@@ -1,6 +1,50 @@
-import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { AvanzelError } from "../../src/types.ts";
-import { decodeTokens, greedyTdt, parseVocab } from "../../src/voice/parakeet.ts";
+import { assetsDir, decodeTokens, greedyTdt, ParakeetTranscriber, parseVocab } from "../../src/voice/parakeet.ts";
+import { tempDir } from "./helpers.ts";
+
+/** Points AVANZEL_ASSETS at `dir` for the rest of the test. */
+function useAssets(dir: string): void {
+  const saved = process.env.AVANZEL_ASSETS;
+  process.env.AVANZEL_ASSETS = dir;
+  onTestFinished(() => {
+    if (saved === undefined) delete process.env.AVANZEL_ASSETS;
+    else process.env.AVANZEL_ASSETS = saved;
+  });
+}
+
+describe("the nemo128 preprocessor", () => {
+  it("ships in the engine's assets folder: onnx-asr 0.12.0's copy", () => {
+    const path = join(assetsDir(), "nemo128.onnx");
+    expect(path).toBe(fileURLToPath(new URL("../../assets/nemo128.onnx", import.meta.url)));
+    const bytes = readFileSync(path);
+    expect(bytes.length).toBe(138_824);
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe("5b4a84c52eeaa615dc46d781cc7e4598f9b432184831d57493c48adcd01371a9");
+  });
+
+  it("is looked up in AVANZEL_ASSETS when the app copies the assets elsewhere", () => {
+    const copied = tempDir();
+    useAssets(copied);
+    expect(assetsDir()).toBe(copied);
+  });
+
+  it("is what ParakeetTranscriber.load reads, whatever the model directory holds", async () => {
+    const modelDir = tempDir();
+    for (const name of ["encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "nemo128.onnx"]) {
+      writeFileSync(join(modelDir, name), "not a real model");
+    }
+    writeFileSync(join(modelDir, "vocab.txt"), "▁a 0\n<blk> 1\n");
+    const assets = tempDir(); // no nemo128.onnx in here
+    useAssets(assets);
+    const load = ParakeetTranscriber.load(modelDir);
+    await expect(load).rejects.toThrow(AvanzelError);
+    await expect(load).rejects.toThrow(join(assets, "nemo128.onnx"));
+  });
+});
 
 describe("decodeTokens", () => {
   // Expected strings were produced by onnx-asr's own `re.sub(r"\A\s|\s\B|(\s)\b", …)` in Python.

@@ -2,6 +2,7 @@
 // (nemo128 mel features → FastConformer encoder → greedy TDT decoding), with Silero VAD for long audio.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { InferenceSession, Tensor } from "onnxruntime-node";
 import { AvanzelError, type Transcriber, type Transcript } from "../types.ts";
 import { segmentSpeech } from "./vad.ts";
@@ -20,6 +21,11 @@ export const VAD_THRESHOLD_SECONDS = 25;
 const VAD_BATCH_SIZE = 8;
 /** Two 10 ms feature frames: with one, the per-feature variance is 0/0 and the model emits <unk> noise. */
 const MIN_SAMPLES = 2 * 160;
+
+/** The engine's assets folder: AVANZEL_ASSETS when the app ships a copy elsewhere, else packages/engine/assets/. */
+export function assetsDir(): string {
+  return process.env.AVANZEL_ASSETS || fileURLToPath(new URL("../../assets/", import.meta.url));
+}
 
 export interface Vocab {
   /** Token text by id, with SentencePiece's word marker turned into a space. */
@@ -136,12 +142,14 @@ export class ParakeetTranscriber implements Transcriber {
     this.#initialState = [zeros("input_states_1"), zeros("input_states_2")];
   }
 
-  /** Loads the model files in `modelDir` (as laid out on Hugging Face, plus nemo128.onnx). */
+  /**
+   * Loads the model files in `modelDir` (as laid out on Hugging Face). The nemo128 preprocessor is always
+   * the engine's own (assets/nemo128.onnx, see assets/NOTICE.md); a copy in `modelDir` is ignored.
+   */
   static async load(modelDir: string, options: ParakeetOptions = {}): Promise<ParakeetTranscriber> {
     const model = options.model ?? basename(modelDir);
     const suffix = options.quantization === "" ? "" : `.${options.quantization ?? "int8"}`;
     const paths = {
-      preprocessor: join(modelDir, "nemo128.onnx"),
       encoder: join(modelDir, `encoder-model${suffix}.onnx`),
       decoder: join(modelDir, `decoder_joint-model${suffix}.onnx`),
       vocab: join(modelDir, "vocab.txt"),
@@ -152,8 +160,10 @@ export class ParakeetTranscriber implements Transcriber {
       const vocab = parseVocab(readFileSync(paths.vocab, "utf8"));
       const configPath = join(modelDir, "config.json");
       const config = existsSync(configPath) ? (JSON.parse(readFileSync(configPath, "utf8")) as { max_tokens_per_step?: number }) : {};
+      // Read as bytes, so the preprocessor also loads from inside an Electron app.asar.
+      const preprocessorModel = readFileSync(join(assetsDir(), "nemo128.onnx"));
       const [preprocessor, encoder, decoder, vad] = await createSessions([
-        paths.preprocessor,
+        preprocessorModel,
         paths.encoder,
         paths.decoder,
         options.vadPath ?? null,
@@ -231,9 +241,14 @@ export class ParakeetTranscriber implements Transcriber {
   }
 }
 
-/** Creates the sessions together; if any fails, releases the others (the encoder alone is ~650 MB). */
-async function createSessions(paths: (string | null)[]): Promise<(InferenceSession | null)[]> {
-  const settled = await Promise.allSettled(paths.map((path) => (path ? InferenceSession.create(path, SESSION_OPTIONS) : null)));
+/** Creates the sessions (from a path or model bytes) together; if any fails, releases the others (the encoder is ~650 MB). */
+async function createSessions(models: (string | Uint8Array | null)[]): Promise<(InferenceSession | null)[]> {
+  const settled = await Promise.allSettled(
+    models.map((model) => {
+      if (model === null) return null;
+      return typeof model === "string" ? InferenceSession.create(model, SESSION_OPTIONS) : InferenceSession.create(model, SESSION_OPTIONS);
+    }),
+  );
   const failure = settled.find((result) => result.status === "rejected");
   if (!failure) return settled.map((result) => (result.status === "fulfilled" ? result.value : null));
   await Promise.all(settled.map((result) => (result.status === "fulfilled" ? result.value?.release() : undefined)));

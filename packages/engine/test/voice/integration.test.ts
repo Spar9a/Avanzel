@@ -1,8 +1,9 @@
 // End to end with the real models and macOS `say`; opt-in because it needs both:
 //   AVANZEL_TEST_ASR=1 npm test -w @avanzel/engine -- test/voice
-// Models come from the Hugging Face cache where possible; nemo128.onnx (and anything not cached) is
-// downloaded once into $TMPDIR/avanzel-test-models.
+// Models come from the Hugging Face cache when it has them; anything missing is downloaded once
+// into $TMPDIR/avanzel-test-models.
 import { spawnSync } from "node:child_process";
+import { symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InferenceSession } from "onnxruntime-node";
@@ -13,6 +14,7 @@ import {
   locateModel,
   makeTranscriber,
   modelFiles,
+  ParakeetTranscriber,
   readWav,
   segmentSpeech,
   VAD_MODEL,
@@ -35,8 +37,7 @@ describe.skipIf(process.env.AVANZEL_TEST_ASR !== "1")("Parakeet v3 end to end (A
   let transcriber: Transcriber;
 
   beforeAll(async () => {
-    await downloadModel(V3, MODELS_DIR);
-    if (!locateModel(VAD_MODEL, MODELS_DIR)) await downloadModel(VAD_MODEL, MODELS_DIR);
+    for (const id of [V3, VAD_MODEL]) if (!locateModel(id, MODELS_DIR)) await downloadModel(id, MODELS_DIR);
     transcriber = await makeTranscriber({ backend: "onnx-asr", model: V3, quantization: "int8", command: [] }, MODELS_DIR);
   }, 300_000);
 
@@ -90,6 +91,16 @@ describe.skipIf(process.env.AVANZEL_TEST_ASR !== "1")("Parakeet v3 end to end (A
       "--data-format=aac",
     ]);
     expect((await transcriber.transcribe(m4a)).text).toMatch(/podcast about indie game development/);
+  });
+
+  it("uses the engine's own nemo128.onnx, not one in the model directory", async () => {
+    const located = locateModel(V3, MODELS_DIR)!;
+    const modelDir = tempDir();
+    for (const name of modelFiles(V3)) symlinkSync(join(located, name), join(modelDir, name));
+    writeFileSync(join(modelDir, "nemo128.onnx"), "not a preprocessor");
+    const parakeet = await ParakeetTranscriber.load(modelDir, { model: V3 });
+    const wav = say("Samantha", "I want to launch my podcast about indie game development before the end of the year.", "en.wav");
+    expect((await parakeet.transcribe(wav)).text).toBe("I want to launch my podcast about indie game development before the end of the year.");
   });
 
   it("returns no text for audio too short to hold a word", async () => {

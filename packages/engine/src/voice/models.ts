@@ -1,47 +1,29 @@
 // Speech model files: what each model needs, where an existing copy is (the app's models directory or a
-// Hugging Face cache snapshot), and downloading whatever is missing.
+// Hugging Face cache snapshot), and downloading whatever is missing from Hugging Face.
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
-import { open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { open, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { inflateRawSync } from "node:zlib";
 import { AvanzelError } from "../types.ts";
-
-/** A file taken from a zip archive (a Python wheel) instead of the model's repo. */
-export interface ArchivedFile {
-  url: string;
-  /** Path of the file inside the archive. */
-  entry: string;
-}
 
 export interface ModelSpec {
   /** Hugging Face repo the files come from. */
   repo: string;
   /** Files the model needs, by quantization: "int8" or "" (full precision). */
   files: Readonly<Record<string, readonly string[]>>;
-  /** Files that come from an archive rather than the repo; never taken from a Hugging Face snapshot. */
-  archived?: Readonly<Record<string, ArchivedFile>>;
 }
 
 /** Silero VAD, which splits recordings longer than 25 s for Parakeet. */
 export const VAD_MODEL = "silero-vad";
 
-// The nemo128 mel-feature preprocessor as onnx-asr 0.12.0 ships it (sha256 5b4a84c5…): zero padding and
-// N/160 frames, matching the NumPy features Avanzel v0.1 computes to ~2e-4. The nemo128.onnx in the Parakeet
-// repos predates onnx-asr 0.11 (reflect padding, one frame more, fails under 257 samples), so it is not used.
-const NEMO128: ArchivedFile = {
-  url: "https://files.pythonhosted.org/packages/6a/60/2fa469a2ee674c35ab48821a1039762ae7b9d0b88188ac1012e779477f76/onnx_asr-0.12.0-py3-none-any.whl",
-  entry: "onnx_asr/preprocessors/data/nemo128.onnx",
-};
-
+// Parakeet's nemo128 preprocessor is not listed: the engine ships its own (assets/nemo128.onnx).
 function parakeet(repo: string): ModelSpec {
   return {
     repo,
     files: {
-      int8: ["encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "vocab.txt", "config.json", "nemo128.onnx"],
-      "": ["encoder-model.onnx", "encoder-model.onnx.data", "decoder_joint-model.onnx", "vocab.txt", "config.json", "nemo128.onnx"],
+      int8: ["encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "vocab.txt", "config.json"],
+      "": ["encoder-model.onnx", "encoder-model.onnx.data", "decoder_joint-model.onnx", "vocab.txt", "config.json"],
     },
-    archived: { "nemo128.onnx": NEMO128 },
   };
 }
 
@@ -110,13 +92,12 @@ function isFile(path: string): boolean {
 
 /**
  * A directory holding every file of model `id`: `<modelsDir>/<id>/` first, else a Hugging Face cache
- * snapshot (only for models without archived files); null when there is no complete copy.
+ * snapshot; null when there is no complete copy.
  */
 export function locateModel(id: string, modelsDir: string, quantization = "int8"): string | null {
   const files = modelFiles(id, quantization);
-  const { repo, archived = {} } = spec(id);
-  const snapshots = files.some((name) => Object.hasOwn(archived, name)) ? [] : hfSnapshots(repo);
-  return [join(modelsDir, id), ...snapshots].find((dir) => files.every((name) => isFile(join(dir, name)))) ?? null;
+  const candidates = [join(modelsDir, id), ...hfSnapshots(spec(id).repo)];
+  return candidates.find((dir) => files.every((name) => isFile(join(dir, name)))) ?? null;
 }
 
 export interface DownloadProgress {
@@ -141,50 +122,40 @@ export interface DownloadOptions {
 const HEADERS = { "accept-encoding": "identity" };
 
 /**
- * Makes `<modelsDir>/<id>/` complete (see `downloadModelFiles`) and returns it. Repo files come from
- * `<baseUrl>/<repo>/resolve/main/<file>`.
+ * Makes `<modelsDir>/<id>/` complete and returns it: files already there are kept, files in a Hugging Face
+ * cache snapshot are symlinked (the cache is never written to), the rest is downloaded from
+ * `<baseUrl>/<repo>/resolve/main/<file>`, streamed to `<file>.part` and renamed when complete.
  */
 export async function downloadModel(id: string, modelsDir: string, options: DownloadOptions = {}): Promise<string> {
-  return downloadModelFiles(spec(id), join(modelsDir, id), options);
-}
-
-/**
- * Makes `dir` hold every file of `model`: files already there are kept, repo files in a Hugging Face cache
- * snapshot are symlinked (the cache is never written to), the rest is downloaded. Each download streams to
- * `<file>.part` and is renamed when complete; archived files are extracted from their archive first.
- */
-export async function downloadModelFiles(model: ModelSpec, dir: string, options: DownloadOptions = {}): Promise<string> {
   const { quantization = "int8", onProgress, signal, baseUrl = "https://huggingface.co" } = options;
-  if (!Object.hasOwn(model.files, quantization)) {
-    throw new AvanzelError(`Unknown quantization '${quantization}'; use "int8" or "" (full precision).`);
-  }
-  const files = model.files[quantization]!;
-  const archived = model.archived ?? {};
+  const files = modelFiles(id, quantization);
+  const { repo } = spec(id);
+  const dir = join(modelsDir, id);
   mkdirSync(dir, { recursive: true });
 
-  const snapshots = hfSnapshots(model.repo);
-  const missing: { name: string; url: string; entry?: string }[] = [];
+  const snapshots = hfSnapshots(repo);
+  const missing: string[] = [];
   for (const name of files) {
     const target = join(dir, name);
     if (isFile(target)) continue;
-    const archive = Object.hasOwn(archived, name) ? archived[name] : undefined;
-    const cached = archive ? undefined : snapshots.map((snapshot) => join(snapshot, name)).find(isFile);
+    const cached = snapshots.map((snapshot) => join(snapshot, name)).find(isFile);
     if (cached === undefined) {
-      missing.push({ name, url: archive?.url ?? `${baseUrl}/${model.repo}/resolve/main/${name}`, entry: archive?.entry });
+      missing.push(name);
       continue;
     }
     rmSync(target, { force: true }); // a dangling link from an earlier, since cleaned, cache
     symlinkSync(cached, target);
   }
 
-  const sizes = await Promise.all(missing.map(({ url }) => contentLength(url, signal)));
+  const urls = missing.map((name) => `${baseUrl}/${repo}/resolve/main/${name}`);
+  const sizes = await Promise.all(urls.map((url) => contentLength(url, signal)));
   const overallTotal = sizes.every((size) => size !== null) ? sizes.reduce<number>((sum, size) => sum + size!, 0) : null;
   let overallReceived = 0;
-  for (const [index, file] of missing.entries()) {
+  for (const [index, name] of missing.entries()) {
     const done = overallReceived;
-    await fetchFile(file, join(dir, file.name), sizes[index] ?? null, signal, (receivedBytes, totalBytes) => {
+    await fetchFile(name, urls[index]!, join(dir, name), sizes[index] ?? null, signal, (receivedBytes, totalBytes) => {
       overallReceived = done + receivedBytes;
-      onProgress?.({ file: file.name, receivedBytes, totalBytes, overallReceived, overallTotal });
+      onProgress?.({ file: name, receivedBytes, totalBytes, overallReceived, overallTotal });
     });
   }
   return dir;
@@ -202,7 +173,8 @@ async function contentLength(url: string, signal?: AbortSignal): Promise<number 
 }
 
 async function fetchFile(
-  { name, url, entry }: { name: string; url: string; entry?: string },
+  name: string,
+  url: string,
   target: string,
   expectedSize: number | null,
   signal: AbortSignal | undefined,
@@ -231,13 +203,6 @@ async function fetchFile(
       await file.close();
     }
     if (totalBytes !== null && received !== totalBytes) throw failed(`got ${received} of ${totalBytes} bytes; try again`);
-    if (entry !== undefined) {
-      try {
-        await writeFile(part, unzipEntry(await readFile(part), entry));
-      } catch (error) {
-        throw failed(error instanceof Error ? error.message : String(error));
-      }
-    }
     await rename(part, target);
   } catch (error) {
     await rm(part, { force: true });
@@ -245,25 +210,4 @@ async function fetchFile(
     const cause = error instanceof Error && error.cause instanceof Error ? ` (${error.cause.message})` : "";
     throw failed(`${error instanceof Error ? error.message : String(error)}${cause}`);
   }
-}
-
-/** The contents of `entry` in a zip archive (stored or deflated, without zip64, as Python wheels are). */
-export function unzipEntry(zip: Buffer, entry: string): Buffer {
-  const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-  if (end < 0 || end + 22 > zip.length) throw new AvanzelError("The download is not a zip archive.");
-  let offset = zip.readUInt32LE(end + 16);
-  for (let index = zip.readUInt16LE(end + 10); index > 0 && zip.readUInt32LE(offset) === 0x02014b50; index--) {
-    const nameLength = zip.readUInt16LE(offset + 28);
-    if (zip.toString("utf8", offset + 46, offset + 46 + nameLength) === entry) {
-      const method = zip.readUInt16LE(offset + 10);
-      const local = zip.readUInt32LE(offset + 42);
-      const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
-      const data = zip.subarray(start, start + zip.readUInt32LE(offset + 20));
-      if (method === 0) return data;
-      if (method === 8) return inflateRawSync(data);
-      throw new AvanzelError(`${entry} uses unsupported zip compression ${method}.`);
-    }
-    offset += 46 + nameLength + zip.readUInt16LE(offset + 30) + zip.readUInt16LE(offset + 32);
-  }
-  throw new AvanzelError(`${entry} is not in the archive.`);
 }
