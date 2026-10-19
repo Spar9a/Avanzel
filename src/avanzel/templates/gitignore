@@ -1,0 +1,7 @@
+# Avanzel internals
+.avanzel/logs/
+.avanzel/lock
+# Obsidian per-device state
+.obsidian/workspace*.json
+# Recordings stay on this machine; their transcripts are the captures in raw/
+raw/audio/

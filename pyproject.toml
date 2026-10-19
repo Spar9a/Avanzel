@@ -1,0 +1,28 @@
+[project]
+name = "avanzel"
+version = "0.1.0"
+description = "Voice-first second brain that runs on the AI agent you already have (Claude Code, Codex, OpenCode, Cursor)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "onnx-asr[cpu,hub]>=0.12",
+    "sounddevice>=0.5",
+]
+
+[project.scripts]
+avanzel = "avanzel.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/avanzel"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = ["integration: opt-in tests that use real speech models or agent CLIs"]
