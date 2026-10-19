@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { defaultSettings, type CustomHarness, type Settings } from "../../src/core/config.ts";
-import { Harness, childEnv, harnesses, runHeadless, selectHarness } from "../../src/core/harness.ts";
+import { Harness, childEnv, errorLine, harnesses, runHeadless, selectHarness } from "../../src/core/harness.ts";
 import { AvanzelError } from "../../src/types.ts";
 import { binScripts, thrownBy, useTmp } from "./helpers.ts";
 
@@ -137,6 +137,23 @@ describe("selectHarness", () => {
     const error = thrownBy(() => selectHarness(defaultSettings()));
     expect(error).toBeInstanceOf(AvanzelError);
     expect(error.message).toContain("claude");
+  });
+});
+
+describe("errorLine", () => {
+  it("picks the last error or login line over echoed prompts and banners", () => {
+    const echoed = Array.from({ length: 40 }, (_, n) => `echoed prompt line ${n}`).join("\n");
+    expect(errorLine(`${echoed}\nwarning: model metadata not found\nERROR: the model is not supported\nbye\n`)).toBe(
+      "ERROR: the model is not supported",
+    );
+    expect(errorLine("  +i\n 11}[]-+####     Press any key to sign in...\n    ttttt/tZZfff^>\n")).toBe(
+      "11}[]-+####     Press any key to sign in...",
+    );
+  });
+
+  it("falls back to the last line, without colours", () => {
+    expect(errorLine("first\n\n  \x1b[31msecond\x1b[0m  \n\n")).toBe("second");
+    expect(errorLine("")).toBe("");
   });
 });
 

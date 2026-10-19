@@ -134,8 +134,7 @@ export class Vault {
 
   static async init(root: string, { git = true }: { git?: boolean } = {}): Promise<Vault> {
     const vault = new Vault(root);
-    for (const folder of ["inbox", "raw", "reviews", ...SHELVES]) mkdirSync(join(vault.root, folder), { recursive: true });
-    mkdirSync(vault.logsDir, { recursive: true });
+    vault.ensureFolders();
     for (const [rel, name] of Object.entries(SCAFFOLD)) {
       const target = join(vault.root, rel);
       if (!existsSync(target)) writeFileSync(target, template(name), "utf8");
@@ -147,6 +146,12 @@ export class Vault {
       await gitops.commitAll(vault.root, "avanzel: new library");
     }
     return vault;
+  }
+
+  /** Create the inbox, sources, reviews and shelf folders that are missing (git drops emptied folders). */
+  ensureFolders(): void {
+    for (const folder of ["inbox", "raw", "reviews", ...SHELVES]) mkdirSync(join(this.root, folder), { recursive: true });
+    mkdirSync(this.logsDir, { recursive: true });
   }
 
   // --- captures -----------------------------------------------------------------------------

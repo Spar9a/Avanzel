@@ -203,6 +203,20 @@ export function selectHarness(settings: Settings, requested?: string | null): Ha
   return harness;
 }
 
+// Words of the lines worth showing when an agent CLI fails. CLIs often print the whole prompt or a
+// login banner before the line that matters.
+const TELLING = [
+  "error", "timed out", "sign in", "log in", "login", "not logged", "unauthorized", "authenticat", "api key",
+  "quota", "rate limit",
+];
+
+/** The line of a failed run's output worth showing: the last error or login line, else the last line. */
+export function errorLine(text: string): string {
+  const rows = text.replace(ANSI, "").split(/\r?\n/).map((row) => row.trim()).filter(Boolean);
+  const telling = rows.filter((row) => TELLING.some((word) => row.toLowerCase().includes(word)));
+  return Array.from(telling.at(-1) ?? rows.at(-1) ?? "").slice(0, 300).join("");
+}
+
 export function childEnv(env: Env): Record<string, string> {
   return Object.fromEntries(
     Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined && !SESSION_VARS.has(entry[0])),
