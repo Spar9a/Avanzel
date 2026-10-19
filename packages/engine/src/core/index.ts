@@ -5,5 +5,7 @@ export * from "./vault.ts";
 export * from "./changes.ts";
 export * from "./search.ts";
 export * as git from "./git.ts";
+export * from "./prompts.ts";
+export * from "./harness.ts";
 export * from "./tasks.ts";
 export { templatesDir } from "./templates.ts";
