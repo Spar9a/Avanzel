@@ -242,7 +242,7 @@ describe("shelfCounts", () => {
     expect(Object.keys(counts).slice(0, SHELVES.length)).toEqual([...SHELVES]);
   });
 
-  it("leaves out the inbox, sources, reviews and the tasks folder", () => {
+  it("leaves out the inbox, sources, reviews and the tasks folder (tasks_folder_is_not_a_shelf)", () => {
     write(vault.root, "tasks/x.md", "x");
     write(vault.root, "reviews/2026-10-20.md", "r");
     write(vault.root, ".obsidian/y.md", "y");

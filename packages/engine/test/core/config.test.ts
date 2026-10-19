@@ -185,6 +185,8 @@ describe("saveSettings", () => {
     };
     saveSettings(tmp(), settings);
     expect(loadSettings(tmp())).toEqual(settings);
+    expect(readFileSync(configPath(), "utf8")).toContain('[models]\nclaude = "sonnet"\ncursor-agent = "gpt-5"\n');
+    expect(readFileSync(configPath(), "utf8")).toContain('\n\n[voice]\n');
   });
 
   it("refuses settings that would not load back, leaving the file alone", () => {

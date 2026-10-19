@@ -112,8 +112,8 @@ function renderConfig(settings: Settings): string {
     timeout_seconds: String(settings.timeoutSeconds),
     auto_commit: String(settings.autoCommit),
     models: Object.entries(settings.models)
-      .map(([name, model]) => `${tomlKey(name)} = ${tomlString(model)}`)
-      .join("\n"),
+      .map(([name, model]) => `${tomlKey(name)} = ${tomlString(model)}\n`)
+      .join(""),
     voice_backend: tomlString(voice.backend),
     voice_model: tomlString(voice.model),
     voice_quantization: tomlString(voice.quantization),
