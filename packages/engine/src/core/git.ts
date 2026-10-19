@@ -63,9 +63,13 @@ export async function revertKeeping(
     const deleted = (await git(root, ["diff", "--cached", "--name-only", "--no-renames", "--diff-filter=D", "-z"])).stdout
       .split("\0")
       .filter(Boolean);
+    const targets = new Set<string>();
     const kept = deleted.flatMap((path) => {
-      const target = keep(path);
-      return target === null ? [] : [{ path, target }];
+      let target = keep(path);
+      if (target === null) return [];
+      if (targets.has(target)) target = path; // never move two files onto one path: the second stays put
+      targets.add(target);
+      return [{ path, target }];
     });
     if (kept.length) {
       await check(git(root, ["--literal-pathspecs", ...SAFE, "checkout", "HEAD", "--", ...kept.map((k) => k.path)]));
