@@ -1,0 +1,24 @@
+{
+  "name": "@avanzel/engine",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Avanzel engine: the Markdown library, agent harness adapters, filing contract and local speech-to-text.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src", "templates"],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "onnxruntime-node": "1.30.0",
+    "smol-toml": "^1.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

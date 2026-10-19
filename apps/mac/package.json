@@ -1,0 +1,37 @@
+{
+  "name": "@avanzel/mac",
+  "productName": "Avanzel",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Avanzel for Mac: a voice-first second brain that runs on the agent you already have.",
+  "type": "module",
+  "main": "dist/main.mjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs && env -u ELECTRON_RUN_AS_NODE electron .",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "e2e": "node scripts/build.mjs && playwright test",
+    "dist": "node scripts/build.mjs && electron-builder --mac dir"
+  },
+  "dependencies": {
+    "@avanzel/engine": "*",
+    "dompurify": "^3.4.17",
+    "marked": "^18.1.1",
+    "onnxruntime-node": "1.30.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "smol-toml": "^1.9.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

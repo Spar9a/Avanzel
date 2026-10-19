@@ -6,3 +6,10 @@ dist/
 build/
 *.egg-info/
 .superpowers/
+node_modules/
+apps/mac/dist/
+apps/mac/release/
+packages/*/dist/
+test-results/
+playwright-report/
+*.tsbuildinfo

@@ -1,0 +1,31 @@
+# Avanzel library settings. Remove a line to fall back to its default.
+
+# Which agent CLI does the work. "auto" picks the first installed of
+# claude, codex, opencode, cursor-agent, gemini. Or name one, or a custom harness below.
+harness = ${harness}
+
+# Give up on a single agent run after this many seconds.
+timeout_seconds = ${timeout_seconds}
+
+# Commit the library to git after every agent run (only when this folder is a git repo).
+auto_commit = ${auto_commit}
+
+# Optional model per harness, to keep filing quick and cheap on your subscription,
+# e.g. claude = "sonnet", codex = "<model name>", opencode = "<provider>/<model>".
+[models]
+${models}
+[voice]
+# "onnx-asr" runs open speech models on this Mac; "command" runs any local speech-to-text
+# CLI that prints the transcript on stdout.
+backend = ${voice_backend}
+# nemo-parakeet-tdt-0.6b-v3 (25 European languages, default) or nemo-parakeet-tdt-0.6b-v2 (English).
+model = ${voice_model}
+quantization = ${voice_quantization}
+# command = ["whisper-cli", "-m", "/path/to/ggml-large-v3-turbo.bin", "-nt", "-f", "{audio}"]
+${voice_command}max_record_seconds = ${voice_max_record_seconds}
+
+# Any other agent CLI: {prompt} and {vault} are substituted.
+# [harnesses.my-agent]
+# headless = ["my-agent", "run", "{prompt}"]
+# interactive = ["my-agent"]
+${harnesses}
