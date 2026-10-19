@@ -21,3 +21,8 @@ export interface VoiceOptions {
   quantization: string;
   command: string[];
 }
+
+/** A problem the owner can fix (missing agent, bad config, …); apps show the message as-is. */
+export class AvanzelError extends Error {
+  override name = "AvanzelError";
+}
