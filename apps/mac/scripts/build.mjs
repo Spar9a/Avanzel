@@ -62,5 +62,7 @@ if (pages.length) {
 }
 
 cpSync(engineTemplates, path.join(dist, "templates"), { recursive: true });
+const engineAssets = path.join(root, "..", "..", "packages", "engine", "assets");
+if (existsSync(engineAssets)) cpSync(engineAssets, path.join(dist, "engine-assets"), { recursive: true });
 if (existsSync(path.join(root, "assets"))) cpSync(path.join(root, "assets"), path.join(dist, "assets"), { recursive: true });
 console.log(`built ${pages.length} renderer(s) into dist/${watch ? " (watch not implemented)" : ""}`);

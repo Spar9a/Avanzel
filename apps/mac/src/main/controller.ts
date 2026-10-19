@@ -1,0 +1,998 @@
+// Everything the app does, in one place: shortcuts → capsule → transcription → capture → filing,
+// settings, shadow tasks and the menu bar. Windows and the tray only render what this decides.
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  globalShortcut,
+  nativeImage,
+  Notification,
+  powerMonitor,
+  shell,
+} from "electron";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+import {
+  AvanzelError,
+  Librarian,
+  Vault,
+  downloadModel,
+  ensureDefaultTasks,
+  harnesses as listHarnesses,
+  lastDue,
+  loadSettings,
+  loadTasks,
+  locateModel,
+  makeTranscriber,
+  nextRun,
+  parseSchedule,
+  readWav,
+  rememberVault,
+  saveSettings,
+  saveTask,
+  selectHarness,
+  writeWav,
+  type FileOutcome,
+  type Settings,
+  type ShadowTask,
+  type Transcriber,
+} from "@avanzel/engine";
+import type {
+  AppSettings,
+  AskResult,
+  CapsuleMode,
+  CapsuleState,
+  FiledPage,
+  ModelStatus,
+  ScreenContext,
+  SettingsSnapshot,
+  Shortcuts,
+  TaskInfo,
+} from "../shared/ipc.ts";
+import { frontContext } from "./front-app.ts";
+import { filedPages, findPage, pageInfo, recentFromLog, rewriteCaptureBody } from "./library-info.ts";
+import type { MenuInput } from "./menu-model.ts";
+import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
+import { dueTasks } from "./schedule.ts";
+import { captureDisplay, looksBlank } from "./screenshot.ts";
+import { registerShortcuts } from "./shortcuts.ts";
+import { SettingsStore } from "./store.ts";
+import { MenuBar } from "./tray.ts";
+import {
+  createAskWindow,
+  createCapsuleWindow,
+  createQuickWindow,
+  createSettingsWindow,
+  placeCapsule,
+  placeQuick,
+} from "./windows.ts";
+
+const MODEL_ID = "nemo-parakeet-tdt-0.6b-v3";
+const EDIT_GRACE_MS = 2500;
+const HARNESS_NAMES: Record<string, string> = {
+  claude: "Claude Code", codex: "Codex", opencode: "OpenCode", "cursor-agent": "Cursor Agent", gemini: "Gemini CLI",
+};
+export const harnessName = (name: string) => HARNESS_NAMES[name] ?? name;
+
+interface Recording {
+  mode: CapsuleMode;
+  startedAt: number;
+  shot?: { path: string; thumbnail: string; context: ScreenContext };
+  maxTimer: NodeJS.Timeout;
+}
+
+interface FilingJob {
+  capturePath: string;
+  text: string;
+  transcribedIn: number | null;
+  agent: string;
+  grace: NodeJS.Timeout | null;
+  outcome?: FileOutcome;
+  pages?: FiledPage[];
+}
+
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const lastLines = (text: string, n = 3) => text.trim().split("\n").filter(Boolean).slice(-n).join("\n");
+
+export class Controller {
+  private readonly store: SettingsStore;
+  private readonly modelsDir: string;
+  private vault: Vault | null = null;
+  private capsule!: BrowserWindow;
+  private settingsWindow: BrowserWindow | null = null;
+  private quickWindow: BrowserWindow | null = null;
+  private askWindow: BrowserWindow | null = null;
+  private menuBar!: MenuBar;
+  private capsuleState: CapsuleState = { kind: "hidden" };
+  private recording: Recording | null = null;
+  private job: FilingJob | null = null;
+  private hideTimer: NodeJS.Timeout | null = null;
+  private keepOpen = false;
+  private queue: Promise<unknown> = Promise.resolve();
+  private transcriber: Transcriber | null = null;
+  private transcriberKey = "";
+  private model: ModelStatus = { kind: "missing" };
+  private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
+  private recent: FiledPage[] = [];
+  private running = new Set<string>();
+  private lastEveningCommits: string[] = [];
+  private audioTimeout: NodeJS.Timeout | null = null;
+
+  constructor(userData: string) {
+    this.store = new SettingsStore(path.join(userData, "settings.json"));
+    this.modelsDir = path.join(userData, "models");
+  }
+
+  // ---------------------------------------------------------------- lifecycle
+
+  async start(): Promise<void> {
+    const envLibrary = process.env.AVANZEL_LIBRARY;
+    if (envLibrary) this.store.update({ libraryPath: envLibrary });
+    this.openLibrary(this.store.get().libraryPath);
+    this.capsule = createCapsuleWindow();
+    this.capsule.on("closed", () => app.quit());
+    this.menuBar = new MenuBar((action) => void this.menuAction(action));
+    this.applyShortcuts();
+    await this.refreshModelStatus();
+    this.refreshMenu();
+    setInterval(() => this.tick(), 60_000);
+    powerMonitor.on("resume", () => this.tick());
+    powerMonitor.on("unlock-screen", () => this.tick());
+    this.tick();
+    if (!this.vault) this.showSettings();
+  }
+
+  private openLibrary(libraryPath: string | null): void {
+    this.vault = null;
+    this.recent = [];
+    if (!libraryPath) return;
+    const vault = new Vault(libraryPath);
+    if (!vault.exists()) return;
+    this.vault = vault;
+    ensureDefaultTasks(vault);
+    this.recent = recentFromLog(vault.root);
+    this.transcriber = null;
+  }
+
+  private requireVault(): Vault {
+    if (!this.vault) throw new AvanzelError("Set up your library first: Avanzel Settings → General.");
+    return this.vault;
+  }
+
+  private librarian(harnessName?: string): Librarian {
+    const vault = this.requireVault();
+    return new Librarian(vault, loadSettings(vault.root), {
+      harnessName: harnessName && harnessName !== "auto" ? harnessName : undefined,
+      transcriber: this.transcriber ?? undefined,
+    });
+  }
+
+  private agentName(harness?: string): string {
+    try {
+      const settings = this.vault ? loadSettings(this.vault.root) : undefined;
+      if (!settings) return "your agent";
+      return harnessName(selectHarness(settings, harness && harness !== "auto" ? harness : undefined).name);
+    } catch {
+      return "your agent";
+    }
+  }
+
+  // ---------------------------------------------------------------- shortcuts & menu
+
+  private applyShortcuts(): void {
+    this.shortcutProblems = registerShortcuts(
+      this.store.get().shortcuts,
+      {
+        dictate: () => void this.toggleDictate(),
+        capture: () => void this.toggleCapture(),
+        type: () => this.openQuick(),
+        ask: () => this.openAsk(),
+      },
+      globalShortcut,
+    );
+  }
+
+  private async menuAction(action: string): Promise<void> {
+    if (action === "dictate") return this.toggleDictate();
+    if (action === "capture") return this.toggleCapture();
+    if (action === "type") return this.openQuick();
+    if (action === "ask") return this.openAsk();
+    if (action === "settings") return this.showSettings();
+    if (action === "open-library") return this.openLibraryFolder();
+    if (action === "undo-review") return void this.undoEveningReview();
+    if (action === "quit") return app.quit();
+    if (action.startsWith("open:")) return this.openPage(action.slice(5));
+    if (action.startsWith("task:")) return void this.runTask(action.slice(5));
+  }
+
+  private menuInput(): MenuInput {
+    const vault = this.vault;
+    const now = new Date();
+    const tasks = vault ? this.safeTasks(vault) : [];
+    return {
+      libraryReady: !!vault,
+      inbox: vault ? vault.pending().length : 0,
+      recent: this.recent,
+      tasks: tasks.map((t) => ({
+        id: t.id,
+        name: t.name,
+        at: t.enabled ? nextRun(t.schedule, now) : null,
+        enabled: t.enabled,
+        running: this.running.has(t.id),
+      })),
+      recording: !!this.recording,
+      shortcuts: this.store.get().shortcuts,
+      undoableReview: this.lastEveningCommits.length > 0,
+    };
+  }
+
+  refreshMenu(): void {
+    try {
+      this.menuBar.update(this.menuInput());
+    } catch (error) {
+      console.error("menu", error);
+    }
+  }
+
+  private safeTasks(vault: Vault): ShadowTask[] {
+    try {
+      return loadTasks(vault);
+    } catch (error) {
+      console.error("tasks", error);
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------------- capsule plumbing
+
+  private setCapsule(state: CapsuleState, autoHideMs?: number): void {
+    this.capsuleState = state;
+    if (this.hideTimer) clearTimeout(this.hideTimer);
+    this.hideTimer = null;
+    const win = this.capsule;
+    win.webContents.send("capsule:state", state);
+    if (state.kind === "hidden") {
+      win.setFocusable(false);
+      win.setIgnoreMouseEvents(true, { forward: true });
+      win.hide();
+    } else {
+      if (!win.isVisible()) {
+        placeCapsule(win);
+        win.showInactive();
+      }
+      if (state.kind === "editing") {
+        win.setFocusable(true);
+        win.setIgnoreMouseEvents(false);
+        win.focus();
+      } else {
+        win.setFocusable(false);
+      }
+    }
+    if (autoHideMs) this.scheduleHide(autoHideMs);
+    this.refreshMenu();
+  }
+
+  private scheduleHide(ms: number): void {
+    this.hideTimer = setTimeout(() => {
+      if (this.keepOpen) return this.scheduleHide(1500);
+      this.setCapsule({ kind: "hidden" });
+    }, ms);
+  }
+
+  private fail(message: string, detail?: string, action?: CapsuleState extends infer S ? S extends { kind: "error"; action?: infer A } ? A : never : never): void {
+    this.setCapsule({ kind: "error", message, detail, action });
+  }
+
+  // ---------------------------------------------------------------- recording
+
+  async toggleDictate(): Promise<void> {
+    if (this.recording) return this.stopRecording();
+    return this.startRecording("dictate");
+  }
+
+  async toggleCapture(): Promise<void> {
+    if (this.recording) return this.stopRecording();
+    if (!(await this.readyToListen())) return;
+    const vault = this.requireVault();
+    if (this.capsule.isVisible()) this.setCapsule({ kind: "hidden" });
+    await new Promise((r) => setTimeout(r, 80)); // let the capsule leave the screen before the shot
+    try {
+      const [image, context] = await Promise.all([captureDisplay(), this.screenContext()]);
+      if (looksBlank(image)) {
+        return this.fail(
+          "Avanzel can't see the screen yet",
+          "Allow Avanzel under System Settings → Privacy & Security → Screen Recording, then press the shortcut again.",
+          "open-screen-settings",
+        );
+      }
+      const shotPath = vault.newAttachmentPath(new Date(), ".png");
+      writeFileSync(shotPath, image.toPNG());
+      const thumbnail = image.resize({ width: 208 }).toDataURL();
+      await this.startRecording("comment", { path: shotPath, thumbnail, context });
+    } catch (error) {
+      this.fail("Couldn't capture the screen", errorMessage(error));
+    }
+  }
+
+  private async screenContext(): Promise<ScreenContext> {
+    const fake = process.env.AVANZEL_FAKE_FRONT_APP;
+    if (fake !== undefined) {
+      const [app, title, url] = fake.split("|");
+      return { ...(app ? { app } : {}), ...(title ? { title } : {}), ...(url ? { url } : {}) };
+    }
+    const { bundleId: _ignored, ...context } = await frontContext();
+    return context;
+  }
+
+  /** Library, speech model and microphone must all be ready; explains what's missing otherwise. */
+  private async readyToListen(): Promise<boolean> {
+    if (!this.vault) {
+      this.showSettings();
+      this.fail("Set up your library first", "Choose or create a library folder in Avanzel Settings → General.", "open-settings");
+      return false;
+    }
+    if (!process.env.AVANZEL_FAKE_TRANSCRIPT && this.model.kind !== "ready") {
+      if (this.model.kind === "missing" || this.model.kind === "error") void this.downloadModel();
+      const progress = this.model.kind === "downloading" && this.model.totalBytes
+        ? ` (${Math.round((100 * this.model.receivedBytes) / this.model.totalBytes)}%)` : "";
+      this.fail(`Downloading the speech model${progress}`, "Parakeet runs on this Mac and is downloaded once (670 MB). Avanzel can listen as soon as it's ready.", "open-settings");
+      return false;
+    }
+    if (!process.env.AVANZEL_FAKE_AUDIO && !(await requestMicrophone())) {
+      this.fail("Avanzel can't use the microphone", "Allow it under System Settings → Privacy & Security → Microphone.", "open-microphone-settings");
+      return false;
+    }
+    return true;
+  }
+
+  private async startRecording(mode: CapsuleMode, shot?: Recording["shot"]): Promise<void> {
+    if (mode === "dictate" && !(await this.readyToListen())) return;
+    const maxSeconds = this.vault ? loadSettings(this.vault.root).voice.maxRecordSeconds : 600;
+    this.recording = {
+      mode,
+      startedAt: Date.now(),
+      shot,
+      maxTimer: setTimeout(() => void this.stopRecording(), maxSeconds * 1000),
+    };
+    this.setCapsule({
+      kind: "listening",
+      mode,
+      startedAt: this.recording.startedAt,
+      fakeMic: !!process.env.AVANZEL_FAKE_AUDIO,
+      microphoneId: this.store.get().microphoneId,
+      ...(shot ? { thumbnail: shot.thumbnail } : {}),
+    });
+    this.capsule.webContents.send("capsule:command", "start");
+    try {
+      globalShortcut.register("Escape", () => this.cancelRecording());
+    } catch {
+      // Esc is a convenience; the menu and the shortcut still stop the recording.
+    }
+  }
+
+  async stopRecording(): Promise<void> {
+    if (!this.recording) return;
+    clearTimeout(this.recording.maxTimer);
+    globalShortcut.unregister("Escape");
+    this.setCapsule({ kind: "transcribing", mode: this.recording.mode });
+    this.capsule.webContents.send("capsule:command", "stop");
+    this.audioTimeout = setTimeout(() => {
+      if (this.recording) {
+        this.recording = null;
+        this.fail("The recording didn't arrive", "Try again; if it keeps happening, check the microphone in Settings → Voice.");
+      }
+    }, 15_000);
+  }
+
+  cancelRecording(): void {
+    if (!this.recording) return;
+    clearTimeout(this.recording.maxTimer);
+    globalShortcut.unregister("Escape");
+    if (this.recording.shot) rmSync(this.recording.shot.path, { force: true });
+    this.recording = null;
+    this.capsule.webContents.send("capsule:command", "cancel");
+    this.setCapsule({ kind: "hidden" });
+  }
+
+  micError(message: string): void {
+    if (!this.recording) return;
+    clearTimeout(this.recording.maxTimer);
+    globalShortcut.unregister("Escape");
+    if (this.recording.shot) rmSync(this.recording.shot.path, { force: true });
+    this.recording = null;
+    this.fail("The microphone didn't start", `${message}\nCheck Settings → Voice and System Settings → Privacy & Security → Microphone.`, "open-microphone-settings");
+  }
+
+  async onAudio(received: Float32Array): Promise<void> {
+    if (this.audioTimeout) clearTimeout(this.audioTimeout);
+    const recording = this.recording;
+    if (!recording) return;
+    this.recording = null;
+    const vault = this.requireVault();
+    const now = new Date();
+    try {
+      const samples = process.env.AVANZEL_FAKE_AUDIO ? readWav(process.env.AVANZEL_FAKE_AUDIO).samples : received;
+      const audioPath = vault.newAudioPath(now);
+      let text = "";
+      let engine = "";
+      let seconds: number | null = null;
+      if (samples.length >= 16000 * 0.3) {
+        writeWav(audioPath, samples, 16000);
+        const started = performance.now();
+        const transcript = await this.transcribe(samples);
+        seconds = (performance.now() - started) / 1000;
+        text = transcript.text.trim();
+        engine = transcript.engine;
+      }
+      if (!text) rmSync(audioPath, { force: true });
+
+      if (recording.mode === "comment" && recording.shot) {
+        this.librarian().captureScreen({
+          image: recording.shot.path,
+          comment: text,
+          ...(text ? { audio: audioPath, transcriber: engine } : {}),
+          context: recording.shot.context,
+        });
+        this.setCapsule(
+          { kind: "saved", text, thumbnail: recording.shot.thumbnail, context: recording.shot.context, note: "Saved to your inbox for tonight's review" },
+          5000,
+        );
+        return;
+      }
+      if (!text) {
+        return this.fail("No speech recognized", "If you did speak, check the microphone in Settings → Voice.");
+      }
+      const capture = vault.newCapture(text, { source: "voice", audio: audioPath, transcriber: engine, now });
+      this.afterCapture(capture.path, text, seconds);
+    } catch (error) {
+      this.fail(error instanceof AvanzelError ? error.message : "Couldn't transcribe that", error instanceof AvanzelError ? undefined : errorMessage(error));
+    }
+  }
+
+  private async transcribe(samples: Float32Array): Promise<{ text: string; engine: string }> {
+    const fake = process.env.AVANZEL_FAKE_TRANSCRIPT;
+    if (fake !== undefined) return { text: fake, engine: "fake" };
+    const voice = loadSettings(this.requireVault().root).voice;
+    const key = JSON.stringify(voice);
+    if (!this.transcriber || key !== this.transcriberKey) {
+      this.transcriber = await makeTranscriber(voice, this.modelsDir);
+      this.transcriberKey = key;
+    }
+    return this.transcriber.transcribe(samples, 16000);
+  }
+
+  // ---------------------------------------------------------------- filing
+
+  private afterCapture(capturePath: string, text: string, transcribedIn: number | null): void {
+    if (this.store.get().fileMode === "evening") {
+      this.setCapsule({ kind: "saved", text, note: "Saved to your inbox for tonight's review" }, 4000);
+      return;
+    }
+    this.beginFiling({ capturePath, text, transcribedIn, agent: this.agentName(), grace: null });
+  }
+
+  private beginFiling(job: FilingJob, graceMs = EDIT_GRACE_MS): void {
+    this.job = job;
+    this.setCapsule({ kind: "filing", text: job.text, agent: job.agent, transcribedIn: job.transcribedIn, canEdit: graceMs > 0 });
+    job.grace = setTimeout(() => {
+      job.grace = null;
+      if (this.job === job && this.capsuleState.kind === "filing") {
+        this.setCapsule({ kind: "filing", text: job.text, agent: job.agent, transcribedIn: job.transcribedIn, canEdit: false });
+      }
+      void this.enqueue(() => this.runFiling(job));
+    }, graceMs);
+  }
+
+  private enqueue<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(work, work);
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async runFiling(job: FilingJob): Promise<void> {
+    if (!existsSync(job.capturePath)) {
+      // Already filed meanwhile (e.g. by the evening review); nothing left to do.
+      if (this.job === job && this.capsuleState.kind === "filing") this.setCapsule({ kind: "hidden" });
+      return;
+    }
+    const started = performance.now();
+    let outcome: FileOutcome | undefined;
+    try {
+      [outcome] = await this.librarian().file([job.capturePath]);
+    } catch (error) {
+      return this.filingFailed(job, errorMessage(error));
+    }
+    const seconds = (performance.now() - started) / 1000;
+    if (!outcome || !outcome.ok) return this.filingFailed(job, outcome?.error || outcome?.message || "The agent stopped without filing.");
+    const vault = this.requireVault();
+    job.outcome = outcome;
+    job.pages = filedPages(vault.root, outcome.changes);
+    this.recent = [...job.pages, ...this.recent.filter((p) => !job.pages?.some((q) => q.path === p.path))].slice(0, 3);
+    if (this.job === job && this.capsuleState.kind === "filing") {
+      this.setCapsule(
+        { kind: "filed", agent: job.agent, seconds, pages: job.pages, canUndo: !!outcome.commit, message: outcome.message || "Filed." },
+        8000,
+      );
+    } else {
+      const first = job.pages[0];
+      this.notify(`Filed by ${job.agent}`, first ? `${first.title} (${first.shelf})${job.pages.length > 1 ? ` and ${job.pages.length - 1} more` : ""}` : outcome.message, () => first && this.openPage(first.path));
+    }
+    this.refreshMenu();
+  }
+
+  private filingFailed(job: FilingJob, error: string): void {
+    const detail = `${lastLines(error)}\nThe note is still in your inbox; the evening review will try again.`;
+    if (this.job === job && this.capsuleState.kind === "filing") this.fail(`${job.agent} couldn't file this note`, detail);
+    else this.notify("A note couldn't be filed", lastLines(error, 1));
+    this.refreshMenu();
+  }
+
+  edit(): void {
+    const job = this.job;
+    if (!job || !job.grace) return;
+    clearTimeout(job.grace);
+    job.grace = null;
+    this.setCapsule({ kind: "editing", text: job.text });
+  }
+
+  submitEdit(text: string): void {
+    const job = this.job;
+    if (!job || this.capsuleState.kind !== "editing") return;
+    const trimmed = text.trim();
+    if (!trimmed) return this.cancelEdit();
+    rewriteCaptureBody(job.capturePath, trimmed);
+    this.beginFiling({ ...job, text: trimmed, grace: null }, 0);
+  }
+
+  cancelEdit(): void {
+    const job = this.job;
+    if (!job || this.capsuleState.kind !== "editing") return;
+    this.beginFiling({ ...job, grace: null }, 0);
+  }
+
+  async undo(): Promise<void> {
+    const job = this.job;
+    const commit = job?.outcome?.commit;
+    if (!job || !commit) return;
+    const undone = await this.enqueue(async () => this.librarian().undo([commit]));
+    this.recent = recentFromLog(this.requireVault().root);
+    this.setCapsule(
+      undone ? { kind: "saved", text: job.text, note: "Undone. The note is back in your inbox." } : { kind: "error", message: "Couldn't undo", detail: "Git refused the revert; see the library's history." },
+      undone ? 3500 : undefined,
+    );
+  }
+
+  openFiled(): void {
+    const page = this.job?.pages?.[0];
+    if (page) this.openPage(page.path);
+    this.setCapsule({ kind: "hidden" });
+  }
+
+  dismiss(): void {
+    if (this.capsuleState.kind === "listening") return this.cancelRecording();
+    if (this.capsuleState.kind === "editing") return this.cancelEdit();
+    this.setCapsule({ kind: "hidden" });
+  }
+
+  setKeepOpen(keep: boolean): void {
+    this.keepOpen = keep;
+  }
+
+  setInteractive(interactive: boolean): void {
+    if (this.capsuleState.kind === "editing") return;
+    this.capsule.setIgnoreMouseEvents(!interactive, { forward: true });
+  }
+
+  openSettingsFor(action: string): void {
+    if (action === "open-microphone-settings") openPrivacyPane("microphone");
+    else if (action === "open-screen-settings") openPrivacyPane("screen");
+    else this.showSettings();
+    this.setCapsule({ kind: "hidden" });
+  }
+
+  // ---------------------------------------------------------------- quick type & ask
+
+  openQuick(): void {
+    if (!this.vault) return this.showSettings();
+    if (!this.quickWindow || this.quickWindow.isDestroyed()) {
+      const created = createQuickWindow();
+      created.on("blur", () => created.hide());
+      this.quickWindow = created;
+    }
+    const win = this.quickWindow;
+    placeQuick(win);
+    app.focus({ steal: true });
+    win.show();
+    win.focus();
+  }
+
+  closeQuick(): void {
+    this.quickWindow?.hide();
+  }
+
+  async submitQuick(text: string): Promise<void> {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    this.closeQuick();
+    const capture = this.requireVault().newCapture(trimmed, { source: "text", now: new Date() });
+    this.afterCapture(capture.path, trimmed, null);
+  }
+
+  openAsk(): void {
+    if (!this.vault) return this.showSettings();
+    if (!this.askWindow || this.askWindow.isDestroyed()) {
+      this.askWindow = createAskWindow();
+      this.askWindow.once("ready-to-show", () => this.askWindow?.show());
+    }
+    app.focus({ steal: true });
+    this.askWindow.show();
+    this.askWindow.focus();
+  }
+
+  closeAsk(): void {
+    this.askWindow?.close();
+  }
+
+  async ask(question: string): Promise<AskResult> {
+    const agent = this.agentName();
+    const started = performance.now();
+    try {
+      const outcome = await this.librarian().ask(question, { save: false });
+      const seconds = (performance.now() - started) / 1000;
+      return outcome.result.ok
+        ? { ok: true, answer: outcome.result.output, agent, seconds }
+        : { ok: false, answer: `${agent} couldn't answer:\n${lastLines(outcome.result.stderr || outcome.result.output)}`, agent, seconds };
+    } catch (error) {
+      return { ok: false, answer: errorMessage(error), agent, seconds: (performance.now() - started) / 1000 };
+    }
+  }
+
+  openPageByName(name: string): void {
+    const vault = this.vault;
+    const rel = vault ? findPage(vault.root, name) : null;
+    if (rel) this.openPage(rel);
+  }
+
+  // ---------------------------------------------------------------- opening things
+
+  private obsidianInstalled(): boolean {
+    return !!app.getApplicationNameForProtocol("obsidian://");
+  }
+
+  openPage(rel: string): void {
+    const vault = this.vault;
+    if (!vault) return;
+    const absolute = path.join(vault.root, rel);
+    if (this.obsidianInstalled()) void shell.openExternal(`obsidian://open?path=${encodeURIComponent(absolute)}`);
+    else void shell.openPath(absolute);
+  }
+
+  openLibraryFolder(): void {
+    const vault = this.vault;
+    if (!vault) return this.showSettings();
+    if (this.obsidianInstalled()) void shell.openExternal(`obsidian://open?path=${encodeURIComponent(vault.root)}`);
+    else void shell.openPath(vault.root);
+  }
+
+  private notify(title: string, body: string, onClick?: () => void): void {
+    if (!Notification.isSupported()) return;
+    const note = new Notification({ title, body, silent: false });
+    if (onClick) note.on("click", onClick);
+    note.show();
+  }
+
+  // ---------------------------------------------------------------- settings
+
+  showSettings(): void {
+    if (!this.settingsWindow || this.settingsWindow.isDestroyed()) {
+      this.settingsWindow = createSettingsWindow();
+      this.settingsWindow.once("ready-to-show", () => this.settingsWindow?.show());
+    }
+    app.focus({ steal: true });
+    this.settingsWindow.show();
+    this.settingsWindow.focus();
+  }
+
+  private broadcast(): void {
+    const win = this.settingsWindow;
+    if (win && !win.isDestroyed()) win.webContents.send("settings:changed", this.snapshot());
+    this.refreshMenu();
+  }
+
+  snapshot(): SettingsSnapshot {
+    const vault = this.vault;
+    let settings: Settings | null = null;
+    try {
+      settings = vault ? loadSettings(vault.root) : null;
+    } catch {
+      settings = null;
+    }
+    const all = settings ? listHarnesses(settings) : {};
+    let selected: string | null = null;
+    try {
+      selected = settings ? selectHarness(settings).name : null;
+    } catch {
+      selected = null;
+    }
+    const stateRuns = vault ? this.readRunState(vault).lastRun : {};
+    const now = new Date();
+    return {
+      app: this.store.get(),
+      library: vault
+        ? {
+            path: vault.root,
+            exists: vault.exists(),
+            isGit: existsSync(path.join(vault.root, ".git")),
+            inbox: vault.pending().length,
+            shelves: vault.shelfCounts(),
+            harness: settings?.harness ?? "auto",
+            models: settings?.models ?? {},
+            timeoutSeconds: settings?.timeoutSeconds ?? 900,
+          }
+        : this.store.get().libraryPath
+          ? { path: this.store.get().libraryPath!, exists: false, isGit: false, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900 }
+          : null,
+      defaultLibraryPath: path.join(homedir(), "Avanzel"),
+      harnesses: Object.values(all).map((h) => ({ name: h.name, available: h.available(), experimental: h.experimental })),
+      selectedHarness: selected,
+      model: this.model,
+      permissions: { microphone: permissionStatus("microphone"), screen: permissionStatus("screen") },
+      tasks: vault
+        ? this.safeTasks(vault).map((t): TaskInfo => ({
+            id: t.id,
+            name: t.name,
+            schedule: t.scheduleText,
+            kind: t.kind,
+            agent: t.agent,
+            enabled: t.enabled,
+            instructions: t.instructions,
+            lastRun: stateRuns[t.id] ?? null,
+            nextRun: t.enabled ? nextRun(t.schedule, now).toISOString() : null,
+            running: this.running.has(t.id),
+          }))
+        : [],
+      shortcutProblems: this.shortcutProblems,
+      obsidian: this.obsidianInstalled(),
+    };
+  }
+
+  setApp(patch: Partial<AppSettings>): SettingsSnapshot {
+    const before = this.store.get();
+    const after = this.store.update(patch);
+    if (JSON.stringify(before.shortcuts) !== JSON.stringify(after.shortcuts)) this.applyShortcuts();
+    if (patch.launchAtLogin !== undefined) app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
+    this.broadcast();
+    return this.snapshot();
+  }
+
+  setLibrarySettings(patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }): SettingsSnapshot {
+    const vault = this.requireVault();
+    const settings = loadSettings(vault.root);
+    saveSettings(vault.root, {
+      ...settings,
+      ...(patch.harness !== undefined ? { harness: patch.harness } : {}),
+      ...(patch.models !== undefined ? { models: patch.models } : {}),
+      ...(patch.timeoutSeconds !== undefined ? { timeoutSeconds: patch.timeoutSeconds } : {}),
+    });
+    this.broadcast();
+    return this.snapshot();
+  }
+
+  async chooseLibrary(): Promise<SettingsSnapshot> {
+    const parent = this.settingsWindow && !this.settingsWindow.isDestroyed() ? this.settingsWindow : undefined;
+    const options = { title: "Choose your library folder", properties: ["openDirectory", "createDirectory"] as ("openDirectory" | "createDirectory")[] };
+    const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    const chosen = result.filePaths[0];
+    if (result.canceled || !chosen) return this.snapshot();
+    if (!new Vault(chosen).exists()) {
+      const entries = readdirSync(chosen).filter((name) => name !== ".DS_Store");
+      if (entries.length) {
+        const confirm = await dialog.showMessageBox({
+          type: "question",
+          buttons: ["Use This Folder", "Cancel"],
+          defaultId: 1,
+          cancelId: 1,
+          message: `Turn “${path.basename(chosen)}” into your Avanzel library?`,
+          detail: "It already has files. Avanzel will add its shelves, an AGENTS.md for your agent, and git history that includes the existing files.",
+        });
+        if (confirm.response !== 0) return this.snapshot();
+      }
+      Vault.init(chosen, { git: true });
+    }
+    return this.useLibrary(chosen);
+  }
+
+  createLibrary(requested: string): SettingsSnapshot {
+    const target = path.resolve(requested.replace(/^~(?=$|\/)/, homedir()));
+    if (!new Vault(target).exists() && existsSync(target) && readdirSync(target).some((n) => n !== ".DS_Store")) {
+      throw new AvanzelError(`${target} already has files in it. Use “Choose existing…” to turn it into a library, or pick an empty folder.`);
+    }
+    mkdirSync(target, { recursive: true });
+    Vault.init(target, { git: true });
+    return this.useLibrary(target);
+  }
+
+  private useLibrary(target: string): SettingsSnapshot {
+    this.store.update({ libraryPath: target });
+    this.openLibrary(target);
+    try {
+      rememberVault(target);
+    } catch (error) {
+      console.error("remember vault", error);
+    }
+    this.broadcast();
+    return this.snapshot();
+  }
+
+  // ---------------------------------------------------------------- speech model
+
+  private async refreshModelStatus(): Promise<void> {
+    if (this.model.kind === "downloading") return;
+    const dir = await locateModel(MODEL_ID, this.modelsDir);
+    this.model = dir ? { kind: "ready", dir } : { kind: "missing" };
+  }
+
+  async downloadModel(): Promise<SettingsSnapshot> {
+    if (this.model.kind === "downloading" || this.model.kind === "ready") return this.snapshot();
+    this.model = { kind: "downloading", receivedBytes: 0, totalBytes: 0 };
+    this.broadcast();
+    let lastBroadcast = 0;
+    void downloadModel(MODEL_ID, this.modelsDir, {
+      onProgress: (p) => {
+        this.model = { kind: "downloading", receivedBytes: p.overallReceived, totalBytes: p.overallTotal };
+        if (Date.now() - lastBroadcast > 250) {
+          lastBroadcast = Date.now();
+          this.broadcast();
+        }
+      },
+    })
+      .then((dir) => {
+        this.model = { kind: "ready", dir };
+        this.transcriber = null;
+        this.notify("Avanzel is ready to listen", "The speech model is downloaded. Press the shortcut and start talking.");
+      })
+      .catch((error) => {
+        this.model = { kind: "error", message: errorMessage(error) };
+      })
+      .finally(() => this.broadcast());
+    return this.snapshot();
+  }
+
+  async requestPermission(kind: "microphone" | "screen"): Promise<SettingsSnapshot> {
+    if (kind === "microphone") await requestMicrophone();
+    else await captureDisplay().catch(() => undefined); // asking for a screenshot is what makes macOS ask
+    return this.snapshot();
+  }
+
+  // ---------------------------------------------------------------- shadow tasks
+
+  private readRunState(vault: Vault): { lastRun: Record<string, string> } {
+    try {
+      const parsed = JSON.parse(readFileSync(path.join(vault.metaDir, "state.json"), "utf8")) as { lastRun?: Record<string, string> };
+      return { lastRun: parsed.lastRun ?? {} };
+    } catch {
+      return { lastRun: {} };
+    }
+  }
+
+  private writeRunState(vault: Vault, state: { lastRun: Record<string, string> }): void {
+    mkdirSync(vault.metaDir, { recursive: true });
+    writeFileSync(path.join(vault.metaDir, "state.json"), `${JSON.stringify(state, null, 2)}\n`);
+  }
+
+  private tick(): void {
+    const vault = this.vault;
+    if (!vault) return this.refreshMenu();
+    const tasks = this.safeTasks(vault);
+    const state = this.readRunState(vault);
+    const now = new Date();
+    const byText = new Map(tasks.map((t) => [t.scheduleText, t.schedule]));
+    const { due, baseline } = dueTasks(
+      tasks.map((t) => ({ id: t.id, schedule: t.scheduleText, enabled: t.enabled })),
+      state.lastRun,
+      now,
+      (text, at) => lastDue(byText.get(text) ?? parseSchedule(text), at),
+    );
+    if (baseline.length) {
+      for (const id of baseline) state.lastRun[id] = now.toISOString();
+      this.writeRunState(vault, state);
+    }
+    for (const id of due) void this.runTask(id);
+    this.refreshMenu();
+  }
+
+  saveTaskFromSettings(patch: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">): SettingsSnapshot {
+    const vault = this.requireVault();
+    const task = this.safeTasks(vault).find((t) => t.id === patch.id);
+    if (!task) throw new AvanzelError(`No shadow task called ${patch.id}.`);
+    saveTask(vault, {
+      ...task,
+      name: patch.name,
+      schedule: parseSchedule(patch.schedule),
+      scheduleText: patch.schedule,
+      agent: patch.agent,
+      enabled: patch.enabled,
+      instructions: patch.instructions,
+    });
+    this.broadcast();
+    return this.snapshot();
+  }
+
+  async runTask(id: string): Promise<SettingsSnapshot> {
+    const vault = this.vault;
+    if (!vault || this.running.has(id)) return this.snapshot();
+    const task = this.safeTasks(vault).find((t) => t.id === id);
+    if (!task) return this.snapshot();
+    const state = this.readRunState(vault);
+    state.lastRun[id] = new Date().toISOString();
+    this.writeRunState(vault, state);
+    this.running.add(id);
+    this.broadcast();
+    void this.enqueue(() => this.executeTask(task)).finally(() => {
+      this.running.delete(id);
+      this.recent = this.vault ? recentFromLog(this.vault.root) : [];
+      this.broadcast();
+    });
+    return this.snapshot();
+  }
+
+  private async executeTask(task: ShadowTask): Promise<void> {
+    const agent = this.agentName(task.agent);
+    try {
+      if (task.kind === "evening-review") {
+        const result = await this.librarian(task.agent).eveningReview({ instructions: task.instructions });
+        const filed = result.outcomes.filter((o) => o.ok).length;
+        if (!result.outcomes.length) return;
+        this.lastEveningCommits = result.commits;
+        const failed = result.outcomes.length - filed;
+        const digest = result.digestPath;
+        this.notify(
+          `${task.name}: ${filed} ${filed === 1 ? "thing" : "things"} filed`,
+          failed ? `${failed} couldn't be filed and are still in the inbox.` : `${agent} sorted today's inbox. Click to read the summary.`,
+          digest ? () => this.openPage(path.relative(this.requireVault().root, digest)) : undefined,
+        );
+      } else if (task.kind === "review") {
+        const outcome = await this.librarian(task.agent).review();
+        const report = outcome.report;
+        this.notify(
+          outcome.result.ok ? `${task.name} is ready` : `${task.name} didn't finish`,
+          outcome.result.ok ? `${agent} looked over your library. Click to read it.` : lastLines(outcome.result.stderr || outcome.result.output, 1),
+          report ? () => this.openPage(path.relative(this.requireVault().root, report)) : undefined,
+        );
+      } else {
+        this.notify(task.name, "Custom shadow tasks arrive together with Tools & MCP. This one was skipped.");
+      }
+    } catch (error) {
+      this.notify(`${task.name} didn't run`, errorMessage(error));
+    }
+  }
+
+  async undoEveningReview(): Promise<void> {
+    const commits = this.lastEveningCommits;
+    if (!commits.length) return;
+    this.lastEveningCommits = [];
+    const undone = await this.enqueue(async () => this.librarian().undo(commits));
+    this.recent = this.vault ? recentFromLog(this.vault.root) : [];
+    this.notify("Evening review undone", undone === commits.length ? "Everything it filed is back in the inbox." : `${undone} of ${commits.length} changes were undone; see the library's history.`);
+    this.refreshMenu();
+  }
+
+  // ---------------------------------------------------------------- test hooks
+
+  capsuleStateForTests(): CapsuleState {
+    return this.capsuleState;
+  }
+
+  async idleForTests(): Promise<void> {
+    await this.queue;
+  }
+
+  pageTitleForTests(rel: string): string {
+    return this.vault ? pageInfo(this.vault.root, rel).title : "";
+  }
+
+  nativeImageForTests(): typeof nativeImage {
+    return nativeImage;
+  }
+}

@@ -12,25 +12,26 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "e2e": "node scripts/build.mjs && playwright test",
-    "dist": "node scripts/build.mjs && electron-builder --mac dir"
+    "dist": "node scripts/build.mjs && electron-builder --mac dir && codesign --force --deep --sign - release/mac-arm64/Avanzel.app",
+    "icon": "node scripts/make-icon.mjs"
   },
   "dependencies": {
-    "@avanzel/engine": "*",
-    "dompurify": "^3.4.17",
-    "marked": "^18.1.1",
-    "onnxruntime-node": "1.30.0",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "smol-toml": "^1.9.1"
+    "onnxruntime-node": "1.30.0"
   },
   "devDependencies": {
+    "@avanzel/engine": "*",
     "@playwright/test": "^1.64.1",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "dompurify": "^3.4.17",
     "electron": "^44.9.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
+    "marked": "^18.1.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "smol-toml": "^1.9.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   }

@@ -31,11 +31,42 @@ It combines three ideas:
 - **[T3 Code](https://github.com/pingdotgg/t3code)'s "harness over harnesses"** — don't build
   another agent; drive the ones the user already trusts and pays for.
 
-## Install
+## Avanzel for Mac
+
+A menu-bar app (Electron + TypeScript, `apps/mac`) on a TypeScript port of the engine
+(`packages/engine`). No Dock icon and no main window: it lives in the menu bar and wakes up on a
+shortcut.
+
+| Shortcut | What happens |
+|---|---|
+| ⌥ Space | Start talking; press again to stop. A capsule above the Dock shows the waveform, then the transcript while your agent files it (Edit fixes misheard words first), then the pages it touched, with Undo and Open. Esc cancels. |
+| ⌥⇧S | Capture the screen and say why it matters. The screenshot, the app, the page and your comment wait in the inbox for the evening review. |
+| ⌥⇧ Space | Type a thought. |
+| ⌥⇧A | Ask your library; the answer links to the pages it used. |
+
+The **evening review** (a shadow task, 21:00 by default) files the day's inbox, writes a summary to
+`reviews/`, and can be undone from the menu. A **weekly review** looks over the whole library.
+Shadow tasks are Markdown files in `tasks/`; edit their times and instructions in Settings.
+
+Run it from this repository (Node 22+):
+
+```bash
+npm install
+npm run dev -w @avanzel/mac          # build and start it (menu bar icon: four bars on a shelf)
+npm run dist -w @avanzel/mac         # or build apps/mac/release/mac-arm64/Avanzel.app
+```
+
+On first launch, Avanzel asks where your library lives (`~/Avanzel` by default; an existing v0.1
+library works as is), finds your agent CLIs, and downloads the Parakeet speech model once (670 MB;
+an existing Hugging Face cache copy is reused). macOS asks for the microphone the first time you
+dictate, and for Screen Recording the first time you capture the screen. The local builds are
+unsigned, so macOS forgets those permissions whenever the app is rebuilt.
+
+## Command line (Python, v0.1)
 
 Requires macOS or Linux, [uv](https://docs.astral.sh/uv/), and at least one agent CLI that is
 logged in (`claude`, `codex`, `opencode` or `cursor-agent`). `ffmpeg` is optional (needed for
-m4a/mp3/ogg voice memos).
+m4a/mp3/ogg voice memos). The CLI and the Mac app read and write the same library format.
 
 ```bash
 git clone <this repo> avanzel && cd avanzel
@@ -177,10 +208,18 @@ code. Nothing else is uploaded; there is no Avanzel server.
 ## Development
 
 ```bash
+# TypeScript engine and Mac app
+npm install
+npm test                                   # engine + app unit tests
+npm run e2e -w @avanzel/mac                # the real app driven by Playwright, with a fake agent
+AVANZEL_TEST_ASR=1 npm test -w @avanzel/engine   # real Parakeet (macOS `say` voices)
+
+# Python CLI (v0.1)
 uv sync
 uv run pytest                                              # fast suite, no network or models
 AVANZEL_TEST_ASR=1 uv run pytest tests/test_integration.py  # real Parakeet (macOS `say` voices)
 AVANZEL_TEST_HARNESS=claude uv run pytest tests/test_integration.py -k harness   # real agent run
 ```
 
-Design: [`docs/superpowers/specs/2026-10-20-avanzel-design.md`](docs/superpowers/specs/2026-10-20-avanzel-design.md).
+Designs: [`docs/superpowers/specs/2026-10-20-avanzel-design.md`](docs/superpowers/specs/2026-10-20-avanzel-design.md) (v0.1),
+[`docs/superpowers/specs/2026-10-20-avanzel-mac-design.md`](docs/superpowers/specs/2026-10-20-avanzel-mac-design.md) (Mac app).

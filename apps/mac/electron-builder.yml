@@ -1,0 +1,23 @@
+appId: app.avanzel.mac
+productName: Avanzel
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - "!dist/**/*.map"
+  - package.json
+asarUnpack:
+  - "**/node_modules/onnxruntime-node/**"
+  - "**/node_modules/onnxruntime-common/**"
+npmRebuild: false
+mac:
+  target: dir
+  category: public.app-category.productivity
+  icon: build/icon.icns
+  identity: null
+  hardenedRuntime: false
+  extendInfo:
+    LSUIElement: true
+    NSMicrophoneUsageDescription: Avanzel listens only while its capsule is on screen, and turns your voice into text on this Mac.
+    NSAppleEventsUsageDescription: Avanzel asks your browser which page you were on when you capture the screen with a comment.
