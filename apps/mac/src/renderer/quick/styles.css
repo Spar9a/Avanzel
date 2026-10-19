@@ -1,0 +1,11 @@
+html, body { background: transparent; overflow: hidden; }
+#root { position: fixed; inset: 0; padding: 10px; }
+.quick {
+  display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 18px; border-radius: 16px;
+  background: color-mix(in srgb, var(--window) 94%, transparent);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.3), inset 0 0 0 0.5px var(--hair);
+}
+.glyph { stroke: var(--text-2); stroke-width: 1.8; stroke-linecap: round; fill: none; flex: none; }
+.quick input { flex: 1; font-size: 20px; background: transparent; box-shadow: none; padding: 0; }
+.quick input:focus-visible { outline: none; }
+.hint { color: var(--text-3); font-size: 12px; flex: none; }
