@@ -1,5 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, type Settings } from "../../src/core/config.ts";
@@ -191,6 +201,33 @@ describe("file", () => {
     expect(existsSync(join(vault.root, "tasks", "planted.md"))).toBe(false);
     expect(outcome.guarded).toEqual(["tasks/evening-review.md", "tasks/planted.md"]);
     expect(outcome.changes.created).toEqual([`ideas/idea-${outcome.captureId}.md`]);
+  });
+
+  it("never writes through a symlink an agent put in place of a protected folder", async () => {
+    mode("link-tasks");
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    const tasks = Object.fromEntries(
+      ["evening-review.md", "weekly-review.md"].map((name) => [name, read(join(vault.root, "tasks", name))]),
+    );
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(lstatSync(join(vault.root, "tasks")).isDirectory()).toBe(true);
+    for (const [name, text] of Object.entries(tasks)) expect(read(join(vault.root, "tasks", name))).toBe(text);
+    expect(outcome.guarded).toEqual(["tasks", "tasks/evening-review.md", "tasks/weekly-review.md"]);
+  });
+
+  it("leaves the owner's own symlinks among the protected files alone", async () => {
+    rmSync(join(vault.root, "CLAUDE.md"));
+    symlinkSync("AGENTS.md", join(vault.root, "CLAUDE.md"));
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(outcome.guarded).toEqual([]);
+    expect(readlinkSync(join(vault.root, "CLAUDE.md"))).toBe("AGENTS.md");
   });
 
   it("also files what was captured while it ran", async () => {

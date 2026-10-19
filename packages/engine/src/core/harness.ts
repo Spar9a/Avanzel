@@ -278,16 +278,20 @@ function collect(argv: string[], cwd: string, timeoutMs: number, signal?: AbortS
     const timeout = setTimeout(() => stop("timeout"), Math.min(timeoutMs, MAX_TIMER_MS));
     const onAbort = () => stop("cancel");
     signal?.addEventListener("abort", onAbort, { once: true });
-    const cleanUp = () => {
+    const exited = () => {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const cleanUp = () => {
+      exited();
       clearTimeout(killTimer);
       clearTimeout(graceTimer);
-      signal?.removeEventListener("abort", onAbort);
     };
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     // Something the agent started may hold its output open long after it exited; don't wait for that.
     child.on("exit", () => {
+      exited(); // a run that finished is not timed out or cancelled while its output drains
       graceTimer = setTimeout(() => {
         child.stdout.destroy();
         child.stderr.destroy();

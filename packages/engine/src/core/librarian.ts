@@ -13,10 +13,12 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -349,8 +351,7 @@ export class Librarian {
     { write, images = [], signal }: { write: boolean; images?: readonly string[]; signal?: AbortSignal | undefined },
   ): Promise<{ result: RunResult; guarded: string[] }> {
     const root = this.vault.root;
-    const protectedDirs = new Set(PROTECTED.filter((rel) => isDirectory(join(root, rel))));
-    const protectedBefore = protectedFiles(root);
+    const protectedBefore = protectedState(root);
     let result: RunResult;
     let guarded: string[];
     try {
@@ -364,7 +365,7 @@ export class Librarian {
         signal,
       });
     } finally {
-      guarded = undoProtected(root, protectedBefore, protectedDirs);
+      guarded = undoProtected(root, protectedBefore);
     }
     return { result, guarded };
   }
@@ -440,8 +441,7 @@ function digest(outcomes: readonly FileOutcome[], now: Date): string {
   if (filed.length) {
     lines.push("", "## What went where", "");
     for (const { captureId, message, changes, restored, guarded } of filed) {
-      const reply = collapse(message);
-      lines.push(`- [[${captureId}]]: ${(Array.from(reply).length > 300 ? `${codePoints(reply, 299)}…` : reply) || "(no reply)"}`);
+      lines.push(`- [[${captureId}]]: ${ellipsize(collapse(message), 300) || "(no reply)"}`);
       const created = changes.created.filter(isPage).map(wikilink);
       const updated = changes.modified.filter(isPage).map(wikilink);
       if (created.length) lines.push(`  - New: ${created.join(", ")}`);
@@ -483,39 +483,52 @@ function rewrite(path: string, data: Buffer): void {
   writeFileSync(path, data);
 }
 
-function protectedFiles(root: string): Map<string, Buffer> {
-  const found = new Map<string, Buffer>();
+/** The protected paths as they are: file contents, symlinks (and their targets), folders. */
+interface ProtectedState {
+  files: Map<string, Buffer>;
+  links: Map<string, string>;
+  dirs: Set<string>;
+}
+
+function protectedState(root: string): ProtectedState {
+  const files = new Map<string, Buffer>();
+  const links = new Map<string, string>();
   for (const rel of PROTECTED) {
-    const stat = lstatOrNull(join(root, rel));
-    const files = stat?.isFile() ? [rel] : stat?.isDirectory() ? filesUnder(root, rel) : [];
-    for (const file of files) found.set(file, readFileSync(join(root, file)));
+    const path = join(root, rel);
+    const stat = lstatOrNull(path);
+    if (stat?.isSymbolicLink()) links.set(rel, readlinkSync(path));
+    const found = stat?.isFile() ? [rel] : stat?.isDirectory() ? filesUnder(root, rel) : [];
+    for (const file of found) files.set(file, readFileSync(join(root, file)));
   }
-  return found;
+  return { files, links, dirs: new Set(PROTECTED.filter((rel) => isDirectory(join(root, rel)))) };
 }
 
 /** Undo every change to the protected paths since `before`; returns the paths that were changed. */
-function undoProtected(root: string, before: Map<string, Buffer>, dirsBefore: Set<string>): string[] {
-  const after = protectedFiles(root);
-  const touched = [...new Set([...before.keys(), ...after.keys()])].filter((rel) => {
-    const was = before.get(rel);
-    const now = after.get(rel);
-    return !(was && now && was.equals(now));
-  });
+function undoProtected(root: string, before: ProtectedState): string[] {
+  const touched = new Set<string>();
+  // Symlinks first, so nothing is ever written through one an agent put in place of a protected path.
   for (const rel of PROTECTED) {
-    // also catch symlinks planted in place of protected files
-    if (isSymlink(join(root, rel)) && !touched.includes(rel)) touched.push(rel);
-  }
-  for (const rel of touched) {
     const path = join(root, rel);
-    const original = before.get(rel);
-    if (original) rewrite(path, original);
-    else if (lstatOrNull(path)) rmSync(path, { recursive: true, force: true });
+    const link = isSymlink(path) ? readlinkSync(path) : undefined;
+    const original = before.links.get(rel);
+    if (link === original) continue;
+    touched.add(rel);
+    if (link !== undefined || (original !== undefined && lstatOrNull(path))) rmSync(path, { recursive: true, force: true });
+    if (original !== undefined) symlinkSync(original, path);
+  }
+  const after = protectedState(root).files;
+  for (const rel of new Set([...before.files.keys(), ...after.keys()])) {
+    const original = before.files.get(rel);
+    if (before.links.has(rel) || (original && after.get(rel)?.equals(original))) continue;
+    touched.add(rel);
+    if (original) rewrite(join(root, rel), original);
+    else rmSync(join(root, rel), { recursive: true, force: true });
   }
   for (const rel of PROTECTED) {
     const folder = join(root, rel);
-    if (!dirsBefore.has(rel) && lstatOrNull(folder)?.isDirectory()) rmSync(folder, { recursive: true, force: true });
+    if (!before.dirs.has(rel) && lstatOrNull(folder)?.isDirectory()) rmSync(folder, { recursive: true, force: true });
   }
-  return touched.sort();
+  return [...touched].sort();
 }
 
 /** Regular files (not symlinks) under `rel`, as vault-relative POSIX paths. */
@@ -554,6 +567,10 @@ function collapse(text: string): string {
 
 function codePoints(text: string, count: number): string {
   return Array.from(text).slice(0, count).join("");
+}
+
+function ellipsize(text: string, max: number): string {
+  return Array.from(text).length > max ? `${codePoints(text, max - 1)}…` : text;
 }
 
 function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {

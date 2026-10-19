@@ -362,9 +362,14 @@ function tryLock(lockDir: string): boolean {
       throw retry;
     }
   }
-  writeFileSync(join(lockDir, "owner"), `${process.pid} ${BOOT_SECONDS}\n`);
-  // Keep the lock out of git even in libraries whose .gitignore predates it.
-  writeFileSync(join(lockDir, ".gitignore"), "*\n");
+  try {
+    writeFileSync(join(lockDir, "owner"), `${process.pid} ${BOOT_SECONDS}\n`);
+    // Keep the lock out of git even in libraries whose .gitignore predates it.
+    writeFileSync(join(lockDir, ".gitignore"), "*\n");
+  } catch (error) {
+    rmSync(lockDir, { recursive: true, force: true });
+    throw error;
+  }
   return true;
 }
 
