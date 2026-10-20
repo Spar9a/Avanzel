@@ -484,13 +484,14 @@ function isAlive(pid: number): boolean {
 /**
  * Whether the live process `pid` started more than a minute away from `startSeconds`, the start its
  * owner line records: then the owner is gone and a later process got its pid. `ps` is asked once per
- * owner line; when it fails or prints something else, the pid counts as the owner's.
+ * owner line; when it fails, prints something else or takes over five seconds (it runs on the app's
+ * main thread, which it must not freeze), the pid counts as the owner's.
  */
 function isReused(owner: string, pid: number, startSeconds: number): boolean {
   let reused = reusedPids.get(owner);
   if (reused === undefined) {
     const env = { ...process.env, LC_ALL: "C" };
-    const ps = spawnSync("ps", ["-o", "etime=", "-p", String(pid)], { encoding: "utf8", env });
+    const ps = spawnSync("ps", ["-o", "etime=", "-p", String(pid)], { encoding: "utf8", env, timeout: 5_000 });
     const elapsed = ps.status === 0 ? parseElapsed(ps.stdout.trim()) : null;
     reused = elapsed !== null && Math.abs(Date.now() / 1000 - elapsed - startSeconds) > SAME_START_SECONDS;
     reusedPids.set(owner, reused);
