@@ -110,6 +110,8 @@ interface FilingJob {
   correction?: Correction;
   /** A line under the words on the filing card, e.g. why the recording itself wasn't kept. */
   detail?: string;
+  /** Its run waits for the library (another run has it); the filing card says so until the run starts. */
+  waiting?: boolean;
   outcome?: FileOutcome;
   pages?: FiledPage[];
 }
@@ -688,7 +690,19 @@ export class Controller {
       transcribedIn: job.transcribedIn,
       canEdit: true,
       ...(job.detail ? { detail: job.detail } : {}),
+      ...(job.waiting ? { waiting: true } : {}),
     });
+  }
+
+  /**
+   * What the engine says of `job`'s filing: `WAITING` while another run (a question, a review, another
+   * Avanzel) has the library, then the start of its own run. Its card shows the wait until the run starts.
+   */
+  private filingProgress(job: FilingJob, message: string): void {
+    const waiting = message === WAITING;
+    if (!!job.waiting === waiting) return;
+    job.waiting = waiting;
+    if (this.job === job && this.capsuleState.kind === "filing") this.showFiling(job);
   }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
@@ -720,8 +734,9 @@ export class Controller {
     }
     const started = performance.now();
     let outcome: FileOutcome | undefined;
+    const progress = (message: string) => this.filingProgress(job, message);
     try {
-      [outcome] = await this.withRun(async (signal) => (await this.librarian()).file([job.capturePath], { signal }), job.abort);
+      [outcome] = await this.withRun(async (signal) => (await this.librarian()).file([job.capturePath], { signal, progress }), job.abort);
     } catch (error) {
       if (job.edited || this.quitting) return;
       return this.filingFailed(job, errorMessage(error));
@@ -1060,14 +1075,21 @@ export class Controller {
       if (!win || win.isDestroyed()) return;
       win.webContents.send("ask:progress", message === WAITING ? "Waiting for the filing in progress to finish…" : message);
     };
+    // Closing that window gives the question up: its agent run stops, and the library is free for a filing waiting on it.
+    const abort = new AbortController();
+    const giveUp = () => abort.abort();
+    if (win?.isDestroyed()) giveUp();
+    else win?.once("closed", giveUp);
     try {
-      const outcome = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal, progress }));
+      const outcome = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal, progress }), abort);
       const seconds = (performance.now() - started) / 1000;
       return outcome.result.ok
         ? { ok: true, answer: outcome.result.output, agent, seconds }
         : { ok: false, answer: `${agent} couldn't answer:\n${lastLines(outcome.result.stderr || outcome.result.output)}`, agent, seconds };
     } catch (error) {
       return { ok: false, answer: errorMessage(error), agent, seconds: (performance.now() - started) / 1000 };
+    } finally {
+      if (win && !win.isDestroyed()) win.removeListener("closed", giveUp);
     }
   }
 

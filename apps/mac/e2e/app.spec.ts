@@ -3,7 +3,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileS
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { call, capsuleKind, filesUnder, launch, makeLibrary, read, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
+import { alive, call, capsuleKind, exists, filesUnder, launch, makeLibrary, read, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
 
 const inbox = (root: string) => readdirSync(path.join(root, "inbox")).filter((n) => !n.startsWith("."));
 const archived = (root: string) => {
@@ -212,6 +212,66 @@ test("asking while a note is being filed says it is waiting, then answers", asyn
   await expect(ask.getByText("Q: What are my goals?")).toBeVisible({ timeout: 60_000 });
   expect(inbox(library)).toEqual([]); // the filing finished, undisturbed
   expect(archived(library)).toHaveLength(1);
+  await app.close();
+});
+
+test("a note dictated while a question is answered says it waits for the library, then is filed", async () => {
+  const library = await makeLibrary();
+  writeFileSync(path.join(library, "goals", "run.md"), "# Run a marathon\n");
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Book the dentist for Friday",
+    FAKE_AGENT_DELAY_MS: "4000", // the question holds the library long enough to dictate meanwhile, and the filing takes as long
+  });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await ask.getByRole("textbox", { name: "Ask your library" }).fill("What are my goals?");
+  await ask.getByRole("textbox", { name: "Ask your library" }).press("Enter");
+  await expect.poll(() => exists(library, ".avanzel/lock.d")).toBe(true); // the question has the library
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+  const waiting = capsule.getByText("Waiting for another Avanzel run to finish…");
+  await expect(waiting).toBeVisible({ timeout: 30_000 });
+  await snap(capsule, "2-filing-waiting");
+  // The question is answered and the filing has the library: the line goes while the card still says it files.
+  await expect(ask.getByText("Q: What are my goals?")).toBeVisible({ timeout: 60_000 });
+  await expect(waiting).toBeHidden();
+  expect(await capsuleKind(app)).toBe("filing");
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("closing the Ask window gives up its question, so a note waiting behind it is filed at once", async () => {
+  const library = await makeLibrary();
+  const record = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-runs-")), "runs.jsonl");
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Book the dentist for Friday",
+    FAKE_AGENT_DELAY_MS: "60000", // the question would keep the library for a minute,
+    FAKE_AGENT_DELAY_TASK: "ask", // the filing takes no time
+    FAKE_AGENT_RECORD: record,
+  });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  const question = ask.getByRole("textbox", { name: "Ask your library" });
+  await question.fill("What are my goals?");
+  await question.press("Enter");
+  await expect.poll(() => exists(path.dirname(record), "runs.jsonl"), { timeout: 30_000 }).toBe(true); // its agent runs: it has the library
+  const { pid } = JSON.parse(readFileSync(record, "utf8").trim().split("\n")[0]!) as { pid: number };
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+  await expect(capsule.getByText("Waiting for another Avanzel run to finish…")).toBeVisible({ timeout: 30_000 });
+  const closed = ask.waitForEvent("close");
+  await question.press("Escape").catch(() => undefined); // closes the Ask window, before the key press returns
+  await closed;
+  await expect.poll(() => capsuleKind(app), { timeout: 15_000 }).toBe("filed");
+  expect(alive(pid)).toBe(false); // the question's agent was stopped
+  expect(inbox(library)).toEqual([]);
   await app.close();
 });
 

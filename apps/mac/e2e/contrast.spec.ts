@@ -158,6 +158,11 @@ function capsuleStates(): [string, CapsuleState, string][] {
     ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null }, "Auto"],
     ["transcribing", { kind: "transcribing", mode: "dictate" }, "Transcribing on this Mac…"],
     ["filing", { kind: "filing", text: said, agent: "Claude Code", transcribedIn: 1.4, canEdit: true }, "Filing with Claude Code…"],
+    [
+      "filing, waiting",
+      { kind: "filing", text: said, agent: "Claude Code", transcribedIn: 1.4, canEdit: true, waiting: true },
+      "Waiting for another Avanzel run to finish…",
+    ],
     ["editing", { kind: "editing", text: said }, "Edit before filing"],
     ["filed", { kind: "filed", agent: "Claude Code", seconds: 23, pages, canUndo: true, message: "Filed." }, "Filed by Claude Code"],
     ["saved", { kind: "saved", text: "This mic looks right for the podcast", thumbnail, context, note: "Saved to your inbox for tonight's review" }, "Saved to your inbox"],

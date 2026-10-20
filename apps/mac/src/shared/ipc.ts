@@ -20,7 +20,16 @@ export type CapsuleState =
   | { kind: "hidden" }
   | { kind: "listening"; mode: CapsuleMode; startedAt: number; fakeMic: boolean; microphoneId: string | null; thumbnail?: string }
   | { kind: "transcribing"; mode: CapsuleMode }
-  | { kind: "filing"; text: string; agent: string; transcribedIn: number | null; canEdit: boolean; detail?: string }
+  | {
+      kind: "filing";
+      text: string;
+      agent: string;
+      transcribedIn: number | null;
+      canEdit: boolean;
+      detail?: string;
+      /** Waiting for the library: another run (a question, a review, another Avanzel) has it. */
+      waiting?: boolean;
+    }
   | { kind: "editing"; text: string }
   | { kind: "filed"; agent: string; seconds: number; pages: FiledPage[]; canUndo: boolean; message: string }
   | { kind: "saved"; text: string; thumbnail?: string; context?: ScreenContext; note: string; detail?: string }

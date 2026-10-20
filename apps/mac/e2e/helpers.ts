@@ -117,3 +117,13 @@ export function onceMarker(): string {
 export function gitOut(root: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" });
 }
+
+/** Whether process `pid` is still running. */
+export function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}

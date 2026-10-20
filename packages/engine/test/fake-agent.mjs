@@ -21,7 +21,8 @@
 // folder-at-archive (a capture whose words contain "blocked-archive" gets a folder where its
 // archived copy goes, raw/<yyyy>/<mm>/<id>.md, besides the usual filing; other captures file normally).
 // FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt, pid}.
-// FAKE_AGENT_DELAY_MS=<ms> waits that long before anything else (an agent that takes a moment).
+// FAKE_AGENT_DELAY_MS=<ms> waits that long before anything else (an agent that takes a moment);
+// with FAKE_AGENT_DELAY_TASK=<task> (file, ask or review), only runs of that task wait.
 
 import {
   appendFileSync,
@@ -54,7 +55,8 @@ if (process.env.FAKE_AGENT_RECORD) {
   appendFileSync(process.env.FAKE_AGENT_RECORD, `${JSON.stringify({ argv, images, prompt, pid: process.pid })}\n`);
 }
 
-if (process.env.FAKE_AGENT_DELAY_MS) await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_AGENT_DELAY_MS)));
+const delayed = !process.env.FAKE_AGENT_DELAY_TASK || process.env.FAKE_AGENT_DELAY_TASK === task;
+if (process.env.FAKE_AGENT_DELAY_MS && delayed) await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_AGENT_DELAY_MS)));
 
 // Synchronous writes, so nothing is lost when the process exits right after.
 const say = (text) => writeSync(1, text);

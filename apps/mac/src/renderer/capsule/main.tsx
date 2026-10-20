@@ -116,6 +116,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
         <div className="hud card" role="status">
           <Close />
           <div className="row"><span className="spin" />Filing with {state.agent}…</div>
+          {state.waiting && <p className="detail">Waiting for another Avanzel run to finish…</p>}
           <p className="said">“{state.text}”</p>
           {state.detail && <p className="detail">{state.detail}</p>}
           <div className="foot">

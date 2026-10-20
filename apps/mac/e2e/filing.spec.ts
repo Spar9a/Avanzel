@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, renameSync, symlinkSync } from "n
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
-import { call, capsuleKind, exists, filesUnder, gitOut, launch, makeLibrary, onceMarker, read, snap, speechWav, windowFor } from "./helpers.ts";
+import { alive, call, capsuleKind, exists, filesUnder, gitOut, launch, makeLibrary, onceMarker, read, snap, speechWav, windowFor } from "./helpers.ts";
 
 const inbox = (root: string) => filesUnder(root, "inbox");
 /** What each capture waiting in the inbox says. */
@@ -13,14 +13,6 @@ const archived = (root: string) => filesUnder(root, "raw").filter((rel) => rel.e
 /** Markdown files in the library (git's own folder aside) that contain `words`. */
 const mentioning = (root: string, words: string) =>
   filesUnder(root, ".").filter((rel) => rel.endsWith(".md") && read(root, rel).includes(words));
-const alive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 /** Dictation filed by a fake agent whose first run gets halfway (goals/half.md) and then hangs. */
 async function dictateToStallingAgent(transcript: string, extra: Record<string, string> = {}) {
