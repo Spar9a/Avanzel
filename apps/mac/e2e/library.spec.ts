@@ -35,7 +35,7 @@ test("running the evening review by hand on an empty inbox says so", async () =>
 
 test("when shadow tasks last ran is kept with the app, not in the library (an old state.json carried over once)", async () => {
   const library = await makeLibrary({ git: true });
-  const ran = "2026-10-19T21:00:05.000Z";
+  const ran = new Date().toISOString(); // just now: no shadow task comes due at launch, whatever the hour
   writeFileSync(path.join(library, ".avanzel", "state.json"), JSON.stringify({ checked: { "evening-review": ran }, ran: { "evening-review": ran } }));
   const app = await launch({ AVANZEL_LIBRARY: library });
   const before = (await call(app, "snapshot")) as SettingsSnapshot;
@@ -60,8 +60,8 @@ test("a library that can't be opened is explained in Settings and the menu, and 
     await expect(settings.getByText(/Avanzel couldn't open the library/)).toBeVisible();
     await expect(settings.getByText(/permission denied/)).toBeVisible();
     await snap(settings, "settings-library-problem");
-    const [header] = (await call(app, "menuForTests")) as { label: string; sublabel?: string }[];
-    expect(header?.sublabel).toMatch(/^Avanzel couldn't open the library/);
+    const [setUp] = (await call(app, "menuForTests")) as { label: string; sublabel?: string }[];
+    expect(setUp?.sublabel).toMatch(/^Avanzel couldn't open the library/);
     await app.close();
   } finally {
     chmodSync(library, 0o755);
