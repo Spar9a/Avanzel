@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, type CustomHarness, type Settings } from "../../src/core/config.ts";
-import { Harness, childEnv, errorLine, harnesses, runHeadless, selectHarness } from "../../src/core/harness.ts";
+import { Harness, checkAgent, childEnv, errorLine, harnesses, runHeadless, selectHarness } from "../../src/core/harness.ts";
 import { AvanzelError } from "../../src/types.ts";
 import { binScripts, thrownBy, useTmp } from "./helpers.ts";
 
@@ -321,5 +321,159 @@ describe("runHeadless", () => {
     const result = await runHeadless(harness, "x", tmp(), { write: false, timeoutSeconds: 30 });
     expect(result.output).toBe("done");
     expect(result.seconds).toBeLessThan(5);
+  });
+});
+
+describe("signIn", () => {
+  const readSignIn = (name: string, output: string, exitCode = 0): boolean | null => {
+    const { signIn } = builtin(name);
+    if (!signIn) throw new Error(`no sign-in check for ${name}`);
+    return signIn.signedIn(output, exitCode);
+  };
+
+  it("is the status command of Claude Code and Codex, and of no other agent", () => {
+    expect(builtin("claude").signIn?.argv).toEqual(["claude", "auth", "status"]);
+    expect(builtin("codex").signIn?.argv).toEqual(["codex", "login", "status"]);
+    for (const name of ["opencode", "cursor-agent", "gemini"]) expect(builtin(name).signIn).toBeUndefined();
+    // A custom harness has none, even one that takes a built-in's name.
+    const mine = { name: "claude", headless: ["claude", "-p", "{prompt}"], interactive: [] };
+    const custom = harnesses(settingsWith({ harnesses: { claude: mine } })).claude as Harness;
+    expect(custom.signIn).toBeUndefined();
+  });
+
+  it("reads nothing but loggedIn from Claude Code's JSON", () => {
+    expect(readSignIn("claude", '{"loggedIn": true, "email": "a@b"}')).toBe(true);
+    expect(readSignIn("claude", '{"loggedIn": false}', 1)).toBe(false);
+    for (const output of ["unknown command", "", "null", "[]", '{"email": "a@b"}', '{"loggedIn": "yes"}']) {
+      expect(readSignIn("claude", output)).toBeNull();
+    }
+  });
+
+  it("reads Codex's words, checking for not logged in first", () => {
+    expect(readSignIn("codex", "Logged in using ChatGPT\n")).toBe(true);
+    expect(readSignIn("codex", "Not logged in\n", 1)).toBe(false);
+    expect(readSignIn("codex", "Logged in using ChatGPT", 1)).toBeNull(); // a failing exit is not believed
+    expect(readSignIn("codex", "Error checking login status: boom", 1)).toBeNull();
+    expect(readSignIn("codex", "")).toBeNull();
+  });
+});
+
+describe("checkAgent", () => {
+  /**
+   * Fake agent CLIs, and nothing else, on PATH (so a script uses shell builtins and /bin/sleep). They
+   * run in the library, so the files they write land in tmp().
+   */
+  const onPath = (scripts: Record<string, string>) => vi.stubEnv("PATH", binScripts(tmp(), scripts));
+  const wrote = (file: string) => existsSync(join(tmp(), file));
+
+  it("reads Claude Code's sign-in from `claude auth status`, without a prompt", async () => {
+    onPath({ claude: `if [ "$*" = "auth status" ]; then echo '{"loggedIn": true, "email": "a@b"}'; else : > PROMPTED; fi` });
+    const check = await checkAgent(builtin("claude"), tmp());
+    expect(check).toMatchObject({ ok: true, how: "signed-in" });
+    expect(check.seconds).toBeGreaterThan(0);
+    expect(wrote("PROMPTED")).toBe(false);
+  });
+
+  it("a signed-out Claude Code is signed-out", async () => {
+    onPath({ claude: `if [ "$*" = "auth status" ]; then echo '{"loggedIn": false}'; exit 1; else : > PROMPTED; fi` });
+    expect(await checkAgent(builtin("claude"), tmp())).toMatchObject({ ok: false, why: "signed-out", detail: "" });
+    expect(wrote("PROMPTED")).toBe(false);
+  });
+
+  it("falls back to a prompt when the status command says nothing it understands", async () => {
+    onPath({ claude: `if [ "$1" = auth ]; then echo "unknown command"; exit 1; fi; echo ready` });
+    expect(await checkAgent(builtin("claude"), tmp())).toMatchObject({ ok: true, how: "replied" });
+  });
+
+  it("falls back to a prompt when the status command hangs", async () => {
+    onPath({ claude: `if [ "$1" = auth ]; then /bin/sleep 5; exit 1; fi; echo ready` });
+    const check = await checkAgent(builtin("claude"), tmp(), { timeoutSeconds: 1 });
+    expect(check).toMatchObject({ ok: true, how: "replied" });
+    expect(check.seconds).toBeLessThan(1); // the reply's own time, not the status command's wait
+  });
+
+  it("reads Codex's sign-in from `codex login status`", async () => {
+    // Codex writes its answer to stderr, not stdout.
+    onPath({ codex: `if [ "$*" = "login status" ]; then echo "Logged in using ChatGPT" >&2; else : > PROMPTED; fi` });
+    expect(await checkAgent(builtin("codex"), tmp())).toMatchObject({ ok: true, how: "signed-in" });
+    onPath({ codex: `if [ "$*" = "login status" ]; then echo "Not logged in" >&2; exit 1; else : > PROMPTED; fi` });
+    expect(await checkAgent(builtin("codex"), tmp())).toMatchObject({ ok: false, why: "signed-out", detail: "" });
+    expect(wrote("PROMPTED")).toBe(false);
+  });
+
+  it("asks other agents one tiny read-only prompt", async () => {
+    onPath({ "cursor-agent": `printf '%s\\n' "$@" > ARGV; echo ready` });
+    const check = await checkAgent(builtin("cursor-agent"), tmp());
+    expect(check).toMatchObject({ ok: true, how: "replied" });
+    expect(check.seconds).toBeGreaterThan(0);
+    const argv = readFileSync(join(tmp(), "ARGV"), "utf8").split("\n");
+    expect(argv).toContain("Reply with the single word: ready.");
+    expect(argv).not.toContain("--force");
+  });
+
+  it("a prompt slower than the timeout is timeout", async () => {
+    onPath({ "cursor-agent": "/bin/sleep 5" });
+    const check = await checkAgent(builtin("cursor-agent"), tmp(), { timeoutSeconds: 1 });
+    expect(check).toMatchObject({ ok: false, why: "timeout" });
+    expect(check.seconds).toBeLessThan(5);
+  });
+
+  it("a sign-in line in a failed reply is signed-out", async () => {
+    onPath({ "cursor-agent": `echo "Error: not logged in. Run cursor-agent login" >&2; exit 1` });
+    expect(await checkAgent(builtin("cursor-agent"), tmp())).toMatchObject({
+      ok: false,
+      why: "signed-out",
+      detail: expect.stringContaining("not logged in"),
+    });
+  });
+
+  it("any other failed reply is failed, with the line that tells why", async () => {
+    onPath({ "cursor-agent": `echo "echoed prompt"; echo "Error: the model is overloaded"; echo "bye"; exit 1` });
+    expect(await checkAgent(builtin("cursor-agent"), tmp())).toMatchObject({
+      ok: false,
+      why: "failed",
+      detail: "Error: the model is overloaded",
+    });
+  });
+
+  it("an agent that can't start is failed, whether or not it has a status command", async () => {
+    onPath({});
+    for (const name of ["claude", "cursor-agent"]) {
+      expect(await checkAgent(builtin(name), tmp())).toMatchObject({
+        ok: false,
+        why: "failed",
+        detail: `Could not start \`${name}\`: it is not on your PATH.`,
+      });
+    }
+  });
+
+  it("is failed for a library that is not a folder", async () => {
+    onPath({ claude: "echo ready" });
+    expect(await checkAgent(builtin("claude"), join(tmp(), "nope"))).toMatchObject({
+      ok: false,
+      why: "failed",
+      detail: `No such folder: ${join(tmp(), "nope")}`,
+    });
+  });
+
+  it("stops the status command when the caller cancels, and asks nothing after it", async () => {
+    onPath({ claude: `if [ "$1" = auth ]; then /bin/sleep 5; else : > PROMPTED; fi` });
+    const controller = new AbortController();
+    const checking = checkAgent(builtin("claude"), tmp(), { signal: controller.signal });
+    setTimeout(() => controller.abort(), 300);
+    const check = await checking;
+    expect(check).toMatchObject({ ok: false, why: "failed", detail: "claude was cancelled" });
+    expect(check.seconds).toBeLessThan(5);
+    expect(wrote("PROMPTED")).toBe(false);
+  });
+
+  it("starts nothing for a caller that has cancelled already", async () => {
+    onPath({ claude: ": > STARTED" });
+    expect(await checkAgent(builtin("claude"), tmp(), { signal: AbortSignal.abort() })).toMatchObject({
+      ok: false,
+      why: "failed",
+      detail: "claude was cancelled",
+    });
+    expect(wrote("STARTED")).toBe(false);
   });
 });

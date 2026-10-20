@@ -44,6 +44,13 @@ export interface HeadlessOptions {
   images?: readonly string[];
 }
 
+/** A command that says whether an agent is signed in, which asks the model nothing. */
+export interface SignInCheck {
+  argv: readonly string[];
+  /** One stream of what the command printed, with its exit code: signed in (true), signed out (false), or neither (null). */
+  signedIn(output: string, exitCode: number): boolean | null;
+}
+
 export interface HarnessSpec {
   name: string;
   binary: string;
@@ -51,6 +58,8 @@ export interface HarnessSpec {
   interactive: (vault: string, model: string | null) => string[];
   readsOutputFile?: boolean;
   experimental?: boolean;
+  /** The agent's own sign-in status command, when it has one. */
+  signIn?: SignInCheck;
 }
 
 export class Harness {
@@ -58,6 +67,7 @@ export class Harness {
   readonly binary: string;
   readonly readsOutputFile: boolean;
   readonly experimental: boolean;
+  readonly signIn: SignInCheck | undefined;
   readonly #spec: HarnessSpec;
 
   constructor(spec: HarnessSpec) {
@@ -66,6 +76,7 @@ export class Harness {
     this.binary = spec.binary;
     this.readsOutputFile = spec.readsOutputFile ?? false;
     this.experimental = spec.experimental ?? false;
+    this.signIn = spec.signIn;
   }
 
   available(): boolean {
@@ -101,6 +112,24 @@ function opt(flag: string, value: string | null): string[] {
   return value ? [flag, value] : [];
 }
 
+// `claude auth status` prints JSON that also holds the account's email and organisation; only
+// `loggedIn` is read, and nothing else is kept.
+function claudeSignedIn(output: string): boolean | null {
+  try {
+    const status: unknown = JSON.parse(output);
+    const loggedIn = typeof status === "object" && status !== null ? (status as { loggedIn?: unknown }).loggedIn : undefined;
+    return loggedIn === true || loggedIn === false ? loggedIn : null;
+  } catch {
+    return null; // not JSON
+  }
+}
+
+// `codex login status` says "Logged in using …", or "Not logged in" and exits 1, so "not" goes first.
+function codexSignedIn(output: string, exitCode: number): boolean | null {
+  if (/not logged in/i.test(output)) return false;
+  return exitCode === 0 && /logged in/i.test(output) ? true : null;
+}
+
 const BUILTINS: Readonly<Record<string, Harness>> = {
   claude: new Harness({
     name: "claude",
@@ -115,6 +144,7 @@ const BUILTINS: Readonly<Record<string, Harness>> = {
       ];
     },
     interactive: (_vault, model) => ["claude", ...opt("--model", model)],
+    signIn: { argv: ["claude", "auth", "status"], signedIn: claudeSignedIn },
   }),
   codex: new Harness({
     name: "codex",
@@ -127,6 +157,7 @@ const BUILTINS: Readonly<Record<string, Harness>> = {
     ],
     interactive: (vault, model) => ["codex", "--cd", vault, ...opt("-m", model)],
     readsOutputFile: true,
+    signIn: { argv: ["codex", "login", "status"], signedIn: codexSignedIn },
   }),
   opencode: new Harness({
     name: "opencode",
@@ -253,6 +284,53 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
   }
 }
 
+/** What a check of an agent found: that it works (signed in, or it replied), or why it doesn't. */
+export type AgentCheck =
+  | { ok: true; how: "signed-in" | "replied"; seconds: number }
+  | { ok: false; why: "signed-out" | "timeout" | "failed"; detail: string; seconds: number };
+
+const CHECK_PROMPT = "Reply with the single word: ready.";
+// A failed reply whose telling line matches is the agent asking its owner to sign in.
+const SIGN_IN_LINE = /sign in|log in|login|not logged|unauthori[sz]ed|authenticat/i;
+
+/** Check that an agent works: read its sign-in from its status command when it has one, else ask it one short question. */
+export async function checkAgent(
+  harness: Harness,
+  vault: string,
+  { timeoutSeconds = 15, signal }: { timeoutSeconds?: number; signal?: AbortSignal } = {},
+): Promise<AgentCheck> {
+  const started = performance.now();
+  const elapsed = () => (performance.now() - started) / 1000;
+  if (harness.signIn && !signal?.aborted) {
+    const signedIn = await readSignIn(harness.signIn, vault, timeoutSeconds, signal);
+    if (signedIn === true) return { ok: true, how: "signed-in", seconds: elapsed() };
+    if (signedIn === false) return { ok: false, why: "signed-out", detail: "", seconds: elapsed() };
+  }
+  try {
+    const run = await runHeadless(harness, CHECK_PROMPT, vault, { write: false, timeoutSeconds, signal });
+    if (run.ok) return { ok: true, how: "replied", seconds: run.seconds };
+    const detail = errorLine(`${run.output}\n${run.stderr}`);
+    // 124 is what runHeadless reports for a run that ran out of time.
+    const why = run.exitCode === 124 ? "timeout" : SIGN_IN_LINE.test(detail) ? "signed-out" : "failed";
+    return { ok: false, why, detail, seconds: run.seconds };
+  } catch (error) {
+    if (!(error instanceof AvanzelError)) throw error;
+    return { ok: false, why: "failed", detail: error.message, seconds: elapsed() };
+  }
+}
+
+// What the agent's status command says: signed in (true), signed out (false), or null when it says
+// neither, can't start or is stopped; the prompt that follows finds out more.
+async function readSignIn(signIn: SignInCheck, vault: string, timeoutSeconds: number, signal?: AbortSignal): Promise<boolean | null> {
+  const status = await collect(signIn.argv, vault, timeoutSeconds * 1000, signal).catch((error: unknown) => {
+    if (error instanceof AvanzelError) return null;
+    throw error;
+  });
+  if (!status || status.stopped) return null;
+  // Claude Code answers on stdout, Codex on stderr.
+  return signIn.signedIn(status.stdout, status.exitCode) ?? signIn.signedIn(status.stderr, status.exitCode);
+}
+
 interface Collected {
   exitCode: number;
   stdout: string;
@@ -260,7 +338,7 @@ interface Collected {
   stopped: "timeout" | "cancel" | null;
 }
 
-function collect(argv: string[], cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<Collected> {
+function collect(argv: readonly string[], cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<Collected> {
   const [file = "", ...args] = argv;
   return new Promise((resolve, reject) => {
     // In a process group of its own, so stopping the agent stops whatever it started too.
