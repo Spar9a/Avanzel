@@ -1,6 +1,6 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AskResult, AvanzelBridge } from "../../shared/ipc.ts";
 import "../common/mac.css";
@@ -25,12 +25,17 @@ function render(answer: string): string {
 function Ask() {
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
+  /** What the pending question is doing, when it is not just looking through the library. */
+  const [progress, setProgress] = useState<string | null>(null);
   const busy = turns.some((t) => t.result === null);
+
+  useEffect(() => window.avanzel.ask.onProgress(setProgress), []);
 
   const ask = async () => {
     const q = question.trim();
     if (!q || busy) return;
     setQuestion("");
+    setProgress(null);
     setTurns((prev) => [{ question: q, result: null }, ...prev]);
     const result = await window.avanzel.ask.ask(q);
     setTurns((prev) => prev.map((t) => (t.question === q && t.result === null ? { question: q, result } : t)));
@@ -66,7 +71,7 @@ function Ask() {
           <article key={turns.length - i}>
             <h2>{turn.question}</h2>
             {turn.result === null ? (
-              <p className="pending"><span className="spin" />Looking through your library…</p>
+              <p className="pending"><span className="spin" />{progress ?? "Looking through your library…"}</p>
             ) : turn.result.ok ? (
               <>
                 <div className="answer" dangerouslySetInnerHTML={{ __html: render(turn.result.answer) }} />

@@ -860,8 +860,13 @@ export class Controller {
   async ask(question: string): Promise<AskResult> {
     const agent = this.agentName();
     const started = performance.now();
+    // Another run, usually a filing, has the library: the engine says the question has to wait.
+    const waiting = () => {
+      const win = this.askWindow;
+      if (win && !win.isDestroyed()) win.webContents.send("ask:progress", "Waiting for the filing in progress to finish…");
+    };
     try {
-      const outcome = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal }));
+      const outcome = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal, progress: waiting }));
       const seconds = (performance.now() - started) / 1000;
       return outcome.result.ok
         ? { ok: true, answer: outcome.result.output, agent, seconds }

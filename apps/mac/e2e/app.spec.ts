@@ -119,6 +119,31 @@ test("asking shows the agent's answer", async () => {
   await app.close();
 });
 
+test("asking while a note is being filed says it is waiting, then answers", async () => {
+  const library = await makeLibrary();
+  writeFileSync(path.join(library, "goals", "run.md"), "# Run a marathon\n");
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Book the dentist for Friday",
+    FAKE_AGENT_DELAY_MS: "4000", // the filing keeps the library busy long enough to ask meanwhile
+  });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  const question = ask.getByRole("textbox", { name: "Ask your library" });
+  await question.fill("What are my goals?"); // typed ahead: Enter is all it takes once the note is being filed
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000, intervals: [50] }).toBe("filing");
+  await question.press("Enter");
+  await expect(ask.getByText("Waiting for the filing in progress to finish…")).toBeVisible();
+  await snap(ask, "9-ask-waiting");
+  await expect(ask.getByText("Q: What are my goals?")).toBeVisible({ timeout: 60_000 });
+  expect(inbox(library)).toEqual([]); // the filing finished, undisturbed
+  expect(archived(library)).toHaveLength(1);
+  await app.close();
+});
+
 test("the evening review files the inbox and writes a digest", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });

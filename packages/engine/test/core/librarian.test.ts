@@ -15,6 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, type Settings } from "../../src/core/config.ts";
 import * as git from "../../src/core/git.ts";
@@ -635,6 +636,29 @@ describe("ask", () => {
     expect(outcome.result.ok).toBe(true);
     expect(outcome.result.output).toBe("Q: What are my goals?\nPages: goals/run.md");
     expect(outcome.changes.empty).toBe(true);
+  });
+
+  it("a read-only ask waits for the library lock", async () => {
+    const runs = recordRuns();
+    const progress = vi.fn();
+    let release = () => {};
+    const held = vault.withLock(() => new Promise<void>((resolve) => (release = resolve))); // a filing, say, has the library
+    const asking = librarian.ask("q", { progress });
+    await vi.waitFor(() => expect(progress).toHaveBeenCalledWith("Waiting for another Avanzel run on this library…"), { timeout: 300 });
+    await sleep(500); // a few polls: an ask that did not wait would have started its agent by now
+    expect(runs()).toEqual([]);
+    expect(progress).toHaveBeenCalledTimes(1);
+    release();
+    await held;
+    const outcome = await asking;
+    expect(outcome.result.ok).toBe(true);
+    expect(runs()).toHaveLength(1);
+  });
+
+  it("says nothing about waiting when the library is free", async () => {
+    const progress = vi.fn();
+    expect((await librarian.ask("q", { progress })).result.ok).toBe(true);
+    expect(progress).not.toHaveBeenCalled();
   });
 
   it("files a saved answer and logs it", async () => {

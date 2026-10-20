@@ -339,7 +339,15 @@ export class Librarian {
 
   // --- ask & review -------------------------------------------------------------------------
 
-  async ask(question: string, { save = false, signal }: { save?: boolean; signal?: AbortSignal } = {}): Promise<AgentOutcome> {
+  /**
+   * Answer from the library. It runs under the library lock even when read-only: the guard of an ask
+   * that ran alongside a filing could put back a change the filing's guard had just undone. While it
+   * waits for the lock, `progress` hears `WAITING` once.
+   */
+  async ask(
+    question: string,
+    { save = false, signal, progress = quiet }: { save?: boolean; signal?: AbortSignal; progress?: (message: string) => void } = {},
+  ): Promise<AgentOutcome> {
     if (!question.trim()) throw new AvanzelError('Ask a question, e.g. "what are my goals this year?"');
     const now = this.clock();
     const answer = async (): Promise<AgentOutcome> => {
@@ -358,7 +366,7 @@ export class Librarian {
       }
       return { result, changes, report: null, guarded };
     };
-    return save ? this.vault.withLock(answer) : answer();
+    return this.vault.withLock(answer, () => progress(WAITING));
   }
 
   async review({ signal }: { signal?: AbortSignal } = {}): Promise<AgentOutcome> {

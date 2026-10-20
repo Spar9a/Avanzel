@@ -152,6 +152,8 @@ export interface AvanzelBridge {
   };
   ask: {
     ask(question: string): Promise<AskResult>;
+    /** What the question in progress is doing instead of looking through the library, e.g. waiting for a filing. */
+    onProgress(callback: (message: string) => void): () => void;
     openPage(name: string): void;
     close(): void;
   };
