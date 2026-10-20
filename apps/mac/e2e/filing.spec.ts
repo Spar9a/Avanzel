@@ -143,6 +143,10 @@ test("an evening review during an edit files only the corrected words", async ()
   await call(app, "runTask", "evening-review");
   await call(app, "idleForTests");
   expect(inboxWords(library)).toEqual([expect.stringContaining("misheard words")]); // the review left it alone
+  // ... and says so, rather than that the inbox was empty.
+  expect(await call(app, "notificationsForTests")).toEqual([
+    { title: "Evening review", body: "Nothing to file right now: your note is still being filed or edited." },
+  ]);
   await capsule.getByRole("textbox").fill("corrected words");
   await capsule.getByRole("button", { name: "File" }).click();
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
@@ -150,6 +154,29 @@ test("an evening review during an edit files only the corrected words", async ()
   const filed = archived(library).map((file) => readFileSync(file, "utf8"));
   expect(filed.filter((text) => text.includes("misheard"))).toEqual([]);
   expect(filed.filter((text) => text.includes("corrected words"))).toHaveLength(1);
+  await app.close();
+});
+
+test("a dictation made while an evening review runs is filed once, by its own filing", async () => {
+  const library = await makeLibrary();
+  new Vault(library).newCapture("An earlier thought", { source: "text" });
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Said while the review ran",
+    FAKE_AGENT_DELAY_MS: "4000", // the review's run on the earlier thought outlasts the dictation
+  });
+  await windowFor(app, "capsule");
+  await call(app, "runTask", "evening-review");
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing"); // waiting behind the review
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed"); // then filed by its own filing
+  await call(app, "idleForTests");
+  const filed = archived(library).map((file) => readFileSync(file, "utf8"));
+  expect(filed.filter((text) => text.includes("Said while the review ran"))).toHaveLength(1);
+  const [digest] = filesUnder(library, "reviews");
+  expect(read(library, `reviews/${digest}`)).toContain("Filed 1 of 1 capture."); // the review left it alone
   await app.close();
 });
 

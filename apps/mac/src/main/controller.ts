@@ -124,6 +124,12 @@ interface Correction {
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const lastLines = (text: string, n = 3) => text.trim().split("\n").filter(Boolean).slice(-n).join("\n");
 
+/** What an evening review that had nothing to file says: an empty inbox, or how many notes it left to their own filing or edit. */
+function nothingFiled(left: number): string {
+  if (!left) return "Inbox was empty.";
+  return `Nothing to file right now: your ${left === 1 ? "note is" : "notes are"} still being filed or edited.`;
+}
+
 /** What an evening review says of the captures it couldn't file; when it filed none, why the first one wasn't (say, the agent can't start). */
 function notFiled(failed: readonly FileOutcome[], filed: number): string {
   const still = `${failed.length} couldn't be filed and are still in the inbox.`;
@@ -154,6 +160,8 @@ export class Controller {
   private runs = new Map<AbortController, Promise<unknown>>();
   /** Captures from Edit until their edit is settled (filed again, kept or cancelled): evening reviews leave them be. */
   private readonly editing = new Set<string>();
+  /** Captures whose own filing waits in the queue: evening reviews leave them to it. */
+  private readonly queuedToFile = new Set<string>();
   /** Edits kept (`keepEdit`) whose words the queue hasn't saved yet. */
   private readonly kept = new Set<FilingJob>();
   /** Corrections no capture holds yet: their refile writes them, or quitting does when its wait runs out first. */
@@ -657,6 +665,7 @@ export class Controller {
   /** Filing starts right away; Edit can stop it until it ends. */
   private beginFiling(job: FilingJob): void {
     this.showFiling(job);
+    this.queuedToFile.add(job.capturePath);
     void this.enqueue(() => this.runFiling(job));
   }
 
@@ -692,9 +701,10 @@ export class Controller {
   }
 
   private async runFiling(job: FilingJob): Promise<void> {
+    this.queuedToFile.delete(job.capturePath); // its turn: should it not file the capture, a review may
     if (job.abort.signal.aborted) return; // Edit stopped it before its turn came
     if (!existsSync(job.capturePath)) {
-      // Already filed meanwhile (e.g. by the evening review); nothing left to do.
+      // Already filed meanwhile (e.g. by another Avanzel on this library); nothing left to do.
       if (this.job === job && this.capsuleState.kind === "filing") this.setCapsule({ kind: "hidden" });
       return;
     }
@@ -1329,16 +1339,27 @@ export class Controller {
     return this.snapshot();
   }
 
+  /**
+   * What an evening review leaves alone, each noted in `left`: a capture being edited (its edit files the
+   * corrected words, once) or one whose own filing waits in the queue (that files it, on its own card).
+   */
+  private leftAlone(left: Set<string>): (capturePath: string) => boolean {
+    return (capturePath) => {
+      const theirs = this.editing.has(capturePath) || this.queuedToFile.has(capturePath);
+      if (theirs) left.add(capturePath);
+      return theirs;
+    };
+  }
+
   private async executeTask(task: ShadowTask, scheduled: boolean): Promise<void> {
     const agent = this.agentName(task.agent);
     try {
       if (task.kind === "evening-review") {
-        // A capture in the editor is filed by its edit, once, with the corrected words.
-        const leave = (capturePath: string) => this.editing.has(capturePath);
+        const left = new Set<string>();
         const result = await this.withRun(async (signal) =>
-          (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions, signal, leave }));
+          (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions, signal, leave: this.leftAlone(left) }));
         if (!result.outcomes.length) {
-          this.notify(task.name, "Inbox was empty.");
+          this.notify(task.name, nothingFiled(left.size));
           return;
         }
         this.lastEveningCommits = result.commits;
