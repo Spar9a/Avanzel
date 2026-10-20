@@ -51,8 +51,10 @@ export function screenshotFixture(): string {
 export async function launch(env: Record<string, string>): Promise<ElectronApplication> {
   const clean = Object.fromEntries(Object.entries(process.env).filter(([k, v]) => k !== "ELECTRON_RUN_AS_NODE" && v !== undefined)) as Record<string, string>;
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const packaged = process.env.AVANZEL_E2E_PACKAGED;
   return electron.launch({
-    args: [appDir],
+    ...(packaged ? { executablePath: packaged } : {}),
+    args: packaged ? [] : [appDir],
     cwd: appDir,
     env: { ...clean, AVANZEL_TEST: "1", AVANZEL_USER_DATA: userData, ...env },
   });

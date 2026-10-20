@@ -7,6 +7,8 @@ files:
   - dist/**
   - "!dist/**/*.map"
   - package.json
+  - "!**/node_modules/onnxruntime-node/bin/napi-v*/linux/**"
+  - "!**/node_modules/onnxruntime-node/bin/napi-v*/win32/**"
 asarUnpack:
   - "**/node_modules/onnxruntime-node/**"
   - "**/node_modules/onnxruntime-common/**"
