@@ -1,9 +1,9 @@
 // The guard: after every agent run, whatever it changed among the library's rules, settings and
-// tasks, and among the symlinks in Avanzel's own paths, is put back. Take a `protectedState`
-// before the run and `undoProtected` after it. Nothing is written or deleted through a symlink, or
-// outside the library.
+// tasks, and among the symlinks in Avanzel's own paths that it can still reach, is put back. Take a
+// `protectedState` before the run and `undoProtected` after it. Nothing is written or deleted through
+// a symlink, or outside the library.
 
-import { readdirSync, readFileSync, readlinkSync, symlinkSync, type Dirent } from "node:fs";
+import { readdirSync, readFileSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { lstatOrNull, realFoldersTo, removeInside, writeInside } from "./inside.ts";
 
@@ -18,8 +18,10 @@ export const PROTECTED_PARENTS = [
   ...new Set(PROTECTED.flatMap((rel) => rel.split("/").slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join("/")))),
 ];
 // What Avanzel itself writes to after a run (the capture, its archive, reports, the log line). Agents
-// may change what is in them, but no symlink they put there, at any depth, outlives the run: it would
-// lead later writes outside the library, or make Avanzel refuse them.
+// may change what is in them, but a symlink they put there, at any depth, is removed after the run:
+// it would lead later writes outside the library, or make Avanzel refuse them. One the run made
+// unreadable, or put below a folder it made unlistable, is passed over; Avanzel's own saves refuse
+// to go through it, so nothing leaks.
 export const OWN_PATHS = ["inbox", "raw", "reviews", "log.md"];
 
 /**
@@ -54,22 +56,27 @@ export function protectedState(root: string): ProtectedState {
 
 /**
  * Undo every change to the protected paths, and to the symlinks in Avanzel's own paths, since
- * `before`; returns the files and links that were changed. Nothing is written or deleted through a
- * symlink, or outside the library.
+ * `before`; returns the files and links that were changed, and any link it could not check or put
+ * back. Nothing is written or deleted through a symlink, or outside the library.
  */
 export function undoProtected(root: string, before: ProtectedState): string[] {
   const touched = new Set<string>();
   // Links first, shallowest first: one an agent put on or under a protected path, or anywhere in
   // Avanzel's own paths, goes (one the owner had is put back), so nothing below it is read or
-  // written through it.
+  // written through it. One that cannot be checked, removed or put back (the run locked it, or a
+  // folder above it) is listed and left as it is: it never stops the guard.
   for (const rel of byDepth(new Set([...before.links.keys(), ...protectedState(root).links.keys()]))) {
     const path = join(root, rel);
-    const link = lstatOrNull(path)?.isSymbolicLink() ? readlinkSync(path) : undefined;
     const original = before.links.get(rel);
-    if (link === original) continue;
-    touched.add(rel);
-    if (link !== undefined || (original !== undefined && lstatOrNull(path))) removeInside(root, rel);
-    if (original !== undefined && realFoldersTo(root, rel, true)) symlinkSync(original, path);
+    try {
+      const link = lstatOrNull(path)?.isSymbolicLink() ? readlinkSync(path) : undefined;
+      if (link === original) continue;
+      touched.add(rel);
+      if (link !== undefined || (original !== undefined && lstatOrNull(path))) removeInside(root, rel);
+      if (original !== undefined && realFoldersTo(root, rel, true)) symlinkSync(original, path);
+    } catch {
+      touched.add(rel);
+    }
   }
   // Then, shallowest first, whatever the run added, or turned from a file into a folder or the other
   // way round: so nothing it added stays, and nothing is in the way of what is put back next.
@@ -95,21 +102,20 @@ function kindOf(state: ProtectedState, rel: string): "file" | "folder" | "link" 
 
 /**
  * Every symlink at `rel` or anywhere below it, and where it points: never looking through a link or
- * into a file. A folder that cannot be read is passed over, so the guard still undoes the rest.
+ * into a file. A link that cannot be read is passed over, and so is a folder that cannot be listed,
+ * with the links below it.
  */
 function recordLinks(root: string, rel: string, links: Map<string, string>): void {
   const path = join(root, rel);
   const stat = lstatOrNull(path);
-  if (stat?.isSymbolicLink()) links.set(rel, readlinkSync(path));
-  if (!stat?.isDirectory()) return;
-  let entries: Dirent[];
   try {
-    entries = readdirSync(path, { withFileTypes: true });
+    if (stat?.isSymbolicLink()) links.set(rel, readlinkSync(path));
+    if (!stat?.isDirectory()) return;
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      if (entry.isSymbolicLink() || entry.isDirectory()) recordLinks(root, `${rel}/${entry.name}`, links);
+    }
   } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (entry.isSymbolicLink() || entry.isDirectory()) recordLinks(root, `${rel}/${entry.name}`, links);
+    // passed over (see above); deeper calls catch their own errors, so no sibling is skipped
   }
 }
 
