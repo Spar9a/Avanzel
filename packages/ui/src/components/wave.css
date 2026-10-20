@@ -1,0 +1,9 @@
+.av-wave { display: inline-flex; flex: none; align-items: center; gap: 2px; height: 24px; }
+.av-wave > i {
+  display: block;
+  width: 3px;
+  height: calc(4px + var(--_level, 0) * 20px);
+  border-radius: var(--av-radius-pill);
+  background: var(--av-ink-accent);
+  transition: height var(--av-duration-quick) linear;
+}

@@ -1,0 +1,4 @@
+.av-receipt { display: flex; flex-direction: column; gap: var(--av-space-8); margin: 0; padding: 0; list-style: none; }
+.av-receipt li { display: flex; align-items: center; gap: var(--av-space-10); min-width: 0; }
+.av-receipt-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--av-text-body); color: var(--av-ink); }
+.av-receipt-shelf { flex: none; font: var(--av-text-footnote); color: var(--av-ink-secondary); }

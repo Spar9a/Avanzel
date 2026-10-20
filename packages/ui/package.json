@@ -1,0 +1,38 @@
+{
+  "name": "@avanzel/ui",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Avanzel's design system: the tokens, the components, the gallery, and the checks that keep every window on them.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./base.css": "./src/base.css",
+    "./menu-bar": "./src/menu-bar.ts"
+  },
+  "scripts": {
+    "tokens": "node scripts/build-tokens.mjs",
+    "gallery": "node scripts/build-gallery.mjs",
+    "check": "node checks/design-check.mjs",
+    "test": "node scripts/build-tokens.mjs --check && vitest run",
+    "e2e": "node scripts/build-gallery.mjs && playwright test",
+    "approve": "node scripts/build-gallery.mjs && playwright test --update-snapshots",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "postcss": "^8.5.31",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "rolldown": "^1.2.14",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

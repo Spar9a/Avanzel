@@ -1,0 +1,28 @@
+.av-segmented {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  padding: 2px;
+  border-radius: var(--av-radius-control);
+  background: var(--av-surface-fill);
+  box-shadow: inset 0 0 0 0.5px var(--av-line-hair);
+}
+.av-segmented > button {
+  appearance: none;
+  margin: 0;
+  border: 0;
+  padding: 3px 10px;
+  border-radius: var(--av-radius-tab);
+  background: transparent;
+  color: var(--av-ink-secondary);
+  font: var(--av-text-footnote);
+  white-space: nowrap;
+  transition: background var(--av-duration-quick) var(--av-ease-out), color var(--av-duration-quick) var(--av-ease-out);
+}
+.av-segmented > button[aria-checked="true"] {
+  background: var(--av-surface-control);
+  color: var(--av-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px var(--av-line-control);
+}
+.av-segmented > button:disabled { opacity: 0.45; }

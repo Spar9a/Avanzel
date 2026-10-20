@@ -1,0 +1,12 @@
+.av-stack { display: flex; flex-direction: column; gap: var(--_gap); min-width: 0; }
+.av-row { display: flex; flex-direction: row; gap: var(--_gap); min-width: 0; }
+.av-row[data-wrap] { flex-wrap: wrap; }
+.av-stack[data-align="start"], .av-row[data-align="start"] { align-items: flex-start; }
+.av-stack[data-align="center"], .av-row[data-align="center"] { align-items: center; }
+.av-stack[data-align="end"], .av-row[data-align="end"] { align-items: flex-end; }
+.av-stack[data-align="stretch"], .av-row[data-align="stretch"] { align-items: stretch; }
+.av-stack[data-align="baseline"], .av-row[data-align="baseline"] { align-items: baseline; }
+.av-row[data-justify="center"] { justify-content: center; }
+.av-row[data-justify="end"] { justify-content: flex-end; }
+.av-row[data-justify="between"] { justify-content: space-between; }
+.av-spacer { flex: 1; }

@@ -1,0 +1,34 @@
+/* What every component needs and nothing more: the tokens, the brand faces, the focus ring and the
+   Reduce Motion rule. It styles no plain elements, so a component can sit in a window that hasn't
+   moved to base.css yet without changing anything around it. */
+@import "./generated/tokens.css";
+@import "./fonts.css";
+
+/* Components size their own boxes, whatever the window's stylesheet says. */
+[class^="av-"],
+[class*=" av-"],
+[class^="av-"]::before,
+[class*=" av-"]::before,
+[class^="av-"]::after,
+[class*=" av-"]::after {
+  box-sizing: border-box;
+}
+
+[class^="av-"]:focus-visible,
+[class*=" av-"]:focus-visible {
+  outline: 2px solid var(--av-accent-focus);
+  outline-offset: 2px;
+}
+
+/* Reduce Motion: every move ends at once and every loop stops. Each animation's last frame is its
+   resting state, so the stamp still lands and nothing is lost. */
+@media (prefers-reduced-motion: reduce) {
+  [class^="av-"],
+  [class*=" av-"],
+  [class^="av-"] *,
+  [class*=" av-"] * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

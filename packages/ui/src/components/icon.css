@@ -1,0 +1,10 @@
+.av-icon {
+  display: block;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.av-icon[data-fill] { fill: currentColor; stroke: none; }

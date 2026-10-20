@@ -1,0 +1,34 @@
+/* Every block in the body is a whole number of 26 px lines, so the words never leave the ruling. */
+.av-letter {
+  --av-ink: var(--av-paper-ink);
+  --av-ink-secondary: var(--av-paper-ink-secondary);
+  position: relative;
+  padding-top: 18px;
+  border-radius: var(--av-radius-card);
+  background: var(--av-surface-paper);
+  color: var(--av-ink);
+  box-shadow: var(--av-shadow-card);
+  overflow: hidden;
+}
+.av-letter-date {
+  padding: 0 26px 7px;
+  font: var(--av-text-caption);
+  color: var(--av-ink-secondary);
+  border-bottom: 1.5px solid var(--av-paper-rule-red);
+}
+.av-letter-body {
+  padding: 0 26px 26px;
+  font: var(--av-text-words);
+  line-height: 26px;
+  background: repeating-linear-gradient(to bottom, transparent 0 25px, var(--av-paper-rule-blue) 25px 26px);
+  user-select: text;
+}
+.av-letter-body > * { max-width: 58ch; }
+.av-letter-body p, .av-letter-body ul, .av-letter-body ol, .av-letter-body blockquote { margin: 0 0 26px; }
+.av-letter-body ul, .av-letter-body ol { padding-left: 20px; }
+.av-letter-body blockquote { font-style: italic; }
+.av-letter-body h3 { margin: 0; font: var(--av-text-voice); line-height: 26px; color: var(--av-ink-accent); }
+.av-letter-sig { display: flex; align-items: flex-end; gap: var(--av-space-12); height: 52px; }
+.av-letter-sig .av-zel { margin-bottom: 2px; }
+.av-letter-sig span { font: var(--av-text-words); font-style: italic; color: var(--av-ink-secondary); }
+.av-letter-stamp { position: absolute; right: 26px; bottom: 30px; }

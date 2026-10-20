@@ -1,0 +1,24 @@
+{
+  "$description": "Overrides when macOS Increase Contrast is on, in light mode. Only roles that change are listed.",
+  "ink": {
+    "$type": "color",
+    "secondary": { "$value": "#4F4F55" }
+  },
+  "paper": {
+    "$type": "color",
+    "ink-secondary": { "$value": "#56506A" }
+  },
+  "line": {
+    "$type": "color",
+    "hair": { "$value": "{palette.alpha.black-20}" },
+    "control": { "$value": "{palette.alpha.black-35}" }
+  },
+  "surface": {
+    "$type": "color",
+    "fill": { "$value": "{palette.alpha.black-8}" }
+  },
+  "accent": {
+    "$type": "color",
+    "focus": { "$value": "{palette.violet.stamp-deep}" }
+  }
+}

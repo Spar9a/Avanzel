@@ -1,0 +1,50 @@
+/* Plain-element defaults for a window built from @avanzel/ui. Import it once in a renderer that has
+   moved over (import "@avanzel/ui/base.css"); windows still on common/mac.css must not, because it
+   restyles their body and headings.
+   A window whose page is see-through, such as the capsule or Quick, sets <html data-backdrop="clear">. */
+@import "./foundations.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+body {
+  font: var(--av-text-body);
+  color: var(--av-ink);
+  background: var(--av-surface-window);
+  -webkit-font-smoothing: antialiased;
+  cursor: default;
+}
+html[data-backdrop="clear"],
+html[data-backdrop="clear"] body {
+  background: transparent;
+}
+h1,
+h2,
+h3,
+p,
+ul,
+ol,
+figure,
+blockquote {
+  margin: 0;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+::selection {
+  background: var(--av-accent-wash);
+}
+::placeholder {
+  color: var(--av-ink-secondary);
+}

@@ -50,7 +50,7 @@ if (pages.length) {
     format: "esm",
     target: "chrome130",
     jsx: "automatic",
-    loader: { ".css": "css" },
+    loader: { ".css": "css", ".woff2": "file" }, // @avanzel/ui bundles its fonts; windows load only local files
   });
   for (const p of pages) {
     for (const file of readdirSync(path.join(rendererDir, p))) {

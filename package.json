@@ -8,7 +8,12 @@
   ],
   "scripts": {
     "test": "npm test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "design:check": "node packages/ui/checks/design-check.mjs",
+    "ui:tokens": "npm run tokens -w @avanzel/ui",
+    "ui:gallery": "npm run gallery -w @avanzel/ui",
+    "ui:e2e": "npm run e2e -w @avanzel/ui",
+    "ui:approve": "npm run approve -w @avanzel/ui"
   },
   "engines": {
     "node": ">=22"

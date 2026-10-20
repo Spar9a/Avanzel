@@ -1,0 +1,2 @@
+.av-link { color: var(--av-ink-accent); text-decoration: none; border-radius: var(--av-radius-small); }
+.av-link:hover { text-decoration: underline; }

@@ -1,0 +1,36 @@
+/* Ink multiplies into light paper and screens onto dark paper. The blend follows the appearance
+   through inheritance, so a stamp in a pinned-light panel inside a dark window still multiplies. */
+:root,
+[data-appearance="light"] { --_stamp-blend: multiply; }
+[data-appearance="dark"] { --_stamp-blend: screen; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-appearance="light"]) { --_stamp-blend: screen; }
+}
+
+.av-stamp {
+  position: relative;
+  display: inline-block;
+  width: max-content;
+  padding: 3px 9px 4px;
+  border: 2.6px solid var(--av-ink-accent);
+  border-radius: var(--av-radius-control);
+  color: var(--av-ink-accent);
+  text-align: center;
+  white-space: nowrap;
+  transform: rotate(-9deg);
+  opacity: 0.9;
+  filter: var(--_ink);
+  mix-blend-mode: var(--_stamp-blend);
+  pointer-events: none;
+}
+.av-stamp-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+.av-stamp b { display: block; font: var(--av-text-stamp); letter-spacing: var(--av-text-stamp-tracking); text-transform: uppercase; }
+.av-stamp small { display: block; margin-top: 1px; font: var(--av-text-stamp-date); letter-spacing: var(--av-text-stamp-date-tracking); text-transform: uppercase; }
+.av-stamp[data-size="small"] { zoom: 0.85; }
+.av-stamp[data-size="xs"] { zoom: 0.7; border-width: 3px; }
+.av-stamp[data-animate] { animation: av-stamp-in var(--av-duration-card) var(--av-ease-stamp) both; }
+@keyframes av-stamp-in {
+  0% { opacity: 0; transform: rotate(-9deg) scale(1.8); }
+  60% { opacity: 0.95; transform: rotate(-9deg) scale(0.96); }
+  100% { opacity: 0.9; transform: rotate(-9deg) scale(1); }
+}

@@ -1,0 +1,54 @@
+/* The ruling and the line height are the same number, so the words sit on the lines. */
+.av-card {
+  --av-ink: var(--av-paper-ink);
+  --av-ink-secondary: var(--av-paper-ink-secondary);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: var(--av-radius-card);
+  background: var(--av-surface-paper);
+  color: var(--av-ink);
+  box-shadow: var(--av-shadow-card);
+}
+.av-card-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--av-space-8);
+  height: 30px;
+  padding: 0 12px 5px;
+  font: var(--av-text-caption);
+  color: var(--av-ink-secondary);
+  border-bottom: 1.5px solid var(--av-paper-rule-red);
+}
+.av-card-lines {
+  min-height: 42px;
+  padding: 1px 12px 0;
+  font: var(--av-text-words-small);
+  line-height: 21px;
+  color: var(--av-ink);
+  background: repeating-linear-gradient(to bottom, transparent 0 20px, var(--av-paper-rule-blue) 20px 21px);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.av-card[data-size="regular"] .av-card-head { padding: 0 26px 7px; }
+.av-card[data-size="regular"] .av-card-lines {
+  min-height: 52px;
+  padding: 0 26px;
+  font: var(--av-text-words);
+  line-height: 26px;
+  background: repeating-linear-gradient(to bottom, transparent 0 25px, var(--av-paper-rule-blue) 25px 26px);
+}
+.av-card:not([data-ruled]) .av-card-lines { background: none; }
+.av-card-lines p { margin: 0; }
+.av-card-lines p + p { margin-top: 21px; }
+.av-card[data-size="regular"] .av-card-lines p + p { margin-top: 26px; }
+.av-card-placeholder { font-style: italic; color: var(--av-ink-secondary); }
+/* The stamp never covers the user's words: the header ends before it and the first line wraps around it. */
+.av-card-stamp { position: absolute; top: 5px; right: 10px; }
+.av-card[data-stamped] .av-card-head { padding-right: 96px; }
+.av-card[data-stamped] .av-card-lines::before { content: ""; float: right; width: 74px; height: 21px; }
+.av-card[data-stamped][data-size="regular"] .av-card-lines::before { height: 26px; }
+.av-card-foot { padding: var(--av-space-8) 12px var(--av-space-10); }
+.av-card[data-size="regular"] .av-card-foot { padding: var(--av-space-10) 26px var(--av-space-16); }

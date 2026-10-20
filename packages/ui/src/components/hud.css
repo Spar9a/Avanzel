@@ -1,0 +1,33 @@
+/* Inside the glass the window roles turn into the glass's own, so a <Text tone="secondary"> or a
+   secondary <Button> needs nothing extra to read well on it. */
+.av-hud {
+  --av-ink: var(--av-hud-ink);
+  --av-ink-secondary: var(--av-hud-ink-secondary);
+  --av-ink-accent: var(--av-hud-ink-accent);
+  --av-ink-danger: var(--av-hud-ink-danger);
+  --av-ink-ok: var(--av-hud-ink-ok);
+  --av-surface-fill: var(--av-hud-fill);
+  --av-surface-control: var(--av-hud-fill);
+  --av-line-hair: var(--av-hud-line);
+  --av-line-control: var(--av-hud-line);
+  --av-accent-focus: var(--av-hud-focus);
+  color-scheme: dark;
+  color: var(--av-ink);
+  font: var(--av-text-body);
+  background: var(--av-hud-surface);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  box-shadow: var(--av-shadow-hud);
+}
+.av-hud[data-shape="pill"] {
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-10);
+  min-height: var(--av-size-capsule);
+  padding: 6px 8px 6px 6px;
+  border-radius: var(--av-radius-pill);
+}
+.av-hud[data-shape="card"] { padding: 14px 16px; border-radius: var(--av-radius-hud); }
+@media (prefers-reduced-transparency: reduce) {
+  .av-hud { background: var(--av-hud-surface-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}

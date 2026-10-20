@@ -1,0 +1,284 @@
+{
+  "$description": "Colour and shadow roles in light mode. dark.tokens.json must define exactly the same names; the tests check it.",
+  "ink": {
+    "$type": "color",
+    "default": {
+      "$value": "{palette.window.ink}",
+      "$description": "Text on windows."
+    },
+    "secondary": {
+      "$value": "{palette.window.muted}",
+      "$description": "Secondary text. Keeps 4.5:1 on window and stage."
+    },
+    "accent": {
+      "$value": "{palette.violet.stamp}",
+      "$description": "Violet text and marks: links, stamps, Zel's headings."
+    },
+    "on-accent": {
+      "$value": "{palette.alpha.white}",
+      "$description": "Text on a violet fill."
+    },
+    "danger": {
+      "$value": "{palette.system.red-text}",
+      "$description": "Text that reports a problem."
+    },
+    "ok": {
+      "$value": "{palette.system.green-text}",
+      "$description": "Text that reports success."
+    }
+  },
+  "surface": {
+    "$type": "color",
+    "window": {
+      "$value": "{palette.window.light}",
+      "$description": "A window's background."
+    },
+    "stage": {
+      "$value": "{palette.window.stage}",
+      "$description": "A tinted area inside a window, where Zel and cards perform."
+    },
+    "paper": {
+      "$value": "{palette.paper.white}",
+      "$description": "Index cards and letters."
+    },
+    "control": {
+      "$value": "{palette.alpha.white}",
+      "$description": "Text fields and keys."
+    },
+    "fill": {
+      "$value": "{palette.alpha.black-5}",
+      "$description": "Secondary buttons, switch tracks, sunken rows."
+    },
+    "raised": {
+      "$value": "{palette.window.light}",
+      "$description": "Bubbles and popovers above a window."
+    },
+    "knob": {
+      "$value": "{palette.alpha.white}",
+      "$description": "A switch's knob."
+    },
+    "group": {
+      "$value": "{palette.alpha.white-90}",
+      "$description": "Settings groups."
+    }
+  },
+  "paper": {
+    "$type": "color",
+    "ink": {
+      "$value": "{palette.paper.ink}",
+      "$description": "Words on paper."
+    },
+    "ink-secondary": {
+      "$value": "{palette.paper.muted}",
+      "$description": "Card headers and dates."
+    },
+    "rule-red": {
+      "$value": "{palette.paper.rule-red}",
+      "$description": "The card's header rule. Never an error colour."
+    },
+    "rule-blue": {
+      "$value": "{palette.paper.rule-blue}",
+      "$description": "The card's ruling."
+    }
+  },
+  "line": {
+    "$type": "color",
+    "hair": {
+      "$value": "{palette.alpha.black-8}",
+      "$description": "Separators and outlines."
+    },
+    "control": {
+      "$value": "{palette.alpha.black-14}",
+      "$description": "The outline of a control."
+    }
+  },
+  "accent": {
+    "$type": "color",
+    "fill": {
+      "$value": "{palette.violet.stamp}",
+      "$description": "Primary buttons, a switch that is on, the selected row."
+    },
+    "wash": {
+      "$value": "{palette.violet.wash}",
+      "$description": "A faint violet background: chips, a selected choice."
+    },
+    "focus": {
+      "$value": "{palette.violet.stamp}",
+      "$description": "The keyboard focus ring."
+    }
+  },
+  "danger": {
+    "$type": "color",
+    "fill": {
+      "$value": "{palette.system.red}",
+      "$description": "A badge or dot that needs attention."
+    }
+  },
+  "shelf": {
+    "$type": "color",
+    "$description": "Shelf colours. Always shown with the shelf's glyph and name, never alone.",
+    "goals": {
+      "$value": "{palette.system.green}"
+    },
+    "ideas": {
+      "$value": "{palette.system.yellow}"
+    },
+    "problems": {
+      "$value": "{palette.system.red}"
+    },
+    "memories": {
+      "$value": "{palette.system.purple}"
+    },
+    "people": {
+      "$value": "{palette.system.blue}"
+    },
+    "topics": {
+      "$value": "{palette.system.grey}"
+    }
+  },
+  "zel": {
+    "$type": "color",
+    "$description": "Zel's own colours. Only the Zel component uses them.",
+    "knob": {
+      "$value": "{palette.zel.knob}"
+    },
+    "neck": {
+      "$value": "{palette.zel.neck}"
+    },
+    "base": {
+      "$value": "{palette.zel.base}"
+    },
+    "pad": {
+      "$value": "{palette.zel.pad}"
+    },
+    "eye": {
+      "$value": "{palette.zel.eye}"
+    },
+    "cheek": {
+      "$value": "{palette.zel.cheek}"
+    },
+    "sweat": {
+      "$value": "{palette.zel.sweat}"
+    },
+    "shine": {
+      "$value": "{palette.alpha.white}"
+    }
+  },
+  "hud": {
+    "$type": "color",
+    "$description": "The capsule's dark glass. It stays dark in light mode, like the system's own HUDs.",
+    "surface": {
+      "$value": "{palette.hud.glass}"
+    },
+    "surface-solid": {
+      "$value": "{palette.hud.solid}",
+      "$description": "Used when Reduce Transparency is on."
+    },
+    "ink": {
+      "$value": "{palette.hud.ink}"
+    },
+    "ink-secondary": {
+      "$value": "{palette.hud.muted}"
+    },
+    "fill": {
+      "$value": "{palette.alpha.white-12}"
+    },
+    "line": {
+      "$value": "{palette.alpha.white-14}"
+    },
+    "ink-accent": {
+      "$value": "{palette.violet.wave}",
+      "$description": "Violet that reads on the dark glass in either mode."
+    },
+    "ink-danger": {
+      "$value": "{palette.system.red-text-hud}"
+    },
+    "ink-ok": {
+      "$value": "{palette.system.green-text-dark}"
+    },
+    "focus": {
+      "$value": "{palette.violet.stamp-light}"
+    }
+  },
+  "shadow": {
+    "$type": "shadow",
+    "window": {
+      "$value": [
+        {
+          "color": "#00000024",
+          "offsetX": "0px",
+          "offsetY": "0px",
+          "blur": "0px",
+          "spread": "0.5px"
+        },
+        {
+          "color": "#28195A66",
+          "offsetX": "0px",
+          "offsetY": "18px",
+          "blur": "44px",
+          "spread": "-18px"
+        }
+      ],
+      "$description": "Windows, bubbles and popovers."
+    },
+    "card": {
+      "$value": [
+        {
+          "color": "#0000000F",
+          "offsetX": "0px",
+          "offsetY": "0.5px",
+          "blur": "0px",
+          "spread": "0px"
+        },
+        {
+          "color": "#1E144659",
+          "offsetX": "0px",
+          "offsetY": "10px",
+          "blur": "24px",
+          "spread": "-12px"
+        }
+      ],
+      "$description": "Paper lifted off its surface."
+    },
+    "hud": {
+      "$value": [
+        {
+          "color": "#0000008C",
+          "offsetX": "0px",
+          "offsetY": "14px",
+          "blur": "34px",
+          "spread": "-12px"
+        },
+        {
+          "color": "#FFFFFF24",
+          "offsetX": "0px",
+          "offsetY": "0px",
+          "blur": "0px",
+          "spread": "0.5px",
+          "inset": true
+        }
+      ],
+      "$description": "The capsule."
+    },
+    "button": {
+      "$value": {
+        "color": "#28147840",
+        "offsetX": "0px",
+        "offsetY": "1px",
+        "blur": "2px",
+        "spread": "0px"
+      },
+      "$description": "Primary buttons."
+    },
+    "knob": {
+      "$value": {
+        "color": "#0000004D",
+        "offsetX": "0px",
+        "offsetY": "1px",
+        "blur": "2px",
+        "spread": "0px"
+      },
+      "$description": "A switch's knob."
+    }
+  }
+}

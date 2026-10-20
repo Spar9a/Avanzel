@@ -1,0 +1,5 @@
+.av-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--av-space-6); }
+.av-actions[data-align="start"] { justify-content: flex-start; }
+.av-actions[data-align="between"] { justify-content: space-between; }
+.av-actions[data-align="stretch"] { flex-wrap: nowrap; }
+.av-actions[data-align="stretch"] > * { flex: 1; }

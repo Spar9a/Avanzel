@@ -1,0 +1,250 @@
+{
+  "$description": "Colour and shadow roles in dark mode. Same names as light.tokens.json.",
+  "ink": {
+    "$type": "color",
+    "default": {
+      "$value": "{palette.window.ink-dark}"
+    },
+    "secondary": {
+      "$value": "{palette.window.muted-dark}"
+    },
+    "accent": {
+      "$value": "{palette.violet.stamp-light}"
+    },
+    "on-accent": {
+      "$value": "{palette.alpha.white}"
+    },
+    "danger": {
+      "$value": "{palette.system.red-text-dark}"
+    },
+    "ok": {
+      "$value": "{palette.system.green-text-dark}"
+    }
+  },
+  "surface": {
+    "$type": "color",
+    "window": {
+      "$value": "{palette.window.dark}"
+    },
+    "stage": {
+      "$value": "{palette.window.stage-dark}"
+    },
+    "paper": {
+      "$value": "{palette.paper.night}"
+    },
+    "control": {
+      "$value": "{palette.alpha.white-14}"
+    },
+    "fill": {
+      "$value": "{palette.alpha.white-7}"
+    },
+    "raised": {
+      "$value": "{palette.window.dark}"
+    },
+    "knob": {
+      "$value": "{palette.alpha.white}"
+    },
+    "group": {
+      "$value": "{palette.alpha.white-6}"
+    }
+  },
+  "paper": {
+    "$type": "color",
+    "ink": {
+      "$value": "{palette.paper.ink-night}"
+    },
+    "ink-secondary": {
+      "$value": "{palette.paper.muted-night}"
+    },
+    "rule-red": {
+      "$value": "{palette.paper.rule-red-night}"
+    },
+    "rule-blue": {
+      "$value": "{palette.paper.rule-blue-night}"
+    }
+  },
+  "line": {
+    "$type": "color",
+    "hair": {
+      "$value": "{palette.alpha.white-9}"
+    },
+    "control": {
+      "$value": "{palette.alpha.white-10}"
+    }
+  },
+  "accent": {
+    "$type": "color",
+    "fill": {
+      "$value": "{palette.violet.button-dark}"
+    },
+    "wash": {
+      "$value": "{palette.violet.wash-dark}"
+    },
+    "focus": {
+      "$value": "{palette.violet.stamp-light}"
+    }
+  },
+  "danger": {
+    "$type": "color",
+    "fill": {
+      "$value": "{palette.system.red-dark}"
+    }
+  },
+  "shelf": {
+    "$type": "color",
+    "goals": {
+      "$value": "{palette.system.green-dark}"
+    },
+    "ideas": {
+      "$value": "{palette.system.yellow-dark}"
+    },
+    "problems": {
+      "$value": "{palette.system.red-dark}"
+    },
+    "memories": {
+      "$value": "{palette.system.purple-dark}"
+    },
+    "people": {
+      "$value": "{palette.system.blue-dark}"
+    },
+    "topics": {
+      "$value": "{palette.system.grey-dark}"
+    }
+  },
+  "zel": {
+    "$type": "color",
+    "knob": {
+      "$value": "{palette.zel.knob-dark}"
+    },
+    "neck": {
+      "$value": "{palette.zel.neck-dark}"
+    },
+    "base": {
+      "$value": "{palette.zel.base-dark}"
+    },
+    "pad": {
+      "$value": "{palette.zel.pad-dark}"
+    },
+    "eye": {
+      "$value": "{palette.zel.eye-dark}"
+    },
+    "cheek": {
+      "$value": "{palette.zel.cheek}"
+    },
+    "sweat": {
+      "$value": "{palette.zel.sweat}"
+    },
+    "shine": {
+      "$value": "{palette.alpha.white}"
+    }
+  },
+  "hud": {
+    "$type": "color",
+    "surface": {
+      "$value": "{palette.hud.glass-dark}"
+    },
+    "surface-solid": {
+      "$value": "{palette.hud.solid-dark}"
+    },
+    "ink": {
+      "$value": "{palette.hud.ink}"
+    },
+    "ink-secondary": {
+      "$value": "{palette.hud.muted}"
+    },
+    "fill": {
+      "$value": "{palette.alpha.white-12}"
+    },
+    "line": {
+      "$value": "{palette.alpha.white-14}"
+    },
+    "ink-accent": {
+      "$value": "{palette.violet.wave}"
+    },
+    "ink-danger": {
+      "$value": "{palette.system.red-text-hud}"
+    },
+    "ink-ok": {
+      "$value": "{palette.system.green-text-dark}"
+    },
+    "focus": {
+      "$value": "{palette.violet.stamp-light}"
+    }
+  },
+  "shadow": {
+    "$type": "shadow",
+    "window": {
+      "$value": [
+        {
+          "color": "#FFFFFF1F",
+          "offsetX": "0px",
+          "offsetY": "0px",
+          "blur": "0px",
+          "spread": "0.5px"
+        },
+        {
+          "color": "#000000BF",
+          "offsetX": "0px",
+          "offsetY": "18px",
+          "blur": "44px",
+          "spread": "-18px"
+        }
+      ]
+    },
+    "card": {
+      "$value": [
+        {
+          "color": "#FFFFFF0F",
+          "offsetX": "0px",
+          "offsetY": "0px",
+          "blur": "0px",
+          "spread": "0.5px"
+        },
+        {
+          "color": "#000000B3",
+          "offsetX": "0px",
+          "offsetY": "12px",
+          "blur": "26px",
+          "spread": "-12px"
+        }
+      ]
+    },
+    "hud": {
+      "$value": [
+        {
+          "color": "#0000008C",
+          "offsetX": "0px",
+          "offsetY": "14px",
+          "blur": "34px",
+          "spread": "-12px"
+        },
+        {
+          "color": "#FFFFFF24",
+          "offsetX": "0px",
+          "offsetY": "0px",
+          "blur": "0px",
+          "spread": "0.5px",
+          "inset": true
+        }
+      ]
+    },
+    "button": {
+      "$value": {
+        "color": "#00000066",
+        "offsetX": "0px",
+        "offsetY": "1px",
+        "blur": "2px",
+        "spread": "0px"
+      }
+    },
+    "knob": {
+      "$value": {
+        "color": "#0000004D",
+        "offsetX": "0px",
+        "offsetY": "1px",
+        "blur": "2px",
+        "spread": "0px"
+      }
+    }
+  }
+}

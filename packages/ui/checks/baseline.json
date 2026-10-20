@@ -1,0 +1,40 @@
+{
+  "apps/mac/src/renderer/ask/main.tsx": {
+    "use-components": 2
+  },
+  "apps/mac/src/renderer/ask/styles.css": {
+    "space-scale": 15,
+    "windows-arrange": 19
+  },
+  "apps/mac/src/renderer/capsule/main.tsx": {
+    "no-style-prop": 2,
+    "use-components": 10,
+    "raw-colour": 1,
+    "no-exclamation": 1
+  },
+  "apps/mac/src/renderer/capsule/styles.css": {
+    "windows-arrange": 104,
+    "space-scale": 29,
+    "no-important": 1
+  },
+  "apps/mac/src/renderer/common/mac.css": {
+    "windows-arrange": 73,
+    "space-scale": 4
+  },
+  "apps/mac/src/renderer/quick/main.tsx": {
+    "use-components": 2
+  },
+  "apps/mac/src/renderer/quick/styles.css": {
+    "windows-arrange": 14,
+    "space-scale": 3
+  },
+  "apps/mac/src/renderer/settings/main.tsx": {
+    "no-style-prop": 4,
+    "use-components": 29
+  },
+  "apps/mac/src/renderer/settings/styles.css": {
+    "windows-arrange": 76,
+    "space-scale": 30,
+    "layer-scale": 1
+  }
+}

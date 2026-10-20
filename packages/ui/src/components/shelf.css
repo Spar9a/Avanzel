@@ -1,0 +1,70 @@
+[data-shelf="goals"] { --_shelf: var(--av-shelf-goals); }
+[data-shelf="ideas"] { --_shelf: var(--av-shelf-ideas); }
+[data-shelf="problems"] { --_shelf: var(--av-shelf-problems); }
+[data-shelf="memories"] { --_shelf: var(--av-shelf-memories); }
+[data-shelf="people"] { --_shelf: var(--av-shelf-people); }
+[data-shelf="topics"] { --_shelf: var(--av-shelf-topics); }
+
+.av-shelf-glyph { display: block; flex: none; }
+
+.av-shelf-tag {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--av-space-4);
+  min-width: 0;
+  white-space: nowrap;
+}
+.av-shelf-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.av-shelf-tag[data-variant="chip"] {
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: var(--av-radius-control);
+  font: var(--av-text-footnote);
+  font-weight: 600;
+  color: var(--av-ink);
+  background: color-mix(in srgb, var(--_shelf) 16%, var(--av-surface-paper));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--_shelf) 45%, transparent);
+}
+.av-shelf-tag[data-variant="tab"] {
+  position: relative;
+  justify-content: center;
+  height: 26px;
+  padding: 1px 8px 0;
+  border-radius: var(--av-radius-tab) var(--av-radius-tab) 0 0;
+  font: var(--av-text-tab);
+  color: var(--av-paper-ink);
+  background: color-mix(in srgb, var(--_shelf) 24%, var(--av-surface-paper));
+  border-top: 3px solid var(--_shelf);
+}
+.av-shelf-tag[data-variant="tab"] .av-shelf-glyph { opacity: 0.8; }
+.av-shelf-count {
+  position: absolute;
+  top: -9px;
+  right: -5px;
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--av-radius-pill);
+  font: var(--av-text-caption);
+  font-weight: 800;
+  background: var(--av-accent-fill);
+  color: var(--av-ink-on-accent);
+  animation: av-shelf-count-in var(--av-duration-card) var(--av-ease-land) both;
+}
+@keyframes av-shelf-count-in { from { transform: scale(0); } to { transform: scale(1); } }
+
+.av-shelf-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 14px;
+  border-radius: var(--av-radius-small) var(--av-radius-small) 0 0;
+  color: var(--av-paper-ink);
+  background: color-mix(in srgb, var(--_shelf) 26%, var(--av-surface-paper));
+  border-top: 2.5px solid var(--_shelf);
+}

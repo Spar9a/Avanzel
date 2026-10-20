@@ -1,0 +1,45 @@
+/* The brand faces, bundled because Avanzel's windows load only local files (their CSP is 'self').
+   Their OFL licences sit beside them in fonts/.
+   Words are Newsreader for Latin and Literata for Cyrillic, which Newsreader doesn't have. Literata's
+   x-height is 0.507 em against Newsreader's 0.426, so it is drawn at 84% to sit level with it. */
+@font-face {
+  font-family: "Avanzel Voice";
+  src: url("./fonts/nunito-voice.woff2") format("woff2");
+  font-weight: 700 900;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Avanzel Words";
+  src: url("./fonts/newsreader-words.woff2") format("woff2");
+  font-weight: 400 500;
+  font-style: normal;
+  font-display: block;
+  unicode-range: U+0000-02FF, U+1E00-1EFF, U+2000-206F, U+20A0-20C0, U+2113, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Avanzel Words";
+  src: url("./fonts/newsreader-words-italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: block;
+  unicode-range: U+0000-02FF, U+1E00-1EFF, U+2000-206F, U+20A0-20C0, U+2113, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Avanzel Words";
+  src: url("./fonts/literata-words-cyrillic.woff2") format("woff2");
+  font-weight: 400 500;
+  font-style: normal;
+  font-display: block;
+  size-adjust: 84%;
+  unicode-range: U+0301, U+0400-052F, U+20B4, U+2116;
+}
+@font-face {
+  font-family: "Avanzel Words";
+  src: url("./fonts/literata-words-cyrillic-italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: block;
+  size-adjust: 84%;
+  unicode-range: U+0301, U+0400-052F, U+20B4, U+2116;
+}

@@ -1,0 +1,20 @@
+{
+  "$description": "Overrides when macOS Increase Contrast is on, in dark mode. Only roles that change are listed.",
+  "ink": {
+    "$type": "color",
+    "secondary": { "$value": "#C8C8CE" }
+  },
+  "paper": {
+    "$type": "color",
+    "ink-secondary": { "$value": "#C9C3D8" }
+  },
+  "line": {
+    "$type": "color",
+    "hair": { "$value": "{palette.alpha.white-22}" },
+    "control": { "$value": "{palette.alpha.white-30}" }
+  },
+  "surface": {
+    "$type": "color",
+    "fill": { "$value": "{palette.alpha.white-12}" }
+  }
+}

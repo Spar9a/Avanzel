@@ -1,0 +1,53 @@
+.av-button {
+  appearance: none;
+  margin: 0;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--av-space-6);
+  height: var(--av-size-control);
+  padding: 0 15px;
+  border-radius: var(--av-radius-pill);
+  font: var(--av-text-button);
+  width: max-content;
+  max-width: 100%;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  background: var(--av-surface-fill);
+  color: var(--av-ink);
+  transition: transform var(--av-duration-quick) var(--av-ease-out), filter var(--av-duration-base) var(--av-ease-out), opacity var(--av-duration-base) var(--av-ease-out);
+}
+.av-button:not(:disabled):hover { filter: brightness(0.96); }
+.av-button:not(:disabled):active { transform: scale(0.97); }
+.av-button:disabled { opacity: 0.45; }
+.av-button[aria-busy] { cursor: progress; }
+
+.av-button[data-variant="primary"] {
+  background: var(--av-accent-fill);
+  color: var(--av-ink-on-accent);
+  box-shadow: var(--av-shadow-button);
+}
+.av-button[data-variant="primary"]:not(:disabled):hover { filter: brightness(1.08); }
+.av-button[data-variant="primary"] .av-spinner {
+  border-color: color-mix(in srgb, var(--av-ink-on-accent) 35%, transparent);
+  border-top-color: var(--av-ink-on-accent);
+}
+.av-button[data-variant="quiet"] { background: transparent; color: var(--av-ink-secondary); }
+.av-button[data-variant="quiet"]:not(:disabled):hover { filter: none; color: var(--av-ink); }
+.av-button[data-variant="link"] {
+  height: auto;
+  padding: 2px 4px;
+  border-radius: var(--av-radius-small);
+  background: transparent;
+  color: var(--av-ink-accent);
+}
+.av-button[data-variant="link"]:not(:disabled):hover { filter: none; text-decoration: underline; }
+.av-button[data-variant="danger"] { color: var(--av-ink-danger); }
+
+.av-button[data-size="small"] { height: var(--av-size-control-small); padding: 0 11px; font: var(--av-text-button-small); }
+.av-button[data-size="large"] { height: var(--av-size-control-large); padding: 0 18px; font: var(--av-text-button-large); }
+.av-button[data-icon-only] { width: var(--av-size-control); padding: 0; }
+.av-button[data-icon-only][data-size="small"] { width: var(--av-size-control-small); }
+.av-button[data-icon-only][data-size="large"] { width: var(--av-size-control-large); }

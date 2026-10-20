@@ -1,0 +1,36 @@
+.av-capsule-zel { position: relative; flex: none; width: 34px; height: 38px; margin-top: -6px; }
+.av-capsule-zel .av-zel { position: absolute; left: 0; top: 0; }
+.av-capsule-live {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font: var(--av-text-body);
+  color: var(--av-ink);
+}
+/* While listening, the newest words stay at the right edge and the oldest fade out at the left. */
+.av-capsule-live[data-flow="stream"] {
+  justify-content: flex-end;
+  -webkit-mask-image: linear-gradient(90deg, transparent, var(--av-ink) 28%);
+  mask-image: linear-gradient(90deg, transparent, var(--av-ink) 28%);
+}
+.av-capsule-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.av-capsule-live[data-flow="stream"] .av-capsule-text { flex: none; overflow: visible; }
+.av-capsule-time {
+  flex: none;
+  min-width: 30px;
+  padding-right: 6px;
+  text-align: right;
+  font: var(--av-text-footnote);
+  font-variant-numeric: tabular-nums;
+  color: var(--av-ink-secondary);
+}
+.av-capsule-actions { display: flex; flex: none; gap: var(--av-space-6); }
+
+.av-capsule-notice { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--av-space-12); align-items: start; }
+.av-capsule-notice .av-zel { margin: -2px 0 0 -4px; }
+.av-capsule-notice-title { margin: 0 0 3px; font: var(--av-text-headline); color: var(--av-ink); }
+.av-capsule-notice-body { font: var(--av-text-footnote); color: var(--av-ink-secondary); }
+.av-capsule-notice-body p { margin: 0; }
+.av-capsule-notice-actions { margin-top: var(--av-space-10); }

@@ -1,0 +1,7 @@
+.av-stage {
+  position: relative;
+  padding: var(--av-space-20);
+  border-radius: var(--av-radius-tile);
+  background: var(--av-surface-stage);
+  color: var(--av-ink);
+}

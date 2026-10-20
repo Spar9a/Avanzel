@@ -1,0 +1,31 @@
+.av-spinner {
+  display: inline-block;
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid var(--av-line-hair);
+  border-top-color: var(--av-ink-accent);
+  animation: av-spin 0.9s linear infinite;
+}
+.av-spinner[data-size="small"] { width: 10px; height: 10px; border-width: 1.6px; }
+@keyframes av-spin { to { transform: rotate(360deg); } }
+
+.av-progress {
+  display: block;
+  height: 4px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-surface-fill);
+  overflow: hidden;
+}
+.av-progress[data-width="short"] { width: 64px; }
+.av-progress > i {
+  display: block;
+  height: 100%;
+  width: var(--_progress, 0%);
+  border-radius: inherit;
+  background: var(--av-accent-fill);
+  transition: width var(--av-duration-card) var(--av-ease-out);
+}
+.av-progress[data-indeterminate] > i { width: 32%; animation: av-progress-slide 1.4s ease-in-out infinite; }
+@keyframes av-progress-slide { from { transform: translateX(-100%); } to { transform: translateX(320%); } }
