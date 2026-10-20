@@ -71,6 +71,13 @@ export interface TaskInfo {
   running: boolean;
 }
 
+/** A file in tasks/ that can't be used as a shadow task, and why. */
+export interface TaskFileProblem {
+  /** Library-relative, e.g. "tasks/standup.md". */
+  file: string;
+  message: string;
+}
+
 export interface LibraryInfo {
   path: string;
   exists: boolean;
@@ -86,12 +93,15 @@ export interface LibraryInfo {
 export interface SettingsSnapshot {
   app: AppSettings;
   library: LibraryInfo | null;
+  /** Why the library at `app.libraryPath` couldn't be opened, if it couldn't. */
+  libraryProblem: string | null;
   defaultLibraryPath: string;
   harnesses: HarnessInfo[];
   selectedHarness: string | null;
   model: ModelStatus;
   permissions: { microphone: PermissionStatus; screen: PermissionStatus };
   tasks: TaskInfo[];
+  taskProblems: TaskFileProblem[];
   shortcutProblems: Partial<Record<keyof Shortcuts, string>>;
   obsidian: boolean;
 }

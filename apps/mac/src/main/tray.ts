@@ -1,6 +1,6 @@
 // The menu bar icon and its menu, rebuilt from MenuInput whenever something changes.
 import { Menu, Tray, nativeImage, type MenuItemConstructorOptions, type NativeImage } from "electron";
-import { buildMenuModel, type MenuInput } from "./menu-model.ts";
+import { buildMenuModel, menuLabel, type MenuInput } from "./menu-model.ts";
 import { dotIcon, encodePng, trayIcon } from "./png.ts";
 
 const SHELF_COLORS: Record<string, string> = {
@@ -37,7 +37,7 @@ export class MenuBar {
       if (item.type === "separator") return { type: "separator" };
       if (item.type === "header") return { label: item.label, sublabel: item.sublabel, enabled: false };
       return {
-        label: item.detail ? `${item.label}\t${item.detail}` : item.label,
+        label: menuLabel(item),
         accelerator: item.accelerator,
         registerAccelerator: false,
         enabled: item.enabled ?? true,

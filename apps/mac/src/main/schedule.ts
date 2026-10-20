@@ -27,7 +27,7 @@ export function dueTasks(
   return { due, baseline };
 }
 
-/** Per library, in `.avanzel/state.json`: when each task was last checked for being due, and last ran. */
+/** Per library (kept by `RunStateStore`): when each task was last checked for being due, and last ran. */
 export interface RunState {
   checked: Record<string, string>;
   ran: Record<string, string>;

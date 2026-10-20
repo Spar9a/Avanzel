@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { captureMeta, filedPages, findPage, pageInfo, recentFromLog } from "../src/main/library-info.ts";
+import { captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "../src/main/library-info.ts";
 
 function library() {
   const root = mkdtempSync(path.join(tmpdir(), "avz-lib-"));
@@ -47,6 +47,14 @@ describe("library info", () => {
     const root = library();
     const pages = filedPages(root, { created: ["people/mark.md", "index.md"], modified: ["goals/launch-podcast.md", "log.md", "reviews/2026-10-20.md"] });
     expect(pages.map((p) => p.path)).toEqual(["people/mark.md", "goals/launch-podcast.md"]);
+  });
+
+  it("opens pages in Obsidian only when Obsidian knows the library as a vault", () => {
+    const root = library();
+    expect(obsidianUrl(root, "goals/launch-podcast.md")).toBeNull();
+    mkdirSync(path.join(root, ".obsidian"));
+    expect(obsidianUrl(root, "goals/launch-podcast.md")).toBe(`obsidian://open?path=${encodeURIComponent(path.join(root, "goals/launch-podcast.md"))}`);
+    expect(obsidianUrl(root, "")).toBe(`obsidian://open?path=${encodeURIComponent(root)}`);
   });
 
   it("reads what a re-filed capture must keep: source, audio, transcriber and creation time", () => {

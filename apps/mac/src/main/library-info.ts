@@ -1,5 +1,5 @@
 // Read-only views of the library for the UI: page titles, recent filings, wikilink lookup.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { FiledPage } from "../shared/ipc.ts";
 
@@ -33,6 +33,19 @@ function walk(dir: string, rel = ""): string[] {
     const childRel = rel ? `${rel}/${entry.name}` : entry.name;
     return entry.isDirectory() ? walk(path.join(dir, entry.name), childRel) : [childRel];
   });
+}
+
+/**
+ * An `obsidian://` link to a page (or, with "", the library), only when the library has a
+ * `.obsidian/` folder: Obsidian ignores links into a folder it has never opened as a vault.
+ */
+export function obsidianUrl(root: string, rel: string): string | null {
+  try {
+    if (!statSync(path.join(root, ".obsidian")).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  return `obsidian://open?path=${encodeURIComponent(rel ? path.join(root, rel) : root)}`;
 }
 
 /** `[[name]]` → library-relative path; shelf pages win over sources in raw/ and inbox/. */

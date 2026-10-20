@@ -14,9 +14,14 @@ function Quick() {
   const submit = async () => {
     if (!text.trim() || busy) return;
     setBusy(true);
-    await window.avanzel.quick.submit(text);
-    setText("");
-    setBusy(false);
+    try {
+      await window.avanzel.quick.submit(text);
+      setText("");
+    } catch {
+      // Not saved (the capsule says why): the words stay here for another try.
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <div className="quick">

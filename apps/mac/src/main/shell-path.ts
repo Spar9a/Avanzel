@@ -7,6 +7,8 @@ type Run = (file: string, args: string[], options: object) => string | Buffer;
 
 export function loginShellPath(shell = process.env.SHELL || "/bin/zsh", run: Run = execFileSync): string | null {
   try {
+    // The one intentional exception to "argv only, never a shell string": asking the owner's login
+    // shell is the point. The string is this fixed literal; nothing from outside goes into it.
     const out = String(run(shell, ["-ilc", 'printf "__AVZ__%s__AVZ__" "$PATH"'], {
       encoding: "utf8",
       timeout: 4000,

@@ -10,7 +10,7 @@ import {
   powerMonitor,
   shell,
 } from "electron";
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import {
@@ -23,7 +23,7 @@ import {
   harnesses as listHarnesses,
   lastDue,
   loadSettings,
-  loadTasks,
+  loadTasksReport,
   locateModel,
   makeTranscriber,
   nextRun,
@@ -35,6 +35,7 @@ import {
   saveTask,
   selectHarness,
   writeWav,
+  type Capture,
   type FileOutcome,
   type Settings,
   type ShadowTask,
@@ -54,12 +55,13 @@ import type {
   TaskInfo,
 } from "../shared/ipc.ts";
 import { frontContext } from "./front-app.ts";
-import { captureMeta, filedPages, findPage, pageInfo, recentFromLog } from "./library-info.ts";
-import type { MenuInput } from "./menu-model.ts";
+import { captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
+import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
-import { dueTasks, markChecked, markRan, normalizeRunState, type RunState } from "./schedule.ts";
+import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
-import { registerShortcuts } from "./shortcuts.ts";
+import { prettyAccelerator, registerShortcuts } from "./shortcuts.ts";
+import { RunStateStore } from "./run-state.ts";
 import { SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
 import {
@@ -129,6 +131,8 @@ export class Controller {
   private transcriber: Transcriber | null = null;
   private transcriberKey = "";
   private model: ModelStatus = { kind: "missing" };
+  private libraryProblem: string | null = null;
+  private readonly runState: RunStateStore;
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
   private recent: FiledPage[] = [];
   private running = new Set<string>();
@@ -137,24 +141,28 @@ export class Controller {
   /** Whether the capsule page listens yet; commands for its recorder wait until it does. */
   private capsuleListening = false;
   private heldCommands: ("start" | "stop" | "cancel")[] = [];
+  /** Notifications posted, kept for the e2e tests only. */
+  private readonly notified: { title: string; body: string }[] = [];
 
   constructor(userData: string) {
     this.store = new SettingsStore(path.join(userData, "settings.json"));
     this.modelsDir = path.join(userData, "models");
+    this.runState = new RunStateStore(path.join(userData, "run-state.json"));
   }
 
   // ---------------------------------------------------------------- lifecycle
 
   async start(): Promise<void> {
-    const envLibrary = process.env.AVANZEL_LIBRARY;
-    if (envLibrary) this.store.update({ libraryPath: envLibrary });
-    this.openLibrary(this.store.get().libraryPath);
+    // The capsule and the menu bar first: whatever goes wrong next, Avanzel stays reachable there.
     this.capsule = createCapsuleWindow();
     this.capsule.webContents.on("did-start-loading", () => {
       this.capsuleListening = false;
     });
     this.capsule.on("closed", () => app.quit());
     this.menuBar = new MenuBar((action) => void this.menuAction(action));
+    const envLibrary = process.env.AVANZEL_LIBRARY;
+    if (envLibrary) this.store.update({ libraryPath: envLibrary });
+    this.openLibrary(this.store.get().libraryPath);
     this.applyShortcuts();
     await this.refreshModelStatus();
     this.refreshMenu();
@@ -184,16 +192,24 @@ export class Controller {
     clearTimeout(timer);
   }
 
+  /** What goes wrong opening it is kept in `libraryProblem`, which the menu and Settings show. */
   private openLibrary(libraryPath: string | null): void {
     this.vault = null;
     this.recent = [];
     this.transcriber = null;
+    this.libraryProblem = null;
     if (!libraryPath) return;
     const vault = new Vault(libraryPath);
     if (!vault.exists()) return;
+    try {
+      ensureDefaultTasks(vault);
+      this.recent = recentFromLog(vault.root);
+    } catch (error) {
+      this.recent = [];
+      this.libraryProblem = `Avanzel couldn't open the library at ${vault.root}: ${errorMessage(error)}`;
+      return;
+    }
     this.vault = vault;
-    ensureDefaultTasks(vault);
-    this.recent = recentFromLog(vault.root);
     try {
       void this.transcriberFor(loadSettings(vault.root).voice);
     } catch {
@@ -276,6 +292,7 @@ export class Controller {
     const tasks = vault ? this.safeTasks(vault) : [];
     return {
       libraryReady: !!vault,
+      problem: this.libraryProblem,
       inbox: vault ? vault.pending().length : 0,
       recent: this.recent,
       tasks: tasks.map((t) => ({
@@ -299,13 +316,9 @@ export class Controller {
     }
   }
 
+  /** The usable shadow tasks; Settings → Shadow tasks says what is wrong with the others. */
   private safeTasks(vault: Vault): ShadowTask[] {
-    try {
-      return loadTasks(vault);
-    } catch (error) {
-      console.error("tasks", error);
-      return [];
-    }
+    return loadTasksReport(vault).tasks;
   }
 
   // ---------------------------------------------------------------- capsule plumbing
@@ -817,7 +830,14 @@ export class Controller {
     const trimmed = text.trim();
     if (!trimmed) return;
     this.closeQuick();
-    const capture = this.requireVault().newCapture(trimmed, { source: "text", now: new Date() });
+    let capture: Capture;
+    try {
+      capture = this.requireVault().newCapture(trimmed, { source: "text", now: new Date() });
+    } catch (error) {
+      // The words stay in the type-a-thought box for another try.
+      this.fail("Couldn't save that thought", `${errorMessage(error)}\nIt is still in the box: press ${prettyAccelerator(this.store.get().shortcuts.type)} to try again.`);
+      throw error;
+    }
     this.afterCapture(capture.path, trimmed, null);
   }
 
@@ -865,20 +885,23 @@ export class Controller {
   openPage(rel: string): void {
     const vault = this.vault;
     if (!vault) return;
-    const absolute = path.join(vault.root, rel);
-    if (this.obsidianInstalled()) void shell.openExternal(`obsidian://open?path=${encodeURIComponent(absolute)}`);
-    else void shell.openPath(absolute);
+    const url = this.obsidianInstalled() ? obsidianUrl(vault.root, rel) : null;
+    if (url) void shell.openExternal(url);
+    else void shell.openPath(path.join(vault.root, rel));
   }
 
   openLibraryFolder(): void {
     const vault = this.vault;
     if (!vault) return this.showSettings();
-    if (this.obsidianInstalled()) void shell.openExternal(`obsidian://open?path=${encodeURIComponent(vault.root)}`);
+    const url = this.obsidianInstalled() ? obsidianUrl(vault.root, "") : null;
+    if (url) void shell.openExternal(url);
     else void shell.openPath(vault.root);
   }
 
   private notify(title: string, body: string, onClick?: () => void): void {
-    if (this.quitting || !Notification.isSupported()) return;
+    if (this.quitting) return;
+    if (process.env.AVANZEL_TEST === "1") this.notified.push({ title, body });
+    if (!Notification.isSupported()) return;
     const note = new Notification({ title, body, silent: false });
     if (onClick) note.on("click", onClick);
     note.show();
@@ -918,6 +941,7 @@ export class Controller {
       selected = null;
     }
     const stateRuns = vault ? this.readRunState(vault).ran : {};
+    const report = vault ? loadTasksReport(vault) : { tasks: [], problems: [] };
     const now = new Date();
     return {
       app: this.store.get(),
@@ -940,20 +964,20 @@ export class Controller {
       selectedHarness: selected,
       model: this.model,
       permissions: { microphone: permissionStatus("microphone"), screen: permissionStatus("screen") },
-      tasks: vault
-        ? this.safeTasks(vault).map((t): TaskInfo => ({
-            id: t.id,
-            name: t.name,
-            schedule: formatSchedule(t.schedule),
-            kind: t.kind,
-            agent: t.agent,
-            enabled: t.enabled,
-            instructions: t.instructions,
-            lastRun: stateRuns[t.id] ?? null,
-            nextRun: t.enabled ? nextRun(t.schedule, now).toISOString() : null,
-            running: this.running.has(t.id),
-          }))
-        : [],
+      libraryProblem: this.libraryProblem,
+      tasks: report.tasks.map((t): TaskInfo => ({
+        id: t.id,
+        name: t.name,
+        schedule: formatSchedule(t.schedule),
+        kind: t.kind,
+        agent: t.agent,
+        enabled: t.enabled,
+        instructions: t.instructions,
+        lastRun: stateRuns[t.id] ?? null,
+        nextRun: t.enabled ? nextRun(t.schedule, now).toISOString() : null,
+        running: this.running.has(t.id),
+      })),
+      taskProblems: report.problems.map((p) => ({ file: vault ? vault.relativePath(p.file) : p.file, message: p.message })),
       shortcutProblems: this.shortcutProblems,
       obsidian: this.obsidianInstalled(),
     };
@@ -1071,17 +1095,13 @@ export class Controller {
 
   // ---------------------------------------------------------------- shadow tasks
 
+  /** Kept with the app, not in the library (where older builds kept it, in `.avanzel/state.json`). */
   private readRunState(vault: Vault): RunState {
-    try {
-      return normalizeRunState(JSON.parse(readFileSync(path.join(vault.metaDir, "state.json"), "utf8")));
-    } catch {
-      return normalizeRunState({});
-    }
+    return this.runState.get(vault.root, path.join(vault.metaDir, "state.json"));
   }
 
   private writeRunState(vault: Vault, state: RunState): void {
-    mkdirSync(vault.metaDir, { recursive: true });
-    writeFileSync(path.join(vault.metaDir, "state.json"), `${JSON.stringify(state, null, 2)}\n`);
+    this.runState.set(vault.root, state);
   }
 
   private tick(): void {
@@ -1098,7 +1118,7 @@ export class Controller {
       (text, at) => lastDue(byText.get(text) ?? parseSchedule(text), at),
     );
     if (baseline.length) this.writeRunState(vault, markChecked(state, baseline, now));
-    for (const id of due) void this.runTask(id);
+    for (const id of due) void this.runTask(id, true);
     this.refreshMenu();
   }
 
@@ -1115,7 +1135,8 @@ export class Controller {
     return this.snapshot();
   }
 
-  async runTask(id: string): Promise<SettingsSnapshot> {
+  /** Run a shadow task now: by hand (the menu, Run now), or because it is due (`scheduled`). */
+  async runTask(id: string, scheduled = false): Promise<SettingsSnapshot> {
     const vault = this.vault;
     if (!vault || this.running.has(id)) return this.snapshot();
     const task = this.safeTasks(vault).find((t) => t.id === id);
@@ -1123,7 +1144,7 @@ export class Controller {
     this.writeRunState(vault, markRan(this.readRunState(vault), id, new Date()));
     this.running.add(id);
     this.broadcast();
-    void this.enqueue(() => this.executeTask(task)).finally(() => {
+    void this.enqueue(() => this.executeTask(task, scheduled)).finally(() => {
       this.running.delete(id);
       this.recent = this.vault ? recentFromLog(this.vault.root) : [];
       this.broadcast();
@@ -1131,14 +1152,17 @@ export class Controller {
     return this.snapshot();
   }
 
-  private async executeTask(task: ShadowTask): Promise<void> {
+  private async executeTask(task: ShadowTask, scheduled: boolean): Promise<void> {
     const agent = this.agentName(task.agent);
     try {
       if (task.kind === "evening-review") {
         const result = await this.withRun(async (signal) =>
           (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions, signal }));
         const filed = result.outcomes.filter((o) => o.ok).length;
-        if (!result.outcomes.length) return;
+        if (!result.outcomes.length) {
+          if (!scheduled) this.notify(task.name, "Inbox was empty.");
+          return;
+        }
         this.lastEveningCommits = result.commits;
         const failed = result.outcomes.length - filed;
         const digest = result.digestPath;
@@ -1189,5 +1213,13 @@ export class Controller {
 
   nativeImageForTests(): typeof nativeImage {
     return nativeImage;
+  }
+
+  notificationsForTests(): { title: string; body: string }[] {
+    return this.notified;
+  }
+
+  menuForTests(): MenuItemModel[] {
+    return buildMenuModel(this.menuInput(), new Date());
   }
 }

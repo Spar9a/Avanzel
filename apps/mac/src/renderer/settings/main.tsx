@@ -94,6 +94,7 @@ function Welcome({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Set
         Avanzel keeps your goals, ideas, problems, memories, people and topics as plain Markdown in a folder you own.
         Your own agent files every thought there; your voice is turned into text on this Mac and never leaves it.
       </p>
+      {snap.libraryProblem && <p className="note problem">{snap.libraryProblem}. Fix that, then choose the folder again.</p>}
       <Group label="Your library">
         <div className="grow">
           <div className="fill pathrow">
@@ -311,9 +312,20 @@ function TaskRow({ task, snap, onChange }: { task: TaskInfo; snap: SettingsSnaps
 function Tasks({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: SettingsSnapshot) => void }) {
   if (!snap.library?.exists) return <p className="note">Create your library first (General).</p>;
   return (
-    <Group note="Tasks are files in your library's tasks/ folder. Avanzel runs them on this Mac with your agent; if the Mac is asleep at the time, the task runs once when it wakes.">
-      {snap.tasks.map((task) => <TaskRow key={task.id} task={task} snap={snap} onChange={onChange} />)}
-    </Group>
+    <>
+      <Group note="Tasks are files in your library's tasks/ folder. Avanzel runs them on this Mac with your agent; if the Mac is asleep at the time, the task runs once when it wakes. To take back the last evening review, use Undo last evening review in the menu bar menu.">
+        {snap.tasks.map((task) => <TaskRow key={task.id} task={task} snap={snap} onChange={onChange} />)}
+      </Group>
+      {snap.taskProblems.length > 0 && (
+        <Group label="Can't be used" note="Fix these files in your library's tasks/ folder; the other tasks run as usual.">
+          {snap.taskProblems.map((problem) => (
+            <div className="grow" key={problem.file}>
+              <span className="fill two"><b>{problem.file}</b><span className="problem">{problem.message}</span></span>
+            </div>
+          ))}
+        </Group>
+      )}
+    </>
   );
 }
 

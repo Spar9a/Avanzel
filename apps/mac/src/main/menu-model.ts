@@ -11,6 +11,8 @@ export interface MenuTask {
 
 export interface MenuInput {
   libraryReady: boolean;
+  /** Why the library couldn't be opened, if that is why it isn't ready. */
+  problem?: string | null;
   inbox: number;
   recent: FiledPage[];
   tasks: MenuTask[];
@@ -48,10 +50,15 @@ function nextPhrase(at: Date, now: Date): string {
   return `on ${formatWhen(at, now).replace(/ (\d\d:\d\d)$/, " at $1")}`;
 }
 
+/** An item's label as the menu shows it: macOS menus don't line up tabs, so a detail goes in parentheses. */
+export function menuLabel(item: { label: string; detail?: string }): string {
+  return item.detail ? `${item.label} (${item.detail})` : item.label;
+}
+
 export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
   if (!input.libraryReady) {
     return [
-      { type: "header", label: "Avanzel", sublabel: "Choose a folder for your library to start." },
+      { type: "header", label: "Avanzel", sublabel: input.problem || "Choose a folder for your library to start." },
       SEP,
       { type: "item", label: "Set up Avanzel…", action: "settings" },
       SEP,

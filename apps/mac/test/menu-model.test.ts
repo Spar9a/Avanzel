@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMenuModel, formatWhen, type MenuInput } from "../src/main/menu-model.ts";
+import { buildMenuModel, formatWhen, menuLabel, type MenuInput } from "../src/main/menu-model.ts";
 import { DEFAULT_SETTINGS } from "../src/main/store.ts";
 
 const now = new Date(2026, 9, 20, 14, 3); // Tue 20 Oct 2026, 14:03 local
@@ -64,6 +64,18 @@ describe("tray menu", () => {
     expect(labels(buildMenuModel(input({ libraryReady: false }), now))).toEqual([
       "Avanzel", "--", "Set up Avanzel…", "--", "Quit Avanzel",
     ]);
+  });
+
+  it("says why the library couldn't be opened", () => {
+    const problem = "Avanzel couldn't open the library at /Users/me/Brain: EACCES: permission denied, mkdir '/Users/me/Brain/tasks'";
+    const [head, ...rest] = buildMenuModel(input({ libraryReady: false, problem }), now);
+    expect(head).toEqual({ type: "header", label: "Avanzel", sublabel: problem });
+    expect(labels(rest)).toEqual(["--", "Set up Avanzel…", "--", "Quit Avanzel"]);
+  });
+
+  it("puts an item's detail in parentheses, since macOS menus don't line up tabs", () => {
+    expect(menuLabel({ label: "Weekly review", detail: "Sun 18:00" })).toBe("Weekly review (Sun 18:00)");
+    expect(menuLabel({ label: "Open library" })).toBe("Open library");
   });
 
   it("formats times relative to today", () => {
