@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { linkSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -6,6 +6,7 @@ import {
   formatSchedule,
   lastDue,
   loadTasks,
+  loadTasksReport,
   nextRun,
   parseSchedule,
   saveTask,
@@ -13,7 +14,7 @@ import {
 } from "../../src/core/tasks.ts";
 import { Vault } from "../../src/core/vault.ts";
 import { AvanzelError } from "../../src/types.ts";
-import { thrownBy, useTmp, write } from "./helpers.ts";
+import { useTmp, write } from "./helpers.ts";
 
 const at = (iso: string) => new Date(iso);
 
@@ -145,15 +146,35 @@ describe("task files", () => {
   });
 
   it.each([
-    ["no frontmatter", "Just words.\n"],
-    ["no schedule", "---\nname: X\n---\nDo things.\n"],
-    ["a bad schedule", "---\nschedule: sometimes\n---\nDo things.\n"],
-    ["an unknown kind", "---\nschedule: daily 07:00\nkind: party\n---\nDo things.\n"],
-    ["a non-boolean enabled", "---\nschedule: daily 07:00\nenabled: maybe\n---\nDo things.\n"],
-  ])("name the file when it has %s", (_, text) => {
-    write(vault.root, "tasks/broken.md", text);
-    const error = thrownBy(() => loadTasks(vault));
-    expect(error).toBeInstanceOf(AvanzelError);
-    expect(error.message).toContain("broken.md");
+    ["no frontmatter", "Just words.\n", "starts with a --- block"],
+    ["no schedule", "---\nname: X\n---\nDo things.\n", "`schedule` is missing"],
+    ["a bad schedule", "---\nschedule: sometimes\n---\nDo things.\n", 'Unknown schedule "sometimes"'],
+    ["an unknown kind", "---\nschedule: daily 07:00\nkind: party\n---\nDo things.\n", "`kind` must be one of"],
+    ["a non-boolean enabled", "---\nschedule: daily 07:00\nenabled: maybe\n---\nDo things.\n", "`enabled` must be true or false"],
+  ])("report a file with %s, and still load the others", (_, text, problem) => {
+    const broken = write(vault.root, "tasks/broken.md", text);
+    const report = loadTasksReport(vault);
+    expect(report.tasks.map((task) => task.id)).toEqual(["evening-review", "weekly-review"]);
+    expect(report.problems).toEqual([{ file: broken, message: expect.stringContaining(problem) }]);
+    expect(loadTasks(vault).map((task) => task.id)).toEqual(["evening-review", "weekly-review"]);
+  });
+
+  it("report a task file that can't be read at all, rather than throw", () => {
+    mkdirSync(join(vault.root, "tasks", "folder.md"));
+    const report = loadTasksReport(vault);
+    expect(report.tasks.map((task) => task.id)).toEqual(["evening-review", "weekly-review"]);
+    expect(report.problems).toEqual([{ file: join(vault.root, "tasks", "folder.md"), message: expect.stringContaining("EISDIR") }]);
+  });
+
+  it("are saved whole: a new file is renamed into place, never written into", () => {
+    // A file another name shares (a hard link) shows whether saving wrote into the old file.
+    const evening = loadTasks(vault)[0]!;
+    const shared = write(vault.root, "elsewhere.md", "not a task\n");
+    rmSync(evening.path);
+    linkSync(shared, evening.path);
+    saveTask(vault, { ...evening, instructions: "Saved whole." });
+    expect(readFileSync(shared, "utf8")).toBe("not a task\n");
+    expect(loadTasks(vault).find((task) => task.id === "evening-review")?.instructions).toBe("Saved whole.");
+    expect(readdirSync(join(vault.root, "tasks")).sort()).toEqual(["evening-review.md", "weekly-review.md"]);
   });
 });

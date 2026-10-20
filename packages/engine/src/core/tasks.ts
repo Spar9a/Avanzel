@@ -2,7 +2,8 @@
 // own). Each is a Markdown file in `tasks/` — frontmatter for the schedule, agent and tools, the body
 // for the owner's standing instructions. When a task last ran is the app's business, not the file's.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { AvanzelError } from "../types.ts";
 import { flowItems, frontmatterFields, splitFrontmatter, yamlScalar } from "./frontmatter.ts";
@@ -70,16 +71,49 @@ export function nextRun(schedule: Schedule, now: Date): Date {
   return candidate > now ? candidate : scheduledOn(now, ahead + period(schedule), schedule);
 }
 
-export function loadTasks(vault: Vault): ShadowTask[] {
-  const folder = tasksDir(vault);
-  if (!existsSync(folder)) return [];
-  return readdirSync(folder)
-    .filter((name) => name.endsWith(".md") && !name.startsWith("."))
-    .sort()
-    .map((name) => parseTask(join(folder, name)));
+/** A task file that can't be used: which one, and what is wrong with it. */
+export interface TaskProblem {
+  file: string;
+  message: string;
 }
 
-/** Write `tasks/<id>.md`; returns its path. */
+export interface TasksReport {
+  tasks: ShadowTask[];
+  problems: TaskProblem[];
+}
+
+/**
+ * Every shadow task in `tasks/`. A file that can't be used is reported with what is wrong, never
+ * thrown: one typo must not stop the others (the evening review among them) from running.
+ */
+export function loadTasksReport(vault: Vault): TasksReport {
+  const folder = tasksDir(vault);
+  const report: TasksReport = { tasks: [], problems: [] };
+  if (!existsSync(folder)) return report;
+  let names: string[];
+  try {
+    names = readdirSync(folder);
+  } catch (error) {
+    report.problems.push({ file: folder, message: errorMessage(error) });
+    return report;
+  }
+  for (const name of names.filter((name) => name.endsWith(".md") && !name.startsWith(".")).sort()) {
+    const file = join(folder, name);
+    try {
+      report.tasks.push(parseTask(file));
+    } catch (error) {
+      report.problems.push({ file, message: errorMessage(error) });
+    }
+  }
+  return report;
+}
+
+/** The shadow tasks that can be used (`loadTasksReport` also says what is wrong with the others). */
+export function loadTasks(vault: Vault): ShadowTask[] {
+  return loadTasksReport(vault).tasks;
+}
+
+/** Write `tasks/<id>.md` whole (written aside, then renamed into place); returns its path. */
 export function saveTask(vault: Vault, task: ShadowTask): string {
   if (!/^[^./\\][^/\\]*$/.test(task.id)) throw new AvanzelError(`"${task.id}" cannot be a task file name.`);
   const folder = tasksDir(vault);
@@ -97,7 +131,13 @@ export function saveTask(vault: Vault, task: ShadowTask): string {
     "",
     `${task.instructions.trim()}\n`,
   ].join("\n");
-  writeFileSync(path, text, "utf8");
+  const partial = join(folder, `.${task.id}.md.${randomUUID()}.tmp`);
+  try {
+    writeFileSync(partial, text, { encoding: "utf8", flag: "wx" });
+    renameSync(partial, path);
+  } finally {
+    rmSync(partial, { force: true });
+  }
   return path;
 }
 
@@ -120,7 +160,7 @@ function tasksDir(vault: Vault): string {
 
 function parseTask(path: string): ShadowTask {
   const fail = (problem: string): never => {
-    throw new AvanzelError(`${path}: ${problem}`);
+    throw new AvanzelError(problem);
   };
   let text = readFileSync(path, "utf8").replace(/\r\n/g, "\n");
   if (text.endsWith("\n---")) text += "\n";
@@ -150,6 +190,10 @@ function parseTask(path: string): ShadowTask {
     enabled: enabled === "true",
     instructions: body.trim(),
   };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function isTaskKind(kind: string): kind is TaskKind {
