@@ -234,7 +234,7 @@ function CheckStatus({ name, status }: { name: string; status: AgentStatus }) {
     case "checking":
       return (
         <Row gap={6}>
-          <Spinner size="small" label="Checking" />
+          <Spinner size="small" />
           <Text variant="footnote" tone="secondary" as="span">Checking…</Text>
         </Row>
       );
