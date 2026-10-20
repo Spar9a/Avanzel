@@ -89,7 +89,12 @@ export async function windowFor(app: ElectronApplication, name: string): Promise
 export async function snap(page: Page, name: string): Promise<void> {
   mkdirSync(shots, { recursive: true });
   await page.waitForTimeout(350); // let the appear animation finish
-  await page.screenshot({ path: path.join(shots, `${name}.png`), omitBackground: true });
+  try {
+    await page.screenshot({ path: path.join(shots, `${name}.png`), omitBackground: true, timeout: 5_000 });
+  } catch (error) {
+    // A picture for people, not an assertion: a hung frame is a warning, not a failed test.
+    console.warn(`snap ${name}: ${String(error).split("\n")[0]}`);
+  }
 }
 
 export function read(root: string, rel: string): string {
