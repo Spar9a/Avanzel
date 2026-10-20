@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { AvanzelError } from "../../src/types.ts";
 import { ONNX_RESAMPLE_RATES, resampleTo16k } from "../../src/voice/resample.ts";
-import { withoutPath } from "./helpers.ts";
+import { tempDir, withoutPath } from "./helpers.ts";
 
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
 
@@ -70,5 +71,22 @@ describe("resampleTo16k", () => {
     const resampling = resampleTo16k(sines(96000, 0.1, [1000, 0.5]), 96000);
     await expect(resampling).rejects.toThrow(AvanzelError);
     await expect(resampling).rejects.toThrow(/96000 Hz needs ffmpeg/);
+  });
+
+  it("tries a resampler again after it failed to load", async () => {
+    vi.resetModules(); // a cache of its own, so no other test has loaded the 8 kHz resampler already
+    const { resampleTo16k: fresh } = await import("../../src/voice/resample.ts");
+    const assets = tempDir();
+    vi.stubEnv("AVANZEL_ASSETS", assets);
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    const asset = join(assets, "resample_8_16.onnx");
+    writeFileSync(asset, "not a model");
+    const samples = sines(8000, 1, [1000, 0.5]);
+    await expect(fresh(samples, 8000)).rejects.toThrow();
+
+    copyFileSync(new URL("../../assets/resample_8_16.onnx", import.meta.url), asset);
+    expect(await fresh(samples, 8000)).toHaveLength(16000);
   });
 });

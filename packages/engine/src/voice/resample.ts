@@ -31,6 +31,7 @@ function resampler(rate: number): Promise<InferenceSession> {
   if (!session) {
     session = InferenceSession.create(readFileSync(join(assetsDir(), `resample_${Math.floor(rate / 1000)}_16.onnx`)), SESSION_OPTIONS);
     sessions.set(rate, session);
+    session.catch(() => sessions.delete(rate)); // a failed load is not kept, so a later call tries again
   }
   return session;
 }
