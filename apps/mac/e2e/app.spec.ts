@@ -228,10 +228,12 @@ test("the evening review files the inbox and writes a digest", async () => {
   await app.close();
 });
 
-test("a scheduled evening review with nothing to file says so", async () => {
+test("an evening review that comes due with nothing to file says so", async () => {
   const library = await makeLibrary();
+  // Last checked two days ago (as an older build kept it in the library; carried over at launch): due at once.
+  const checked = new Date(Date.now() - 2 * 86_400_000).toISOString();
+  writeFileSync(path.join(library, ".avanzel", "state.json"), JSON.stringify({ checked: { "evening-review": checked }, ran: {} }));
   const app = await launch({ AVANZEL_LIBRARY: library });
-  await call(app, "runTask", "evening-review", true);
   await call(app, "idleForTests");
   expect(await call(app, "notificationsForTests")).toContainEqual({ title: "Evening review", body: "Inbox was empty." });
   await app.close();

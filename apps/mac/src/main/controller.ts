@@ -1319,7 +1319,7 @@ export class Controller {
       (text, at) => lastDue(byText.get(text) ?? parseSchedule(text), at),
     );
     if (baseline.length) this.writeRunState(vault, markChecked(state, baseline, now));
-    for (const id of due) void this.runTask(id, true);
+    for (const id of due) void this.runTask(id);
     this.refreshMenu();
   }
 
@@ -1336,8 +1336,8 @@ export class Controller {
     return this.snapshot();
   }
 
-  /** Run a shadow task now: by hand (the menu, Run now), or because it is due (`scheduled`). */
-  async runTask(id: string, scheduled = false): Promise<SettingsSnapshot> {
+  /** Run a shadow task now: by hand (the menu, Run now), or because it is due (`tick`). */
+  async runTask(id: string): Promise<SettingsSnapshot> {
     const vault = this.vault;
     if (!vault || this.running.has(id)) return this.snapshot();
     const task = this.safeTasks(vault).find((t) => t.id === id);
@@ -1345,7 +1345,7 @@ export class Controller {
     this.writeRunState(vault, markRan(this.readRunState(vault), id, new Date()));
     this.running.add(id);
     this.broadcast();
-    void this.enqueue(() => this.executeTask(task, scheduled)).finally(() => {
+    void this.enqueue(() => this.executeTask(task)).finally(() => {
       this.running.delete(id);
       this.recent = this.vault ? recentFromLog(this.vault.root) : [];
       this.broadcast();
@@ -1365,7 +1365,7 @@ export class Controller {
     };
   }
 
-  private async executeTask(task: ShadowTask, scheduled: boolean): Promise<void> {
+  private async executeTask(task: ShadowTask): Promise<void> {
     const agent = this.agentName(task.agent);
     try {
       if (task.kind === "evening-review") {
