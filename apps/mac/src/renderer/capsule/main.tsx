@@ -117,6 +117,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
           <Close />
           <div className="row"><span className="spin" />Filing with {state.agent}…</div>
           <p className="said">“{state.text}”</p>
+          {state.detail && <p className="detail">{state.detail}</p>}
           <div className="foot">
             <span>{state.transcribedIn === null ? "Typed note" : `Transcribed on this Mac in ${state.transcribedIn.toFixed(1)} seconds`}</span>
             {state.canEdit && <button className="btn" onClick={() => api.edit()}>Edit</button>}
@@ -157,6 +158,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
             </div>
           )}
           {state.text && <p className="said">“{state.text}”</p>}
+          {state.detail && <p className="detail">{state.detail}</p>}
           <div className="foot"><span>{state.note}</span></div>
         </div>
       );

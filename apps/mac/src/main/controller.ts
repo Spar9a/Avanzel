@@ -20,6 +20,7 @@ import {
   WAITING,
   downloadModel,
   ensureDefaultTasks,
+  errorLine,
   formatSchedule,
   harnesses as listHarnesses,
   lastDue,
@@ -105,12 +106,21 @@ interface FilingJob {
   edited: boolean;
   /** The editor's text after Edit, as the owner types it: what `keepEdit` saves. */
   draft?: string;
+  /** A line under the words on the filing card, e.g. why the recording itself wasn't kept. */
+  detail?: string;
   outcome?: FileOutcome;
   pages?: FiledPage[];
 }
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const lastLines = (text: string, n = 3) => text.trim().split("\n").filter(Boolean).slice(-n).join("\n");
+
+/** What an evening review says of the captures it couldn't file; when it filed none, why the first one wasn't (say, the agent can't start). */
+function notFiled(failed: readonly FileOutcome[], filed: number): string {
+  const still = `${failed.length} couldn't be filed and are still in the inbox.`;
+  const why = filed ? "" : errorLine(failed[0]?.error ?? "");
+  return why ? `${why}\n${still}` : still;
+}
 
 export class Controller {
   private readonly store: SettingsStore;
@@ -554,19 +564,19 @@ export class Controller {
     const now = new Date();
     try {
       const samples = process.env.AVANZEL_FAKE_AUDIO ? await this.fakeAudio(process.env.AVANZEL_FAKE_AUDIO) : received;
-      const audioPath = vault.newAudioPath(now);
+      const { audioPath, unkept } = this.claimRecording(vault, now);
       let text = "";
       let engine = "";
       let seconds: number | null = null;
       if (samples.length >= 16000 * 0.3) {
-        writeWav(audioPath, samples, 16000);
+        if (audioPath) writeWav(audioPath, samples, 16000);
         const started = performance.now();
         const transcript = await this.transcribe(samples);
         seconds = (performance.now() - started) / 1000;
         text = transcript.text.trim();
         engine = transcript.engine;
       }
-      if (!text) rmSync(audioPath, { force: true });
+      if (!text && audioPath) rmSync(audioPath, { force: true });
 
       if (recording.mode === "comment" && recording.shot) {
         (await this.librarian()).captureScreen({
@@ -576,7 +586,14 @@ export class Controller {
           context: recording.shot.context,
         });
         this.setCapsule(
-          { kind: "saved", text, thumbnail: recording.shot.thumbnail, context: recording.shot.context, note: "Saved to your inbox for tonight's review" },
+          {
+            kind: "saved",
+            text,
+            thumbnail: recording.shot.thumbnail,
+            context: recording.shot.context,
+            note: "Saved to your inbox for tonight's review",
+            ...(text && unkept ? { detail: unkept } : {}),
+          },
           5000,
         );
         return;
@@ -585,9 +602,21 @@ export class Controller {
         return this.fail("No speech recognized", "If you did speak, check the microphone in Settings → Voice.");
       }
       const capture = vault.newCapture(text, { source: "voice", audio: audioPath, transcriber: engine, now });
-      this.afterCapture(capture.path, text, seconds);
+      this.afterCapture(capture.path, text, seconds, unkept);
     } catch (error) {
       this.fail(error instanceof AvanzelError ? error.message : "Couldn't transcribe that", error instanceof AvanzelError ? undefined : errorMessage(error));
+    }
+  }
+
+  /**
+   * A fresh path in raw/audio/ for the recording. When the library refuses one (say, a link on the
+   * way), none, and why (`unkept`): the words are then saved without their recording, not lost with it.
+   */
+  private claimRecording(vault: Vault, now: Date): { audioPath: string | null; unkept?: string } {
+    try {
+      return { audioPath: vault.newAudioPath(now) };
+    } catch (error) {
+      return { audioPath: null, unkept: `Only your words were kept, not the recording. ${errorMessage(error)}` };
     }
   }
 
@@ -605,12 +634,13 @@ export class Controller {
 
   // ---------------------------------------------------------------- filing
 
-  private afterCapture(capturePath: string, text: string, transcribedIn: number | null): void {
+  /** `detail`: a line the capsule shows under the words, e.g. why the recording itself wasn't kept. */
+  private afterCapture(capturePath: string, text: string, transcribedIn: number | null, detail?: string): void {
     if (this.store.get().fileMode === "evening") {
-      this.setCapsule({ kind: "saved", text, note: "Saved to your inbox for tonight's review" }, 4000);
+      this.setCapsule({ kind: "saved", text, note: "Saved to your inbox for tonight's review", ...(detail ? { detail } : {}) }, 4000);
       return;
     }
-    this.beginFiling({ capturePath, text, transcribedIn, agent: this.agentName(), abort: new AbortController(), edited: false });
+    this.beginFiling({ capturePath, text, transcribedIn, agent: this.agentName(), abort: new AbortController(), edited: false, detail });
   }
 
   /** Filing starts right away; Edit can stop it until it ends. */
@@ -621,7 +651,14 @@ export class Controller {
 
   private showFiling(job: FilingJob): void {
     this.job = job;
-    this.setCapsule({ kind: "filing", text: job.text, agent: job.agent, transcribedIn: job.transcribedIn, canEdit: true });
+    this.setCapsule({
+      kind: "filing",
+      text: job.text,
+      agent: job.agent,
+      transcribedIn: job.transcribedIn,
+      canEdit: true,
+      ...(job.detail ? { detail: job.detail } : {}),
+    });
   }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
@@ -955,9 +992,9 @@ export class Controller {
   async ask(question: string): Promise<AskResult> {
     const agent = this.agentName();
     const started = performance.now();
+    const win = this.askWindow; // the window that asked, even once another one opens
     // The engine's messages go to the Ask window as they are, except its waiting one: that names no run, and here it is usually a filing.
     const progress = (message: string) => {
-      const win = this.askWindow;
       if (!win || win.isDestroyed()) return;
       win.webContents.send("ask:progress", message === WAITING ? "Waiting for the filing in progress to finish…" : message);
     };
@@ -1262,17 +1299,17 @@ export class Controller {
         const leave = (capturePath: string) => this.editing.has(capturePath);
         const result = await this.withRun(async (signal) =>
           (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions, signal, leave }));
-        const filed = result.outcomes.filter((o) => o.ok).length;
         if (!result.outcomes.length) {
           this.notify(task.name, "Inbox was empty.");
           return;
         }
         this.lastEveningCommits = result.commits;
-        const failed = result.outcomes.length - filed;
+        const failed = result.outcomes.filter((o) => !o.ok);
+        const filed = result.outcomes.length - failed.length;
         const digest = result.digestPath;
         this.notify(
           `${task.name}: ${filed} ${filed === 1 ? "thing" : "things"} filed`,
-          failed ? `${failed} couldn't be filed and are still in the inbox.` : `${agent} sorted today's inbox. Click to read the summary.`,
+          failed.length ? notFiled(failed, filed) : `${agent} sorted today's inbox. Click to read the summary.`,
           digest ? () => this.openPage(path.relative(this.requireVault().root, digest)) : undefined,
         );
       } else if (task.kind === "review") {

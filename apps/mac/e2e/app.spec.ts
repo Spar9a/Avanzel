@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { copyFileSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { call, capsuleKind, launch, makeLibrary, read, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
+import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
+import { call, capsuleKind, filesUnder, launch, makeLibrary, read, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
 
 const inbox = (root: string) => readdirSync(path.join(root, "inbox")).filter((n) => !n.startsWith("."));
 const archived = (root: string) => {
@@ -93,6 +95,49 @@ test("a screen capture with a spoken comment waits in the inbox with its screens
   await app.close();
 });
 
+test("words whose recording the library won't keep are saved without it, and the capsule says why", async () => {
+  const library = await makeLibrary();
+  const outside = mkdtempSync(path.join(tmpdir(), "avz-e2e-outside-"));
+  mkdirSync(path.join(library, "raw", "audio"));
+  symlinkSync(outside, path.join(library, "raw", "audio", String(new Date().getFullYear())));
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Water the basil every morning",
+    AVANZEL_FAKE_SCREEN: screenshotFixture(),
+    AVANZEL_FAKE_FRONT_APP: "Safari|Growing basil|https://example.com/basil",
+    FAKE_AGENT_DELAY_MS: "3000", // the filing card stays up long enough to read
+  });
+  const capsule = await windowFor(app, "capsule");
+  const note = capsule.getByText(/^Only your words were kept, not the recording\./);
+  // A dictation: filed without its recording.
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+  await expect(note).toBeVisible({ timeout: 30_000 });
+  await expect(note).toContainText("raw/audio/"); // why: the link on the way
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  const [filed, ...others] = archived(library);
+  expect(others).toEqual([]);
+  expect(readFileSync(filed!, "utf8")).toContain("Water the basil every morning");
+  expect(readFileSync(filed!, "utf8")).not.toContain("audio:");
+  // A screen capture's spoken comment: saved with its screenshot, without its recording.
+  await call(app, "toggleCapture");
+  await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("listening");
+  await call(app, "toggleCapture");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
+  await expect(note).toBeVisible();
+  const [name] = inbox(library);
+  const comment = read(library, `inbox/${name}`);
+  expect(comment).toContain("source: screen");
+  expect(comment).toContain("Water the basil every morning");
+  expect(comment).toMatch(/attachments: \[?raw\/attachments\//);
+  expect(comment).not.toContain("audio:");
+  // No recording anywhere, in the library or where the link leads.
+  expect(filesUnder(library, "raw").filter((rel) => !rel.endsWith(".md") && !rel.endsWith(".png"))).toEqual([]);
+  expect(readdirSync(outside)).toEqual([]);
+  await app.close();
+});
+
 test("typing a thought files it", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
@@ -168,6 +213,24 @@ test("a scheduled evening review with nothing to file says so", async () => {
   await call(app, "runTask", "evening-review", true);
   await call(app, "idleForTests");
   expect(await call(app, "notificationsForTests")).toContainEqual({ title: "Evening review", body: "Inbox was empty." });
+  await app.close();
+});
+
+test("an evening review that files nothing says why", async () => {
+  const library = await makeLibrary();
+  const agent = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-agent-")), "agent");
+  writeFileSync(agent, "#!/avanzel/no/such/interpreter\n", { mode: 0o755 }); // picked (it is executable), but it cannot start
+  saveSettings(library, { ...loadSettings(library), harnesses: { fake: { name: "fake", headless: [agent, "{prompt}"], interactive: [] } } });
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "setApp", { fileMode: "evening" });
+  await call(app, "submitQuick", "first thought");
+  await call(app, "runTask", "evening-review");
+  await call(app, "idleForTests");
+  expect(await call(app, "notificationsForTests")).toContainEqual({
+    title: "Evening review: 0 things filed",
+    body: expect.stringContaining(`Could not start \`${agent}\``),
+  });
+  expect(inbox(library)).toHaveLength(1);
   await app.close();
 });
 
