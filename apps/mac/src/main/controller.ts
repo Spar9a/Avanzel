@@ -280,6 +280,7 @@ export class Controller {
     if (action === "ask") return this.openAsk();
     if (action === "settings") return this.showSettings();
     if (action === "open-library") return this.openLibraryFolder();
+    if (action === "open-inbox" && this.vault) return void shell.openPath(this.vault.inbox);
     if (action === "undo-review") return void this.undoEveningReview();
     if (action === "quit") return app.quit();
     if (action.startsWith("open:")) return this.openPage(action.slice(5));

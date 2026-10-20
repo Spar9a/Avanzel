@@ -27,16 +27,32 @@ const labels = (items: ReturnType<typeof buildMenuModel>) =>
   items.flatMap((item) => (item.type === "separator" ? ["--"] : [item.label]));
 
 describe("tray menu", () => {
-  it("leads with the inbox count and the next shadow task", () => {
+  it("leads with the inbox count, which opens the inbox, and the next shadow task under it", () => {
     const [head] = buildMenuModel(input(), now);
-    expect(head).toMatchObject({ type: "header", label: "Avanzel" });
-    expect(head && "sublabel" in head && head.sublabel).toBe("2 notes in the inbox. Next: Evening review at 21:00.");
+    expect(head).toEqual({ type: "item", label: "2 notes in the inbox", action: "open-inbox", sublabel: "Next: Evening review at 21:00" });
+  });
+
+  it("counts a single note, and says nothing of the next task when none is on", () => {
+    const tasks = input().tasks.map((task) => ({ ...task, enabled: false, at: null }));
+    const [head] = buildMenuModel(input({ inbox: 1, tasks }), now);
+    expect(head).toEqual({ type: "item", label: "1 note in the inbox", action: "open-inbox" });
+  });
+
+  it("titles Recently filed and Shadow tasks with section headers", () => {
+    const headers = buildMenuModel(input(), now).filter((item) => item.type === "header");
+    expect(headers).toEqual([{ type: "header", label: "Recently filed" }, { type: "header", label: "Shadow tasks" }]);
+  });
+
+  it("keeps sublabels off headers, with or without a library", () => {
+    for (const menu of [buildMenuModel(input({ undoableReview: true }), now), buildMenuModel(input({ libraryReady: false }), now)]) {
+      expect(menu.filter((item) => item.type === "header" && "sublabel" in item)).toEqual([]);
+    }
   });
 
   it("offers the three captures with their shortcuts, recently filed pages and tasks", () => {
     const items = buildMenuModel(input(), now);
     expect(labels(items)).toEqual([
-      "Avanzel", "--",
+      "2 notes in the inbox", "--",
       "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "--",
       "Recently filed", "Launch the indie game dev podcast", "Маленький сад на балконе", "--",
       "Shadow tasks", "Evening review", "Weekly review", "--",
@@ -55,22 +71,21 @@ describe("tray menu", () => {
 
   it("says an empty inbox plainly and offers undo after an evening review", () => {
     const items = buildMenuModel(input({ inbox: 0, undoableReview: true }), now);
-    const head = items[0];
-    expect(head && "sublabel" in head && head.sublabel).toBe("Inbox is empty. Next: Evening review at 21:00.");
+    expect(items[0]).toMatchObject({ label: "Inbox is empty", sublabel: "Next: Evening review at 21:00" });
     expect(labels(items)).toContain("Undo last evening review");
   });
 
   it("only offers setup when there is no library yet", () => {
-    expect(labels(buildMenuModel(input({ libraryReady: false }), now))).toEqual([
-      "Avanzel", "--", "Set up Avanzel…", "--", "Quit Avanzel",
-    ]);
+    const items = buildMenuModel(input({ libraryReady: false }), now);
+    expect(labels(items)).toEqual(["Set up Avanzel…", "--", "Quit Avanzel"]);
+    expect(items[0]).toEqual({ type: "item", label: "Set up Avanzel…", action: "settings", sublabel: "Choose a folder for your library to start." });
   });
 
   it("says why the library couldn't be opened", () => {
     const problem = "Avanzel couldn't open the library at /Users/me/Brain: EACCES: permission denied, mkdir '/Users/me/Brain/tasks'";
     const [head, ...rest] = buildMenuModel(input({ libraryReady: false, problem }), now);
-    expect(head).toEqual({ type: "header", label: "Avanzel", sublabel: problem });
-    expect(labels(rest)).toEqual(["--", "Set up Avanzel…", "--", "Quit Avanzel"]);
+    expect(head).toEqual({ type: "item", label: "Set up Avanzel…", action: "settings", sublabel: problem });
+    expect(labels(rest)).toEqual(["--", "Quit Avanzel"]);
   });
 
   it("puts an item's detail in parentheses, since macOS menus don't line up tabs", () => {

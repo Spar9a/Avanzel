@@ -35,9 +35,10 @@ export class MenuBar {
   update(input: MenuInput, now = new Date()): void {
     const template: MenuItemConstructorOptions[] = buildMenuModel(input, now).map((item) => {
       if (item.type === "separator") return { type: "separator" };
-      if (item.type === "header") return { label: item.label, sublabel: item.sublabel, enabled: false };
+      if (item.type === "header") return { type: "header", label: item.label }; // a macOS 14+ section header
       return {
         label: menuLabel(item),
+        sublabel: item.sublabel,
         accelerator: item.accelerator,
         registerAccelerator: false,
         enabled: item.enabled ?? true,

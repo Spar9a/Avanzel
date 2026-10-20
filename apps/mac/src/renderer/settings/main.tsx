@@ -31,8 +31,8 @@ function Icon({ pane }: { pane: Pane }) {
   return <span className="ico" style={{ ["--bg" as string]: ICONS[pane].bg }}><svg viewBox="0 0 14 14">{ICONS[pane].path}</svg></span>;
 }
 
-function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
-  return <input type="checkbox" role="switch" className="sw" aria-label={label} checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />;
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return <input type="checkbox" role="switch" className="sw" aria-label={label} checked={checked} onChange={(e) => onChange(e.target.checked)} />;
 }
 
 const KEY_CODES: Record<string, string> = {
@@ -343,7 +343,7 @@ function Tools() {
         <div className="grow" key={name}>
           <span className="app-ico" style={{ ["--bg" as string]: color }}><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="4" /></svg></span>
           <span className="fill">{name}</span>
-          <Toggle label={`${name} (not available yet)`} checked={false} disabled onChange={() => undefined} />
+          <span className="sub">Coming soon</span>
         </div>
       ))}
     </Group>

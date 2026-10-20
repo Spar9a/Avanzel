@@ -8,4 +8,4 @@ html, body { background: transparent; overflow: hidden; }
 .glyph { stroke: var(--text-2); stroke-width: 1.8; stroke-linecap: round; fill: none; flex: none; }
 .quick input { flex: 1; font-size: 20px; background: transparent; box-shadow: none; padding: 0; }
 .quick input:focus-visible { outline: none; }
-.hint { color: var(--text-3); font-size: 12px; flex: none; }
+.hint { color: var(--text-2); font-size: 12px; flex: none; }

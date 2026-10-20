@@ -21,10 +21,11 @@ export interface MenuInput {
   undoableReview: boolean;
 }
 
+// Anything the owner has to read is an enabled item: macOS draws disabled items too dim to read.
 export type MenuItemModel =
   | { type: "separator" }
-  | { type: "header"; label: string; sublabel?: string }
-  | { type: "item"; label: string; action: string; accelerator?: string; enabled?: boolean; shelf?: string; detail?: string };
+  | { type: "header"; label: string }
+  | { type: "item"; label: string; action: string; accelerator?: string; enabled?: boolean; shelf?: string; detail?: string; sublabel?: string };
 
 const SEP: MenuItemModel = { type: "separator" };
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -58,22 +59,19 @@ export function menuLabel(item: { label: string; detail?: string }): string {
 export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
   if (!input.libraryReady) {
     return [
-      { type: "header", label: "Avanzel", sublabel: input.problem || "Choose a folder for your library to start." },
-      SEP,
-      { type: "item", label: "Set up Avanzel…", action: "settings" },
+      { type: "item", label: "Set up Avanzel…", action: "settings", sublabel: input.problem || "Choose a folder for your library to start." },
       SEP,
       { type: "item", label: "Quit Avanzel", action: "quit", accelerator: "Cmd+Q" },
     ];
   }
 
-  const inbox = input.inbox === 0 ? "Inbox is empty." : input.inbox === 1 ? "1 note in the inbox." : `${input.inbox} notes in the inbox.`;
+  const inbox = input.inbox === 0 ? "Inbox is empty" : input.inbox === 1 ? "1 note in the inbox" : `${input.inbox} notes in the inbox`;
   const upcoming = input.tasks
     .filter((t): t is MenuTask & { at: Date } => t.enabled && t.at !== null)
     .sort((a, b) => a.at.getTime() - b.at.getTime())[0];
-  const sublabel = upcoming ? `${inbox} Next: ${upcoming.name} ${nextPhrase(upcoming.at, now)}.` : inbox;
 
   const items: MenuItemModel[] = [
-    { type: "header", label: "Avanzel", sublabel },
+    { type: "item", label: inbox, action: "open-inbox", sublabel: upcoming && `Next: ${upcoming.name} ${nextPhrase(upcoming.at, now)}` },
     SEP,
     {
       type: "item",
