@@ -107,6 +107,8 @@ export interface AskResult {
 export interface AvanzelBridge {
   capsule: {
     onState(callback: (state: CapsuleState) => void): () => void;
+    /** Listening now: send the current state again (one sent while the page loaded is lost). */
+    ready(): void;
     onCommand(callback: (command: "start" | "stop" | "cancel") => void): () => void;
     sendAudio(samples: Float32Array): Promise<void>;
     reportMicError(message: string): void;

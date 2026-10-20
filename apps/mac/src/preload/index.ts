@@ -11,6 +11,7 @@ function listen<T>(channel: string, callback: (value: T) => void): () => void {
 const bridge: AvanzelBridge = {
   capsule: {
     onState: (callback) => listen<CapsuleState>("capsule:state", callback),
+    ready: () => ipcRenderer.send("capsule:ready"),
     onCommand: (callback) => listen<"start" | "stop" | "cancel">("capsule:command", callback),
     sendAudio: (samples) => ipcRenderer.invoke("capsule:audio", samples),
     reportMicError: (message) => ipcRenderer.send("capsule:mic-error", message),

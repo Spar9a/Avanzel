@@ -2,7 +2,6 @@
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import type { AppSettings, TaskInfo } from "../shared/ipc.ts";
 import type { Controller } from "./controller.ts";
-import { openPrivacyPane } from "./permissions.ts";
 
 type Handler = (event: IpcMainInvokeEvent, ...args: never[]) => unknown;
 
@@ -12,6 +11,7 @@ export function registerIpc(controller: Controller): void {
     ipcMain.on(channel, fn as Parameters<typeof ipcMain.on>[1]);
 
   // capsule
+  on("capsule:ready", () => controller.capsuleReady());
   handle("capsule:audio", (_e, samples: Float32Array) => controller.onAudio(samples));
   on("capsule:mic-error", (_e, message: string) => controller.micError(message));
   on("capsule:interactive", (_e, interactive: boolean) => controller.setInteractive(interactive));
@@ -37,7 +37,7 @@ export function registerIpc(controller: Controller): void {
   handle("settings:run-task", (_e, id: string) => controller.runTask(id));
   handle("settings:request-permission", (_e, kind: "microphone" | "screen") => controller.requestPermission(kind));
   on("settings:open-library", () => controller.openLibraryFolder());
-  on("settings:open-privacy", (_e, pane: "microphone" | "screen") => openPrivacyPane(pane));
+  on("settings:open-privacy", (_e, pane: "microphone" | "screen") => void controller.openPrivacy(pane));
 
   // quick type & ask
   handle("quick:submit", (_e, text: string) => controller.submitQuick(text));

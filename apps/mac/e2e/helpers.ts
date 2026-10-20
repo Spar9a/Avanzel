@@ -1,7 +1,7 @@
 import { _electron as electron, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { Vault, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,9 +14,9 @@ const fakeAgent = path.join(repo, "packages", "engine", "test", "fake-agent.mjs"
 export const shots = path.join(appDir, "test-results", "shots");
 
 /** A library made by the engine itself, with the fake agent as its harness. */
-export async function makeLibrary(): Promise<string> {
+export async function makeLibrary({ git = false }: { git?: boolean } = {}): Promise<string> {
   const root = mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-"));
-  const vault = await Vault.init(root, { git: false });
+  const vault = await Vault.init(root, { git });
   const settings = loadSettings(vault.root);
   saveSettings(vault.root, {
     ...settings,
@@ -33,7 +33,8 @@ export function speechWav(text: string, voice = "Samantha"): string {
   return file;
 }
 
-export function screenshotFixture(): string {
+/** A small screenshot with a window on it, or (`blank`) the black picture macOS hands an app it doesn't let see the screen. */
+export function screenshotFixture({ blank = false }: { blank?: boolean } = {}): string {
   const file = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-png-")), "screen.png");
   const width = 320;
   const height = 200;
@@ -41,7 +42,8 @@ export function screenshotFixture(): string {
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 4;
-      rgba.set(y < 24 ? [226, 226, 230, 255] : x > 30 && x < 120 && y > 50 && y < 170 ? [44, 44, 48, 255] : [244, 244, 246, 255], i);
+      if (blank) rgba.set([0, 0, 0, 255], i);
+      else rgba.set(y < 24 ? [226, 226, 230, 255] : x > 30 && x < 120 && y > 50 && y < 170 ? [44, 44, 48, 255] : [244, 244, 246, 255], i);
     }
   }
   writeFileSync(file, encodePng(width, height, rgba));
@@ -96,4 +98,22 @@ export function read(root: string, rel: string): string {
 
 export function exists(root: string, rel: string): boolean {
   return existsSync(path.join(root, rel));
+}
+
+/** Every file under `rel` (none when it is missing), relative to it, hidden ones left out. */
+export function filesUnder(root: string, rel: string): string[] {
+  const dir = path.join(root, rel);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { recursive: true, encoding: "utf8" })
+    .filter((name) => !name.split("/").some((part) => part.startsWith(".")) && statSync(path.join(dir, name)).isFile())
+    .sort();
+}
+
+/** A scratch file path for the fake agent's FAKE_AGENT_ONCE (its first run stalls, later ones file). */
+export function onceMarker(): string {
+  return path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-once-")), "stalled");
+}
+
+export function gitOut(root: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd: root, encoding: "utf8" });
 }

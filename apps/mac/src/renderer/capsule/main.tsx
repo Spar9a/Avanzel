@@ -179,10 +179,14 @@ function App() {
   const { levels, push } = useLevels(listening, listening && state.fakeMic);
   const recorder = useRef(new Recorder((level) => push(level)));
 
-  useEffect(() => api.onState((next) => {
-    stateRef.current = next;
-    setState(next);
-  }), []);
+  useEffect(() => {
+    const off = api.onState((next) => {
+      stateRef.current = next;
+      setState(next);
+    });
+    api.ready();
+    return off;
+  }, []);
 
   useEffect(() => api.onCommand(async (command) => {
     const current = stateRef.current;

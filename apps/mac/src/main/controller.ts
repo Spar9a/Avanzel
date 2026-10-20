@@ -275,6 +275,11 @@ export class Controller {
     this.refreshMenu();
   }
 
+  /** The capsule page is listening: it may have missed the state sent while it loaded. */
+  capsuleReady(): void {
+    this.capsule.webContents.send("capsule:state", this.capsuleState);
+  }
+
   private scheduleHide(ms: number): void {
     this.hideTimer = setTimeout(() => {
       if (this.keepOpen) return this.scheduleHide(1500);
@@ -296,18 +301,15 @@ export class Controller {
   async toggleCapture(): Promise<void> {
     if (this.recording) return this.stopRecording();
     if (!(await this.readyToListen())) return;
+    const screen = permissionStatus("screen");
+    if (screen === "denied" || screen === "restricted") return this.cantSeeScreen();
     const vault = this.requireVault();
     if (this.capsule.isVisible()) this.setCapsule({ kind: "hidden" });
     await new Promise((r) => setTimeout(r, 80)); // let the capsule leave the screen before the shot
     try {
+      // Not asked yet: this capture is what makes macOS ask. Without the grant it comes back blank.
       const [image, context] = await Promise.all([captureDisplay(), this.screenContext()]);
-      if (looksBlank(image)) {
-        return this.fail(
-          "Avanzel can't see the screen yet",
-          "Allow Avanzel under System Settings → Privacy & Security → Screen Recording, then press the shortcut again.",
-          "open-screen-settings",
-        );
-      }
+      if (looksBlank(image)) return this.cantSeeScreen();
       const shotPath = vault.newAttachmentPath(new Date(), ".png");
       writeFileSync(shotPath, image.toPNG());
       const thumbnail = image.resize({ width: 208 }).toDataURL();
@@ -315,6 +317,15 @@ export class Controller {
     } catch (error) {
       this.fail("Couldn't capture the screen", errorMessage(error));
     }
+  }
+
+  /** macOS applies a Screen Recording grant only when the app starts again. */
+  private cantSeeScreen(): void {
+    this.fail(
+      "Avanzel can't see the screen yet",
+      "Allow Avanzel under System Settings → Privacy & Security → Screen Recording, then quit and reopen Avanzel.",
+      "open-screen-settings",
+    );
   }
 
   private async screenContext(): Promise<ScreenContext> {
@@ -341,7 +352,7 @@ export class Controller {
       this.fail(`Downloading the speech model${progress}`, "Parakeet runs on this Mac and is downloaded once (670 MB). Avanzel can listen as soon as it's ready.", "open-settings");
       return false;
     }
-    if (!process.env.AVANZEL_FAKE_AUDIO && !(await requestMicrophone())) {
+    if (!(await requestMicrophone())) {
       this.fail("Avanzel can't use the microphone", "Allow it under System Settings → Privacy & Security → Microphone.", "open-microphone-settings");
       return false;
     }
@@ -603,10 +614,19 @@ export class Controller {
   }
 
   openSettingsFor(action: string): void {
-    if (action === "open-microphone-settings") openPrivacyPane("microphone");
-    else if (action === "open-screen-settings") openPrivacyPane("screen");
+    if (action === "open-microphone-settings") void this.openPrivacy("microphone");
+    else if (action === "open-screen-settings") void this.openPrivacy("screen");
     else this.showSettings();
     this.setCapsule({ kind: "hidden" });
+  }
+
+  /**
+   * macOS lists an app under Screen Recording only once it has tried to capture the screen, and to
+   * Electron "never asked" looks the same as "denied": so try once first (nothing is kept).
+   */
+  async openPrivacy(kind: "microphone" | "screen"): Promise<void> {
+    if (kind === "screen" && permissionStatus("screen") !== "granted") await captureDisplay().catch(() => undefined);
+    openPrivacyPane(kind);
   }
 
   // ---------------------------------------------------------------- quick type & ask
