@@ -290,3 +290,33 @@ test("first launch without a library opens the welcome screen", async () => {
   await snap(settings, "settings-welcome");
   await app.close();
 });
+
+test("the speech engine that other [voice] settings or another library replace is released", async () => {
+  const library = await makeLibrary();
+  const other = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "capsuleStateForTests"); // the controller is up
+  // Engines that note their release stand in for the controller's current one, set by hand.
+  const releasedAfter = await app.evaluate(async (_electron, otherLibrary) => {
+    type Engine = { engine: string; transcribe(): Promise<unknown>; release(): Promise<void> };
+    const controller = (globalThis as unknown as {
+      __avanzel: { transcriber: Engine | null; transcriberKey: string; transcriberFor(voice: object): Promise<Engine>; openLibrary(root: string): void };
+    }).__avanzel;
+    const released: string[] = [];
+    const noting = (engine: string): Engine => ({ engine, transcribe: async () => ({ text: "", engine, seconds: 0 }), release: async () => void released.push(engine) });
+    const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600 };
+    const steps: string[][] = [];
+    controller.transcriber = noting("old settings");
+    controller.transcriberKey = "{}";
+    await controller.transcriberFor(voice); // other [voice] settings
+    steps.push([...released]);
+    controller.transcriber = noting("old library");
+    await controller.transcriberFor(voice); // the same settings again
+    steps.push([...released]);
+    controller.openLibrary(otherLibrary); // another library
+    steps.push([...released]);
+    return steps;
+  }, other);
+  expect(releasedAfter).toEqual([["old settings"], ["old settings"], ["old settings", "old library"]]);
+  await app.close();
+});

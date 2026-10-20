@@ -296,6 +296,7 @@ export class Controller {
   private dropTranscriber(): void {
     const old = this.transcriber;
     this.transcriber = null;
+    // Not awaited: release() waits for the transcriptions in progress, and `librarian()` would stall behind a long one.
     old?.release?.().catch((error: unknown) => console.error("speech model", error));
   }
 
