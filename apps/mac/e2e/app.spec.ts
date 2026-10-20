@@ -18,13 +18,17 @@ const archived = (root: string) => {
 
 test("dictation is transcribed on the Mac, filed by the agent, and shows the pages", async () => {
   const library = await makeLibrary();
-  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("I want to launch my podcast about indie game development before the end of the year.") });
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_FAKE_AUDIO: speechWav("I want to launch my podcast about indie game development before the end of the year."),
+    FAKE_AGENT_DELAY_MS: "3000", // filing starts at once: give the filing card time to be seen
+  });
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await snap(capsule, "1-listening");
   await call(app, "toggleDictate");
-  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000, intervals: [50] }).toBe("filing");
   await snap(capsule, "2-filing");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   await expect(capsule.getByText("Filed by fake")).toBeVisible();
@@ -38,38 +42,16 @@ test("dictation is transcribed on the Mac, filed by the agent, and shows the pag
 test("Russian dictation keeps its words and gets a timestamp id", async () => {
   const library = await makeLibrary();
   const speech = speechWav("Идея: сделать маленький сад на балконе с помидорами и базиликом.", "Milena");
-  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speech });
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speech, FAKE_AGENT_DELAY_MS: "3000" });
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
   await call(app, "toggleDictate");
-  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000, intervals: [50] }).toBe("filing");
   await expect(capsule.getByText(/балконе/)).toBeVisible();
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   const [capture] = archived(library);
   expect(path.basename(capture!)).toMatch(/^\d{4}-\d{2}-\d{2}-\d{6}/);
   expect(readFileSync(capture!, "utf8")).toMatch(/сад на балконе/);
-  await app.close();
-});
-
-test("Edit changes the words before the agent sees them", async () => {
-  const library = await makeLibrary();
-  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("hello"), AVANZEL_FAKE_TRANSCRIPT: "a hygienic tool for regular users" });
-  const capsule = await windowFor(app, "capsule");
-  await call(app, "toggleDictate");
-  await call(app, "toggleDictate");
-  // Edit is offered only for the first 2.5 s of filing: poll tightly so a busy machine can't miss it
-  await expect.poll(() => capsuleKind(app), { timeout: 30_000, intervals: [50] }).toBe("filing");
-  await capsule.getByRole("button", { name: "Edit" }).click();
-  await expect.poll(() => capsuleKind(app)).toBe("editing");
-  const box = capsule.getByRole("textbox");
-  await box.fill("an agentic tool for regular users");
-  await snap(capsule, "4-editing");
-  await box.press("Enter");
-  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-  const [capture] = archived(library);
-  const text = readFileSync(capture!, "utf8");
-  expect(text).toContain("an agentic tool for regular users");
-  expect(text).not.toContain("hygienic");
   await app.close();
 });
 

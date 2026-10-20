@@ -10,7 +10,7 @@ import {
   powerMonitor,
   shell,
 } from "electron";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import {
@@ -72,7 +72,8 @@ import {
 } from "./windows.ts";
 
 const MODEL_ID = "nemo-parakeet-tdt-0.6b-v3";
-const EDIT_GRACE_MS = 2500;
+// Quitting waits at most this long for stopped agent runs to finish their bookkeeping.
+const QUIT_WAIT_MS = 10_000;
 // How long a stopped recording's audio may take to arrive from the capsule (tests shorten it).
 const AUDIO_TIMEOUT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_AUDIO_TIMEOUT_MS)) || 15_000;
 const HARNESS_NAMES: Record<string, string> = {
@@ -94,7 +95,10 @@ interface FilingJob {
   text: string;
   transcribedIn: number | null;
   agent: string;
-  grace: NodeJS.Timeout | null;
+  /** Stops this filing's agent run: Edit, or quitting. */
+  abort: AbortController;
+  /** Edit stopped the run: what it did is taken back (`refile`), not shown. */
+  edited: boolean;
   outcome?: FileOutcome;
   pages?: FiledPage[];
 }
@@ -117,6 +121,11 @@ export class Controller {
   private hideTimer: NodeJS.Timeout | null = null;
   private keepOpen = false;
   private queue: Promise<unknown> = Promise.resolve();
+  /** Work in the queue that hasn't finished. */
+  private queued = 0;
+  /** Every agent run going on, by the controller that stops it. */
+  private runs = new Map<AbortController, Promise<unknown>>();
+  private quitting = false;
   private transcriber: Transcriber | null = null;
   private transcriberKey = "";
   private model: ModelStatus = { kind: "missing" };
@@ -154,6 +163,25 @@ export class Controller {
     powerMonitor.on("unlock-screen", () => this.tick());
     this.tick();
     if (!this.vault) this.showSettings();
+  }
+
+  /** Whether quitting now would cut an agent run, or work queued behind one, short. */
+  busy(): boolean {
+    return this.runs.size > 0 || this.queued > 0;
+  }
+
+  /**
+   * Before quitting: stop every agent run, then wait (at most QUIT_WAIT_MS) while the engine does
+   * its bookkeeping: protected files put back, what a run left committed, the capture kept in the
+   * inbox. Nothing new starts meanwhile.
+   */
+  async stopForQuit(): Promise<void> {
+    this.quitting = true;
+    for (const abort of this.runs.keys()) abort.abort();
+    let timer: NodeJS.Timeout | undefined;
+    const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, QUIT_WAIT_MS)));
+    await Promise.race([Promise.allSettled([this.queue, ...this.runs.values()]), waited]);
+    clearTimeout(timer);
   }
 
   private openLibrary(libraryPath: string | null): void {
@@ -545,28 +573,41 @@ export class Controller {
       this.setCapsule({ kind: "saved", text, note: "Saved to your inbox for tonight's review" }, 4000);
       return;
     }
-    this.beginFiling({ capturePath, text, transcribedIn, agent: this.agentName(), grace: null });
+    this.beginFiling({ capturePath, text, transcribedIn, agent: this.agentName(), abort: new AbortController(), edited: false });
   }
 
-  private beginFiling(job: FilingJob, graceMs = EDIT_GRACE_MS): void {
+  /** Filing starts right away; Edit can stop it until it ends. */
+  private beginFiling(job: FilingJob): void {
+    this.showFiling(job);
+    void this.enqueue(() => this.runFiling(job));
+  }
+
+  private showFiling(job: FilingJob): void {
     this.job = job;
-    this.setCapsule({ kind: "filing", text: job.text, agent: job.agent, transcribedIn: job.transcribedIn, canEdit: graceMs > 0 });
-    job.grace = setTimeout(() => {
-      job.grace = null;
-      if (this.job === job && this.capsuleState.kind === "filing") {
-        this.setCapsule({ kind: "filing", text: job.text, agent: job.agent, transcribedIn: job.transcribedIn, canEdit: false });
-      }
-      void this.enqueue(() => this.runFiling(job));
-    }, graceMs);
+    this.setCapsule({ kind: "filing", text: job.text, agent: job.agent, transcribedIn: job.transcribedIn, canEdit: true });
   }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
+    this.queued++;
     const run = this.queue.then(work, work);
-    this.queue = run.catch(() => undefined);
+    this.queue = run.catch(() => undefined).finally(() => this.queued--);
     return run;
   }
 
+  /** One agent run, stopped through `abort` by Edit or by quitting; once Avanzel is quitting, no run starts. */
+  private async withRun<T>(work: (signal: AbortSignal) => Promise<T>, abort = new AbortController()): Promise<T> {
+    if (this.quitting) abort.abort();
+    const running = work(abort.signal);
+    this.runs.set(abort, running);
+    try {
+      return await running;
+    } finally {
+      this.runs.delete(abort);
+    }
+  }
+
   private async runFiling(job: FilingJob): Promise<void> {
+    if (job.abort.signal.aborted) return; // Edit stopped it before its turn came
     if (!existsSync(job.capturePath)) {
       // Already filed meanwhile (e.g. by the evening review); nothing left to do.
       if (this.job === job && this.capsuleState.kind === "filing") this.setCapsule({ kind: "hidden" });
@@ -575,14 +616,16 @@ export class Controller {
     const started = performance.now();
     let outcome: FileOutcome | undefined;
     try {
-      [outcome] = await (await this.librarian()).file([job.capturePath]);
+      [outcome] = await this.withRun(async (signal) => (await this.librarian()).file([job.capturePath], { signal }), job.abort);
     } catch (error) {
+      if (job.edited || this.quitting) return;
       return this.filingFailed(job, errorMessage(error));
     }
-    const seconds = (performance.now() - started) / 1000;
-    if (!outcome || !outcome.ok) return this.filingFailed(job, outcome?.error || outcome?.message || "The agent stopped without filing.");
-    const vault = this.requireVault();
     job.outcome = outcome;
+    if (job.edited || this.quitting) return; // Edit takes back what this run did (`refile`)
+    const seconds = (performance.now() - started) / 1000;
+    if (!outcome || !outcome.ok) return this.filingFailed(job, outcome?.error || outcome?.message || "The agent stopped without filing.", outcome);
+    const vault = this.requireVault();
     job.pages = filedPages(vault.root, outcome.changes);
     this.recent = [...job.pages, ...this.recent.filter((p) => !job.pages?.some((q) => q.path === p.path))].slice(0, 3);
     if (this.job === job && this.capsuleState.kind === "filing") {
@@ -597,43 +640,108 @@ export class Controller {
     this.refreshMenu();
   }
 
-  private filingFailed(job: FilingJob, error: string): void {
-    const detail = `${lastLines(error)}\nThe note is still in your inbox; the evening review will try again.`;
+  private filingFailed(job: FilingJob, error: string, outcome?: FileOutcome): void {
+    const where = outcome?.savedOriginal
+      ? `Your words are kept in ${outcome.savedOriginal}; the inbox now holds the agent's version.`
+      : "The note is still in your inbox; the evening review will try again.";
+    const partial = outcome?.commit ? ` ${job.agent}'s partial edits are kept as their own commit in the library's history.` : "";
+    const detail = `${lastLines(error)}\n${where}${partial}`;
     if (this.job === job && this.capsuleState.kind === "filing") this.fail(`${job.agent} couldn't file this note`, detail);
     else this.notify("A note couldn't be filed", lastLines(error, 1));
     this.refreshMenu();
   }
 
+  /** Stops the agent at once and shows the words; Submit or Cancel then takes back what it did (`refile`). */
   edit(): void {
     const job = this.job;
-    if (!job || !job.grace) return;
-    clearTimeout(job.grace);
-    job.grace = null;
+    if (!job || job.edited || this.capsuleState.kind !== "filing") return;
+    job.edited = true;
+    job.abort.abort();
     this.setCapsule({ kind: "editing", text: job.text });
   }
 
   submitEdit(text: string): void {
     const job = this.job;
     if (!job || this.capsuleState.kind !== "editing") return;
-    const trimmed = text.trim();
-    if (!trimmed) return this.cancelEdit();
-    // A fresh capture, so its id (and every [[link]] to it) carries the corrected words.
-    const vault = this.requireVault();
-    const meta = captureMeta(job.capturePath);
-    const fresh = vault.newCapture(trimmed, {
-      source: meta.source,
-      audio: meta.audio ? path.join(vault.root, meta.audio) : null,
-      transcriber: meta.transcriber ?? null,
-      now: meta.created ?? new Date(),
-    });
-    rmSync(job.capturePath, { force: true });
-    this.beginFiling({ ...job, capturePath: fresh.path, text: trimmed, grace: null }, 0);
+    const words = text.trim();
+    if (!words) return this.cancelEdit();
+    this.refile(job, words);
   }
 
   cancelEdit(): void {
     const job = this.job;
     if (!job || this.capsuleState.kind !== "editing") return;
-    this.beginFiling({ ...job, grace: null }, 0);
+    this.refile(job, null);
+  }
+
+  /**
+   * After Edit: once the stopped run is over (queue order), undo the commit it made (its leftovers,
+   * or its filing if it finished first), then file the corrected `words` as a fresh capture, or
+   * (null) the capture as it was.
+   */
+  private refile(job: FilingJob, words: string | null): void {
+    const next: FilingJob = {
+      capturePath: job.capturePath,
+      text: words ?? job.text,
+      transcribedIn: job.transcribedIn,
+      agent: job.agent,
+      abort: new AbortController(),
+      edited: false,
+    };
+    this.showFiling(next);
+    void this.enqueue(async () => {
+      const problem = await this.takeBack(job); // first: undoing a finished filing puts the misheard capture back in the inbox
+      try {
+        next.capturePath = words === null ? job.capturePath : this.recapture(job, words);
+      } catch (error) {
+        return this.filingFailed(next, errorMessage(error));
+      }
+      if (problem === null) return this.runFiling(next);
+      if (this.job === next && this.capsuleState.kind === "filing") {
+        const waiting = existsSync(next.capturePath) ? " The note waits in your inbox for the evening review." : "";
+        this.fail("Couldn't take back the agent's first try", `${problem}${waiting}`);
+      }
+    });
+  }
+
+  /** Undo the commit a stopped run made (none without git or auto_commit, or when it changed nothing); null, or why it couldn't. */
+  private async takeBack(job: FilingJob): Promise<string | null> {
+    const commit = job.outcome?.commit;
+    if (!commit) return null;
+    try {
+      return (await (await this.librarian()).undo([commit])) === 1 ? null : "Git refused to undo it; see the library's history.";
+    } catch (error) {
+      return errorMessage(error);
+    }
+  }
+
+  /**
+   * The corrected words as a fresh capture, so its id (and every [[link]] to it) carries them, with
+   * the recording, transcriber and creation time of the misheard one. That one goes first (kept
+   * aside until the new one is written), so the id needs no "-2". Returns the new capture's path.
+   */
+  private recapture(job: FilingJob, words: string): string {
+    const vault = this.requireVault();
+    const old = job.capturePath;
+    const inInbox = existsSync(old);
+    // Filed meanwhile, it is in raw/: read what to keep from there, and leave it be.
+    const source = [old, vault.archivePath(old)].find((file) => existsSync(file));
+    const meta = source ? captureMeta(source) : { source: "text" };
+    const aside = path.join(path.dirname(old), `.${path.basename(old)}.editing`);
+    if (inInbox) renameSync(old, aside);
+    try {
+      const fresh = vault.newCapture(words, {
+        source: meta.source,
+        audio: meta.audio ? path.join(vault.root, meta.audio) : null,
+        transcriber: meta.transcriber ?? null,
+        now: meta.created ?? new Date(),
+      });
+      if (inInbox) rmSync(aside, { force: true });
+      return fresh.path;
+    } catch (error) {
+      if (inInbox) renameSync(aside, old);
+      throw error;
+    }
   }
 
   async undo(): Promise<void> {
@@ -732,7 +840,7 @@ export class Controller {
     const agent = this.agentName();
     const started = performance.now();
     try {
-      const outcome = await (await this.librarian()).ask(question, { save: false });
+      const outcome = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal }));
       const seconds = (performance.now() - started) / 1000;
       return outcome.result.ok
         ? { ok: true, answer: outcome.result.output, agent, seconds }
@@ -770,7 +878,7 @@ export class Controller {
   }
 
   private notify(title: string, body: string, onClick?: () => void): void {
-    if (!Notification.isSupported()) return;
+    if (this.quitting || !Notification.isSupported()) return;
     const note = new Notification({ title, body, silent: false });
     if (onClick) note.on("click", onClick);
     note.show();
@@ -1027,7 +1135,8 @@ export class Controller {
     const agent = this.agentName(task.agent);
     try {
       if (task.kind === "evening-review") {
-        const result = await (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions });
+        const result = await this.withRun(async (signal) =>
+          (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions, signal }));
         const filed = result.outcomes.filter((o) => o.ok).length;
         if (!result.outcomes.length) return;
         this.lastEveningCommits = result.commits;
@@ -1039,7 +1148,7 @@ export class Controller {
           digest ? () => this.openPage(path.relative(this.requireVault().root, digest)) : undefined,
         );
       } else if (task.kind === "review") {
-        const outcome = await (await this.librarian(task.agent)).review();
+        const outcome = await this.withRun(async (signal) => (await this.librarian(task.agent)).review({ signal }));
         const report = outcome.report;
         this.notify(
           outcome.result.ok ? `${task.name} is ready` : `${task.name} didn't finish`,

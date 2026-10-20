@@ -21,8 +21,8 @@ test("a second stop while stopping is ignored, so it never cuts the next dictati
     void controller.toggleDictate();
     void controller.toggleDictate();
   });
-  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
-  await call(app, "toggleDictate"); // the next thought, while the first one is filed
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toMatch(/^(filing|filed)$/); // its audio arrived
+  await call(app, "toggleDictate"); // the next thought, right away
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await new Promise((resolve) => setTimeout(resolve, WAIT_FOR_AUDIO_MS + 1000)); // nothing may fire meanwhile
   expect(await capsuleKind(app)).toBe("listening");

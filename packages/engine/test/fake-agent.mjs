@@ -15,8 +15,10 @@
 // goals/half.md, then never finishes) | link-report (a dangling link to $FAKE_AGENT_OUTSIDE where
 // the review report goes, and a reply) | link-year (raw/2026 links to $FAKE_AGENT_OUTSIDE; the
 // capture is tampered with) | hardlink-log (log.md becomes a hard link to $FAKE_AGENT_OUTSIDE;
-// skips its log line).
-// FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt}.
+// skips its log line) | slow-once (the first run — until the file $FAKE_AGENT_ONCE exists —
+// writes goals/half.md and a line in index.md, then never finishes; later runs file normally).
+// FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt, pid}.
+// FAKE_AGENT_DELAY_MS=<ms> waits that long before anything else (an agent that takes a moment).
 
 import {
   appendFileSync,
@@ -46,8 +48,10 @@ const task = (prompt.split("\n")[0] ?? "").replace(/^Avanzel task: /, "").trim()
 const root = process.cwd();
 
 if (process.env.FAKE_AGENT_RECORD) {
-  appendFileSync(process.env.FAKE_AGENT_RECORD, `${JSON.stringify({ argv, images, prompt })}\n`);
+  appendFileSync(process.env.FAKE_AGENT_RECORD, `${JSON.stringify({ argv, images, prompt, pid: process.pid })}\n`);
 }
+
+if (process.env.FAKE_AGENT_DELAY_MS) await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_AGENT_DELAY_MS)));
 
 // Synchronous writes, so nothing is lost when the process exits right after.
 const say = (text) => writeSync(1, text);
@@ -93,6 +97,16 @@ if (mode === "slow-messy") {
   // starts a page, then never finishes
   writeFileSync(join(root, "goals", "half.md"), "# Half done\n");
   await new Promise((resolve) => setTimeout(resolve, 30_000));
+}
+
+if (mode === "slow-once" && !existsSync(process.env.FAKE_AGENT_ONCE)) {
+  // gets halfway through its first run, then hangs until it is stopped
+  writeFileSync(process.env.FAKE_AGENT_ONCE, `${process.pid}\n`);
+  writeFileSync(join(root, "goals", "half.md"), "# Half done\n");
+  append("index.md", "- [[half]] — left by a stalled run\n");
+  await new Promise((resolve) => setTimeout(resolve, 60_000));
+  complain("gave up\n");
+  process.exit(3);
 }
 
 if (mode === "noop") {

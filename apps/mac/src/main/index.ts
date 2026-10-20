@@ -17,9 +17,18 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   let controller: Controller | null = null;
+  let stopping = false;
   app.on("second-instance", () => controller?.showSettings());
   app.on("window-all-closed", () => {
     // Stay in the menu bar when Settings or Ask close.
+  });
+  // An agent still running when Avanzel quits is stopped first, and its run's bookkeeping finished:
+  // otherwise it would go on editing the library unguarded, and its edits would never be undoable.
+  app.on("before-quit", (event) => {
+    if (stopping || !controller?.busy()) return;
+    stopping = true;
+    event.preventDefault();
+    void controller.stopForQuit().finally(() => app.quit());
   });
 
   app.whenReady().then(async () => {
