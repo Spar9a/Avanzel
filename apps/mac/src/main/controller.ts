@@ -58,10 +58,10 @@ import { frontContext } from "./front-app.ts";
 import { captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
+import { RunStateStore } from "./run-state.ts";
 import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { prettyAccelerator, registerShortcuts } from "./shortcuts.ts";
-import { RunStateStore } from "./run-state.ts";
 import { SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
 import {
