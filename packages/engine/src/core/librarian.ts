@@ -21,6 +21,7 @@ import {
   symlinkSync,
   unlinkSync,
   writeFileSync,
+  type Stats,
 } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { AvanzelError, type Transcriber } from "../types.ts";
@@ -40,6 +41,13 @@ const PROTECTED = [
   "AGENTS.md", "CLAUDE.md", ".avanzel/config.toml", "opencode.json", ".mcp.json",
   ".git/config", ".git/hooks", ".agents", ".claude", ".codex", ".cursor", ".gemini", ".opencode", "tasks",
 ];
+// The folders those lie in (.avanzel, .git): swapping one for a symlink would redirect what is inside.
+const PROTECTED_PARENTS = [
+  ...new Set(PROTECTED.flatMap((rel) => rel.split("/").slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join("/")))),
+];
+// What Avanzel itself writes to after a run (the capture, its archive, reports, the log line). Agents
+// may change what is in them, but swapping one for a symlink would make Avanzel write outside.
+const OWN_PATHS = ["inbox", "raw", "reviews", "log.md"];
 const WAITING = "Waiting for another Avanzel run on this library…";
 
 export interface FileOutcome {
@@ -184,6 +192,7 @@ export class Librarian {
       const outcomes = await this.#fileQueue(null, options);
       if (!outcomes.length) return { outcomes, digestPath: null, commits: [] };
       const now = this.clock();
+      await this.#commitOwnerChanges(`evening review ${localDate(now)}`);
       const digestPath = this.#newReportPath(`${localDate(now)}-evening`);
       writeFileSync(digestPath, digest(outcomes, now), { encoding: "utf8", flag: "wx" });
       this.vault.appendLog("review", `[[${stem(digestPath)}]]`, now);
@@ -270,6 +279,7 @@ export class Librarian {
     const root = this.vault.root;
     const now = this.clock();
     const captureId = stem(path);
+    await this.#commitOwnerChanges(`file ${captureId}`);
     const original = readFileSync(path);
     const archiveTarget = this.vault.archivePath(path, now);
     const archiveExisted = existsSync(archiveTarget);
@@ -310,6 +320,7 @@ export class Librarian {
     if (!question.trim()) throw new AvanzelError('Ask a question, e.g. "what are my goals this year?"');
     const now = this.clock();
     const answer = async (): Promise<AgentOutcome> => {
+      if (save) await this.#commitOwnerChanges("saving an answer");
       const before = snapshot(this.vault.root);
       const { result, guarded } = await this.#run(askPrompt(question, { save, now }), { write: save, signal });
       const changes = diff(before, snapshot(this.vault.root)).without(guarded);
@@ -329,6 +340,7 @@ export class Librarian {
     const now = this.clock();
     return this.vault.withLock(async () => {
       const report = this.#newReportPath(localDate(now));
+      await this.#commitOwnerChanges(`review ${stem(report)}`);
       const before = snapshot(this.vault.root);
       const { result, guarded } = await this.#run(reviewPrompt(this.vault.relativePath(report), now), { write: true, signal });
       if (result.ok && !existsSync(report) && result.output) {
@@ -372,6 +384,17 @@ export class Librarian {
 
   async #commit(message: string): Promise<string | null> {
     return this.settings.autoCommit ? gitops.commitAll(this.vault.root, message) : null;
+  }
+
+  /**
+   * Commit whatever is pending — the owner's own edits, captures and settings since the last
+   * commit — on its own, right before an agent run or the evening review's digest. The run's commit
+   * then holds only what the run changed (plus the archive and log), so undoing it never takes the
+   * owner's work along. This commit is never handed out for undo. What the owner changes while an
+   * agent is running still lands in that run's commit: an accepted gap, short of locking them out.
+   */
+  async #commitOwnerChanges(before: string): Promise<void> {
+    await this.#commit(`avanzel: owner's changes before ${before}`);
   }
 
   /** reviews/<name>.md, or <name>-2.md, <name>-3.md, … when taken. */
@@ -476,14 +499,17 @@ function restoreCapture(path: string, original: Buffer, archiveTarget: string | 
   return true;
 }
 
-/** Write `data` to `path` itself, never through a symlink an agent may have put there. */
+/**
+ * Write `data` to `path` itself, replacing a symlink an agent may have put at that name. (Used for
+ * the capture, in the inbox: unlike the protected paths, the inbox may be a symlink on purpose.)
+ */
 function rewrite(path: string, data: Buffer): void {
   if (lstatOrNull(path)) rmSync(path, { recursive: true, force: true });
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, data);
 }
 
-/** The protected paths as they are: file contents, symlinks (and their targets), folders. */
+/** The protected paths as they are, never looking through a symlink: files, symlinks (and where they point), folders. */
 interface ProtectedState {
   files: Map<string, Buffer>;
   links: Map<string, string>;
@@ -491,52 +517,106 @@ interface ProtectedState {
 }
 
 function protectedState(root: string): ProtectedState {
-  const files = new Map<string, Buffer>();
-  const links = new Map<string, string>();
-  for (const rel of PROTECTED) {
+  const state: ProtectedState = { files: new Map(), links: new Map(), dirs: new Set() };
+  const record = (rel: string, descend: boolean): void => {
     const path = join(root, rel);
     const stat = lstatOrNull(path);
-    if (stat?.isSymbolicLink()) links.set(rel, readlinkSync(path));
-    const found = stat?.isFile() ? [rel] : stat?.isDirectory() ? filesUnder(root, rel) : [];
-    for (const file of found) files.set(file, readFileSync(join(root, file)));
+    if (stat?.isSymbolicLink()) {
+      state.links.set(rel, readlinkSync(path));
+    } else if (stat?.isFile()) {
+      state.files.set(rel, readFileSync(path));
+    } else if (stat?.isDirectory()) {
+      state.dirs.add(rel);
+      if (descend) for (const name of readdirSync(path)) record(`${rel}/${name}`, true);
+    }
+  };
+  for (const rel of PROTECTED_PARENTS) record(rel, false);
+  for (const rel of PROTECTED) if (!behindLink(root, rel)) record(rel, true);
+  for (const rel of OWN_PATHS) {
+    const path = join(root, rel);
+    if (lstatOrNull(path)?.isSymbolicLink()) state.links.set(rel, readlinkSync(path)); // links only, never contents
   }
-  return { files, links, dirs: new Set(PROTECTED.filter((rel) => isDirectory(join(root, rel)))) };
+  return state;
 }
 
-/** Undo every change to the protected paths since `before`; returns the paths that were changed. */
+/**
+ * Undo every change to the protected paths since `before`; returns the paths that were changed.
+ * Symlinks go first, shallowest first: one an agent put anywhere on or under a protected path is
+ * removed (and one the owner had is put back) before anything is restored. Nothing is written or
+ * deleted through a symlink, or outside the library.
+ */
 function undoProtected(root: string, before: ProtectedState): string[] {
   const touched = new Set<string>();
-  // Symlinks first, so nothing is ever written through one an agent put in place of a protected path.
-  for (const rel of PROTECTED) {
+  for (const rel of byDepth(new Set([...before.links.keys(), ...protectedState(root).links.keys()]))) {
     const path = join(root, rel);
-    const link = isSymlink(path) ? readlinkSync(path) : undefined;
+    const link = lstatOrNull(path)?.isSymbolicLink() ? readlinkSync(path) : undefined;
     const original = before.links.get(rel);
     if (link === original) continue;
     touched.add(rel);
-    if (link !== undefined || (original !== undefined && lstatOrNull(path))) rmSync(path, { recursive: true, force: true });
-    if (original !== undefined) symlinkSync(original, path);
+    if (link !== undefined || (original !== undefined && lstatOrNull(path))) removeInside(root, rel);
+    if (original !== undefined && realFoldersTo(root, rel, true)) symlinkSync(original, path);
   }
-  const after = protectedState(root).files;
-  for (const rel of new Set([...before.files.keys(), ...after.keys()])) {
+  const after = protectedState(root);
+  for (const rel of new Set([...before.files.keys(), ...after.files.keys()])) {
     const original = before.files.get(rel);
-    if (before.links.has(rel) || (original && after.get(rel)?.equals(original))) continue;
+    if (original && after.files.get(rel)?.equals(original)) continue;
     touched.add(rel);
-    if (original) rewrite(join(root, rel), original);
-    else rmSync(join(root, rel), { recursive: true, force: true });
+    if (original) writeInside(root, rel, original);
+    else removeInside(root, rel);
   }
-  for (const rel of PROTECTED) {
-    const folder = join(root, rel);
-    if (!before.dirs.has(rel) && lstatOrNull(folder)?.isDirectory()) rmSync(folder, { recursive: true, force: true });
+  for (const rel of byDepth(after.dirs)) {
+    if (!before.dirs.has(rel)) removeInside(root, rel); // a folder the run created
   }
   return [...touched].sort();
 }
 
-/** Regular files (not symlinks) under `rel`, as vault-relative POSIX paths. */
-function filesUnder(root: string, rel: string): string[] {
-  return readdirSync(join(root, rel), { withFileTypes: true }).flatMap((entry) => {
-    const child = `${rel}/${entry.name}`;
-    return entry.isDirectory() ? filesUnder(root, child) : entry.isFile() ? [child] : [];
+/** Write `data` at `rel` itself, never through a symlink or outside the library (else not at all). */
+function writeInside(root: string, rel: string, data: Buffer): void {
+  if (!realFoldersTo(root, rel, true)) return;
+  const path = join(root, rel);
+  if (lstatOrNull(path)) rmSync(path, { recursive: true, force: true });
+  writeFileSync(path, data);
+}
+
+/** Remove `rel` itself (a symlink, not what it points to), never through a symlink or outside the library. */
+function removeInside(root: string, rel: string): void {
+  if (realFoldersTo(root, rel, false)) rmSync(join(root, rel), { recursive: true, force: true });
+}
+
+/**
+ * Whether every folder from the library root down to `rel` is a real folder inside the library,
+ * creating missing ones when asked — except `.git`: git takes a half-made `.git` for no repository
+ * at all and goes looking for one in the folders above the library.
+ */
+function realFoldersTo(root: string, rel: string, create: boolean): boolean {
+  const parts = rel.split("/").slice(0, -1);
+  for (let depth = 1; depth <= parts.length; depth++) {
+    const folder = join(root, ...parts.slice(0, depth));
+    const stat = lstatOrNull(folder);
+    if (stat === null) {
+      if (!create || (depth === 1 && parts[0] === ".git")) return false;
+      mkdirSync(folder);
+    } else if (!stat.isDirectory()) {
+      return false; // a symlink, or a file, on the way
+    }
+  }
+  const realRoot = realpathSync(root);
+  const realFolder = realpathSync(join(root, ...parts));
+  return realFolder === realRoot || realFolder.startsWith(`${realRoot}${sep}`);
+}
+
+/** Whether a folder between the library root and `rel` is a symlink (or no folder at all). */
+function behindLink(root: string, rel: string): boolean {
+  const parts = rel.split("/");
+  return parts.slice(0, -1).some((_, i) => {
+    const stat = lstatOrNull(join(root, ...parts.slice(0, i + 1)));
+    return stat !== null && !stat.isDirectory();
   });
+}
+
+/** Shallowest first, then by name. */
+function byDepth(paths: Iterable<string>): string[] {
+  return [...paths].sort((a, b) => a.split("/").length - b.split("/").length || (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function moveFile(from: string, to: string): void {
@@ -573,16 +653,12 @@ function ellipsize(text: string, max: number): string {
   return Array.from(text).length > max ? `${codePoints(text, max - 1)}…` : text;
 }
 
-function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
+function lstatOrNull(path: string): Stats | null {
   try {
     return lstatSync(path);
   } catch {
     return null;
   }
-}
-
-function isSymlink(path: string): boolean {
-  return lstatOrNull(path)?.isSymbolicLink() ?? false;
 }
 
 function isRegularFile(path: string): boolean {
@@ -592,14 +668,6 @@ function isRegularFile(path: string): boolean {
 function isFile(path: string): boolean {
   try {
     return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
   } catch {
     return false;
   }

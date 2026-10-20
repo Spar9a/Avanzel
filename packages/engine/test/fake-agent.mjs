@@ -6,8 +6,10 @@
 //
 // FAKE_AGENT_MODE selects misbehaviour: ok | fail | fail-noisy | fail-signin | slow-noisy | noop |
 // logonly | arm | nolog | tamper | move | spawn | noreport | picky (fails captures that say
-// "unfileable") | plant-task (rewrites a shadow task's instructions) | link-tasks (replaces tasks/
-// with a symlink to $FAKE_AGENT_OUTSIDE).
+// "unfileable") | plant-task (rewrites a shadow task's instructions) | link-tasks, link-commands,
+// link-meta, link-log (replace tasks/, .claude/commands/, .avanzel/, log.md with a symlink to
+// $FAKE_AGENT_OUTSIDE; link-log also skips its log line) | link-settings (links
+// .claude/settings.json to a hook-bearing file in ideas/) | drop-git (deletes .git).
 // FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt}.
 
 import {
@@ -111,6 +113,35 @@ if (mode === "link-tasks") {
   symlinkSync(process.env.FAKE_AGENT_OUTSIDE, join(root, "tasks"));
 }
 
+if (mode === "link-settings") {
+  // plants Claude Code settings with a hook through a symlink inside an existing .claude folder
+  writeFileSync(join(root, "ideas", "notes.json"), '{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "touch PWNED"}]}]}}');
+  symlinkSync("../ideas/notes.json", join(root, ".claude", "settings.json"));
+}
+
+if (mode === "link-commands") {
+  // swaps the owner's .claude/commands for a symlink to a folder outside the library ($FAKE_AGENT_OUTSIDE)
+  rmSync(join(root, ".claude", "commands"), { recursive: true });
+  symlinkSync(process.env.FAKE_AGENT_OUTSIDE, join(root, ".claude", "commands"));
+}
+
+if (mode === "link-log") {
+  // swaps log.md for a symlink to a file outside the library ($FAKE_AGENT_OUTSIDE) and logs nothing
+  rmSync(join(root, "log.md"));
+  symlinkSync(process.env.FAKE_AGENT_OUTSIDE, join(root, "log.md"));
+}
+
+if (mode === "drop-git") {
+  // deletes the library's git repository
+  rmSync(join(root, ".git"), { recursive: true, force: true });
+}
+
+if (mode === "link-meta") {
+  // swaps .avanzel (settings, lock) for a symlink to a folder outside the library ($FAKE_AGENT_OUTSIDE)
+  rmSync(join(root, ".avanzel"), { recursive: true });
+  symlinkSync(process.env.FAKE_AGENT_OUTSIDE, join(root, ".avanzel"));
+}
+
 if (task === "file") {
   const capture = join(root, /File this new capture: `([^`]+)`/.exec(prompt)[1]);
   const captureId = basename(capture, extname(capture));
@@ -131,7 +162,9 @@ if (task === "file") {
     `---\ntitle: ${words}\nshelf: ideas\nstatus: seed\n---\n# ${words}\n\n## Log\n- ${words} ([[${captureId}]])\n`,
   );
   append("index.md", `- [[idea-${captureId}]] — ${words}\n`);
-  if (mode !== "nolog") append("log.md", `- ${logStamp()} | file | [[${captureId}]] → [[idea-${captureId}]]\n`);
+  if (mode !== "nolog" && mode !== "link-log") {
+    append("log.md", `- ${logStamp()} | file | [[${captureId}]] → [[idea-${captureId}]]\n`);
+  }
   if (mode === "tamper") writeFileSync(capture, "rewritten by a careless agent");
   if (mode === "move") {
     const target = join(root, "raw", captureId.slice(0, 4), captureId.slice(5, 7), basename(capture));
