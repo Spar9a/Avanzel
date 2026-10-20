@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { call, capsuleKind, launch, makeLibrary, read, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
 
@@ -149,6 +149,21 @@ test("the evening review files the inbox and writes a digest", async () => {
   const reviews = readdirSync(path.join(library, "reviews")).filter((n) => n.endsWith("-evening.md"));
   expect(reviews).toHaveLength(1);
   expect(read(library, `reviews/${reviews[0]}`)).toContain("# Evening review");
+  await app.close();
+});
+
+test("the evening review transcribes a recording dropped into the inbox, with nothing dictated since launch", async () => {
+  const library = await makeLibrary();
+  copyFileSync(speechWav("Buy a new bicycle helmet before the summer trip."), path.join(library, "inbox", "Voice Memo 12.wav"));
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "runTask", "evening-review");
+  await call(app, "idleForTests");
+  const reviews = readdirSync(path.join(library, "reviews")).filter((n) => n.endsWith("-evening.md"));
+  expect(read(library, `reviews/${reviews[0]}`)).toContain("Filed 1 of 1 capture.");
+  expect(inbox(library)).toEqual([]);
+  const [capture] = archived(library);
+  expect(readFileSync(capture!, "utf8")).toContain("source: audio");
+  expect(readFileSync(capture!, "utf8")).toMatch(/bicycle helmet/i);
   await app.close();
 });
 

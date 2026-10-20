@@ -39,6 +39,7 @@ import {
   type Settings,
   type ShadowTask,
   type Transcriber,
+  type VoiceSettings,
 } from "@avanzel/engine";
 import type {
   AppSettings,
@@ -152,13 +153,18 @@ export class Controller {
   private openLibrary(libraryPath: string | null): void {
     this.vault = null;
     this.recent = [];
+    this.transcriber = null;
     if (!libraryPath) return;
     const vault = new Vault(libraryPath);
     if (!vault.exists()) return;
     this.vault = vault;
     ensureDefaultTasks(vault);
     this.recent = recentFromLog(vault.root);
-    this.transcriber = null;
+    try {
+      void this.transcriberFor(loadSettings(vault.root).voice);
+    } catch {
+      // a broken config.toml is reported by whatever needs the settings next
+    }
   }
 
   private requireVault(): Vault {
@@ -166,12 +172,30 @@ export class Controller {
     return this.vault;
   }
 
-  private librarian(harnessName?: string): Librarian {
+  /** Always with the speech-to-text engine: the evening review may find recordings in the inbox. */
+  private async librarian(harnessName?: string): Promise<Librarian> {
     const vault = this.requireVault();
-    return new Librarian(vault, loadSettings(vault.root), {
+    const settings = loadSettings(vault.root);
+    return new Librarian(vault, settings, {
       harnessName: harnessName && harnessName !== "auto" ? harnessName : undefined,
-      transcriber: this.transcriber ?? undefined,
+      transcriber: await this.transcriberFor(settings.voice),
     });
+  }
+
+  /**
+   * The engine the library's [voice] settings ask for, made again only when they change. Making one
+   * costs nothing (the model loads on first use); one the settings can't make reports why on use.
+   */
+  private async transcriberFor(voice: VoiceSettings): Promise<Transcriber> {
+    const key = JSON.stringify(voice);
+    if (!this.transcriber || key !== this.transcriberKey) {
+      this.transcriber = await makeTranscriber(voice, this.modelsDir).catch((error: unknown): Transcriber => ({
+        engine: "none",
+        transcribe: () => Promise.reject(error),
+      }));
+      this.transcriberKey = key;
+    }
+    return this.transcriber;
   }
 
   private agentName(harness?: string): string {
@@ -466,7 +490,7 @@ export class Controller {
       if (!text) rmSync(audioPath, { force: true });
 
       if (recording.mode === "comment" && recording.shot) {
-        this.librarian().captureScreen({
+        (await this.librarian()).captureScreen({
           image: recording.shot.path,
           comment: text,
           ...(text ? { audio: audioPath, transcriber: engine } : {}),
@@ -496,14 +520,7 @@ export class Controller {
   private async transcribe(samples: Float32Array): Promise<{ text: string; engine: string }> {
     const fake = process.env.AVANZEL_FAKE_TRANSCRIPT;
     if (fake !== undefined) return { text: fake, engine: "fake" };
-    const voice = loadSettings(this.requireVault().root).voice;
-    const key = JSON.stringify(voice);
-    let transcriber = this.transcriber;
-    if (!transcriber || key !== this.transcriberKey) {
-      transcriber = await makeTranscriber(voice, this.modelsDir);
-      this.transcriber = transcriber;
-      this.transcriberKey = key;
-    }
+    const transcriber = await this.transcriberFor(loadSettings(this.requireVault().root).voice);
     return transcriber.transcribe(samples, 16000);
   }
 
@@ -544,7 +561,7 @@ export class Controller {
     const started = performance.now();
     let outcome: FileOutcome | undefined;
     try {
-      [outcome] = await this.librarian().file([job.capturePath]);
+      [outcome] = await (await this.librarian()).file([job.capturePath]);
     } catch (error) {
       return this.filingFailed(job, errorMessage(error));
     }
@@ -609,7 +626,7 @@ export class Controller {
     const job = this.job;
     const commit = job?.outcome?.commit;
     if (!job || !commit) return;
-    const undone = await this.enqueue(async () => this.librarian().undo([commit]));
+    const undone = await this.enqueue(async () => (await this.librarian()).undo([commit]));
     this.recent = recentFromLog(this.requireVault().root);
     this.setCapsule(
       undone ? { kind: "saved", text: job.text, note: "Undone. The note is back in your inbox." } : { kind: "error", message: "Couldn't undo", detail: "Git refused the revert; see the library's history." },
@@ -701,7 +718,7 @@ export class Controller {
     const agent = this.agentName();
     const started = performance.now();
     try {
-      const outcome = await this.librarian().ask(question, { save: false });
+      const outcome = await (await this.librarian()).ask(question, { save: false });
       const seconds = (performance.now() - started) / 1000;
       return outcome.result.ok
         ? { ok: true, answer: outcome.result.output, agent, seconds }
@@ -996,7 +1013,7 @@ export class Controller {
     const agent = this.agentName(task.agent);
     try {
       if (task.kind === "evening-review") {
-        const result = await this.librarian(task.agent).eveningReview({ instructions: task.instructions });
+        const result = await (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions });
         const filed = result.outcomes.filter((o) => o.ok).length;
         if (!result.outcomes.length) return;
         this.lastEveningCommits = result.commits;
@@ -1008,7 +1025,7 @@ export class Controller {
           digest ? () => this.openPage(path.relative(this.requireVault().root, digest)) : undefined,
         );
       } else if (task.kind === "review") {
-        const outcome = await this.librarian(task.agent).review();
+        const outcome = await (await this.librarian(task.agent)).review();
         const report = outcome.report;
         this.notify(
           outcome.result.ok ? `${task.name} is ready` : `${task.name} didn't finish`,
@@ -1027,7 +1044,7 @@ export class Controller {
     const commits = this.lastEveningCommits;
     if (!commits.length) return;
     this.lastEveningCommits = [];
-    const undone = await this.enqueue(async () => this.librarian().undo(commits));
+    const undone = await this.enqueue(async () => (await this.librarian()).undo(commits));
     this.recent = this.vault ? recentFromLog(this.vault.root) : [];
     this.notify("Evening review undone", undone === commits.length ? "Everything it filed is back in the inbox." : `${undone} of ${commits.length} changes were undone; see the library's history.`);
     this.refreshMenu();
