@@ -1,9 +1,9 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AvanzelError } from "../../src/types.ts";
 import { CommandTranscriber } from "../../src/voice/command.ts";
-import { tempDir, wavBytes } from "./helpers.ts";
+import { tempDir, wavBytes, withoutPath } from "./helpers.ts";
 
 // A fake speech-to-text CLI: prints the WAV it was given, with messy whitespace.
 const DESCRIBE_WAV = `
@@ -43,6 +43,15 @@ describe("CommandTranscriber", () => {
     expect(transcript.seconds).toBe(0.5);
   });
 
+  it("passes a path with $ characters to the command unchanged", async () => {
+    const dir = join(tempDir(), "a$&b$$c"); // $&, $$ and the $' in the file name are all replacement patterns
+    mkdirSync(dir);
+    const path = join(dir, "x$'y.wav");
+    writeFileSync(path, wavBytes({ sampleRate: 16000, bits: 16, frames: Array.from({ length: 1600 }, () => [0]) }));
+    const echo = new CommandTranscriber([process.execPath, "-e", "process.stdout.write(process.argv[1])", "{audio}"]);
+    expect((await echo.transcribe(path)).text).toBe(path);
+  });
+
   it("converts other WAVs to 16 kHz mono PCM16 in a temporary file", async () => {
     const wav = wavFile("cd.wav", 44100, 16, Array.from({ length: 44100 }, () => [100, -100]));
     const transcript = await new CommandTranscriber(fake).transcribe(wav);
@@ -80,11 +89,7 @@ describe("CommandTranscriber", () => {
   it("needs ffmpeg for audio that is not WAV", async () => {
     const memo = join(tempDir(), "memo.m4a");
     writeFileSync(memo, "not really audio");
-    const saved = process.env.PATH;
-    process.env.PATH = tempDir();
-    onTestFinished(() => {
-      process.env.PATH = saved;
-    });
+    withoutPath();
     await expect(new CommandTranscriber(fake).transcribe(memo)).rejects.toThrow(/Install ffmpeg/);
   });
 });

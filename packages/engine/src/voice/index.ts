@@ -2,7 +2,7 @@
 import { join } from "node:path";
 import { AvanzelError, type Transcriber, type VoiceOptions } from "../types.ts";
 import { CommandTranscriber } from "./command.ts";
-import { locateModel, MissingModelError, modelFiles, VAD_MODEL } from "./models.ts";
+import { locateModel, MissingModelError, MODELS, modelFiles, VAD_MODEL } from "./models.ts";
 import { ParakeetTranscriber } from "./parakeet.ts";
 
 export { CommandTranscriber } from "./command.ts";
@@ -21,8 +21,8 @@ export { type ParakeetOptions, ParakeetTranscriber } from "./parakeet.ts";
 export { segmentSpeech } from "./vad.ts";
 export { readWav, resampleLinear, type WavAudio, writeWav } from "./wav.ts";
 
-/** Speech models the onnx-asr backend runs. */
-const PARAKEET_MODELS = ["nemo-parakeet-tdt-0.6b-v3", "nemo-parakeet-tdt-0.6b-v2"] as const;
+/** Speech models the onnx-asr backend runs: every known model but Silero VAD. */
+const PARAKEET_MODELS = Object.keys(MODELS).filter((id) => id !== VAD_MODEL);
 
 /**
  * The transcriber `options` ask for. Parakeet loads on first use; while `locateModel` finds no complete
@@ -32,7 +32,7 @@ export async function makeTranscriber(options: VoiceOptions, modelsDir: string):
   const { backend, model, quantization } = options;
   if (backend === "command") return new CommandTranscriber(options.command);
   if (backend !== "onnx-asr") throw new AvanzelError(`Unknown voice backend '${backend}'; use "onnx-asr" or "command".`);
-  if (!(PARAKEET_MODELS as readonly string[]).includes(model)) {
+  if (!PARAKEET_MODELS.includes(model)) {
     throw new AvanzelError(`Speech model '${model}' is not supported; use "${PARAKEET_MODELS.join('" or "')}".`);
   }
   modelFiles(model, quantization); // rejects an unknown quantization now rather than on first use

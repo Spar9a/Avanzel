@@ -1,13 +1,35 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { onTestFinished } from "vitest";
+import { onTestFinished, vi } from "vitest";
 
 /** A fresh temporary directory, removed when the current test finishes. */
 export function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "avanzel-voice-test-"));
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
+}
+
+/** Runs the rest of the test with PATH pointing at an empty folder, so no ffmpeg can be found. */
+export function withoutPath(): void {
+  vi.stubEnv("PATH", tempDir());
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+}
+
+/**
+ * Gives the rest of the test a fresh, empty Hugging Face cache, so only what the test puts there exists and the
+ * real cache is never touched: HF_HUB_CACHE points at it and HF_HOME is unset. Returns the hub directory.
+ */
+export function useHfCache(): string {
+  const hub = tempDir();
+  vi.stubEnv("HF_HUB_CACHE", hub);
+  vi.stubEnv("HF_HOME", undefined);
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+  return hub;
 }
 
 interface WavSpec {

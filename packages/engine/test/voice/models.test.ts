@@ -1,24 +1,21 @@
 import { randomBytes } from "node:crypto";
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  readlinkSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { AvanzelError } from "../../src/types.ts";
-import { type DownloadProgress, downloadModel, hfCacheDir, locateModel, MODELS, modelFiles } from "../../src/voice/models.ts";
-import { tempDir } from "./helpers.ts";
+import {
+  type DownloadProgress,
+  downloadModel,
+  hfCacheDir,
+  locateModel,
+  MODELS,
+  modelFiles,
+  parakeetFileNames,
+} from "../../src/voice/models.ts";
+import { tempDir, useHfCache } from "./helpers.ts";
 
 const V3 = "nemo-parakeet-tdt-0.6b-v3";
 const V3_REPO = "istupakov/parakeet-tdt-0.6b-v3-onnx";
@@ -27,18 +24,7 @@ const FULL = ["encoder-model.onnx", "encoder-model.onnx.data", "decoder_joint-mo
 
 let hub: string;
 beforeEach(() => {
-  // Every test gets its own empty Hugging Face cache; the real one is never touched.
-  hub = mkdtempSync(join(tmpdir(), "avanzel-voice-hub-"));
-  const saved = { HF_HUB_CACHE: process.env.HF_HUB_CACHE, HF_HOME: process.env.HF_HOME };
-  process.env.HF_HUB_CACHE = hub;
-  delete process.env.HF_HOME;
-  return () => {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    rmSync(hub, { recursive: true, force: true });
-  };
+  hub = useHfCache(); // every test gets its own empty Hugging Face cache
 });
 
 function writeFiles(dir: string, files: Record<string, string | Buffer>): void {
@@ -86,6 +72,13 @@ describe("MODELS", () => {
   });
 });
 
+describe("parakeetFileNames", () => {
+  it("names the encoder and decoder files by quantization", () => {
+    expect(parakeetFileNames("int8")).toEqual({ encoder: "encoder-model.int8.onnx", decoder: "decoder_joint-model.int8.onnx" });
+    expect(parakeetFileNames("")).toEqual({ encoder: "encoder-model.onnx", decoder: "decoder_joint-model.onnx" });
+  });
+});
+
 describe("hfCacheDir", () => {
   it("follows HF_HUB_CACHE, then HF_HOME, then ~/.cache/huggingface/hub", () => {
     expect(hfCacheDir({ HF_HUB_CACHE: "/x/hub", HF_HOME: "/y" })).toBe("/x/hub");
@@ -107,6 +100,15 @@ describe("locateModel", () => {
     writeFiles(join(models, V3), { "vocab.txt": "partial" });
     const snapshot = hfSnapshot(V3_REPO, INT8);
     expect(locateModel(V3, models)).toBe(snapshot);
+  });
+
+  it("prefers the snapshot refs/main names", () => {
+    const models = tempDir();
+    const aaaa = hfSnapshot(V3_REPO, INT8, "aaaa1111");
+    const bbbb = hfSnapshot(V3_REPO, INT8, "bbbb2222"); // refs/main names the snapshot made last
+    expect(locateModel(V3, models)).toBe(bbbb);
+    writeFileSync(join(aaaa, "..", "..", "refs", "main"), "aaaa1111"); // <repo dir>/refs/main
+    expect(locateModel(V3, models)).toBe(aaaa);
   });
 
   it("returns null when no copy has every file", () => {

@@ -24,7 +24,8 @@ export class CommandTranscriber implements Transcriber {
     const dir = mkdtempSync(join(tmpdir(), "avanzel-audio-"));
     try {
       const { path, seconds } = await pcm16Wav(audio, sampleRate, dir);
-      const [command, ...args] = this.#argv.map((part) => part.replaceAll("{audio}", path)) as [string, ...string[]];
+      // A replacer function: given a string, `replaceAll` would read `$&`, `$$` or `$'` in the path as patterns.
+      const [command, ...args] = this.#argv.map((part) => part.replaceAll("{audio}", () => path)) as [string, ...string[]];
       let result: Awaited<ReturnType<typeof runCommand>>;
       try {
         result = await runCommand(command, args);

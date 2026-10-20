@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { InferenceSession, Tensor } from "onnxruntime-node";
 import { AvanzelError, type Transcriber, type Transcript } from "../types.ts";
+import { parakeetFileNames } from "./models.ts";
 import { segmentSpeech } from "./vad.ts";
 import { loadAudio, resampleLinear, SAMPLE_RATE } from "./wav.ts";
 
@@ -148,10 +149,10 @@ export class ParakeetTranscriber implements Transcriber {
    */
   static async load(modelDir: string, options: ParakeetOptions = {}): Promise<ParakeetTranscriber> {
     const model = options.model ?? basename(modelDir);
-    const suffix = options.quantization === "" ? "" : `.${options.quantization ?? "int8"}`;
+    const names = parakeetFileNames(options.quantization ?? "int8");
     const paths = {
-      encoder: join(modelDir, `encoder-model${suffix}.onnx`),
-      decoder: join(modelDir, `decoder_joint-model${suffix}.onnx`),
+      encoder: join(modelDir, names.encoder),
+      decoder: join(modelDir, names.decoder),
       vocab: join(modelDir, "vocab.txt"),
     };
     const missing = [...Object.values(paths), ...(options.vadPath ? [options.vadPath] : [])].filter((path) => !existsSync(path));
@@ -246,6 +247,7 @@ async function createSessions(models: (string | Uint8Array | null)[]): Promise<(
   const settled = await Promise.allSettled(
     models.map((model) => {
       if (model === null) return null;
+      // create() has separate overloads for a path and for bytes, so one call can't take their union.
       return typeof model === "string" ? InferenceSession.create(model, SESSION_OPTIONS) : InferenceSession.create(model, SESSION_OPTIONS);
     }),
   );

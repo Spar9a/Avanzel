@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AvanzelError } from "../../src/types.ts";
 import { loadAudio, readWav, resampleLinear, writeWav } from "../../src/voice/wav.ts";
-import { tempDir, wavBytes } from "./helpers.ts";
+import { tempDir, wavBytes, withoutPath } from "./helpers.ts";
 
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
 
@@ -12,15 +12,6 @@ function writeFixture(name: string, bytes: Buffer): string {
   const path = join(tempDir(), name);
   writeFileSync(path, bytes);
   return path;
-}
-
-/** Runs the rest of the test with an empty PATH, so no ffmpeg can be found. */
-function withoutPath(): void {
-  const saved = process.env.PATH;
-  process.env.PATH = tempDir();
-  onTestFinished(() => {
-    process.env.PATH = saved;
-  });
 }
 
 describe("writeWav / readWav", () => {

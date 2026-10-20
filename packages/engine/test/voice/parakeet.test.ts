@@ -19,6 +19,7 @@ function useAssets(dir: string): void {
 
 describe("the nemo128 preprocessor", () => {
   it("ships in the engine's assets folder: onnx-asr 0.12.0's copy", () => {
+    useAssets(""); // a variable exported by the shell or the app must not redirect this
     const path = join(assetsDir(), "nemo128.onnx");
     expect(path).toBe(fileURLToPath(new URL("../../assets/nemo128.onnx", import.meta.url)));
     const bytes = readFileSync(path);
@@ -43,6 +44,16 @@ describe("the nemo128 preprocessor", () => {
     const load = ParakeetTranscriber.load(modelDir);
     await expect(load).rejects.toThrow(AvanzelError);
     await expect(load).rejects.toThrow(join(assets, "nemo128.onnx"));
+  });
+});
+
+describe("ParakeetTranscriber", () => {
+  it("load names the model files that are missing", async () => {
+    const load = ParakeetTranscriber.load(tempDir());
+    await expect(load).rejects.toThrow(AvanzelError);
+    for (const name of ["encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "vocab.txt"]) {
+      await expect(load).rejects.toThrow(name);
+    }
   });
 });
 

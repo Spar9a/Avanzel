@@ -1,11 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { AvanzelError, type VoiceOptions } from "../../src/types.ts";
 import { CommandTranscriber } from "../../src/voice/command.ts";
 import { makeTranscriber, MissingModelError, modelFiles } from "../../src/voice/index.ts";
-import { tempDir } from "./helpers.ts";
+import { tempDir, useHfCache } from "./helpers.ts";
 
 const V3 = "nemo-parakeet-tdt-0.6b-v3";
 
@@ -14,15 +13,7 @@ function voice(overrides: Partial<VoiceOptions>): VoiceOptions {
 }
 
 beforeEach(() => {
-  // An empty Hugging Face cache, so only what a test puts in modelsDir exists.
-  const hub = mkdtempSync(join(tmpdir(), "avanzel-voice-hub-"));
-  const saved = process.env.HF_HUB_CACHE;
-  process.env.HF_HUB_CACHE = hub;
-  return () => {
-    if (saved === undefined) delete process.env.HF_HUB_CACHE;
-    else process.env.HF_HUB_CACHE = saved;
-    rmSync(hub, { recursive: true, force: true });
-  };
+  useHfCache(); // an empty Hugging Face cache, so only what a test puts in modelsDir exists
 });
 
 describe("makeTranscriber", () => {
@@ -58,6 +49,10 @@ describe("makeTranscriber", () => {
 
   it("rejects models and quantizations it cannot run", async () => {
     await expect(makeTranscriber(voice({ model: "whisper-base" }), tempDir())).rejects.toThrow(/whisper-base/);
+    // Silero VAD is a known model, but not one to transcribe with; the message lists the Parakeet models.
+    await expect(makeTranscriber(voice({ model: "silero-vad" }), tempDir())).rejects.toThrow(
+      /'silero-vad' is not supported; use "nemo-parakeet-tdt-0\.6b-v3" or "nemo-parakeet-tdt-0\.6b-v2"/,
+    );
     await expect(makeTranscriber(voice({ quantization: "fp16" }), tempDir())).rejects.toThrow(AvanzelError);
   });
 

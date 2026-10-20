@@ -16,13 +16,21 @@ export interface ModelSpec {
 /** Silero VAD, which splits recordings longer than 25 s for Parakeet. */
 export const VAD_MODEL = "silero-vad";
 
+/** Parakeet's encoder and decoder files for `quantization` ("int8" or "" for full precision). */
+export function parakeetFileNames(quantization: string): { encoder: string; decoder: string } {
+  const suffix = quantization === "" ? "" : `.${quantization}`;
+  return { encoder: `encoder-model${suffix}.onnx`, decoder: `decoder_joint-model${suffix}.onnx` };
+}
+
 // Parakeet's nemo128 preprocessor is not listed: the engine ships its own (assets/nemo128.onnx).
 function parakeet(repo: string): ModelSpec {
+  const int8 = parakeetFileNames("int8");
+  const full = parakeetFileNames("");
   return {
     repo,
     files: {
-      int8: ["encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "vocab.txt", "config.json"],
-      "": ["encoder-model.onnx", "encoder-model.onnx.data", "decoder_joint-model.onnx", "vocab.txt", "config.json"],
+      int8: [int8.encoder, int8.decoder, "vocab.txt", "config.json"],
+      "": [full.encoder, "encoder-model.onnx.data", full.decoder, "vocab.txt", "config.json"],
     },
   };
 }
