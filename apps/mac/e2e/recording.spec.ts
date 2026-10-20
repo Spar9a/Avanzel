@@ -33,6 +33,29 @@ test("a second stop while stopping is ignored, so it never cuts the next dictati
   await app.close();
 });
 
+test("start and stop sent before the capsule page listens still reach it (a shortcut right after launch)", async () => {
+  const library = await makeLibrary();
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "said while the capsule was loading",
+    AVANZEL_AUDIO_TIMEOUT_MS: String(WAIT_FOR_AUDIO_MS),
+  });
+  await windowFor(app, "capsule");
+  await call(app, "capsuleStateForTests");
+  await app.evaluate(async ({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/capsule/"))!;
+    const controller = (globalThis as unknown as { __avanzel: { toggleDictate(): Promise<void> } }).__avanzel;
+    const page = win.webContents.getURL();
+    await win.webContents.loadURL("about:blank"); // nothing listens until the capsule page is back
+    await controller.toggleDictate();
+    await controller.toggleDictate();
+    void win.webContents.loadURL(page);
+  });
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  await app.close();
+});
+
 test("a recording whose audio never arrives is given up, and the capsule is told to let go of the microphone", async () => {
   const library = await makeLibrary();
   const app = await launch({

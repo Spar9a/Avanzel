@@ -125,6 +125,9 @@ export class Controller {
   private running = new Set<string>();
   private lastEveningCommits: string[] = [];
   private audioTimeout: NodeJS.Timeout | null = null;
+  /** Whether the capsule page listens yet; commands for its recorder wait until it does. */
+  private capsuleListening = false;
+  private heldCommands: ("start" | "stop" | "cancel")[] = [];
 
   constructor(userData: string) {
     this.store = new SettingsStore(path.join(userData, "settings.json"));
@@ -138,6 +141,9 @@ export class Controller {
     if (envLibrary) this.store.update({ libraryPath: envLibrary });
     this.openLibrary(this.store.get().libraryPath);
     this.capsule = createCapsuleWindow();
+    this.capsule.webContents.on("did-start-loading", () => {
+      this.capsuleListening = false;
+    });
     this.capsule.on("closed", () => app.quit());
     this.menuBar = new MenuBar((action) => void this.menuAction(action));
     this.applyShortcuts();
@@ -303,9 +309,17 @@ export class Controller {
     this.refreshMenu();
   }
 
-  /** The capsule page is listening: it may have missed the state sent while it loaded. */
+  /** The capsule page is listening: it may have missed the state sent while it loaded, and gets the commands held for it. */
   capsuleReady(): void {
+    this.capsuleListening = true;
     this.capsule.webContents.send("capsule:state", this.capsuleState);
+    for (const command of this.heldCommands.splice(0)) this.capsule.webContents.send("capsule:command", command);
+  }
+
+  /** A command for the capsule's recorder. Sent while its page loads, it would be lost: so it waits. */
+  private capsuleCommand(command: "start" | "stop" | "cancel"): void {
+    if (this.capsuleListening) this.capsule.webContents.send("capsule:command", command);
+    else this.heldCommands.push(command);
   }
 
   private scheduleHide(ms: number): void {
@@ -414,7 +428,7 @@ export class Controller {
       microphoneId: this.store.get().microphoneId,
       ...(shot ? { thumbnail: shot.thumbnail } : {}),
     });
-    this.capsule.webContents.send("capsule:command", "start");
+    this.capsuleCommand("start");
     try {
       globalShortcut.register("Escape", () => this.cancelRecording());
     } catch {
@@ -429,7 +443,7 @@ export class Controller {
     clearTimeout(recording.maxTimer);
     globalShortcut.unregister("Escape");
     this.setCapsule({ kind: "transcribing", mode: recording.mode });
-    this.capsule.webContents.send("capsule:command", "stop");
+    this.capsuleCommand("stop");
     this.clearAudioTimeout();
     this.audioTimeout = setTimeout(() => {
       this.audioTimeout = null;
@@ -458,7 +472,7 @@ export class Controller {
     globalShortcut.unregister("Escape");
     if (recording.shot) rmSync(recording.shot.path, { force: true });
     if (this.recording === recording) this.recording = null;
-    this.capsule.webContents.send("capsule:command", "cancel");
+    this.capsuleCommand("cancel");
   }
 
   private clearAudioTimeout(): void {
