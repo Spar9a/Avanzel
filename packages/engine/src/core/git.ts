@@ -62,8 +62,10 @@ export async function revertKeeping(
   }
   try {
     // With -z, every deletion is two fields: `:<old mode> <new mode> <old id> <new id> D`, then its
-    // path. Symlinks (old mode 120000) are left deleted.
-    const fields = (await git(root, ["diff", "--cached", "--raw", "-z", "--no-renames", "--diff-filter=D"])).stdout.split("\0");
+    // path. Symlinks (old mode 120000) are left deleted. Should git fail to list them, nothing is
+    // undone: an empty list would let the revert delete what `keep` would have kept.
+    const listed = await check(git(root, ["diff", "--cached", "--raw", "-z", "--no-renames", "--diff-filter=D"]));
+    const fields = listed.stdout.split("\0");
     const deleted = fields.flatMap((path, i) => (i % 2 === 1 && !fields[i - 1]?.startsWith(":120000 ") ? [path] : []));
     const targets = new Set<string>();
     const kept = deleted.flatMap((path) => {
@@ -119,9 +121,11 @@ async function rollback(root: string): Promise<void> {
   }
 }
 
-async function check(pending: Promise<Completed>): Promise<void> {
+/** The finished git command, or an AvanzelError when it failed. */
+async function check(pending: Promise<Completed>): Promise<Completed> {
   const result = await pending;
   if (result.code !== 0) throw new AvanzelError(`git failed: ${result.stderr.trim()}`);
+  return result;
 }
 
 function git(root: string, args: string[]): Promise<Completed> {

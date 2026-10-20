@@ -3,8 +3,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as git from "../../src/core/git.ts";
+import { which } from "../../src/core/proc.ts";
 import { Vault } from "../../src/core/vault.ts";
-import { envHome, gitIdentity, useTmp, write } from "./helpers.ts";
+import { binScripts, envHome, gitIdentity, useTmp, write } from "./helpers.ts";
 
 const tmp = useTmp();
 
@@ -102,5 +103,24 @@ describe.skipIf(!git.available())("git", () => {
     expect(readFileSync(join(root, "log.md"), "utf8")).toBe("a\nb\n");
     expect(subjects(root)[0]).toBe('Revert "add c"');
     expect(await git.revert(root, "0".repeat(40))).toBe(false);
+  });
+
+  it("undoes nothing, rather than dropping a file it was asked to keep, when git can't list what a revert deletes", async () => {
+    gitIdentity();
+    const root = repo();
+    await git.initRepo(root);
+    write(root, "index.md", "# Index\n");
+    await git.commitAll(root, "base");
+    write(root, "raw/2026/10/note.md", "the owner's words\n");
+    const added = await git.commitAll(root, "add the note");
+    // A git whose `diff --cached --raw` fails (a damaged index, say) and that runs as usual otherwise.
+    const real = which("git");
+    const bin = binScripts(tmp(), { git: `case "$*" in *"diff --cached --raw"*) echo "fatal: index file corrupt" >&2; exit 128;; esac\nexec '${real}' "$@"` });
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+
+    await expect(git.revertKeeping(root, added ?? "", "undo the note", (path) => path)).rejects.toThrow(/git failed: fatal: index file corrupt/);
+    expect(readFileSync(join(root, "raw/2026/10/note.md"), "utf8")).toBe("the owner's words\n");
+    expect(subjects(root)).toEqual(["add the note", "base"]);
+    expect(gitOut(root, "status", "--porcelain")).toBe("");
   });
 });
