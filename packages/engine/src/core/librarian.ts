@@ -226,14 +226,15 @@ export class Librarian {
       let path = queue.find((candidate) => !attempted.has(candidate) && isFile(candidate) && !leave(candidate));
       if (path === undefined) break;
       attempted.add(path);
+      // Whatever goes wrong with one capture (an AvanzelError, or say EACCES from git or the disk)
+      // becomes its error outcome, so its message reaches the digest; the rest go on.
       if (AUDIO_EXTS.has(extname(path).toLowerCase())) {
         progress(`Transcribing ${basename(path)} locally…`);
         let capture: Capture | null;
         try {
           capture = await this.captureAudio(path, { source: "audio", keepOriginal: false });
         } catch (error) {
-          if (!(error instanceof AvanzelError)) throw error;
-          outcomes.push(outcome(stem(path), { error: error.message }));
+          outcomes.push(outcome(stem(path), { error: errorMessage(error) }));
           continue;
         }
         if (!capture) {
@@ -246,8 +247,7 @@ export class Librarian {
       try {
         path = this.#adopt(path);
       } catch (error) {
-        if (!(error instanceof AvanzelError)) throw error;
-        outcomes.push(outcome(stem(path), { error: `${basename(path)}: ${error.message}` }));
+        outcomes.push(outcome(stem(path), { error: `${basename(path)}: ${errorMessage(error)}` }));
         continue;
       }
       attempted.add(path);
@@ -255,8 +255,7 @@ export class Librarian {
       try {
         outcomes.push(await this.#fileOne(path, instructions, signal));
       } catch (error) {
-        if (!(error instanceof AvanzelError)) throw error;
-        outcomes.push(outcome(stem(path), { error: error.message })); // this capture fails alone; the rest go on
+        outcomes.push(outcome(stem(path), { error: errorMessage(error) })); // this capture fails alone; the rest go on
       }
     }
     return outcomes;
@@ -578,6 +577,10 @@ function moveFile(from: string, to: string): void {
 
 function stem(path: string): string {
   return basename(path, extname(path));
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function wikilink(page: string): string {

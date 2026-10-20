@@ -804,6 +804,23 @@ describe("eveningReview", () => {
     });
   });
 
+  it("fails only the capture an unexpected error stops, files the rest, and writes the digest", async () => {
+    const locked = librarian.captureText("Locked away");
+    const basil = librarian.captureText("Water the basil");
+    chmodSync(locked.path, 0o000); // reading it fails with EACCES, which is no AvanzelError
+    const review = await librarian.eveningReview();
+    expect(review.outcomes.map((outcome) => [outcome.captureId, outcome.ok])).toEqual([
+      [locked.id, false],
+      [basil.id, true],
+    ]);
+    expect(review.outcomes[0]?.error).toMatch(new RegExp(`^${locked.id}\\.md: EACCES: permission denied`));
+    const digest = read(review.digestPath ?? "");
+    expect(digest).toContain("Filed 1 of 2 captures.");
+    expect(digest).toMatch(new RegExp(`- \\[\\[${locked.id}\\]\\]: ${locked.id}\\.md: EACCES: permission denied.* \\(still in the inbox\\)\\n`));
+    expect(read(vault.logPath)).toContain("- 2026-10-20 14:03 | review | [[2026-10-20-evening]]\n");
+    expect(vault.pending()).toEqual([locked.path]);
+  });
+
   it("writes nothing when the inbox is empty", async () => {
     expect(await librarian.eveningReview()).toEqual({ outcomes: [], digestPath: null, commits: [] });
     expect(readdirSync(join(vault.root, "reviews"))).toEqual([]);
