@@ -35,13 +35,30 @@ test("dictation is transcribed on the Mac, filed by the agent, and shows the pag
   await app.close();
 });
 
+test("Russian dictation keeps its words and gets a timestamp id", async () => {
+  const library = await makeLibrary();
+  const speech = speechWav("Идея: сделать маленький сад на балконе с помидорами и базиликом.", "Milena");
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speech });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  await expect(capsule.getByText(/балконе/)).toBeVisible();
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  const [capture] = archived(library);
+  expect(path.basename(capture!)).toMatch(/^\d{4}-\d{2}-\d{2}-\d{6}/);
+  expect(readFileSync(capture!, "utf8")).toMatch(/сад на балконе/);
+  await app.close();
+});
+
 test("Edit changes the words before the agent sees them", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("hello"), AVANZEL_FAKE_TRANSCRIPT: "a hygienic tool for regular users" });
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
   await call(app, "toggleDictate");
-  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  // Edit is offered only for the first 2.5 s of filing: poll tightly so a busy machine can't miss it
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000, intervals: [50] }).toBe("filing");
   await capsule.getByRole("button", { name: "Edit" }).click();
   await expect.poll(() => capsuleKind(app)).toBe("editing");
   const box = capsule.getByRole("textbox");

@@ -27,9 +27,9 @@ export async function makeLibrary(): Promise<string> {
   return root;
 }
 
-export function speechWav(text: string): string {
+export function speechWav(text: string, voice = "Samantha"): string {
   const file = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-wav-")), "speech.wav");
-  execFileSync("say", ["-v", "Samantha", "-o", file, "--data-format=LEI16@16000", text]);
+  execFileSync("say", ["-v", voice, "-o", file, "--data-format=LEI16@16000", text]);
   return file;
 }
 
