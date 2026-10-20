@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
@@ -18,7 +18,7 @@ import {
   parakeetFileNames,
   VAD_MODEL,
 } from "../../src/voice/models.ts";
-import { tempDir, useHfCache } from "./helpers.ts";
+import { pinnedSizeFiles, tempDir, useHfCache } from "./helpers.ts";
 
 const V3 = "nemo-parakeet-tdt-0.6b-v3";
 const V3_REPO = "istupakov/parakeet-tdt-0.6b-v3-onnx";
@@ -108,9 +108,19 @@ describe("hfCacheDir", () => {
 describe("locateModel", () => {
   it("prefers a complete copy in the app's models directory", () => {
     const models = tempDir();
-    writeFiles(join(models, V3), Object.fromEntries(INT8.map((name) => [name, name])));
+    pinnedSizeFiles(join(models, V3), V3, INT8);
     hfSnapshot(V3_REPO, INT8);
     expect(locateModel(V3, models)).toBe(join(models, V3));
+  });
+
+  it("does not take a copy in the app's models directory with a file of the wrong size, such as one an older build left short", () => {
+    const models = tempDir();
+    pinnedSizeFiles(join(models, V3), V3, INT8);
+    writeFileSync(join(models, V3, "encoder-model.int8.onnx"), "only the start of it");
+    expect(locateModel(V3, models)).toBeNull();
+    // A Hugging Face cache snapshot still counts when every file is there, whatever its size.
+    const snapshot = hfSnapshot(V3_REPO, INT8);
+    expect(locateModel(V3, models)).toBe(snapshot);
   });
 
   it("falls back to a complete Hugging Face cache snapshot", () => {
@@ -138,16 +148,16 @@ describe("locateModel", () => {
 
   it("does not count dangling symlinks", () => {
     const models = tempDir();
-    writeFiles(join(models, V3), Object.fromEntries(INT8.slice(1).map((name) => [name, name])));
+    pinnedSizeFiles(join(models, V3), V3, INT8.slice(1));
     symlinkSync(join(models, "gone.onnx"), join(models, V3, INT8[0]!));
     expect(locateModel(V3, models)).toBeNull();
   });
 
   it("needs the full-precision files when quantization is empty", () => {
     const models = tempDir();
-    writeFiles(join(models, V3), Object.fromEntries(INT8.map((name) => [name, name])));
+    pinnedSizeFiles(join(models, V3), V3, INT8);
     expect(locateModel(V3, models, "")).toBeNull();
-    writeFiles(join(models, V3), Object.fromEntries(FULL.map((name) => [name, name])));
+    pinnedSizeFiles(join(models, V3), V3, FULL);
     expect(locateModel(V3, models, "")).toBe(join(models, V3));
   });
 
@@ -238,7 +248,6 @@ describe("downloadModelFiles", () => {
 
     for (const name of INT8) expect(readFileSync(join(dir, name)).equals(files[name]!)).toBe(true);
     expect(readdirSync(dir).sort()).toEqual([...INT8].sort()); // no .part leftovers
-    expect(locateModel(V3, models)).toBe(dir);
     // One GET per file at the pinned revision, and no HEAD requests to ask how long they are.
     expect(requests.sort()).toEqual(INT8.map(get).sort());
     // Asked for as they are: no content encoding between the server's bytes and their digest.
@@ -287,7 +296,7 @@ describe("downloadModelFiles", () => {
       expect(readFileSync(join(dir, name)).equals(files[name]!)).toBe(true);
     }
     expect(listTree(hub)).toEqual(before); // nothing written into the HF cache
-    expect(locateModel(V3, models, "")).toBe(dir);
+    for (const name of FULL) expect(statSync(join(dir, name)).size).toBe(files[name]!.length); // every file, at its pinned size
   });
 
   it("links the snapshot whose copy has the pinned size when another snapshot holds an outdated one", async () => {
@@ -323,7 +332,7 @@ describe("downloadModelFiles", () => {
     expect(readFileSync(join(dir, "vocab.txt")).equals(files["vocab.txt"]!)).toBe(true);
     expect(readlinkSync(join(dir, "config.json"))).toBe(join(snapshot, "config.json")); // linked afresh
     expect(requests.some((r) => r.endsWith("/config.json"))).toBe(false);
-    expect(locateModel(V3, models)).toBe(dir);
+    for (const name of INT8) expect(statSync(join(dir, name)).size).toBe(files[name]!.length); // every file, at its pinned size
   });
 
   it('fetches the full-precision files when quantization is ""', async () => {
@@ -340,15 +349,36 @@ describe("downloadModelFiles", () => {
     expect(events.at(-1)?.overallTotal).toBe(FULL.reduce((sum, name) => sum + files[name]!.length, 0));
   });
 
-  it("keeps files that are already there", async () => {
+  it("keeps files that are already there with their pinned size, without reading them", async () => {
     const files = v3Files();
     const model = pinnedSpec(files);
     const { baseUrl, requests } = await fakeHub(model, files);
     const dir = join(tempDir(), V3);
-    writeFiles(dir, { "vocab.txt": "mine", "config.json": "{}" });
+    const mine = Buffer.alloc(files["vocab.txt"]!.length, "m"); // the pinned size; what is in it isn't checked
+    writeFiles(dir, { "vocab.txt": mine, "config.json": files["config.json"]! });
     await downloadModelFiles(model, dir, { baseUrl });
-    expect(readFileSync(join(dir, "vocab.txt"), "utf8")).toBe("mine");
+    expect(readFileSync(join(dir, "vocab.txt")).equals(mine)).toBe(true);
     expect(requests.some((r) => r.endsWith("/vocab.txt") || r.endsWith("/config.json"))).toBe(false);
+  });
+
+  it("replaces a file of the wrong size, such as one an older build left short: downloaded, or linked from the cache", async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl, requests } = await fakeHub(model, files);
+    const dir = join(tempDir(), V3);
+    writeFiles(dir, {
+      ...Object.fromEntries(INT8.map((name) => [name, files[name]!])),
+      "encoder-model.int8.onnx": files["encoder-model.int8.onnx"]!.subarray(0, 1000), // cut short
+      "config.json": "{}",
+    });
+    const snapshot = hfSnapshot(V3_REPO, { "config.json": files["config.json"]! });
+
+    await downloadModelFiles(model, dir, { baseUrl });
+
+    expect(requests).toEqual([get("encoder-model.int8.onnx")]);
+    expect(readFileSync(join(dir, "encoder-model.int8.onnx")).equals(files["encoder-model.int8.onnx"]!)).toBe(true);
+    expect(readlinkSync(join(dir, "config.json"))).toBe(join(snapshot, "config.json"));
+    expect(readdirSync(dir).sort()).toEqual([...INT8].sort()); // no .part leftovers
   });
 
   it("starts a file over when an earlier attempt left its .part behind", async () => {
@@ -450,7 +480,8 @@ describe("downloadModel", () => {
   it("keeps a model's files in <modelsDir>/<id>/", async () => {
     const { baseUrl, requests } = await fakeHub(MODELS[VAD_MODEL]!, {});
     const models = tempDir();
-    writeFiles(join(models, VAD_MODEL), { "silero_vad.onnx": "already here" });
+    pinnedSizeFiles(join(models, VAD_MODEL), VAD_MODEL, ["silero_vad.onnx"]);
+    expect(locateModel(VAD_MODEL, models)).toBe(join(models, VAD_MODEL)); // complete by the same rule
     expect(await downloadModel(VAD_MODEL, models, { baseUrl })).toBe(join(models, VAD_MODEL));
     expect(requests).toEqual([]);
   });

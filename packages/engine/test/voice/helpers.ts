@@ -1,13 +1,27 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { onTestFinished, vi } from "vitest";
+import { MODELS } from "../../src/voice/models.ts";
 
 /** A fresh temporary directory, removed when the current test finishes. */
 export function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "avanzel-voice-test-"));
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
+}
+
+/**
+ * Files `names` of model `id` in `dir`, each as long as MODELS pins it but holding nothing real ("not a real
+ * model", then a hole: sparse, so even the 2.4 GB ones take no disk space). Their size is all a copy is checked by.
+ */
+export function pinnedSizeFiles(dir: string, id: string, names: readonly string[]): void {
+  mkdirSync(dir, { recursive: true });
+  for (const name of names) {
+    const path = join(dir, name);
+    writeFileSync(path, "not a real model");
+    truncateSync(path, MODELS[id]!.digests[name]!.size);
+  }
 }
 
 /** Runs the rest of the test with PATH pointing at an empty folder, so no ffmpeg can be found. */

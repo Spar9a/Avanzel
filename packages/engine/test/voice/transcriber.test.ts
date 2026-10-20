@@ -1,10 +1,9 @@
-import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AvanzelError, type Transcript, type VoiceOptions } from "../../src/types.ts";
 import { CommandTranscriber } from "../../src/voice/command.ts";
 import { lazily, makeTranscriber, MissingModelError, modelFiles } from "../../src/voice/index.ts";
-import { tempDir, useHfCache } from "./helpers.ts";
+import { pinnedSizeFiles, tempDir, useHfCache } from "./helpers.ts";
 
 const V3 = "nemo-parakeet-tdt-0.6b-v3";
 
@@ -36,10 +35,7 @@ describe("makeTranscriber", () => {
     const models = tempDir();
     const transcriber = await makeTranscriber(voice({}), models);
     await expect(transcriber.transcribe(new Float32Array(16000))).rejects.toThrow(MissingModelError);
-    for (const [id, files] of [[V3, modelFiles(V3)], ["silero-vad", modelFiles("silero-vad")]] as const) {
-      mkdirSync(join(models, id), { recursive: true });
-      for (const name of files) writeFileSync(join(models, id, name), "not a real model");
-    }
+    for (const id of [V3, "silero-vad"]) pinnedSizeFiles(join(models, id), id, modelFiles(id));
     // Present now, so loading gets past the missing-model check (and fails on the fake files).
     const error = await transcriber.transcribe(new Float32Array(16000)).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(AvanzelError);

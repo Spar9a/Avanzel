@@ -141,13 +141,16 @@ function isFile(path: string): boolean {
 }
 
 /**
- * A directory holding every file of model `id`: `<modelsDir>/<id>/` first, else a Hugging Face cache
- * snapshot; null when there is no complete copy.
+ * A directory holding every file of model `id`: `<modelsDir>/<id>/` first, when each file there has its pinned
+ * size (an older build, which checked nothing, may have left one short), else a Hugging Face cache snapshot that
+ * has every file; null when there is no complete copy.
  */
 export function locateModel(id: string, modelsDir: string, quantization = "int8"): string | null {
-  const files = modelFiles(id, quantization);
-  const candidates = [join(modelsDir, id), ...hfSnapshots(spec(id).repo)];
-  return candidates.find((dir) => files.every((name) => isFile(join(dir, name)))) ?? null;
+  const model = spec(id);
+  const files = quantizedFiles(model, quantization, id);
+  const own = join(modelsDir, id);
+  if (files.every((name) => fileSize(join(own, name)) === digestOf(model, name).size)) return own;
+  return hfSnapshots(model.repo).find((dir) => files.every((name) => isFile(join(dir, name)))) ?? null;
 }
 
 export interface DownloadProgress {
@@ -183,10 +186,11 @@ interface PinnedFile extends Digest {
 }
 
 /**
- * Makes `dir` hold every file of `model` for `options.quantization` and returns it: files already there are kept,
- * files in a Hugging Face cache snapshot are symlinked when they have the pinned size (the cache is never written
- * to), the rest is downloaded from `<baseUrl>/<repo>/resolve/<revision>/<file>`, streamed to `<file>.part` and
- * renamed into place only when its size and SHA-256 are the pinned ones.
+ * Makes `dir` hold every file of `model` for `options.quantization` and returns it: files already there with their
+ * pinned size are kept (one of another size, say a short one an older build left, is replaced), files in a Hugging
+ * Face cache snapshot are symlinked when they have the pinned size (the cache is never written to), the rest is
+ * downloaded from `<baseUrl>/<repo>/resolve/<revision>/<file>`, streamed to `<file>.part` and renamed into place
+ * only when its size and SHA-256 are the pinned ones.
  */
 export async function downloadModelFiles(model: ModelSpec, dir: string, options: DownloadOptions = {}): Promise<string> {
   const { quantization = "int8", onProgress, signal, baseUrl = "https://huggingface.co" } = options;
@@ -198,13 +202,15 @@ export async function downloadModelFiles(model: ModelSpec, dir: string, options:
   const missing: PinnedFile[] = [];
   for (const file of files) {
     const target = join(dir, file.name);
-    if (isFile(target)) continue;
+    if (fileSize(target) === file.size) continue;
     const cached = snapshots.map((snapshot) => join(snapshot, file.name)).find((path) => fileSize(path) === file.size);
     if (cached === undefined) {
-      missing.push(file);
+      missing.push(file); // downloaded, then renamed over whatever is at `target`
       continue;
     }
-    // A dangling link from an earlier, since cleaned, cache. Not rmSync: Node 24.11 leaves dangling links alone.
+    // What is at `target` goes first (symlinkSync never replaces it): a file of the wrong size, or a dangling link
+    // from an earlier, since cleaned, cache. lstat sees the entry itself, a dangling link too (stat and existsSync
+    // follow it and see nothing), and unlink removes just that entry, never what a link points to.
     if (lstatSync(target, { throwIfNoEntry: false })) unlinkSync(target);
     symlinkSync(cached, target);
   }
