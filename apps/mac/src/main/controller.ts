@@ -776,7 +776,7 @@ export class Controller {
     const job = this.inEditor;
     if (!job) return;
     const words = text.trim();
-    if (!words) return this.cancelEdit();
+    if (!words || words === job.text) return this.cancelEdit(); // nothing to correct: no corrected words to save either
     this.refile(job, words);
   }
 

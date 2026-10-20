@@ -217,6 +217,16 @@ test("words filed after an edit are saved when the quit wait runs out before the
   expect(words.filter((text) => text.includes("first fix"))).toHaveLength(1);
 });
 
+test("File with the words unchanged is a Cancel: quitting before its turn writes no second copy", async () => {
+  const words = await quitWhileHeld(async (app, capsule) => {
+    await capsule.getByRole("button", { name: "Edit" }).click();
+    await expect.poll(() => capsuleKind(app)).toBe("editing");
+    await capsule.getByRole("button", { name: "File" }).click(); // nothing typed
+    await expect.poll(() => capsuleKind(app)).toBe("filing");
+  });
+  expect(words).toEqual([expect.stringContaining("misheard words")]);
+});
+
 test("a second Edit on a refiled note keeps its words when the quit wait runs out", async () => {
   const words = await quitWhileHeld(async (app, capsule) => {
     await fileEdit(app, capsule, "first fix");
