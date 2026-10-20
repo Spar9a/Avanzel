@@ -493,6 +493,11 @@ export class Controller {
       this.fail("Set up your library first", "Choose or create a library folder in Avanzel Settings → General.", "open-settings");
       return false;
     }
+    if (this.model.kind === "error" && this.model.cause === "settings") {
+      // Read again on every press: fixing the [voice] settings by hand is the only way out, and nothing watches the file.
+      this.model = this.modelStatus();
+      this.broadcast();
+    }
     if (!process.env.AVANZEL_FAKE_TRANSCRIPT && this.model.kind !== "ready") {
       // A failed download waits for Try again: pressing the shortcut says so and fetches nothing.
       if (this.model.kind === "missing") void this.downloadModel();

@@ -213,7 +213,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
               </Actions>
             }
           >
-            <Text variant="footnote">Typing works in the meantime. Settings → Voice shows what went wrong.</Text>
+            Typing works in the meantime. Settings → Voice shows what went wrong.
           </CapsuleNotice>
         </div>
       );

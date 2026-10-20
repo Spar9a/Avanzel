@@ -143,3 +143,21 @@ test("voice settings Avanzel can't use are named at the shortcut, and nothing do
   expect(hub.requests).toEqual([]);
   await app.close();
 });
+
+test("a fixed [voice] setting works on the next press", async () => {
+  const hub = await fakeModelHub("stall");
+  const library = await makeLibrary();
+  const config = loadSettings(library);
+  saveSettings(library, { ...config, voice: { ...config.voice, model: "parakeet-v9" } });
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "toggleDictate");
+  await expect(capsule.getByText("Avanzel can't use these voice settings")).toBeVisible();
+  expect(hub.requests).toEqual([]);
+  saveSettings(library, config); // fixed by hand, with Avanzel running
+  await call(app, "toggleDictate");
+  await expect(capsule.getByRole("progressbar", { name: "Downloading the speech model" })).toBeVisible();
+  await expect(capsule.getByText("The speech model is still downloading")).toBeVisible();
+  await expect.poll(() => hub.requests.length).toBeGreaterThan(0);
+  await app.close();
+});
