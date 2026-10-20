@@ -1,9 +1,10 @@
-// Audio in and out: PCM WAV files, linear resampling, and ffmpeg for every other format.
+// Audio in and out: PCM WAV files, and ffmpeg for every other format.
 import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
 import { AvanzelError } from "../types.ts";
+import { resampleTo16k } from "./resample.ts";
 
 /** The rate the speech models (and the app's recorder) work at. */
 export const SAMPLE_RATE = 16000;
@@ -93,21 +94,6 @@ export function writeWav(path: string, samples: Float32Array, sampleRate = SAMPL
   writeFileSync(path, bytes);
 }
 
-/** Linear interpolation from one sample rate to another; returns `samples` itself when the rates match. */
-export function resampleLinear(samples: Float32Array, from: number, to: number): Float32Array {
-  if (from === to) return samples;
-  const out = new Float32Array(Math.round((samples.length * to) / from));
-  const last = samples.length - 1;
-  for (let i = 0; i < out.length; i++) {
-    const position = (i * from) / to;
-    const left = Math.floor(position);
-    const a = samples[Math.min(left, last)]!;
-    const b = samples[Math.min(left + 1, last)]!;
-    out[i] = a + (b - a) * (position - left);
-  }
-  return out;
-}
-
 /** Any audio file as 16 kHz mono samples: PCM WAVs are read directly, other formats go through ffmpeg. */
 export async function loadAudio(path: string): Promise<{ samples: Float32Array; seconds: number }> {
   if (!existsSync(path)) throw new AvanzelError(`No such audio file: ${path}`);
@@ -119,7 +105,7 @@ export async function loadAudio(path: string): Promise<{ samples: Float32Array; 
     audio = await decodeWithFfmpeg(path);
   }
   return {
-    samples: resampleLinear(audio.samples, audio.sampleRate, SAMPLE_RATE),
+    samples: await resampleTo16k(audio.samples, audio.sampleRate),
     seconds: audio.samples.length / audio.sampleRate,
   };
 }

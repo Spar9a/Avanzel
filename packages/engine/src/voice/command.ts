@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { AvanzelError, type Transcriber, type Transcript } from "../types.ts";
-import { loadAudio, readWav, resampleLinear, runCommand, SAMPLE_RATE, writeWav } from "./wav.ts";
+import { resampleTo16k } from "./resample.ts";
+import { loadAudio, readWav, runCommand, SAMPLE_RATE, writeWav } from "./wav.ts";
 
 export class CommandTranscriber implements Transcriber {
   readonly engine: string;
@@ -54,7 +55,7 @@ async function pcm16Wav(audio: string | Float32Array, sampleRate: number, dir: s
     }
     ({ samples, seconds } = await loadAudio(audio));
   } else {
-    samples = resampleLinear(audio, sampleRate, SAMPLE_RATE);
+    samples = await resampleTo16k(audio, sampleRate);
     seconds = audio.length / sampleRate;
   }
   const path = join(dir, "audio.wav");

@@ -29,8 +29,8 @@ import {
   nextRun,
   parseSchedule,
   readWav,
-  resampleLinear,
   rememberVault,
+  resampleTo16k,
   saveSettings,
   saveTask,
   selectHarness,
@@ -529,7 +529,7 @@ export class Controller {
     const vault = this.requireVault();
     const now = new Date();
     try {
-      const samples = process.env.AVANZEL_FAKE_AUDIO ? this.fakeAudio(process.env.AVANZEL_FAKE_AUDIO) : received;
+      const samples = process.env.AVANZEL_FAKE_AUDIO ? await this.fakeAudio(process.env.AVANZEL_FAKE_AUDIO) : received;
       const audioPath = vault.newAudioPath(now);
       let text = "";
       let engine = "";
@@ -567,9 +567,9 @@ export class Controller {
     }
   }
 
-  private fakeAudio(file: string): Float32Array {
+  private async fakeAudio(file: string): Promise<Float32Array> {
     const wav = readWav(file);
-    return wav.sampleRate === 16000 ? wav.samples : resampleLinear(wav.samples, wav.sampleRate, 16000);
+    return resampleTo16k(wav.samples, wav.sampleRate);
   }
 
   private async transcribe(samples: Float32Array): Promise<{ text: string; engine: string }> {

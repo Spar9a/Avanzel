@@ -19,8 +19,9 @@ export {
   VAD_MODEL,
 } from "./models.ts";
 export { type ParakeetOptions, ParakeetTranscriber } from "./parakeet.ts";
+export { resampleTo16k } from "./resample.ts";
 export { segmentSpeech } from "./vad.ts";
-export { readWav, resampleLinear, type WavAudio, writeWav } from "./wav.ts";
+export { readWav, type WavAudio, writeWav } from "./wav.ts";
 
 /** Speech models the onnx-asr backend runs: every known model but Silero VAD. */
 const PARAKEET_MODELS = Object.keys(MODELS).filter((id) => id !== VAD_MODEL);

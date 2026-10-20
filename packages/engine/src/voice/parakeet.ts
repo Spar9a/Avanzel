@@ -2,19 +2,15 @@
 // (nemo128 mel features → FastConformer encoder → greedy TDT decoding), with Silero VAD for long audio.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { InferenceSession, Tensor } from "onnxruntime-node";
 import { AvanzelError, type Transcriber, type Transcript } from "../types.ts";
 import { parakeetFileNames } from "./models.ts";
+import { assetsDir, SESSION_OPTIONS } from "./onnx.ts";
+import { resampleTo16k } from "./resample.ts";
 import { segmentSpeech } from "./vad.ts";
-import { loadAudio, resampleLinear, SAMPLE_RATE } from "./wav.ts";
+import { loadAudio, SAMPLE_RATE } from "./wav.ts";
 
-/** CPU only: on macOS the CoreML provider was measured ~10x slower for Parakeet. */
-export const SESSION_OPTIONS: InferenceSession.SessionOptions = {
-  executionProviders: ["cpu"],
-  intraOpNumThreads: 4,
-  logSeverityLevel: 3,
-};
+export { assetsDir, SESSION_OPTIONS } from "./onnx.ts";
 
 /** Audio longer than this is cut into speech segments with Silero VAD first (as Avanzel v0.1 does). */
 export const VAD_THRESHOLD_SECONDS = 25;
@@ -22,11 +18,6 @@ export const VAD_THRESHOLD_SECONDS = 25;
 const VAD_BATCH_SIZE = 8;
 /** Two 10 ms feature frames: with one, the per-feature variance is 0/0 and the model emits <unk> noise. */
 const MIN_SAMPLES = 2 * 160;
-
-/** The engine's assets folder: AVANZEL_ASSETS when the app ships a copy elsewhere, else packages/engine/assets/. */
-export function assetsDir(): string {
-  return process.env.AVANZEL_ASSETS || fileURLToPath(new URL("../../assets/", import.meta.url));
-}
 
 export interface Vocab {
   /** Token text by id, with SentencePiece's word marker turned into a space. */
@@ -181,7 +172,7 @@ export class ParakeetTranscriber implements Transcriber {
     const { samples, seconds } =
       typeof audio === "string"
         ? await loadAudio(audio)
-        : { samples: resampleLinear(audio, sampleRate, SAMPLE_RATE), seconds: audio.length / sampleRate };
+        : { samples: await resampleTo16k(audio, sampleRate), seconds: audio.length / sampleRate };
     let text: string;
     if (samples.length < MIN_SAMPLES) {
       text = "";

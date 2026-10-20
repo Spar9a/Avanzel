@@ -92,4 +92,9 @@ describe("CommandTranscriber", () => {
     withoutPath();
     await expect(new CommandTranscriber(fake).transcribe(memo)).rejects.toThrow(/Install ffmpeg/);
   });
+
+  it("needs ffmpeg for recorded samples at a rate onnx-asr doesn't resample", async () => {
+    withoutPath();
+    await expect(new CommandTranscriber(fake).transcribe(new Float32Array(9600), 96000)).rejects.toThrow(/96000 Hz needs ffmpeg/);
+  });
 });
