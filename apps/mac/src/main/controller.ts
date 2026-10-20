@@ -640,9 +640,9 @@ export class Controller {
       return { audioPath: vault.newAudioPath(now) };
     } catch (error) {
       if (error instanceof AvanzelError) {
-        // The library refuses one when a link is on the way.
+        // The library refuses one when a link, or a file, is on the way.
         const folder = `raw/audio/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}`;
-        return { audioPath: null, unkept: `Only your words were kept: ${folder} goes through a link.` };
+        return { audioPath: null, unkept: `Only your words were kept: ${folder} isn't a plain folder. Remove the link or file on its path to keep recordings.` };
       }
       console.error("recording", error);
       return { audioPath: null, unkept: "Only your words were kept: the recording couldn't be saved." };

@@ -109,8 +109,10 @@ test("words whose recording the library won't keep are saved without it, and the
     FAKE_AGENT_DELAY_MS: "3000", // the filing card stays up long enough to read
   });
   const capsule = await windowFor(app, "capsule");
-  // One short line, and why: the link on the way.
-  const note = capsule.getByText(/^Only your words were kept: raw\/audio\/\d{4}\/\d{2} goes through a link\.$/);
+  // One short line: why (the link on the way), and what to do about it.
+  const note = capsule.getByText(
+    /^Only your words were kept: raw\/audio\/\d{4}\/\d{2} isn't a plain folder\. Remove the link or file on its path to keep recordings\.$/,
+  );
   // A dictation: filed without its recording.
   await call(app, "toggleDictate");
   await call(app, "toggleDictate");

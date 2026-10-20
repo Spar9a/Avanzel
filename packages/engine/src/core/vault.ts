@@ -355,11 +355,12 @@ function publish(path: string, content: string): boolean {
 
 /**
  * Create the first free `<stem>[-N]<suffix>` in `folder` (library-relative), empty, and return its
- * path. The folders are made, and must be, real folders inside the library: never through a link.
+ * path. The folders are made, and must be, real folders inside the library: never through a link,
+ * and a file on the way refuses too.
  */
 function claim(root: string, folder: string, stem: string, suffix: string): string {
   if (!realFoldersTo(root, `${folder}/${stem}${suffix}`, true)) {
-    throw new AvanzelError(`Avanzel doesn't save through links, and ${folder} goes through one. Remove the link, then try again.`);
+    throw new AvanzelError(`Avanzel saves only into plain folders, and ${folder} isn't one: a link or a file is on its path. Remove it, then try again.`);
   }
   for (let counter = 1; ; counter++) {
     const candidate = join(root, folder, counter === 1 ? `${stem}${suffix}` : `${stem}-${counter}${suffix}`);

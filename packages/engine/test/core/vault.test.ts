@@ -203,6 +203,15 @@ describe("recordings and attachments", () => {
     expect(screenshot.message).toContain("raw/attachments/2026/10");
     expect(readdirSync(outside)).toEqual([]);
   });
+
+  it("says what is wrong, and what to do, in words that hold for a file in the way as for a link", () => {
+    writeFileSync(join(vault.raw, "audio"), "a file where the recordings' folder goes");
+    const refused = thrownBy(() => vault.newAudioPath(NOW));
+    expect(refused).toBeInstanceOf(AvanzelError);
+    expect(refused.message).toBe(
+      "Avanzel saves only into plain folders, and raw/audio/2026/10 isn't one: a link or a file is on its path. Remove it, then try again.",
+    );
+  });
 });
 
 describe("inbox and archive", () => {
