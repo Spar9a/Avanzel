@@ -19,6 +19,7 @@ import {
   Vault,
   downloadModel,
   ensureDefaultTasks,
+  formatSchedule,
   harnesses as listHarnesses,
   lastDue,
   loadSettings,
@@ -28,6 +29,7 @@ import {
   nextRun,
   parseSchedule,
   readWav,
+  resampleLinear,
   rememberVault,
   saveSettings,
   saveTask,
@@ -51,10 +53,10 @@ import type {
   TaskInfo,
 } from "../shared/ipc.ts";
 import { frontContext } from "./front-app.ts";
-import { filedPages, findPage, pageInfo, recentFromLog, rewriteCaptureBody } from "./library-info.ts";
+import { captureMeta, filedPages, findPage, pageInfo, recentFromLog } from "./library-info.ts";
 import type { MenuInput } from "./menu-model.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
-import { dueTasks } from "./schedule.ts";
+import { dueTasks, markChecked, markRan, normalizeRunState, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { registerShortcuts } from "./shortcuts.ts";
 import { SettingsStore } from "./store.ts";
@@ -412,7 +414,7 @@ export class Controller {
     const vault = this.requireVault();
     const now = new Date();
     try {
-      const samples = process.env.AVANZEL_FAKE_AUDIO ? readWav(process.env.AVANZEL_FAKE_AUDIO).samples : received;
+      const samples = process.env.AVANZEL_FAKE_AUDIO ? this.fakeAudio(process.env.AVANZEL_FAKE_AUDIO) : received;
       const audioPath = vault.newAudioPath(now);
       let text = "";
       let engine = "";
@@ -450,16 +452,23 @@ export class Controller {
     }
   }
 
+  private fakeAudio(file: string): Float32Array {
+    const wav = readWav(file);
+    return wav.sampleRate === 16000 ? wav.samples : resampleLinear(wav.samples, wav.sampleRate, 16000);
+  }
+
   private async transcribe(samples: Float32Array): Promise<{ text: string; engine: string }> {
     const fake = process.env.AVANZEL_FAKE_TRANSCRIPT;
     if (fake !== undefined) return { text: fake, engine: "fake" };
     const voice = loadSettings(this.requireVault().root).voice;
     const key = JSON.stringify(voice);
-    if (!this.transcriber || key !== this.transcriberKey) {
-      this.transcriber = await makeTranscriber(voice, this.modelsDir);
+    let transcriber = this.transcriber;
+    if (!transcriber || key !== this.transcriberKey) {
+      transcriber = await makeTranscriber(voice, this.modelsDir);
+      this.transcriber = transcriber;
       this.transcriberKey = key;
     }
-    return this.transcriber.transcribe(samples, 16000);
+    return transcriber.transcribe(samples, 16000);
   }
 
   // ---------------------------------------------------------------- filing
@@ -541,8 +550,17 @@ export class Controller {
     if (!job || this.capsuleState.kind !== "editing") return;
     const trimmed = text.trim();
     if (!trimmed) return this.cancelEdit();
-    rewriteCaptureBody(job.capturePath, trimmed);
-    this.beginFiling({ ...job, text: trimmed, grace: null }, 0);
+    // A fresh capture, so its id (and every [[link]] to it) carries the corrected words.
+    const vault = this.requireVault();
+    const meta = captureMeta(job.capturePath);
+    const fresh = vault.newCapture(trimmed, {
+      source: meta.source,
+      audio: meta.audio ? path.join(vault.root, meta.audio) : null,
+      transcriber: meta.transcriber ?? null,
+      now: meta.created ?? new Date(),
+    });
+    rmSync(job.capturePath, { force: true });
+    this.beginFiling({ ...job, capturePath: fresh.path, text: trimmed, grace: null }, 0);
   }
 
   cancelEdit(): void {
@@ -715,7 +733,7 @@ export class Controller {
     } catch {
       selected = null;
     }
-    const stateRuns = vault ? this.readRunState(vault).lastRun : {};
+    const stateRuns = vault ? this.readRunState(vault).ran : {};
     const now = new Date();
     return {
       app: this.store.get(),
@@ -742,7 +760,7 @@ export class Controller {
         ? this.safeTasks(vault).map((t): TaskInfo => ({
             id: t.id,
             name: t.name,
-            schedule: t.scheduleText,
+            schedule: formatSchedule(t.schedule),
             kind: t.kind,
             agent: t.agent,
             enabled: t.enabled,
@@ -766,14 +784,16 @@ export class Controller {
     return this.snapshot();
   }
 
-  setLibrarySettings(patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }): SettingsSnapshot {
+  async setLibrarySettings(patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }): Promise<SettingsSnapshot> {
     const vault = this.requireVault();
-    const settings = loadSettings(vault.root);
-    saveSettings(vault.root, {
-      ...settings,
-      ...(patch.harness !== undefined ? { harness: patch.harness } : {}),
-      ...(patch.models !== undefined ? { models: patch.models } : {}),
-      ...(patch.timeoutSeconds !== undefined ? { timeoutSeconds: patch.timeoutSeconds } : {}),
+    await this.enqueue(async () => {
+      const settings = loadSettings(vault.root);
+      saveSettings(vault.root, {
+        ...settings,
+        ...(patch.harness !== undefined ? { harness: patch.harness } : {}),
+        ...(patch.models !== undefined ? { models: patch.models } : {}),
+        ...(patch.timeoutSeconds !== undefined ? { timeoutSeconds: patch.timeoutSeconds } : {}),
+      });
     });
     this.broadcast();
     return this.snapshot();
@@ -798,18 +818,18 @@ export class Controller {
         });
         if (confirm.response !== 0) return this.snapshot();
       }
-      Vault.init(chosen, { git: true });
+      await Vault.init(chosen, { git: true });
     }
     return this.useLibrary(chosen);
   }
 
-  createLibrary(requested: string): SettingsSnapshot {
+  async createLibrary(requested: string): Promise<SettingsSnapshot> {
     const target = path.resolve(requested.replace(/^~(?=$|\/)/, homedir()));
     if (!new Vault(target).exists() && existsSync(target) && readdirSync(target).some((n) => n !== ".DS_Store")) {
       throw new AvanzelError(`${target} already has files in it. Use “Choose existing…” to turn it into a library, or pick an empty folder.`);
     }
     mkdirSync(target, { recursive: true });
-    Vault.init(target, { git: true });
+    await Vault.init(target, { git: true });
     return this.useLibrary(target);
   }
 
@@ -829,7 +849,7 @@ export class Controller {
 
   private async refreshModelStatus(): Promise<void> {
     if (this.model.kind === "downloading") return;
-    const dir = await locateModel(MODEL_ID, this.modelsDir);
+    const dir = locateModel(MODEL_ID, this.modelsDir);
     this.model = dir ? { kind: "ready", dir } : { kind: "missing" };
   }
 
@@ -840,7 +860,7 @@ export class Controller {
     let lastBroadcast = 0;
     void downloadModel(MODEL_ID, this.modelsDir, {
       onProgress: (p) => {
-        this.model = { kind: "downloading", receivedBytes: p.overallReceived, totalBytes: p.overallTotal };
+        this.model = { kind: "downloading", receivedBytes: p.overallReceived, totalBytes: p.overallTotal ?? 0 };
         if (Date.now() - lastBroadcast > 250) {
           lastBroadcast = Date.now();
           this.broadcast();
@@ -867,16 +887,15 @@ export class Controller {
 
   // ---------------------------------------------------------------- shadow tasks
 
-  private readRunState(vault: Vault): { lastRun: Record<string, string> } {
+  private readRunState(vault: Vault): RunState {
     try {
-      const parsed = JSON.parse(readFileSync(path.join(vault.metaDir, "state.json"), "utf8")) as { lastRun?: Record<string, string> };
-      return { lastRun: parsed.lastRun ?? {} };
+      return normalizeRunState(JSON.parse(readFileSync(path.join(vault.metaDir, "state.json"), "utf8")));
     } catch {
-      return { lastRun: {} };
+      return normalizeRunState({});
     }
   }
 
-  private writeRunState(vault: Vault, state: { lastRun: Record<string, string> }): void {
+  private writeRunState(vault: Vault, state: RunState): void {
     mkdirSync(vault.metaDir, { recursive: true });
     writeFileSync(path.join(vault.metaDir, "state.json"), `${JSON.stringify(state, null, 2)}\n`);
   }
@@ -887,33 +906,26 @@ export class Controller {
     const tasks = this.safeTasks(vault);
     const state = this.readRunState(vault);
     const now = new Date();
-    const byText = new Map(tasks.map((t) => [t.scheduleText, t.schedule]));
+    const byText = new Map(tasks.map((t) => [formatSchedule(t.schedule), t.schedule]));
     const { due, baseline } = dueTasks(
-      tasks.map((t) => ({ id: t.id, schedule: t.scheduleText, enabled: t.enabled })),
-      state.lastRun,
+      tasks.map((t) => ({ id: t.id, schedule: formatSchedule(t.schedule), enabled: t.enabled })),
+      state.checked,
       now,
       (text, at) => lastDue(byText.get(text) ?? parseSchedule(text), at),
     );
-    if (baseline.length) {
-      for (const id of baseline) state.lastRun[id] = now.toISOString();
-      this.writeRunState(vault, state);
-    }
+    if (baseline.length) this.writeRunState(vault, markChecked(state, baseline, now));
     for (const id of due) void this.runTask(id);
     this.refreshMenu();
   }
 
-  saveTaskFromSettings(patch: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">): SettingsSnapshot {
+  /** Task and settings files are protected during agent runs, so writes wait for the filing queue. */
+  async saveTaskFromSettings(patch: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">): Promise<SettingsSnapshot> {
     const vault = this.requireVault();
-    const task = this.safeTasks(vault).find((t) => t.id === patch.id);
-    if (!task) throw new AvanzelError(`No shadow task called ${patch.id}.`);
-    saveTask(vault, {
-      ...task,
-      name: patch.name,
-      schedule: parseSchedule(patch.schedule),
-      scheduleText: patch.schedule,
-      agent: patch.agent,
-      enabled: patch.enabled,
-      instructions: patch.instructions,
+    const schedule = parseSchedule(patch.schedule);
+    await this.enqueue(async () => {
+      const task = this.safeTasks(vault).find((t) => t.id === patch.id);
+      if (!task) throw new AvanzelError(`No shadow task called ${patch.id}.`);
+      saveTask(vault, { ...task, name: patch.name, schedule, agent: patch.agent, enabled: patch.enabled, instructions: patch.instructions });
     });
     this.broadcast();
     return this.snapshot();
@@ -924,9 +936,7 @@ export class Controller {
     if (!vault || this.running.has(id)) return this.snapshot();
     const task = this.safeTasks(vault).find((t) => t.id === id);
     if (!task) return this.snapshot();
-    const state = this.readRunState(vault);
-    state.lastRun[id] = new Date().toISOString();
-    this.writeRunState(vault, state);
+    this.writeRunState(vault, markRan(this.readRunState(vault), id, new Date()));
     this.running.add(id);
     this.broadcast();
     void this.enqueue(() => this.executeTask(task)).finally(() => {

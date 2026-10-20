@@ -1,5 +1,5 @@
 // Read-only views of the library for the UI: page titles, recent filings, wikilink lookup.
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { FiledPage } from "../shared/ipc.ts";
 
@@ -66,14 +66,25 @@ export function recentFromLog(root: string, limit = 3): FiledPage[] {
   return recent;
 }
 
-/** Replace a capture's words after Edit, keeping its frontmatter and any ![[embeds]] at the end. */
-export function rewriteCaptureBody(file: string, text: string): void {
-  const original = readFileSync(file, "utf8");
-  const match = /^(---\n[\s\S]*?\n---\n)([\s\S]*)$/.exec(original);
-  const frontmatter = match?.[1] ?? "";
-  const body = match?.[2] ?? original;
-  const embeds = body.split("\n").filter((line) => /^!\[\[.+\]\]$/.test(line.trim()));
-  const parts = [`${frontmatter}\n${text.trim()}\n`];
-  if (embeds.length) parts.push(`\n${embeds.join("\n")}\n`);
-  writeFileSync(file, parts.join(""));
+export interface CaptureMeta {
+  source: string;
+  /** Library-relative recording path. */
+  audio?: string;
+  transcriber?: string;
+  created?: Date;
+}
+
+/** What a capture re-created after Edit must keep from the original. */
+export function captureMeta(file: string): CaptureMeta {
+  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(readFileSync(file, "utf8"))?.[1];
+  if (!frontmatter) return { source: "text" };
+  const field = (key: string) => new RegExp(`^${key}:\\s*(.+?)\\s*$`, "m").exec(frontmatter)?.[1]?.replace(/^["']|["']$/g, "");
+  const meta: CaptureMeta = { source: field("source") ?? "text" };
+  const audio = field("audio");
+  const transcriber = field("transcriber");
+  const created = field("created");
+  if (audio) meta.audio = audio;
+  if (transcriber) meta.transcriber = transcriber;
+  if (created && !Number.isNaN(Date.parse(created))) meta.created = new Date(created);
+  return meta;
 }

@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { filedPages, findPage, pageInfo, recentFromLog, rewriteCaptureBody } from "../src/main/library-info.ts";
+import { captureMeta, filedPages, findPage, pageInfo, recentFromLog } from "../src/main/library-info.ts";
 
 function library() {
   const root = mkdtempSync(path.join(tmpdir(), "avz-lib-"));
@@ -49,11 +49,16 @@ describe("library info", () => {
     expect(pages.map((p) => p.path)).toEqual(["people/mark.md", "goals/launch-podcast.md"]);
   });
 
-  it("rewrites a capture's words but keeps its frontmatter and embeds", () => {
+  it("reads what a re-filed capture must keep: source, audio, transcriber and creation time", () => {
     const root = library();
     const file = path.join(root, "capture.md");
-    writeFileSync(file, "---\nid: x\nsource: voice\n---\n\nhygienic tool\n\n![[2026-10-20-140312.wav]]\n");
-    rewriteCaptureBody(file, "agentic tool");
-    expect(readFileSync(file, "utf8")).toBe("---\nid: x\nsource: voice\n---\n\nagentic tool\n\n![[2026-10-20-140312.wav]]\n");
+    writeFileSync(file, "---\nid: 2026-10-20-040829-a-hygienic-tool\ntype: capture\nsource: voice\ncreated: 2026-10-20T04:08:29+04:00\naudio: raw/audio/2026/10/2026-10-20-040829.wav\ntranscriber: onnx-asr:nemo-parakeet-tdt-0.6b-v3\n---\n\nwords\n");
+    const meta = captureMeta(file);
+    expect(meta.source).toBe("voice");
+    expect(meta.audio).toBe("raw/audio/2026/10/2026-10-20-040829.wav");
+    expect(meta.transcriber).toBe("onnx-asr:nemo-parakeet-tdt-0.6b-v3");
+    expect(meta.created?.toISOString()).toBe(new Date("2026-10-20T04:08:29+04:00").toISOString());
+    writeFileSync(file, "just text\n");
+    expect(captureMeta(file)).toEqual({ source: "text" });
   });
 });

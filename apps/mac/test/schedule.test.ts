@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dueTasks } from "../src/main/schedule.ts";
+import { dueTasks, markChecked, markRan, normalizeRunState } from "../src/main/schedule.ts";
 
 // Daily at 21:00, local time.
 const lastDue = (_schedule: string, now: Date) => {
@@ -34,5 +34,28 @@ describe("shadow task scheduling", () => {
   it("skips disabled tasks", () => {
     const state = { "evening-review": new Date(2026, 9, 19, 21, 0).toISOString() };
     expect(dueTasks([{ ...task, enabled: false }], state, new Date(2026, 9, 20, 22, 0), lastDue).due).toEqual([]);
+  });
+});
+
+describe("run state", () => {
+  it("remembers a first sighting without pretending the task ran", () => {
+    const now = new Date(2026, 9, 20, 23, 0);
+    const state = markChecked({ checked: {}, ran: {} }, ["evening-review"], now);
+    expect(state.checked["evening-review"]).toBe(now.toISOString());
+    expect(state.ran).toEqual({});
+  });
+
+  it("records a real run as both checked and ran", () => {
+    const now = new Date(2026, 9, 20, 21, 0);
+    const state = markRan({ checked: {}, ran: {} }, "evening-review", now);
+    expect(state).toEqual({ checked: { "evening-review": now.toISOString() }, ran: { "evening-review": now.toISOString() } });
+  });
+
+  it("reads old state files that only had lastRun", () => {
+    expect(normalizeRunState({ lastRun: { a: "2026-10-19T21:00:00.000Z" } })).toEqual({
+      checked: { a: "2026-10-19T21:00:00.000Z" },
+      ran: { a: "2026-10-19T21:00:00.000Z" },
+    });
+    expect(normalizeRunState("junk")).toEqual({ checked: {}, ran: {} });
   });
 });

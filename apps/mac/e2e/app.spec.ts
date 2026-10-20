@@ -17,7 +17,7 @@ const archived = (root: string) => {
 };
 
 test("dictation is transcribed on the Mac, filed by the agent, and shows the pages", async () => {
-  const library = makeLibrary();
+  const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("I want to launch my podcast about indie game development before the end of the year.") });
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
@@ -36,7 +36,7 @@ test("dictation is transcribed on the Mac, filed by the agent, and shows the pag
 });
 
 test("Edit changes the words before the agent sees them", async () => {
-  const library = makeLibrary();
+  const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("hello"), AVANZEL_FAKE_TRANSCRIPT: "a hygienic tool for regular users" });
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
@@ -57,7 +57,7 @@ test("Edit changes the words before the agent sees them", async () => {
 });
 
 test("an agent failure is shown and the note stays in the inbox", async () => {
-  const library = makeLibrary();
+  const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("hello"), AVANZEL_FAKE_TRANSCRIPT: "will not be filed", FAKE_AGENT_MODE: "fail" });
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
@@ -70,7 +70,7 @@ test("an agent failure is shown and the note stays in the inbox", async () => {
 });
 
 test("a screen capture with a spoken comment waits in the inbox with its screenshot", async () => {
-  const library = makeLibrary();
+  const library = await makeLibrary();
   const app = await launch({
     AVANZEL_LIBRARY: library,
     AVANZEL_FAKE_AUDIO: speechWav("hello"),
@@ -95,7 +95,7 @@ test("a screen capture with a spoken comment waits in the inbox with its screens
 });
 
 test("typing a thought files it", async () => {
-  const library = makeLibrary();
+  const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   await call(app, "openQuick");
   const quick = await windowFor(app, "quick");
@@ -108,7 +108,7 @@ test("typing a thought files it", async () => {
 });
 
 test("asking shows the agent's answer", async () => {
-  const library = makeLibrary();
+  const library = await makeLibrary();
   writeFileSync(path.join(library, "goals", "run.md"), "# Run a marathon\n");
   const app = await launch({ AVANZEL_LIBRARY: library });
   await call(app, "openAsk");
@@ -121,7 +121,7 @@ test("asking shows the agent's answer", async () => {
 });
 
 test("the evening review files the inbox and writes a digest", async () => {
-  const library = makeLibrary();
+  const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   await call(app, "setApp", { fileMode: "evening" });
   await call(app, "submitQuick", "first thought");
@@ -136,7 +136,7 @@ test("the evening review files the inbox and writes a digest", async () => {
 });
 
 test("settings show every pane", async () => {
-  const library = makeLibrary();
+  const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");

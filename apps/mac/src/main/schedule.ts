@@ -26,3 +26,32 @@ export function dueTasks(
   }
   return { due, baseline };
 }
+
+/** Per library, in `.avanzel/state.json`: when each task was last checked for being due, and last ran. */
+export interface RunState {
+  checked: Record<string, string>;
+  ran: Record<string, string>;
+}
+
+const stringRecord = (value: unknown): Record<string, string> =>
+  typeof value === "object" && value !== null
+    ? Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+    : {};
+
+export function normalizeRunState(raw: unknown): RunState {
+  const r = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  if ("checked" in r || "ran" in r) return { checked: stringRecord(r.checked), ran: stringRecord(r.ran) };
+  const legacy = stringRecord(r.lastRun);
+  return { checked: { ...legacy }, ran: { ...legacy } };
+}
+
+export function markChecked(state: RunState, ids: string[], now: Date): RunState {
+  const checked = { ...state.checked };
+  for (const id of ids) checked[id] = now.toISOString();
+  return { checked, ran: { ...state.ran } };
+}
+
+export function markRan(state: RunState, id: string, now: Date): RunState {
+  const at = now.toISOString();
+  return { checked: { ...state.checked, [id]: at }, ran: { ...state.ran, [id]: at } };
+}

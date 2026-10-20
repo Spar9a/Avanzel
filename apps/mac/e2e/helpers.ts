@@ -14,9 +14,9 @@ const fakeAgent = path.join(repo, "packages", "engine", "test", "fake-agent.mjs"
 export const shots = path.join(appDir, "test-results", "shots");
 
 /** A library made by the engine itself, with the fake agent as its harness. */
-export function makeLibrary(): string {
+export async function makeLibrary(): Promise<string> {
   const root = mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-"));
-  const vault = Vault.init(root, { git: false });
+  const vault = await Vault.init(root, { git: false });
   const settings = loadSettings(vault.root);
   saveSettings(vault.root, {
     ...settings,
@@ -84,6 +84,7 @@ export async function windowFor(app: ElectronApplication, name: string): Promise
 
 export async function snap(page: Page, name: string): Promise<void> {
   mkdirSync(shots, { recursive: true });
+  await page.waitForTimeout(350); // let the appear animation finish
   await page.screenshot({ path: path.join(shots, `${name}.png`), omitBackground: true });
 }
 
