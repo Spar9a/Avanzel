@@ -7,6 +7,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -17,7 +18,7 @@ import { defaultSettings, type Settings } from "../../src/core/config.ts";
 import * as git from "../../src/core/git.ts";
 import { errorLine } from "../../src/core/harness.ts";
 import { Librarian, type FileOutcome } from "../../src/core/librarian.ts";
-import { Vault } from "../../src/core/vault.ts";
+import { Vault, type Capture } from "../../src/core/vault.ts";
 import { AvanzelError, type Transcriber, type Transcript } from "../../src/types.ts";
 import { FAKE_AGENT, NOW, binScripts, envHome, gitIdentity, useTmp, write } from "./helpers.ts";
 
@@ -679,6 +680,38 @@ describe("eveningReview", () => {
       `- [[${capture.id}]]: Filed into [[idea-${capture.id}]].\n  - New: [[idea-${capture.id}]]\n` +
         "  - The agent edited your capture; your original words were restored.\n",
     );
+  });
+
+  describe("with a symlinked inbox/, an agent that changes the capture", () => {
+    let capture: Capture;
+    let kept: string;
+
+    beforeEach(() => {
+      mode("tamper"); // files it, then rewrites the capture
+      const elsewhere = join(tmp(), "elsewhere");
+      renameSync(vault.inbox, elsewhere);
+      symlinkSync(elsewhere, vault.inbox);
+      capture = librarian.captureText("My exact words");
+      kept = `.avanzel/logs/${capture.id}.original.md`;
+    });
+
+    it("leaves the owner's words in .avanzel/logs, and the digest says so", async () => {
+      const original = read(capture.path);
+      const review = await librarian.eveningReview();
+      const [outcome] = review.outcomes;
+      expect(outcome).toMatchObject({ ok: false, savedOriginal: kept });
+      expect(read(join(vault.root, kept))).toBe(original);
+      const digest = read(review.digestPath ?? "");
+      expect(digest).toContain(`(your words are kept in ${kept})`);
+      expect(digest).not.toContain("still in the inbox");
+    });
+
+    it("never replaces words an earlier try kept", async () => {
+      write(vault.root, kept, "the words of the first try\n");
+      const outcome = await only(librarian.file());
+      expect(outcome.savedOriginal).toBe(kept);
+      expect(read(join(vault.root, kept))).toBe("the words of the first try\n");
+    });
   });
 
   it("writes nothing when the inbox is empty", async () => {

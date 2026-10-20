@@ -45,7 +45,7 @@ export function writeInside(root: string, rel: string, data: Buffer | string): v
 }
 
 /** Create `rel` holding `data` unless anything at all (a dangling link too) is there; false when not created. */
-export function createInside(root: string, rel: string, data: string): boolean {
+export function createInside(root: string, rel: string, data: Buffer | string): boolean {
   if (!realFoldersTo(root, rel, true)) return false;
   try {
     writeFileSync(join(root, rel), data, { encoding: "utf8", flag: "wx" }); // O_EXCL: fails on any existing entry

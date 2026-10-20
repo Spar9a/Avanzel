@@ -56,9 +56,17 @@ export interface FileOutcome {
   error: string;
   /** The agent had changed the capture; the owner's words were put back. */
   restored: boolean;
+  /**
+   * The agent had changed the capture and its words could not be put back (inbox/ is a symlink):
+   * where they are kept instead, library-relative (null when that was not needed, or not possible).
+   */
+  savedOriginal: string | null;
   /** Protected paths whose changes were undone. */
   guarded: string[];
-  /** The filing's commit, for Undo (null without git or with auto_commit off). */
+  /**
+   * The run's commit, for Undo: the filing, or what a failed, timed-out or cancelled run left
+   * behind. Null without git, with auto_commit off, or when a failed run changed nothing.
+   */
   commit: string | null;
 }
 
@@ -71,7 +79,10 @@ export interface AgentOutcome {
 
 export interface EveningReviewResult {
   outcomes: FileOutcome[];
-  /** `reviews/YYYY-MM-DD-evening.md`, or null when the inbox was empty. */
+  /**
+   * `reviews/YYYY-MM-DD-evening.md`, or null when the inbox was empty or the digest could not be
+   * written safely (reviews/ is a symlink).
+   */
   digestPath: string | null;
   /** Every commit the review made, oldest first (for Undo all). */
   commits: string[];
@@ -287,8 +298,9 @@ export class Librarian {
     const prompt = filePrompt(captureRel, captureId, now, { attachments, instructions });
     const { result, guarded } = await this.#run(prompt, { write: true, images: attachments, signal });
     const restoral = restoreCapture(root, captureRel, original, archiveExisted ? null : archiveRel);
+    const savedOriginal = restoral === "blocked" ? this.#keepOriginal(captureId, original) : null;
     const changes = diff(before, snapshot(root)).without([...SOURCES, ...guarded]);
-    const ran = { changes, message: result.output, restored: restoral === "restored", guarded };
+    const ran = { changes, message: result.output, restored: restoral === "restored", savedOriginal, guarded };
     const error = this.#notFiled(result, restoral, changes, captureId, archiveRel);
     if (error !== null) {
       // What the run left behind (it failed, timed out, was cancelled or filed nothing) is its own
@@ -319,6 +331,17 @@ export class Librarian {
       return `Could not archive ${captureId}: a folder on the way to ${archiveRel} is a symlink.`;
     }
     return null;
+  }
+
+  /**
+   * Keep the owner's words where Avanzel can write without following a link: `.avanzel/logs/`,
+   * kept out of git and out of Undo's reach. Returns where they are, or null. Words kept by an
+   * earlier try stay as they were: by now the inbox may hold the agent's version.
+   */
+  #keepOriginal(captureId: string, original: Buffer): string | null {
+    const rel = `${this.vault.relativePath(this.vault.logsDir)}/${captureId}.original.md`;
+    if (createInside(this.vault.root, rel, original)) return rel;
+    return isRegularFile(join(this.vault.root, rel)) ? rel : null;
   }
 
   /** The capture's screenshots that really are images inside the library, vault-relative. */
@@ -473,6 +496,7 @@ function outcome(captureId: string, fields: Partial<Omit<FileOutcome, "captureId
     archivedTo: null,
     error: "",
     restored: false,
+    savedOriginal: null,
     guarded: [],
     commit: null,
     ...fields,
@@ -500,8 +524,9 @@ function digest(outcomes: readonly FileOutcome[], now: Date): string {
   }
   if (failed.length) {
     lines.push("", "## Needs attention", "");
-    for (const { captureId, error } of failed) {
-      lines.push(`- [[${captureId}]]: ${errorLine(error) || "the agent failed"} (still in the inbox)`);
+    for (const { captureId, error, savedOriginal } of failed) {
+      const where = savedOriginal ? `your words are kept in ${savedOriginal}` : "still in the inbox";
+      lines.push(`- [[${captureId}]]: ${errorLine(error) || "the agent failed"} (${where})`);
     }
   }
   return `${lines.join("\n")}\n`;
