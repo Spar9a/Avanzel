@@ -1,8 +1,8 @@
 // Local speech-to-text: Parakeet through onnxruntime-node, or any speech-to-text CLI.
 import { join } from "node:path";
-import { AvanzelError, type Transcriber, type VoiceOptions } from "../types.ts";
+import { AvanzelError, type Transcriber, type Transcript, type VoiceOptions } from "../types.ts";
 import { CommandTranscriber } from "./command.ts";
-import { locateModel, MissingModelError, modelFiles, VAD_MODEL } from "./models.ts";
+import { locateModel, MissingModelError, MODELS, modelFiles, VAD_MODEL } from "./models.ts";
 import { ParakeetTranscriber } from "./parakeet.ts";
 
 export { CommandTranscriber } from "./command.ts";
@@ -10,6 +10,7 @@ export {
   type DownloadOptions,
   type DownloadProgress,
   downloadModel,
+  downloadModelFiles,
   locateModel,
   MissingModelError,
   MODELS,
@@ -18,11 +19,12 @@ export {
   VAD_MODEL,
 } from "./models.ts";
 export { type ParakeetOptions, ParakeetTranscriber } from "./parakeet.ts";
+export { resampleTo16k } from "./resample.ts";
 export { segmentSpeech } from "./vad.ts";
-export { readWav, resampleLinear, type WavAudio, writeWav } from "./wav.ts";
+export { readWav, type WavAudio, writeWav } from "./wav.ts";
 
-/** Speech models the onnx-asr backend runs. */
-const PARAKEET_MODELS = ["nemo-parakeet-tdt-0.6b-v3", "nemo-parakeet-tdt-0.6b-v2"] as const;
+/** Speech models the onnx-asr backend runs: every known model but Silero VAD. */
+const PARAKEET_MODELS = Object.keys(MODELS).filter((id) => id !== VAD_MODEL);
 
 /**
  * The transcriber `options` ask for. Parakeet loads on first use; while `locateModel` finds no complete
@@ -32,7 +34,7 @@ export async function makeTranscriber(options: VoiceOptions, modelsDir: string):
   const { backend, model, quantization } = options;
   if (backend === "command") return new CommandTranscriber(options.command);
   if (backend !== "onnx-asr") throw new AvanzelError(`Unknown voice backend '${backend}'; use "onnx-asr" or "command".`);
-  if (!(PARAKEET_MODELS as readonly string[]).includes(model)) {
+  if (!PARAKEET_MODELS.includes(model)) {
     throw new AvanzelError(`Speech model '${model}' is not supported; use "${PARAKEET_MODELS.join('" or "')}".`);
   }
   modelFiles(model, quantization); // rejects an unknown quantization now rather than on first use
@@ -44,17 +46,49 @@ export async function makeTranscriber(options: VoiceOptions, modelsDir: string):
   });
 }
 
-/** Loads on first use, and tries again after a failed load (say, once the models are downloaded). */
-function lazily(engine: string, load: () => Promise<Transcriber>): Transcriber {
+/**
+ * Loads on first use, and tries again after a failed load (say, once the models are downloaded). `release()` lets the
+ * transcriptions in progress finish, then frees what was loaded; the next `transcribe` loads again, once that is done,
+ * so there is never more than one copy of the model. Exported for tests; apps get theirs from `makeTranscriber`.
+ */
+export function lazily(engine: string, load: () => Promise<Transcriber>): Required<Transcriber> {
   let loading: Promise<Transcriber> | null = null;
+  /** Every transcription from the moment `transcribe` is called, even while it waits for the model to load. */
+  const running = new Set<Promise<unknown>>();
+  let releasing: Promise<void> | null = null;
+
+  async function loadAndTranscribe(audio: string | Float32Array, sampleRate?: number): Promise<Transcript> {
+    if (releasing) await releasing.catch(() => {}); // a failed release is for its caller to hear about, not this transcription
+    loading ??= load().catch((error: unknown) => {
+      loading = null;
+      throw error;
+    });
+    return (await loading).transcribe(audio, sampleRate);
+  }
+
+  async function freeModel(): Promise<void> {
+    await Promise.allSettled(running); // those started so far; later ones wait for the release in `loadAndTranscribe`
+    const model = loading;
+    loading = null;
+    await (await model)?.release?.();
+  }
+
   return {
     engine,
     async transcribe(audio, sampleRate) {
-      loading ??= load().catch((error: unknown) => {
-        loading = null;
-        throw error;
+      const run = loadAndTranscribe(audio, sampleRate);
+      running.add(run);
+      try {
+        return await run;
+      } finally {
+        running.delete(run);
+      }
+    },
+    release() {
+      releasing ??= freeModel().finally(() => {
+        releasing = null;
       });
-      return (await loading).transcribe(audio, sampleRate);
+      return releasing;
     },
   };
 }

@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AvanzelError } from "../../src/types.ts";
-import { loadAudio, readWav, resampleLinear, writeWav } from "../../src/voice/wav.ts";
-import { tempDir, wavBytes } from "./helpers.ts";
+import { loadAudio, readWav, writeWav } from "../../src/voice/wav.ts";
+import { tempDir, wavBytes, withoutPath } from "./helpers.ts";
 
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
 
@@ -12,15 +12,6 @@ function writeFixture(name: string, bytes: Buffer): string {
   const path = join(tempDir(), name);
   writeFileSync(path, bytes);
   return path;
-}
-
-/** Runs the rest of the test with an empty PATH, so no ffmpeg can be found. */
-function withoutPath(): void {
-  const saved = process.env.PATH;
-  process.env.PATH = tempDir();
-  onTestFinished(() => {
-    process.env.PATH = saved;
-  });
 }
 
 describe("writeWav / readWav", () => {
@@ -114,27 +105,6 @@ describe("writeWav / readWav", () => {
     expect(() => readWav(junk)).toThrow(/junk\.wav/);
     const float = writeFixture("float.wav", wavBytes({ sampleRate: 16000, bits: 32, frames: [[0]], format: 3 }));
     expect(() => readWav(float)).toThrow(AvanzelError);
-  });
-});
-
-describe("resampleLinear", () => {
-  it("returns the samples unchanged at the same rate", () => {
-    const samples = Float32Array.of(0.1, 0.2, 0.3);
-    expect(resampleLinear(samples, 16000, 16000)).toEqual(samples);
-  });
-
-  it("produces round(n * to / from) samples", () => {
-    expect(resampleLinear(new Float32Array(44100), 44100, 16000)).toHaveLength(16000);
-    expect(resampleLinear(new Float32Array(48000), 48000, 16000)).toHaveLength(16000);
-    expect(resampleLinear(new Float32Array(22050), 22050, 16000)).toHaveLength(16000);
-    expect(resampleLinear(new Float32Array(4000), 8000, 16000)).toHaveLength(8000);
-    expect(resampleLinear(new Float32Array(1001), 48000, 16000)).toHaveLength(334);
-    expect(resampleLinear(new Float32Array(0), 44100, 16000)).toHaveLength(0);
-  });
-
-  it("interpolates linearly between neighbouring samples", () => {
-    expect([...resampleLinear(Float32Array.of(0, 1, 2, 3), 8000, 16000)]).toEqual([0, 0.5, 1, 1.5, 2, 2.5, 3, 3]);
-    expect([...resampleLinear(Float32Array.of(0, 1, 2, 3, 4, 5, 6, 7, 8), 48000, 16000)]).toEqual([0, 3, 6]);
   });
 });
 

@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { AvanzelError, type Transcriber, type Transcript } from "../types.ts";
-import { loadAudio, readWav, resampleLinear, runCommand, SAMPLE_RATE, writeWav } from "./wav.ts";
+import { resampleTo16k } from "./resample.ts";
+import { loadAudio, readWav, runCommand, SAMPLE_RATE, writeWav } from "./wav.ts";
 
 export class CommandTranscriber implements Transcriber {
   readonly engine: string;
@@ -24,7 +25,8 @@ export class CommandTranscriber implements Transcriber {
     const dir = mkdtempSync(join(tmpdir(), "avanzel-audio-"));
     try {
       const { path, seconds } = await pcm16Wav(audio, sampleRate, dir);
-      const [command, ...args] = this.#argv.map((part) => part.replaceAll("{audio}", path)) as [string, ...string[]];
+      // A replacer function: given a string, `replaceAll` would read `$&`, `$$` or `$'` in the path as patterns.
+      const [command, ...args] = this.#argv.map((part) => part.replaceAll("{audio}", () => path)) as [string, ...string[]];
       let result: Awaited<ReturnType<typeof runCommand>>;
       try {
         result = await runCommand(command, args);
@@ -40,6 +42,9 @@ export class CommandTranscriber implements Transcriber {
       rmSync(dir, { recursive: true, force: true });
     }
   }
+
+  /** Nothing to free: each transcription starts the command anew. */
+  async release(): Promise<void> {}
 }
 
 /** `audio` as a 16 kHz mono PCM16 WAV: the file itself when it already is one, else a converted copy in `dir`. */
@@ -53,7 +58,7 @@ async function pcm16Wav(audio: string | Float32Array, sampleRate: number, dir: s
     }
     ({ samples, seconds } = await loadAudio(audio));
   } else {
-    samples = resampleLinear(audio, sampleRate, SAMPLE_RATE);
+    samples = await resampleTo16k(audio, sampleRate);
     seconds = audio.length / sampleRate;
   }
   const path = join(dir, "audio.wav");
