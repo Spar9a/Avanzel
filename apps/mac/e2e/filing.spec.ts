@@ -1,6 +1,6 @@
 // Filing with the agent: Edit while it runs, quitting while it runs, and runs that fail.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { mkdtempSync, readFileSync, renameSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, renameSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
@@ -215,6 +215,27 @@ test("words filed after an edit are saved when the quit wait runs out before the
   expect(words).toHaveLength(2);
   expect(words.filter((text) => text.includes("misheard words"))).toHaveLength(1);
   expect(words.filter((text) => text.includes("first fix"))).toHaveLength(1);
+});
+
+test("corrected words that can't be saved yet are saved when Avanzel quits, and the card says so", async () => {
+  const { library, app, capsule } = await dictateToStallingAgent("misheard words");
+  await editTo(app, capsule, "corrected words");
+  const inboxDir = path.join(library, "inbox");
+  chmodSync(inboxDir, 0o555); // the corrected words can't be written for now
+  try {
+    await capsule.getByRole("button", { name: "File" }).click();
+    await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+    await expect(capsule.getByText("Your corrected words are saved to your inbox when you quit", { exact: false })).toBeVisible();
+    await call(app, "idleForTests"); // nothing left to do: the words are only in memory
+  } finally {
+    chmodSync(inboxDir, 0o755);
+  }
+  await quit(app);
+  const words = inboxWords(library);
+  expect(words).toHaveLength(2);
+  expect(words.filter((text) => text.includes("misheard words"))).toHaveLength(1);
+  const [corrected] = words.filter((text) => text.includes("corrected words"));
+  expect(corrected).toContain("\ntranscriber: fake\n");
 });
 
 test("File with the words unchanged is a Cancel: quitting before its turn writes no second copy", async () => {

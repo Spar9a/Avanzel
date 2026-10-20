@@ -212,9 +212,12 @@ export class Controller {
     if (!this.vault) this.showSettings();
   }
 
-  /** Whether quitting now would cut an agent run, work queued behind one, or an edit short. */
+  /**
+   * Whether quitting now would cut an agent run, work queued behind one, or an edit short, or leave
+   * words only in memory (kept edits and corrections whose save failed): `stopForQuit` saves those.
+   */
   busy(): boolean {
-    return this.runs.size > 0 || this.queued > 0 || this.editing.size > 0;
+    return this.runs.size > 0 || this.queued > 0 || this.editing.size > 0 || this.kept.size > 0 || this.unwritten.size > 0;
   }
 
   /**
@@ -742,8 +745,9 @@ export class Controller {
     this.refreshMenu();
   }
 
-  private filingFailed(job: FilingJob, error: string, outcome?: FileOutcome): void {
-    const where = outcome?.savedOriginal
+  /** `where`: what the card says of the owner's words when it isn't the usual (in the inbox, or kept aside by the engine). */
+  private filingFailed(job: FilingJob, error: string, outcome?: FileOutcome, where?: string): void {
+    where ??= outcome?.savedOriginal
       ? `Your words are kept in ${outcome.savedOriginal}; the inbox now holds the agent's version.`
       : "The note is still in your inbox; the evening review will try again.";
     const partial = outcome?.commit ? ` ${job.agent}'s partial edits are kept as their own commit in the library's history.` : "";
@@ -811,7 +815,9 @@ export class Controller {
         next.capturePath = correction ? this.recapture(job, correction.words) : job.capturePath;
         if (correction) this.unwritten.delete(correction);
       } catch (error) {
-        return this.filingFailed(next, errorMessage(error));
+        // The corrected words stay in `unwritten`, so quitting saves them; the misheard capture stays as it was.
+        const original = existsSync(job.capturePath) ? "; the original note is still there" : "";
+        return this.filingFailed(next, errorMessage(error), undefined, `Your corrected words are saved to your inbox when you quit${original}.`);
       } finally {
         this.settleEdit(job, next);
       }
@@ -857,7 +863,8 @@ export class Controller {
         this.saveDraft(job, (words) => this.recapture(job, words));
         if (problem !== null) this.notify("Couldn't take back the agent's first try", problem);
       } catch (error) {
-        this.notify("Couldn't keep your edit", errorMessage(error));
+        // The edit stays in `kept`, so quitting saves it.
+        this.notify("Couldn't save your edit yet", `${errorMessage(error)}\nYour corrected words are saved to your inbox when you quit.`);
       } finally {
         this.editing.delete(job.capturePath);
       }
