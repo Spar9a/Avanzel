@@ -74,7 +74,7 @@ export const MODELS: Readonly<Record<string, ModelSpec>> = {
   },
 };
 
-/** The speech models are not on this Mac yet; apps catch this to offer `downloadModel` for `models`. */
+/** The speech models are not on this Mac yet; apps catch this to offer `downloadModels` for `models`. */
 export class MissingModelError extends AvanzelError {
   readonly models: string[];
 
@@ -153,6 +153,11 @@ export function locateModel(id: string, modelsDir: string, quantization = "int8"
   return hfSnapshots(model.repo).find((dir) => files.every((name) => isFile(join(dir, name)))) ?? null;
 }
 
+/** The models among `ids` that `locateModel` finds no complete copy of, in the order given. */
+export function missingModels(ids: readonly string[], modelsDir: string, quantization = "int8"): string[] {
+  return ids.filter((id) => locateModel(id, modelsDir, quantization) === null);
+}
+
 export interface DownloadProgress {
   file: string;
   receivedBytes: number;
@@ -180,52 +185,115 @@ export async function downloadModel(id: string, modelsDir: string, options: Down
   return downloadModelFiles(spec(id), join(modelsDir, id), options);
 }
 
+/**
+ * Makes `<modelsDir>/<id>/` complete for each of `ids` and returns those directories in that order; see
+ * `downloadModelsFiles`.
+ */
+export async function downloadModels(
+  ids: readonly string[],
+  modelsDir: string,
+  options: DownloadOptions = {},
+): Promise<string[]> {
+  return downloadModelsFiles(ids.map((id) => ({ model: spec(id), dir: join(modelsDir, id) })), options);
+}
+
 /** A file of a model, with the size and SHA-256 it has to have. */
 interface PinnedFile extends Digest {
   name: string;
 }
 
 /**
- * Makes `dir` hold every file of `model` for `options.quantization` and returns it: files already there with their
- * pinned size are kept (one of another size, say a short one an older build left, is replaced), files in a Hugging
- * Face cache snapshot are symlinked when they have the pinned size (the cache is never written to), the rest is
- * downloaded from `<baseUrl>/<repo>/resolve/<revision>/<file>`, streamed to `<file>.part` and renamed into place
- * only when its size and SHA-256 are the pinned ones.
+ * What a download does to make a directory hold some files of a model. A file already there with its pinned size is
+ * in neither list.
  */
-export async function downloadModelFiles(model: ModelSpec, dir: string, options: DownloadOptions = {}): Promise<string> {
-  const { quantization = "int8", onProgress, signal, baseUrl = "https://huggingface.co" } = options;
-  const names = quantizedFiles(model, quantization, model.repo);
-  const files = names.map((name): PinnedFile => ({ name, ...digestOf(model, name) }));
-  mkdirSync(dir, { recursive: true });
+interface Plan {
+  /** Files to symlink from a Hugging Face cache snapshot that has them at their pinned size, to `target`. */
+  link: { target: string; from: string }[];
+  /** Files to download: neither in the directory nor in any snapshot at their pinned size. */
+  fetch: PinnedFile[];
+  /** The pinned sizes of `fetch`, added up. */
+  bytes: number;
+}
 
+/**
+ * Decides whether each of `names`, files of `model`, is kept, linked or fetched to make `dir` hold it, by looking and
+ * nothing more: a file in `dir` with its pinned size is kept, else a copy of that size in a Hugging Face cache snapshot
+ * is linked, else it is fetched. Throws when `model` pins no digest for one of `names`.
+ */
+function planFiles(model: ModelSpec, names: readonly string[], dir: string): Plan {
   const snapshots = hfSnapshots(model.repo);
-  const missing: PinnedFile[] = [];
-  for (const file of files) {
-    const target = join(dir, file.name);
+  const link: Plan["link"] = [];
+  const fetch: PinnedFile[] = [];
+  for (const name of names) {
+    const file: PinnedFile = { name, ...digestOf(model, name) };
+    const target = join(dir, name);
     if (fileSize(target) === file.size) continue;
-    const cached = snapshots.map((snapshot) => join(snapshot, file.name)).find((path) => fileSize(path) === file.size);
-    if (cached === undefined) {
-      missing.push(file); // downloaded, then renamed over whatever is at `target`
-      continue;
+    const from = snapshots.map((snapshot) => join(snapshot, name)).find((path) => fileSize(path) === file.size);
+    if (from === undefined) fetch.push(file); // downloaded, then renamed over whatever is at `target`
+    else link.push({ target, from });
+  }
+  return { link, fetch, bytes: fetch.reduce((sum, file) => sum + file.size, 0) };
+}
+
+/**
+ * The bytes `downloadModels` would fetch for `ids` with `quantization`: the pinned sizes of the files that are neither
+ * in `<modelsDir>/<id>/` nor in a Hugging Face cache snapshot at their pinned size. It only looks; nothing is written.
+ */
+export function downloadSize(ids: readonly string[], modelsDir: string, quantization = "int8"): number {
+  return ids.reduce((sum, id) => sum + planFiles(spec(id), modelFiles(id, quantization), join(modelsDir, id)).bytes, 0);
+}
+
+/** Makes `dir` hold every file of `model` and returns it; `downloadModelsFiles` for one model. */
+export async function downloadModelFiles(model: ModelSpec, dir: string, options: DownloadOptions = {}): Promise<string> {
+  return (await downloadModelsFiles([{ model, dir }], options))[0]!;
+}
+
+/**
+ * Makes each job's `dir` hold every file of its `model` for `options.quantization` and returns the dirs in the order
+ * given: files already there with their pinned size are kept (one of another size, say a short one an older build left,
+ * is replaced), files in a Hugging Face cache snapshot are symlinked when they have the pinned size (the cache is never
+ * written to), the rest is downloaded from `<baseUrl>/<repo>/resolve/<revision>/<file>`, streamed to `<file>.part` and
+ * renamed into place only when its size and SHA-256 are the pinned ones. Every job's cached files are linked before
+ * any download starts, and then the jobs download one after the other, the one with the fewest bytes to fetch first
+ * (jobs with as many keep the order given). `onProgress` counts over all jobs, and its `overallTotal` is the same in
+ * every event.
+ */
+export async function downloadModelsFiles(
+  jobs: readonly { model: ModelSpec; dir: string }[],
+  options: DownloadOptions = {},
+): Promise<string[]> {
+  const { quantization = "int8", onProgress, signal, baseUrl = "https://huggingface.co" } = options;
+  const plans = jobs.map(({ model, dir }) => ({
+    model,
+    dir,
+    ...planFiles(model, quantizedFiles(model, quantization, model.repo), dir),
+  }));
+
+  for (const { dir, link } of plans) {
+    mkdirSync(dir, { recursive: true });
+    for (const { target, from } of link) {
+      // What is at `target` goes first (symlinkSync never replaces it): a file of the wrong size, or a dangling link
+      // from an earlier, since cleaned, cache. lstat sees the entry itself, a dangling link too (stat and existsSync
+      // follow it and see nothing), and unlink removes just that entry, never what a link points to.
+      if (lstatSync(target, { throwIfNoEntry: false })) unlinkSync(target);
+      symlinkSync(from, target);
     }
-    // What is at `target` goes first (symlinkSync never replaces it): a file of the wrong size, or a dangling link
-    // from an earlier, since cleaned, cache. lstat sees the entry itself, a dangling link too (stat and existsSync
-    // follow it and see nothing), and unlink removes just that entry, never what a link points to.
-    if (lstatSync(target, { throwIfNoEntry: false })) unlinkSync(target);
-    symlinkSync(cached, target);
   }
 
-  const overallTotal = missing.reduce((sum, file) => sum + file.size, 0);
-  let overallReceived = 0;
-  for (const file of missing) {
-    const done = overallReceived;
-    const url = `${baseUrl}/${model.repo}/resolve/${model.revision}/${file.name}`;
-    await fetchFile(file, url, join(dir, file.name), signal, (receivedBytes) => {
-      overallReceived = done + receivedBytes;
-      onProgress?.({ file: file.name, receivedBytes, totalBytes: file.size, overallReceived, overallTotal });
-    });
+  const overallTotal = plans.reduce((sum, plan) => sum + plan.bytes, 0);
+  let fetched = 0; // the bytes of the files that are done, of every job so far
+  // sort is stable, so jobs with as many bytes to fetch stay in the order given
+  for (const { model, dir, fetch } of [...plans].sort((a, b) => a.bytes - b.bytes)) {
+    for (const file of fetch) {
+      const url = `${baseUrl}/${model.repo}/resolve/${model.revision}/${file.name}`;
+      await fetchFile(file, url, join(dir, file.name), signal, (receivedBytes) => {
+        const overallReceived = fetched + receivedBytes;
+        onProgress?.({ file: file.name, receivedBytes, totalBytes: file.size, overallReceived, overallTotal });
+      });
+      fetched += file.size;
+    }
   }
-  return dir;
+  return jobs.map(({ dir }) => dir);
 }
 
 function digestOf(model: ModelSpec, name: string): Digest {

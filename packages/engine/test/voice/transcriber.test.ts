@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AvanzelError, type Transcript, type VoiceOptions } from "../../src/types.ts";
 import { CommandTranscriber } from "../../src/voice/command.ts";
-import { lazily, makeTranscriber, MissingModelError, modelFiles } from "../../src/voice/index.ts";
+import { lazily, makeTranscriber, MissingModelError, modelFiles, speechModels } from "../../src/voice/index.ts";
 import { pinnedSizeFiles, tempDir, useHfCache } from "./helpers.ts";
 
 const V3 = "nemo-parakeet-tdt-0.6b-v3";
@@ -73,6 +73,34 @@ describe("makeTranscriber", () => {
   it("rejects unknown backends", async () => {
     await expect(makeTranscriber(voice({ backend: "nope" }), tempDir())).rejects.toThrow(AvanzelError);
     await expect(makeTranscriber(voice({ backend: "nope" }), tempDir())).rejects.toThrow(/nope/);
+  });
+});
+
+describe("speechModels", () => {
+  it("names Parakeet and Silero for onnx-asr, and nothing for a command", () => {
+    expect(speechModels({ backend: "onnx-asr", model: V3, quantization: "int8", command: [] })).toEqual([V3, "silero-vad"]);
+    const v2 = "nemo-parakeet-tdt-0.6b-v2";
+    expect(speechModels(voice({ model: v2, quantization: "" }))).toEqual([v2, "silero-vad"]);
+
+    const command = ["/opt/bin/whisper-cli", "-f", "{audio}"];
+    expect(speechModels(voice({ backend: "command", command }))).toEqual([]);
+    // A command has no model or quantization to look at.
+    expect(speechModels(voice({ backend: "command", model: "whisper-base", quantization: "fp16" }))).toEqual([]);
+    expect(() => speechModels(voice({ backend: "nope" }))).toThrow(/Unknown voice backend/);
+  });
+
+  it("rejects what makeTranscriber rejects, with the same message", async () => {
+    const unusable = [
+      voice({ backend: "nope" }),
+      voice({ model: "whisper-base" }),
+      voice({ model: "silero-vad" }), // known, but not a model to transcribe with
+      voice({ quantization: "fp16" }),
+    ];
+    for (const options of unusable) {
+      const refused = await makeTranscriber(options, tempDir()).then(() => undefined, (error: unknown) => error);
+      expect(refused).toBeInstanceOf(AvanzelError);
+      expect(() => speechModels(options)).toThrow(new AvanzelError((refused as AvanzelError).message));
+    }
   });
 });
 

@@ -11,10 +11,14 @@ export {
   type DownloadProgress,
   downloadModel,
   downloadModelFiles,
+  downloadModels,
+  downloadModelsFiles,
+  downloadSize,
   locateModel,
   MissingModelError,
   MODELS,
   type ModelSpec,
+  missingModels,
   modelFiles,
   VAD_MODEL,
 } from "./models.ts";
@@ -27,17 +31,35 @@ export { readWav, type WavAudio, writeWav } from "./wav.ts";
 const PARAKEET_MODELS = Object.keys(MODELS).filter((id) => id !== VAD_MODEL);
 
 /**
- * The transcriber `options` ask for. Parakeet loads on first use; while `locateModel` finds no complete
- * copy of it or of Silero VAD, transcribing throws a `MissingModelError` naming what `downloadModel` should fetch.
+ * Throws an `AvanzelError` unless `options` name a backend, model and quantization `makeTranscriber` can run. A
+ * command has no model or quantization to check.
  */
-export async function makeTranscriber(options: VoiceOptions, modelsDir: string): Promise<Transcriber> {
-  const { backend, model, quantization } = options;
-  if (backend === "command") return new CommandTranscriber(options.command);
+function checkVoice({ backend, model, quantization }: VoiceOptions): void {
+  if (backend === "command") return;
   if (backend !== "onnx-asr") throw new AvanzelError(`Unknown voice backend '${backend}'; use "onnx-asr" or "command".`);
   if (!PARAKEET_MODELS.includes(model)) {
     throw new AvanzelError(`Speech model '${model}' is not supported; use "${PARAKEET_MODELS.join('" or "')}".`);
   }
   modelFiles(model, quantization); // rejects an unknown quantization now rather than on first use
+}
+
+/**
+ * The speech models `options` need on disk, for `missingModels` and `downloadModels`: none for a command, else the
+ * Parakeet model and Silero VAD. Throws what `makeTranscriber` does for options it cannot run.
+ */
+export function speechModels(options: VoiceOptions): string[] {
+  checkVoice(options);
+  return options.backend === "command" ? [] : [options.model, VAD_MODEL];
+}
+
+/**
+ * The transcriber `options` ask for. Parakeet loads on first use; while `locateModel` finds no complete
+ * copy of it or of Silero VAD, transcribing throws a `MissingModelError` naming what `downloadModels` should fetch.
+ */
+export async function makeTranscriber(options: VoiceOptions, modelsDir: string): Promise<Transcriber> {
+  checkVoice(options);
+  const { backend, model, quantization } = options;
+  if (backend === "command") return new CommandTranscriber(options.command);
   return lazily(`onnx-asr:${model}`, async () => {
     const modelDir = locateModel(model, modelsDir, quantization);
     const vadDir = locateModel(VAD_MODEL, modelsDir);
