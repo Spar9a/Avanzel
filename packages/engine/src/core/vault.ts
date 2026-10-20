@@ -187,14 +187,14 @@ export class Vault {
     throw new Error("unreachable: candidate ids are unbounded");
   }
 
-  /** Claim a fresh recording path (created empty, so concurrent recorders never share one). */
+  /** Claim a fresh recording path (created empty, so concurrent recorders never share one), never through a link. */
   newAudioPath(now: Date, suffix = ".wav"): string {
-    return claim(join(this.raw, "audio", ...yearMonth(now)), idStamp(now), suffix);
+    return claim(this.root, `raw/audio/${yearMonth(now).join("/")}`, idStamp(now), suffix);
   }
 
-  /** Claim a fresh screenshot path under `raw/attachments/YYYY/MM/` (created empty). */
+  /** Claim a fresh screenshot path under `raw/attachments/YYYY/MM/` (created empty), never through a link. */
   newAttachmentPath(now: Date, suffix: string): string {
-    return claim(join(this.raw, "attachments", ...yearMonth(now)), idStamp(now), suffix);
+    return claim(this.root, `raw/attachments/${yearMonth(now).join("/")}`, idStamp(now), suffix);
   }
 
   /** Text and audio files waiting in the inbox, oldest (by name) first. */
@@ -338,11 +338,16 @@ function publish(path: string, content: string): boolean {
   }
 }
 
-/** Create the first free `<stem>[-N]<suffix>` in `folder`, empty, and return its path. */
-function claim(folder: string, stem: string, suffix: string): string {
-  mkdirSync(folder, { recursive: true });
+/**
+ * Create the first free `<stem>[-N]<suffix>` in `folder` (library-relative), empty, and return its
+ * path. The folders are made, and must be, real folders inside the library: never through a link.
+ */
+function claim(root: string, folder: string, stem: string, suffix: string): string {
+  if (!realFoldersTo(root, `${folder}/${stem}${suffix}`, true)) {
+    throw new AvanzelError(`Avanzel doesn't save through links, and ${folder} goes through one. Remove the link, then try again.`);
+  }
   for (let counter = 1; ; counter++) {
-    const candidate = join(folder, counter === 1 ? `${stem}${suffix}` : `${stem}-${counter}${suffix}`);
+    const candidate = join(root, folder, counter === 1 ? `${stem}${suffix}` : `${stem}-${counter}${suffix}`);
     try {
       closeSync(openSync(candidate, "wx"));
       return candidate;

@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -184,6 +184,22 @@ describe("recordings and attachments", () => {
     expect(first).toBe(join(vault.root, "raw", "attachments", "2026", "10", "2026-10-20-140312.png"));
     expect(existsSync(first)).toBe(true);
     expect(vault.newAttachmentPath(NOW, ".png").split("/").at(-1)).toBe("2026-10-20-140312-2.png");
+  });
+
+  it("never claims a recording or screenshot path through a linked folder", () => {
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    mkdirSync(join(vault.raw, "audio"));
+    symlinkSync(outside, join(vault.raw, "audio", "2026"));
+    const recording = thrownBy(() => vault.newAudioPath(NOW));
+    expect(recording).toBeInstanceOf(AvanzelError);
+    expect(recording.message).toContain("raw/audio/2026");
+    mkdirSync(join(vault.raw, "attachments", "2026"), { recursive: true });
+    symlinkSync(outside, join(vault.raw, "attachments", "2026", "10"));
+    const screenshot = thrownBy(() => vault.newAttachmentPath(NOW, ".png"));
+    expect(screenshot).toBeInstanceOf(AvanzelError);
+    expect(screenshot.message).toContain("raw/attachments/2026/10");
+    expect(readdirSync(outside)).toEqual([]);
   });
 });
 

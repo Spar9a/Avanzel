@@ -7,6 +7,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -341,13 +342,40 @@ describe("file", () => {
     write(outside, `10/${capture.id}.md`, "an outside file of the same name");
     vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
     const outcome = await only(librarian.file());
-    expect(outcome.ok).toBe(false);
-    expect(outcome.error).toContain("raw/2026/10");
     expect(readdirSync(join(outside, "10"))).toEqual([`${capture.id}.md`]);
     expect(read(join(outside, "10", `${capture.id}.md`))).toBe("an outside file of the same name");
-    expect(read(capture.path)).toBe(original); // the owner's words, back in the inbox
-    expect(outcome.archivedTo).toBeNull();
-    expect(vault.pending()).toEqual([capture.path]);
+    expect(outcome).toMatchObject({ ok: true, restored: true, guarded: ["raw/2026"] }); // the planted link is gone
+    const archived = join(vault.raw, "2026", "10", `${capture.id}.md`);
+    expect(outcome.archivedTo).toBe(archived);
+    expect(realpathSync(archived)).toBe(archived); // a real raw/2026/10/, inside the library
+    expect(read(archived)).toBe(original); // the owner's words
+    expect(vault.pending()).toEqual([]);
+  });
+
+  it("removes a link an agent planted under raw/audio, so later recordings stay in the library", async () => {
+    mode("link-audio");
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.guarded).toContain("raw/audio/2026");
+    expect(lstatOrNull(join(vault.raw, "audio", "2026"))?.isSymbolicLink() ?? false).toBe(false);
+    expect(realpathSync(vault.newAudioPath(NOW)).startsWith(`${vault.root}/`)).toBe(true);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("removes a link an agent planted under raw/attachments, so later screenshots stay in the library", async () => {
+    mode("link-attachments");
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.guarded).toContain("raw/attachments/2026/10");
+    expect(lstatOrNull(join(vault.raw, "attachments", "2026", "10"))?.isSymbolicLink() ?? false).toBe(false);
+    expect(realpathSync(vault.newAttachmentPath(NOW, ".png")).startsWith(`${vault.root}/`)).toBe(true);
+    expect(readdirSync(outside)).toEqual([]);
   });
 
   it("never changes a file outside the library that an agent hard-linked as log.md", async () => {
@@ -620,7 +648,9 @@ describe("review", () => {
     const outcome = await librarian.review();
     expect(outcome.result.ok).toBe(true);
     expect(readdirSync(outside)).toEqual([]);
-    expect(outcome.report).toBeNull();
+    expect(outcome.guarded).toEqual(["reviews/2026-10-20.md"]); // the link is gone…
+    expect(outcome.report).toBe(join(vault.root, "reviews", "2026-10-20.md"));
+    expect(lstatSync(outcome.report ?? "").isFile()).toBe(true); // …so the reply is the report, inside the library
   });
 
   it("gets a new report name the second time on a day", async () => {
@@ -679,6 +709,19 @@ describe("eveningReview", () => {
     expect(read(review.digestPath ?? "")).toContain(
       `- [[${capture.id}]]: Filed into [[idea-${capture.id}]].\n  - New: [[idea-${capture.id}]]\n` +
         "  - The agent edited your capture; your original words were restored.\n",
+    );
+  });
+
+  it("notes the links it removed from Avanzel's own folders", async () => {
+    mode("link-audio");
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    librarian.captureText("harmless words");
+    const review = await librarian.eveningReview();
+    expect(read(review.digestPath ?? "")).toContain(
+      "  - Undid the agent's changes to raw/audio/2026 " +
+        "(library rules, settings and tasks are off-limits to it, and so are links in Avanzel's own folders).\n",
     );
   });
 
@@ -923,6 +966,19 @@ describe.skipIf(!git.available())("with git", () => {
     expect(gitOut("status", "--porcelain")).toBe("");
     // and the library works as before: the same captures file again
     expect((await librarian.file()).map((outcome) => outcome.ok)).toEqual([true, true]);
+  });
+
+  it("Undo removes a link a run committed under raw/", async () => {
+    // Committed straight with git: a library from before the guard removed such links may hold one.
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    symlinkSync(outside, join(versioned.raw, "2026"));
+    const screenshot = write(versioned.root, "raw/attachments/2026/10/2026-10-20-140312.png", "PNG");
+    const commit = await git.commitAll(versioned.root, "avanzel: file 2026-10-20-140312-harmless-words");
+    expect(await librarian.undo([commit ?? ""])).toBe(1);
+    expect(lstatOrNull(join(versioned.raw, "2026"))).toBeNull();
+    expect(read(screenshot)).toBe("PNG");
+    expect(gitOut("status", "--porcelain")).toBe("");
   });
 
   it("leaves the library alone when a filing can no longer be undone cleanly", async () => {

@@ -495,7 +495,8 @@ function digest(outcomes: readonly FileOutcome[], now: Date): string {
       if (updated.length) lines.push(`  - Updated: ${updated.join(", ")}`);
       if (restored) lines.push("  - The agent edited your capture; your original words were restored.");
       if (guarded.length) {
-        lines.push(`  - Undid the agent's changes to ${guarded.join(", ")} (library rules, settings and tasks are off-limits to it).`);
+        const offLimits = "library rules, settings and tasks are off-limits to it, and so are links in Avanzel's own folders";
+        lines.push(`  - Undid the agent's changes to ${guarded.join(", ")} (${offLimits}).`);
       }
     }
   }
