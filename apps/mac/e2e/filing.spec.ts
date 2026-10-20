@@ -55,6 +55,37 @@ async function quit(app: ElectronApplication): Promise<void> {
   await closed;
 }
 
+/**
+ * Dictates "misheard words" while another process holds the library (this test, standing in for a
+ * second Avanzel): the filing waits for it, and so does all that queues behind it, past the end of
+ * quitting's wait. `meanwhile` acts in the capsule, then Avanzel quits. Returns what the inbox holds.
+ */
+async function quitWhileHeld(meanwhile: (app: ElectronApplication, capsule: Page) => Promise<void>): Promise<string[]> {
+  const library = await makeLibrary();
+  let letGo = () => {};
+  const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
+  try {
+    const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("hello"), AVANZEL_FAKE_TRANSCRIPT: "misheard words" });
+    const capsule = await windowFor(app, "capsule");
+    await call(app, "toggleDictate");
+    await call(app, "toggleDictate");
+    await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+    await meanwhile(app, capsule);
+    await quit(app);
+  } finally {
+    letGo();
+    await held;
+  }
+  return inboxWords(library);
+}
+
+/** Edit, type `words` and File: the refiled note waits behind the held library. */
+async function fileEdit(app: ElectronApplication, capsule: Page, words: string): Promise<void> {
+  await editTo(app, capsule, words);
+  await capsule.getByRole("button", { name: "File" }).click();
+  await expect.poll(() => capsuleKind(app)).toBe("filing");
+}
+
 test("Edit stops the agent mid-run, takes back what it did, and files the corrected words", async () => {
   const { library, app, capsule } = await dictateToStallingAgent("Remember to email Mark the hygienic plan");
   await capsule.getByRole("button", { name: "Edit" }).click();
@@ -143,30 +174,31 @@ test("quitting with the editor open keeps the edit in the inbox", async () => {
 });
 
 test("quitting with the editor open still saves the edit when the wait runs out", async () => {
-  const library = await makeLibrary();
-  // Another process holds the library (this test, standing in for a second Avanzel): the filing waits
-  // for it, and the edit kept on quitting waits behind the filing, past the end of quitting's wait.
-  let letGo = () => {};
-  const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
-  try {
-    const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("hello"), AVANZEL_FAKE_TRANSCRIPT: "misheard words" });
-    const capsule = await windowFor(app, "capsule");
-    await call(app, "toggleDictate");
-    await call(app, "toggleDictate");
-    await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
-    await editTo(app, capsule, "corrected words");
-    await quit(app);
-  } finally {
-    letGo();
-    await held;
-  }
+  const words = await quitWhileHeld((app, capsule) => editTo(app, capsule, "corrected words"));
   // The corrected words are written anyway, with the recording and transcriber of the misheard ones, which stay too.
-  const words = inboxWords(library);
   expect(words).toHaveLength(2);
   expect(words.filter((text) => text.includes("misheard words"))).toHaveLength(1);
   const [corrected] = words.filter((text) => text.includes("corrected words"));
   expect(corrected).toContain("\ntranscriber: fake\n");
   expect(corrected).toMatch(/\naudio: raw\/audio\/.+\.wav\n/);
+});
+
+test("words filed after an edit are saved when the quit wait runs out before their turn", async () => {
+  const words = await quitWhileHeld((app, capsule) => fileEdit(app, capsule, "first fix"));
+  expect(words).toHaveLength(2);
+  expect(words.filter((text) => text.includes("misheard words"))).toHaveLength(1);
+  expect(words.filter((text) => text.includes("first fix"))).toHaveLength(1);
+});
+
+test("a second Edit on a refiled note keeps its words when the quit wait runs out", async () => {
+  const words = await quitWhileHeld(async (app, capsule) => {
+    await fileEdit(app, capsule, "first fix");
+    await capsule.getByRole("button", { name: "Edit" }).click(); // opened again, nothing typed
+    await expect.poll(() => capsuleKind(app)).toBe("editing");
+  });
+  expect(words).toHaveLength(2);
+  expect(words.filter((text) => text.includes("misheard words"))).toHaveLength(1);
+  expect(words.filter((text) => text.includes("first fix"))).toHaveLength(1);
 });
 
 test("starting a new dictation with the editor open keeps the edit", async () => {

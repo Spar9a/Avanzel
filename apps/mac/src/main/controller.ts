@@ -106,10 +106,19 @@ interface FilingJob {
   edited: boolean;
   /** The editor's text after Edit, as the owner types it: what `keepEdit` saves. */
   draft?: string;
+  /** The corrected words it files (File after Edit); a Cancel files the same ones as the job it refiles. */
+  correction?: Correction;
   /** A line under the words on the filing card, e.g. why the recording itself wasn't kept. */
   detail?: string;
   outcome?: FileOutcome;
   pages?: FiledPage[];
+}
+
+/** Words filed after Edit, on their way to the inbox: only in memory until the refile's `recapture` writes them. */
+interface Correction {
+  words: string;
+  /** The job they correct: its capture's recording, transcriber and creation time go with them (`recaptureOptions`). */
+  of: FilingJob;
 }
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -147,6 +156,8 @@ export class Controller {
   private readonly editing = new Set<string>();
   /** Edits kept (`keepEdit`) whose words the queue hasn't saved yet. */
   private readonly kept = new Set<FilingJob>();
+  /** Corrections no capture holds yet: their refile writes them, or quitting does when its wait runs out first. */
+  private readonly unwritten = new Set<Correction>();
   private quitting = false;
   private transcriber: Transcriber | null = null;
   private transcriberKey = "";
@@ -201,8 +212,8 @@ export class Controller {
   /**
    * Before quitting: stop every agent run and keep an open edit (`keepEdit`), then wait (at most
    * QUIT_WAIT_MS) while the engine does its bookkeeping: protected files put back, what a run left
-   * committed, the capture kept in the inbox. Nothing new starts meanwhile. The words of kept edits
-   * the wait didn't reach are saved all the same.
+   * committed, the capture kept in the inbox. Nothing new starts meanwhile. Words the wait left only
+   * in memory (`saveUnwritten`) are saved all the same.
    */
   async stopForQuit(): Promise<void> {
     this.quitting = true;
@@ -212,7 +223,7 @@ export class Controller {
     const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, QUIT_WAIT_MS)));
     await Promise.race([Promise.allSettled([this.queue, ...this.runs.values()]), waited]);
     clearTimeout(timer);
-    this.saveKeptDrafts();
+    this.saveUnwritten();
   }
 
   /** What goes wrong opening it is kept in `libraryProblem`, which the menu and Settings show. */
@@ -765,6 +776,7 @@ export class Controller {
    */
   private refile(job: FilingJob, words: string | null): void {
     this.inEditor = null; // settled by File or Cancel: the editor closes without keeping the edit
+    const correction = words === null ? null : this.correct(job, words);
     const next: FilingJob = {
       capturePath: job.capturePath,
       text: words ?? job.text,
@@ -772,12 +784,15 @@ export class Controller {
       agent: job.agent,
       abort: new AbortController(),
       edited: false,
+      correction: correction ?? job.correction,
     };
     this.showFiling(next);
     void this.enqueue(async () => {
       const problem = await this.takeBack(job); // first: undoing a finished filing puts the misheard capture back in the inbox
       try {
-        next.capturePath = words === null ? job.capturePath : this.recapture(job, words);
+        if (correction && !this.unwritten.has(correction)) return; // corrected further meanwhile, or written as Avanzel quit
+        next.capturePath = correction ? this.recapture(job, correction.words) : job.capturePath;
+        if (correction) this.unwritten.delete(correction);
       } catch (error) {
         return this.filingFailed(next, errorMessage(error));
       } finally {
@@ -789,6 +804,14 @@ export class Controller {
         this.fail("Couldn't take back the agent's first try", `${problem}${waiting}`);
       }
     });
+  }
+
+  /** File after Edit: `words` correct `job`'s, and replace any correction of `job` that no capture holds yet. */
+  private correct(job: FilingJob, words: string): Correction {
+    if (job.correction) this.unwritten.delete(job.correction);
+    const correction = { words, of: job };
+    this.unwritten.add(correction);
+    return correction;
   }
 
   /**
@@ -828,15 +851,30 @@ export class Controller {
   private saveDraft(job: FilingJob, save: (words: string) => unknown): void {
     if (!this.kept.has(job)) return;
     const words = job.draft?.trim();
-    if (words && words !== job.text) save(words);
+    if (words && words !== job.text) {
+      save(words);
+      if (job.correction) this.unwritten.delete(job.correction); // corrected further by the draft
+    }
     this.kept.delete(job);
   }
 
-  /** Quitting, and the queue didn't get to these kept edits in time: their words are saved anyway, beside the misheard captures. */
-  private saveKeptDrafts(): void {
+  /**
+   * Quitting, and the queue didn't get to these in time: the drafts of kept edits, then the corrections
+   * no capture holds yet, are saved as fresh captures anyway, beside the misheard ones.
+   */
+  private saveUnwritten(): void {
+    const save = (words: string, of: FilingJob) => this.requireVault().newCapture(words, this.recaptureOptions(of));
     for (const job of this.kept) {
       try {
-        this.saveDraft(job, (words) => this.requireVault().newCapture(words, this.recaptureOptions(job)));
+        this.saveDraft(job, (words) => save(words, job));
+      } catch (error) {
+        console.error("keep edit", error);
+      }
+    }
+    for (const correction of this.unwritten) {
+      try {
+        save(correction.words, correction.of);
+        this.unwritten.delete(correction);
       } catch (error) {
         console.error("keep edit", error);
       }
