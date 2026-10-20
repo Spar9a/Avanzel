@@ -88,6 +88,8 @@ export interface FileOptions {
   /** The owner's standing instructions for this run (a shadow task's body). */
   instructions?: string | null;
   signal?: AbortSignal;
+  /** Captures to leave in the inbox, unreported (say, ones the owner is editing); asked as each next capture is picked. */
+  leave?: (capturePath: string) => boolean;
 }
 
 export interface LibrarianOptions {
@@ -213,12 +215,15 @@ export class Librarian {
     });
   }
 
-  async #fileQueue(only: readonly string[] | null, { progress = quiet, instructions = null, signal }: FileOptions): Promise<FileOutcome[]> {
+  async #fileQueue(
+    only: readonly string[] | null,
+    { progress = quiet, instructions = null, signal, leave = () => false }: FileOptions,
+  ): Promise<FileOutcome[]> {
     const outcomes: FileOutcome[] = [];
     const attempted = new Set<string>();
     while (!signal?.aborted) {
       const queue = only ?? this.vault.pending();
-      let path = queue.find((candidate) => !attempted.has(candidate) && isFile(candidate));
+      let path = queue.find((candidate) => !attempted.has(candidate) && isFile(candidate) && !leave(candidate));
       if (path === undefined) break;
       attempted.add(path);
       if (AUDIO_EXTS.has(extname(path).toLowerCase())) {

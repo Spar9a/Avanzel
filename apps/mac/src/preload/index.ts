@@ -17,6 +17,7 @@ const bridge: AvanzelBridge = {
     reportMicError: (message) => ipcRenderer.send("capsule:mic-error", message),
     setInteractive: (interactive) => ipcRenderer.send("capsule:interactive", interactive),
     edit: () => ipcRenderer.send("capsule:edit"),
+    editDraft: (text) => ipcRenderer.send("capsule:edit-draft", text),
     submitEdit: (text) => ipcRenderer.send("capsule:submit-edit", text),
     cancelEdit: () => ipcRenderer.send("capsule:cancel-edit"),
     undo: () => ipcRenderer.send("capsule:undo"),

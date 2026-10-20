@@ -809,6 +809,15 @@ describe("eveningReview", () => {
     expect(readdirSync(join(vault.root, "reviews"))).toEqual([]);
   });
 
+  it("leaves captures the owner is editing in the inbox", async () => {
+    const a = librarian.captureText("first");
+    const b = librarian.captureText("second");
+    const review = await librarian.eveningReview({ leave: (path) => path === a.path });
+    expect(review.outcomes.map((outcome) => outcome.captureId)).toEqual([b.id]);
+    expect(vault.pending()).toEqual([a.path]);
+    expect(read(review.digestPath ?? "")).not.toContain(a.id); // left alone, not reported
+  });
+
   it("never writes the digest through a link left where it would go", async () => {
     const outside = join(tmp(), "outside");
     mkdirSync(outside);

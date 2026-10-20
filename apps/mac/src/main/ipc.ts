@@ -16,6 +16,7 @@ export function registerIpc(controller: Controller): void {
   on("capsule:mic-error", (_e, message: string) => controller.micError(message));
   on("capsule:interactive", (_e, interactive: boolean) => controller.setInteractive(interactive));
   on("capsule:edit", () => controller.edit());
+  on("capsule:edit-draft", (_e, text: string) => controller.editDraft(text));
   on("capsule:submit-edit", (_e, text: string) => controller.submitEdit(text));
   on("capsule:cancel-edit", () => controller.cancelEdit());
   on("capsule:undo", () => void controller.undo());

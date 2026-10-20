@@ -1,11 +1,14 @@
 // Filing with the agent: Edit while it runs, quitting while it runs, and runs that fail.
-import { expect, test } from "@playwright/test";
+import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { mkdtempSync, readFileSync, renameSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Vault } from "../../../packages/engine/src/index.ts";
 import { call, capsuleKind, exists, filesUnder, gitOut, launch, makeLibrary, onceMarker, read, snap, speechWav, windowFor } from "./helpers.ts";
 
 const inbox = (root: string) => filesUnder(root, "inbox");
+/** What each capture waiting in the inbox says. */
+const inboxWords = (root: string) => inbox(root).map((name) => read(root, `inbox/${name}`));
 const archived = (root: string) => filesUnder(root, "raw").filter((rel) => rel.endsWith(".md")).map((rel) => path.join(root, "raw", rel));
 /** Markdown files in the library (git's own folder aside) that contain `words`. */
 const mentioning = (root: string, words: string) =>
@@ -36,6 +39,20 @@ async function dictateToStallingAgent(transcript: string, extra: Record<string, 
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
   await expect.poll(() => exists(library, "goals/half.md"), { timeout: 30_000 }).toBe(true); // the agent is mid-run
   return { library, app, capsule };
+}
+
+/** Edit, then type `words`: the editor sends them on their own message, so wait until the app has them. */
+async function editTo(app: ElectronApplication, capsule: Page, words: string): Promise<void> {
+  await capsule.getByRole("button", { name: "Edit" }).click();
+  await expect.poll(() => capsuleKind(app)).toBe("editing");
+  await capsule.getByRole("textbox").fill(words);
+  await expect.poll(() => call(app, "draftForTests")).toBe(words);
+}
+
+async function quit(app: ElectronApplication): Promise<void> {
+  const closed = app.waitForEvent("close", { timeout: 30_000 });
+  await app.evaluate(({ app: electronApp }) => electronApp.quit()).catch(() => undefined);
+  await closed;
 }
 
 test("Edit stops the agent mid-run, takes back what it did, and files the corrected words", async () => {
@@ -78,17 +95,91 @@ test("cancelling an Edit takes back what the stopped run did and files the words
   await app.close();
 });
 
+test("an evening review during an edit files only the corrected words", async () => {
+  const library = await makeLibrary();
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "misheard words",
+    FAKE_AGENT_DELAY_MS: "3000",
+  });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000, intervals: [50] }).toBe("filing");
+  await capsule.getByRole("button", { name: "Edit" }).click();
+  await expect.poll(() => capsuleKind(app)).toBe("editing");
+  await call(app, "runTask", "evening-review");
+  await call(app, "idleForTests");
+  expect(inboxWords(library)).toEqual([expect.stringContaining("misheard words")]); // the review left it alone
+  await capsule.getByRole("textbox").fill("corrected words");
+  await capsule.getByRole("button", { name: "File" }).click();
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await call(app, "idleForTests");
+  const filed = archived(library).map((file) => readFileSync(file, "utf8"));
+  expect(filed.filter((text) => text.includes("misheard"))).toEqual([]);
+  expect(filed.filter((text) => text.includes("corrected words"))).toHaveLength(1);
+  await app.close();
+});
+
 test("quitting mid-filing stops the agent, commits what it left, and keeps the note in the inbox", async () => {
   const record = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-runs-")), "runs.jsonl");
   const { library, app } = await dictateToStallingAgent("Call the plumber about the leak", { FAKE_AGENT_RECORD: record });
   const { pid } = JSON.parse(readFileSync(record, "utf8").trim().split("\n")[0]!) as { pid: number };
-  const closed = app.waitForEvent("close", { timeout: 30_000 });
-  await app.evaluate(({ app: electronApp }) => electronApp.quit()).catch(() => undefined);
-  await closed;
+  await quit(app);
   expect(alive(pid)).toBe(false);
   expect(inbox(library)).toEqual([expect.stringMatching(/-call-the-plumber-about-the\.md$/)]);
   expect(gitOut(library, "log", "-1", "--format=%s")).toMatch(/^avanzel: leftovers of failed filing /);
   expect(gitOut(library, "status", "--porcelain")).toBe("");
+});
+
+test("quitting with the editor open keeps the edit in the inbox", async () => {
+  const { library, app, capsule } = await dictateToStallingAgent("misheard words");
+  await editTo(app, capsule, "corrected words");
+  await quit(app);
+  expect(inboxWords(library)).toEqual([expect.stringContaining("corrected words")]);
+  expect(mentioning(library, "misheard")).toEqual([]);
+  expect(exists(library, "goals/half.md")).toBe(false); // what the stopped run did is taken back
+});
+
+test("quitting with the editor open still saves the edit when the wait runs out", async () => {
+  const library = await makeLibrary();
+  // Another process holds the library (this test, standing in for a second Avanzel): the filing waits
+  // for it, and the edit kept on quitting waits behind the filing, past the end of quitting's wait.
+  let letGo = () => {};
+  const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
+  try {
+    const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("hello"), AVANZEL_FAKE_TRANSCRIPT: "misheard words" });
+    const capsule = await windowFor(app, "capsule");
+    await call(app, "toggleDictate");
+    await call(app, "toggleDictate");
+    await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+    await editTo(app, capsule, "corrected words");
+    await quit(app);
+  } finally {
+    letGo();
+    await held;
+  }
+  // The corrected words are written anyway, with the recording and transcriber of the misheard ones, which stay too.
+  const words = inboxWords(library);
+  expect(words).toHaveLength(2);
+  expect(words.filter((text) => text.includes("misheard words"))).toHaveLength(1);
+  const [corrected] = words.filter((text) => text.includes("corrected words"));
+  expect(corrected).toContain("\ntranscriber: fake\n");
+  expect(corrected).toMatch(/\naudio: raw\/audio\/.+\.wav\n/);
+});
+
+test("starting a new dictation with the editor open keeps the edit", async () => {
+  const { library, app, capsule } = await dictateToStallingAgent("misheard words");
+  await editTo(app, capsule, "corrected words");
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await call(app, "cancelRecording");
+  await call(app, "idleForTests");
+  expect(inboxWords(library)).toEqual([expect.stringContaining("corrected words")]);
+  expect(mentioning(library, "misheard")).toEqual([]);
+  expect(exists(library, "goals/half.md")).toBe(false);
+  await app.close();
 });
 
 test("a failed filing says its partial edits are kept as their own commit", async () => {

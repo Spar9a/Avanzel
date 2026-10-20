@@ -124,6 +124,8 @@ export interface AvanzelBridge {
     reportMicError(message: string): void;
     setInteractive(interactive: boolean): void;
     edit(): void;
+    /** The editor's text, on every change: kept if Avanzel quits or a recording starts before File or Cancel. */
+    editDraft(text: string): void;
     submitEdit(text: string): void;
     cancelEdit(): void;
     undo(): void;

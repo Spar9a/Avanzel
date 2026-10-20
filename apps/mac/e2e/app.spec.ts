@@ -162,6 +162,15 @@ test("the evening review files the inbox and writes a digest", async () => {
   await app.close();
 });
 
+test("a scheduled evening review with nothing to file says so", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "runTask", "evening-review", true);
+  await call(app, "idleForTests");
+  expect(await call(app, "notificationsForTests")).toContainEqual({ title: "Evening review", body: "Inbox was empty." });
+  await app.close();
+});
+
 test("the evening review transcribes a recording dropped into the inbox, with nothing dictated since launch", async () => {
   const library = await makeLibrary();
   copyFileSync(speechWav("Buy a new bicycle helmet before the summer trip."), path.join(library, "inbox", "Voice Memo 12.wav"));

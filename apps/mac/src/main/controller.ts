@@ -37,6 +37,7 @@ import {
   selectHarness,
   writeWav,
   type Capture,
+  type CaptureOptions,
   type FileOutcome,
   type Settings,
   type ShadowTask,
@@ -102,6 +103,8 @@ interface FilingJob {
   abort: AbortController;
   /** Edit stopped the run: what it did is taken back (`refile`), not shown. */
   edited: boolean;
+  /** The editor's text after Edit, as the owner types it: what `keepEdit` saves. */
+  draft?: string;
   outcome?: FileOutcome;
   pages?: FiledPage[];
 }
@@ -121,6 +124,8 @@ export class Controller {
   private capsuleState: CapsuleState = { kind: "hidden" };
   private recording: Recording | null = null;
   private job: FilingJob | null = null;
+  /** The job whose words are in the capsule's editor: from Edit until File or Cancel (`refile`), or `keepEdit`. */
+  private inEditor: FilingJob | null = null;
   private hideTimer: NodeJS.Timeout | null = null;
   private keepOpen = false;
   private queue: Promise<unknown> = Promise.resolve();
@@ -128,6 +133,10 @@ export class Controller {
   private queued = 0;
   /** Every agent run going on, by the controller that stops it. */
   private runs = new Map<AbortController, Promise<unknown>>();
+  /** Captures from Edit until their edit is settled (filed again, kept or cancelled): evening reviews leave them be. */
+  private readonly editing = new Set<string>();
+  /** Edits kept (`keepEdit`) whose words the queue hasn't saved yet. */
+  private readonly kept = new Set<FilingJob>();
   private quitting = false;
   private transcriber: Transcriber | null = null;
   private transcriberKey = "";
@@ -174,30 +183,33 @@ export class Controller {
     if (!this.vault) this.showSettings();
   }
 
-  /** Whether quitting now would cut an agent run, or work queued behind one, short. */
+  /** Whether quitting now would cut an agent run, work queued behind one, or an edit short. */
   busy(): boolean {
-    return this.runs.size > 0 || this.queued > 0;
+    return this.runs.size > 0 || this.queued > 0 || this.editing.size > 0;
   }
 
   /**
-   * Before quitting: stop every agent run, then wait (at most QUIT_WAIT_MS) while the engine does
-   * its bookkeeping: protected files put back, what a run left committed, the capture kept in the
-   * inbox. Nothing new starts meanwhile.
+   * Before quitting: stop every agent run and keep an open edit (`keepEdit`), then wait (at most
+   * QUIT_WAIT_MS) while the engine does its bookkeeping: protected files put back, what a run left
+   * committed, the capture kept in the inbox. Nothing new starts meanwhile. The words of kept edits
+   * the wait didn't reach are saved all the same.
    */
   async stopForQuit(): Promise<void> {
     this.quitting = true;
     for (const abort of this.runs.keys()) abort.abort();
+    this.keepEdit();
     let timer: NodeJS.Timeout | undefined;
     const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, QUIT_WAIT_MS)));
     await Promise.race([Promise.allSettled([this.queue, ...this.runs.values()]), waited]);
     clearTimeout(timer);
+    this.saveKeptDrafts();
   }
 
   /** What goes wrong opening it is kept in `libraryProblem`, which the menu and Settings show. */
   private openLibrary(libraryPath: string | null): void {
     this.vault = null;
     this.recent = [];
-    this.transcriber = null;
+    this.dropTranscriber();
     this.libraryProblem = null;
     if (!libraryPath) return;
     const vault = new Vault(libraryPath);
@@ -240,13 +252,22 @@ export class Controller {
   private async transcriberFor(voice: VoiceSettings): Promise<Transcriber> {
     const key = JSON.stringify(voice);
     if (!this.transcriber || key !== this.transcriberKey) {
-      this.transcriber = await makeTranscriber(voice, this.modelsDir).catch((error: unknown): Transcriber => ({
+      const made = await makeTranscriber(voice, this.modelsDir).catch((error: unknown): Transcriber => ({
         engine: "none",
         transcribe: () => Promise.reject(error),
       }));
+      this.dropTranscriber(); // the one these settings replace
+      this.transcriber = made;
       this.transcriberKey = key;
     }
     return this.transcriber;
+  }
+
+  /** Lets the speech-to-text engine go: it frees its model (Parakeet's is ~700 MB) once the transcriptions in progress end. */
+  private dropTranscriber(): void {
+    const old = this.transcriber;
+    this.transcriber = null;
+    old?.release?.().catch((error: unknown) => console.error("speech model", error));
   }
 
   private agentName(harness?: string): string {
@@ -326,6 +347,7 @@ export class Controller {
   // ---------------------------------------------------------------- capsule plumbing
 
   private setCapsule(state: CapsuleState, autoHideMs?: number): void {
+    if (state.kind !== "editing") this.keepEdit(); // whatever replaces the editor (a recording, a typed thought, an error) keeps its edit
     this.capsuleState = state;
     if (this.hideTimer) clearTimeout(this.hideTimer);
     this.hideTimer = null;
@@ -666,26 +688,36 @@ export class Controller {
     this.refreshMenu();
   }
 
-  /** Stops the agent at once and shows the words; Submit or Cancel then takes back what it did (`refile`). */
+  /**
+   * Stops the agent at once and shows the words; Submit or Cancel then takes back what it did
+   * (`refile`). Not while quitting: the editor would close with the app, and its words with it.
+   */
   edit(): void {
     const job = this.job;
-    if (!job || job.edited || this.capsuleState.kind !== "filing") return;
+    if (!job || job.edited || this.quitting || this.capsuleState.kind !== "filing") return;
     job.edited = true;
     job.abort.abort();
+    this.editing.add(job.capturePath);
+    this.inEditor = job;
     this.setCapsule({ kind: "editing", text: job.text });
   }
 
+  /** The editor's text, sent as the owner types: what `keepEdit` saves if neither File nor Cancel comes first. */
+  editDraft(text: string): void {
+    if (this.inEditor) this.inEditor.draft = text;
+  }
+
   submitEdit(text: string): void {
-    const job = this.job;
-    if (!job || this.capsuleState.kind !== "editing") return;
+    const job = this.inEditor;
+    if (!job) return;
     const words = text.trim();
     if (!words) return this.cancelEdit();
     this.refile(job, words);
   }
 
   cancelEdit(): void {
-    const job = this.job;
-    if (!job || this.capsuleState.kind !== "editing") return;
+    const job = this.inEditor;
+    if (!job) return;
     this.refile(job, null);
   }
 
@@ -695,6 +727,7 @@ export class Controller {
    * (null) the capture as it was.
    */
   private refile(job: FilingJob, words: string | null): void {
+    this.inEditor = null; // settled by File or Cancel: the editor closes without keeping the edit
     const next: FilingJob = {
       capturePath: job.capturePath,
       text: words ?? job.text,
@@ -710,6 +743,8 @@ export class Controller {
         next.capturePath = words === null ? job.capturePath : this.recapture(job, words);
       } catch (error) {
         return this.filingFailed(next, errorMessage(error));
+      } finally {
+        this.settleEdit(job, next);
       }
       if (problem === null) return this.runFiling(next);
       if (this.job === next && this.capsuleState.kind === "filing") {
@@ -717,6 +752,58 @@ export class Controller {
         this.fail("Couldn't take back the agent's first try", `${problem}${waiting}`);
       }
     });
+  }
+
+  /**
+   * `job`'s edit is settled, in queue order, so a review queued meanwhile still left its capture be.
+   * When `next` is in the editor already (a second Edit), its capture is the one left be now.
+   */
+  private settleEdit(job: FilingJob, next: FilingJob): void {
+    this.editing.delete(job.capturePath);
+    if (next.edited) this.editing.add(next.capturePath);
+  }
+
+  /**
+   * The editor is open as Avanzel quits, or something else takes the capsule (a recording, a typed
+   * thought): the edit is kept rather than lost. Once the stopped run is over (queue order), what it
+   * did is taken back and the draft saved as a fresh capture (`recapture`); empty or unchanged, the
+   * capture stays as it was. Nothing is filed: it waits in the inbox for the evening review.
+   */
+  private keepEdit(): void {
+    const job = this.inEditor;
+    if (!job) return;
+    this.inEditor = null; // File and Cancel no longer apply to it
+    this.kept.add(job);
+    void this.enqueue(async () => {
+      try {
+        const problem = await this.takeBack(job);
+        this.saveDraft(job, (words) => this.recapture(job, words));
+        if (problem !== null) this.notify("Couldn't take back the agent's first try", problem);
+      } catch (error) {
+        this.notify("Couldn't keep your edit", errorMessage(error));
+      } finally {
+        this.editing.delete(job.capturePath);
+      }
+    });
+  }
+
+  /** A kept edit's words as a fresh capture (`save`), once: by the queue, or by quitting when its wait ran out first. */
+  private saveDraft(job: FilingJob, save: (words: string) => unknown): void {
+    if (!this.kept.has(job)) return;
+    const words = job.draft?.trim();
+    if (words && words !== job.text) save(words);
+    this.kept.delete(job);
+  }
+
+  /** Quitting, and the queue didn't get to these kept edits in time: their words are saved anyway, beside the misheard captures. */
+  private saveKeptDrafts(): void {
+    for (const job of this.kept) {
+      try {
+        this.saveDraft(job, (words) => this.requireVault().newCapture(words, this.recaptureOptions(job)));
+      } catch (error) {
+        console.error("keep edit", error);
+      }
+    }
   }
 
   /** Undo the commit a stopped run made (none without git or auto_commit, or when it changed nothing); null, or why it couldn't. */
@@ -738,25 +825,32 @@ export class Controller {
   private recapture(job: FilingJob, words: string): string {
     const vault = this.requireVault();
     const old = job.capturePath;
-    const inInbox = existsSync(old);
-    // Filed meanwhile, it is in raw/: read what to keep from there, and leave it be.
-    const source = [old, vault.archivePath(old)].find((file) => existsSync(file));
-    const meta = source ? captureMeta(source) : { source: "text" };
+    const options = this.recaptureOptions(job);
+    const inInbox = existsSync(old); // filed meanwhile, it is in raw/, and left be
     const aside = path.join(path.dirname(old), `.${path.basename(old)}.editing`);
     if (inInbox) renameSync(old, aside);
     try {
-      const fresh = vault.newCapture(words, {
-        source: meta.source,
-        audio: meta.audio ? path.join(vault.root, meta.audio) : null,
-        transcriber: meta.transcriber ?? null,
-        now: meta.created ?? new Date(),
-      });
+      const fresh = vault.newCapture(words, options);
       if (inInbox) rmSync(aside, { force: true });
       return fresh.path;
     } catch (error) {
       if (inInbox) renameSync(aside, old);
       throw error;
     }
+  }
+
+  /** What the corrected words keep of the misheard capture: its source, recording, transcriber and creation time. */
+  private recaptureOptions(job: FilingJob): CaptureOptions {
+    const vault = this.requireVault();
+    // Filed meanwhile, it is in raw/: read what to keep from there.
+    const source = [job.capturePath, vault.archivePath(job.capturePath)].find((file) => existsSync(file));
+    const meta = source ? captureMeta(source) : { source: "text" };
+    return {
+      source: meta.source,
+      audio: meta.audio ? path.join(vault.root, meta.audio) : null,
+      transcriber: meta.transcriber ?? null,
+      now: meta.created ?? new Date(),
+    };
   }
 
   async undo(): Promise<void> {
@@ -1085,7 +1179,7 @@ export class Controller {
     })
       .then((dir) => {
         this.model = { kind: "ready", dir };
-        this.transcriber = null;
+        this.dropTranscriber();
         this.notify("Avanzel is ready to listen", "The speech model is downloaded. Press the shortcut and start talking.");
       })
       .catch((error) => {
@@ -1164,11 +1258,13 @@ export class Controller {
     const agent = this.agentName(task.agent);
     try {
       if (task.kind === "evening-review") {
+        // A capture in the editor is filed by its edit, once, with the corrected words.
+        const leave = (capturePath: string) => this.editing.has(capturePath);
         const result = await this.withRun(async (signal) =>
-          (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions, signal }));
+          (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions, signal, leave }));
         const filed = result.outcomes.filter((o) => o.ok).length;
         if (!result.outcomes.length) {
-          if (!scheduled) this.notify(task.name, "Inbox was empty.");
+          this.notify(task.name, "Inbox was empty.");
           return;
         }
         this.lastEveningCommits = result.commits;
@@ -1225,6 +1321,10 @@ export class Controller {
 
   notificationsForTests(): { title: string; body: string }[] {
     return this.notified;
+  }
+
+  draftForTests(): string | null {
+    return this.inEditor?.draft ?? null;
   }
 
   menuForTests(): MenuItemModel[] {

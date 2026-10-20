@@ -70,7 +70,10 @@ function Editor({ text }: { text: string }) {
       <textarea
         autoFocus
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          api.editDraft(e.target.value);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Escape") api.cancelEdit();
           if (e.key === "Enter" && (e.metaKey || !e.shiftKey)) {
