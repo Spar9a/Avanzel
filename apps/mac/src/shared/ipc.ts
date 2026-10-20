@@ -64,10 +64,27 @@ export interface AppSettings {
 
 export type PermissionStatus = "granted" | "denied" | "not-determined" | "restricted" | "unknown";
 
+/** What the check of an agent found (Settings → Agents), or that it is running. */
+export type AgentStatus =
+  | { kind: "checking" }
+  | { kind: "signed-in"; seconds: number }
+  | { kind: "replied"; seconds: number }
+  | { kind: "signed-out" }
+  | { kind: "timeout" }
+  | {
+      kind: "failed";
+      /** The line of the agent's output that says why (the engine's errorLine), or why it couldn't start. */
+      detail: string;
+    };
+
 export interface HarnessInfo {
   name: string;
   available: boolean;
   experimental: boolean;
+  /** Its check reads its own sign-in command, which asks the model nothing; the others' check is a prompt. */
+  freeCheck: boolean;
+  /** Its last check in this app run, or null while it hasn't been checked. */
+  status: AgentStatus | null;
 }
 
 export type ModelStatus =
@@ -175,6 +192,10 @@ export interface AvanzelBridge {
     downloadModel(): Promise<SettingsSnapshot>;
     saveTask(task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">): Promise<SettingsSnapshot>;
     runTask(id: string): Promise<SettingsSnapshot>;
+    /** Starts the free checks of installed agents not checked yet in this app run; their results arrive through onChanged. */
+    checkAgents(): Promise<SettingsSnapshot>;
+    /** Checks agent `name` again, its prompt included; the result arrives through onChanged. */
+    checkAgent(name: string): Promise<SettingsSnapshot>;
     openLibrary(): void;
     openPrivacy(pane: "microphone" | "screen"): void;
     requestPermission(kind: "microphone" | "screen"): Promise<SettingsSnapshot>;

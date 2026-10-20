@@ -18,6 +18,7 @@ import {
   Librarian,
   Vault,
   WAITING,
+  checkAgent as checkHarness,
   defaultSettings,
   downloadModels,
   downloadSize,
@@ -41,9 +42,11 @@ import {
   selectHarness,
   speechModels,
   writeWav,
+  type AgentCheck,
   type Capture,
   type CaptureOptions,
   type FileOutcome,
+  type Harness,
   type Settings,
   type ShadowTask,
   type Transcriber,
@@ -51,6 +54,7 @@ import {
   type VoiceSettings,
 } from "@avanzel/engine";
 import type {
+  AgentStatus,
   AppSettings,
   AskResult,
   CapsuleMode,
@@ -143,6 +147,13 @@ function notFiled(failed: readonly FileOutcome[], filed: number): string {
   return why ? `${why}\n${still}` : still;
 }
 
+/** What Settings → Agents shows for what the engine's check found. */
+function statusOf(check: AgentCheck): AgentStatus {
+  if (check.ok) return { kind: check.how, seconds: check.seconds };
+  if (check.why === "failed") return { kind: "failed", detail: check.detail };
+  return { kind: check.why };
+}
+
 export class Controller {
   private readonly store: SettingsStore;
   private readonly modelsDir: string;
@@ -179,6 +190,8 @@ export class Controller {
   private libraryProblem: string | null = null;
   private readonly runState: RunStateStore;
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
+  /** What each agent's check found in this app run, by harness name, for Settings → Agents. */
+  private readonly agentChecks = new Map<string, AgentStatus>();
   private recent: FiledPage[] = [];
   private running = new Set<string>();
   private lastEveningCommits: string[] = [];
@@ -1199,7 +1212,13 @@ export class Controller {
           ? { path: this.store.get().libraryPath!, exists: false, isGit: false, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900 }
           : null,
       defaultLibraryPath: path.join(homedir(), "Avanzel"),
-      harnesses: Object.values(all).map((h) => ({ name: h.name, available: h.available(), experimental: h.experimental })),
+      harnesses: Object.values(all).map((h) => ({
+        name: h.name,
+        available: h.available(),
+        experimental: h.experimental,
+        freeCheck: h.signIn !== undefined,
+        status: this.agentChecks.get(h.name) ?? null,
+      })),
       selectedHarness: selected,
       model: this.model,
       permissions: { microphone: permissionStatus("microphone"), screen: permissionStatus("screen") },
@@ -1290,8 +1309,57 @@ export class Controller {
     }
     await this.refreshModelStatus(); // its [voice] settings say which speech models it needs
     if (this.vault && this.model.kind === "missing") void this.downloadModel();
+    this.checkAgents();
     this.broadcast();
     return this.snapshot();
+  }
+
+  // ---------------------------------------------------------------- agent checks
+
+  /**
+   * Starts the free checks (an agent's own sign-in command, which asks the model nothing) of the installed agents not
+   * checked yet in this app run. It returns at once; Settings gets each result through settings:changed.
+   */
+  checkAgents(): SettingsSnapshot {
+    const vault = this.vault;
+    if (vault) {
+      for (const [name, harness] of Object.entries(this.harnessesOf(vault))) {
+        if (harness.signIn && !this.agentChecks.has(name) && harness.available()) void this.runAgentCheck(name, harness, vault);
+      }
+    }
+    return this.snapshot();
+  }
+
+  /** Checks agent `name` again, its prompt included (Check, in Settings → Agents); a check under way is left to finish. */
+  checkAgent(name: string): SettingsSnapshot {
+    const vault = this.vault;
+    const table = vault ? this.harnessesOf(vault) : {};
+    const harness = Object.hasOwn(table, name) ? table[name] : undefined;
+    if (vault && harness && this.agentChecks.get(name)?.kind !== "checking") void this.runAgentCheck(name, harness, vault);
+    return this.snapshot();
+  }
+
+  /** The library's agents by name: none when its settings don't load. */
+  private harnessesOf(vault: Vault): Record<string, Harness> {
+    try {
+      return listHarnesses(loadSettings(vault.root));
+    } catch {
+      return {};
+    }
+  }
+
+  /** One check, in the library: Settings shows it running, then what it found. */
+  private async runAgentCheck(name: string, harness: Harness, vault: Vault): Promise<void> {
+    this.agentChecks.set(name, { kind: "checking" });
+    this.broadcast();
+    let status: AgentStatus;
+    try {
+      status = statusOf(await checkHarness(harness, vault.root));
+    } catch (error) {
+      status = { kind: "failed", detail: errorMessage(error) }; // never left "checking"
+    }
+    this.agentChecks.set(name, status);
+    this.broadcast();
   }
 
   // ---------------------------------------------------------------- speech model

@@ -20,6 +20,7 @@
 // writes goals/half.md and a line in index.md, then never finishes; later runs file normally) |
 // folder-at-archive (a capture whose words contain "blocked-archive" gets a folder where its
 // archived copy goes, raw/<yyyy>/<mm>/<id>.md, besides the usual filing; other captures file normally).
+// The agent check's prompt, "Reply with the single word: ready.", gets "ready".
 // FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt, pid}.
 // FAKE_AGENT_DELAY_MS=<ms> waits that long before anything else (an agent that takes a moment);
 // with FAKE_AGENT_DELAY_TASK=<task> (file, ask or review), only runs of that task wait.
@@ -271,6 +272,8 @@ if (task === "file") {
     if (mode !== "noreport") writeFileSync(report, "# Review\n\n- all good\n");
     reply("Library looks healthy.");
   }
+} else if (task === "Reply with the single word: ready.") {
+  reply("ready");
 } else {
   complain(`unknown task: '${task}'\n`);
   process.exit(1);

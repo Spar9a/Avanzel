@@ -38,6 +38,8 @@ export function registerIpc(controller: Controller): void {
   handle("settings:save-task", (_e, task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">) =>
     controller.saveTaskFromSettings(task));
   handle("settings:run-task", (_e, id: string) => controller.runTask(id));
+  handle("settings:check-agents", () => controller.checkAgents());
+  handle("settings:check-agent", (_e, name: string) => controller.checkAgent(name));
   handle("settings:request-permission", (_e, kind: "microphone" | "screen") => controller.requestPermission(kind));
   on("settings:open-library", () => controller.openLibraryFolder());
   on("settings:open-privacy", (_e, pane: "microphone" | "screen") => void controller.openPrivacy(pane));
