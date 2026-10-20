@@ -72,6 +72,8 @@ import {
 
 const MODEL_ID = "nemo-parakeet-tdt-0.6b-v3";
 const EDIT_GRACE_MS = 2500;
+// How long a stopped recording's audio may take to arrive from the capsule (tests shorten it).
+const AUDIO_TIMEOUT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_AUDIO_TIMEOUT_MS)) || 15_000;
 const HARNESS_NAMES: Record<string, string> = {
   claude: "Claude Code", codex: "Codex", opencode: "OpenCode", "cursor-agent": "Cursor Agent", gemini: "Gemini CLI",
 };
@@ -82,6 +84,8 @@ interface Recording {
   startedAt: number;
   shot?: { path: string; thumbnail: string; context: ScreenContext };
   maxTimer: NodeJS.Timeout;
+  /** Asked to stop (the shortcut, the menu or the time limit); its audio is on the way. */
+  stopping: boolean;
 }
 
 interface FilingJob {
@@ -361,17 +365,27 @@ export class Controller {
 
   private async startRecording(mode: CapsuleMode, shot?: Recording["shot"]): Promise<void> {
     if (mode === "dictate" && !(await this.readyToListen())) return;
+    if (this.recording) {
+      // Another tap started one while this one waited (say, on the microphone prompt).
+      if (shot) rmSync(shot.path, { force: true });
+      return;
+    }
+    this.clearAudioTimeout();
     const maxSeconds = this.vault ? loadSettings(this.vault.root).voice.maxRecordSeconds : 600;
-    this.recording = {
+    const recording: Recording = {
       mode,
       startedAt: Date.now(),
       shot,
-      maxTimer: setTimeout(() => void this.stopRecording(), maxSeconds * 1000),
+      stopping: false,
+      maxTimer: setTimeout(() => {
+        if (this.recording === recording) void this.stopRecording();
+      }, maxSeconds * 1000),
     };
+    this.recording = recording;
     this.setCapsule({
       kind: "listening",
       mode,
-      startedAt: this.recording.startedAt,
+      startedAt: recording.startedAt,
       fakeMic: !!process.env.AVANZEL_FAKE_AUDIO,
       microphoneId: this.store.get().microphoneId,
       ...(shot ? { thumbnail: shot.thumbnail } : {}),
@@ -385,42 +399,53 @@ export class Controller {
   }
 
   async stopRecording(): Promise<void> {
-    if (!this.recording) return;
-    clearTimeout(this.recording.maxTimer);
+    const recording = this.recording;
+    if (!recording || recording.stopping) return; // a second tap while its audio is on the way
+    recording.stopping = true;
+    clearTimeout(recording.maxTimer);
     globalShortcut.unregister("Escape");
-    this.setCapsule({ kind: "transcribing", mode: this.recording.mode });
+    this.setCapsule({ kind: "transcribing", mode: recording.mode });
     this.capsule.webContents.send("capsule:command", "stop");
+    this.clearAudioTimeout();
     this.audioTimeout = setTimeout(() => {
-      if (this.recording) {
-        this.recording = null;
-        this.fail("The recording didn't arrive", "Try again; if it keeps happening, check the microphone in Settings → Voice.");
-      }
-    }, 15_000);
+      this.audioTimeout = null;
+      if (this.recording !== recording) return; // only ever this recording, never a newer one
+      this.abandonRecording(recording);
+      this.fail("The recording didn't arrive", "Try again; if it keeps happening, check the microphone in Settings → Voice.");
+    }, AUDIO_TIMEOUT_MS);
   }
 
   cancelRecording(): void {
     if (!this.recording) return;
-    clearTimeout(this.recording.maxTimer);
-    globalShortcut.unregister("Escape");
-    if (this.recording.shot) rmSync(this.recording.shot.path, { force: true });
-    this.recording = null;
-    this.capsule.webContents.send("capsule:command", "cancel");
+    this.abandonRecording(this.recording);
     this.setCapsule({ kind: "hidden" });
   }
 
   micError(message: string): void {
     if (!this.recording) return;
-    clearTimeout(this.recording.maxTimer);
-    globalShortcut.unregister("Escape");
-    if (this.recording.shot) rmSync(this.recording.shot.path, { force: true });
-    this.recording = null;
+    this.abandonRecording(this.recording);
     this.fail("The microphone didn't start", `${message}\nCheck Settings → Voice and System Settings → Privacy & Security → Microphone.`, "open-microphone-settings");
   }
 
-  async onAudio(received: Float32Array): Promise<void> {
+  /** Give a recording up without its audio: the capsule lets go of the microphone, and a screenshot taken for it goes. */
+  private abandonRecording(recording: Recording): void {
+    clearTimeout(recording.maxTimer);
+    this.clearAudioTimeout();
+    globalShortcut.unregister("Escape");
+    if (recording.shot) rmSync(recording.shot.path, { force: true });
+    if (this.recording === recording) this.recording = null;
+    this.capsule.webContents.send("capsule:command", "cancel");
+  }
+
+  private clearAudioTimeout(): void {
     if (this.audioTimeout) clearTimeout(this.audioTimeout);
+    this.audioTimeout = null;
+  }
+
+  async onAudio(received: Float32Array): Promise<void> {
     const recording = this.recording;
-    if (!recording) return;
+    if (!recording?.stopping) return; // audio no stop asked for, e.g. a late one from a recording given up
+    this.clearAudioTimeout();
     this.recording = null;
     const vault = this.requireVault();
     const now = new Date();

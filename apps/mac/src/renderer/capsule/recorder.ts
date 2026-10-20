@@ -5,16 +5,31 @@ export class Recorder {
   private stream: MediaStream | null = null;
   private node: AudioWorkletNode | null = null;
   private chunks: Float32Array[] = [];
+  /** Counts starts, stops and cancels: a start overtaken by a stop or cancel lets go of what it opens. */
+  private generation = 0;
 
   constructor(private readonly onLevel: (level: number) => void) {}
 
   async start(deviceId: string | null): Promise<void> {
+    const generation = ++this.generation;
+    const overtaken = () => generation !== this.generation; // stopped or cancelled meanwhile
     this.chunks = [];
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { deviceId: deviceId ? { exact: deviceId } : undefined, channelCount: 1, echoCancellation: false, noiseSuppression: false },
-    });
-    this.context = new AudioContext({ sampleRate: 16000 });
-    await this.context.audioWorklet.addModule(new URL("capture-worklet.js", document.baseURI).href);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: deviceId ? { exact: deviceId } : undefined, channelCount: 1, echoCancellation: false, noiseSuppression: false },
+      });
+      if (overtaken()) {
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
+      this.stream = stream;
+      this.context = new AudioContext({ sampleRate: 16000 });
+      await this.context.audioWorklet.addModule(new URL("capture-worklet.js", document.baseURI).href);
+    } catch (error) {
+      if (overtaken()) return; // whatever opened was released by the stop or cancel; nothing to report
+      throw error;
+    }
+    if (overtaken() || !this.context || !this.stream) return;
     const source = this.context.createMediaStreamSource(this.stream);
     this.node = new AudioWorkletNode(this.context, "capture-processor");
     let sum = 0;
@@ -36,6 +51,7 @@ export class Recorder {
 
   /** Stops the microphone and returns everything recorded since start. */
   async stop(): Promise<Float32Array> {
+    this.generation++;
     const chunks = this.chunks;
     await this.release();
     const total = chunks.reduce((n, c) => n + c.length, 0);
@@ -49,6 +65,7 @@ export class Recorder {
   }
 
   async cancel(): Promise<void> {
+    this.generation++;
     await this.release();
   }
 
