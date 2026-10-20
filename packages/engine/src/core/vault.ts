@@ -58,6 +58,10 @@ const RESERVED_FIELDS = new Set(["id", "type", "source", "created", "attachments
 const LOCK_POLL_MS = 200;
 // mkdir and writing the owner are two steps; an owner-less lock is only abandoned after this long.
 const OWNERLESS_LOCK_GRACE_MS = 10_000;
+// Releasing reads the owner file, which can fail for a moment (too many open files, say): it is read
+// this many times, this far apart, before the lock is left as it is.
+const RELEASE_TRIES = 5;
+const RELEASE_RETRY_MS = 100;
 // This boot, to the second. A lock from an earlier boot is stale even if its pid is alive again.
 const BOOT_SECONDS = Math.round(Date.now() / 1000 - uptime());
 const SAME_BOOT_SECONDS = 60;
@@ -319,7 +323,7 @@ export class Vault {
     try {
       return await fn();
     } finally {
-      if (ownerOf(this.lockDir) === owner) discard(this.lockDir, owner); // someone may have taken it over meanwhile
+      await release(this.lockDir, owner);
     }
   }
 }
@@ -437,13 +441,35 @@ function discard(lockDir: string, owner: string): void {
   rmSync(grave, { recursive: true, force: true });
 }
 
-/** A lock folder's owner file, or "" when it has none (not written yet, abandoned before it was, or gone). */
-function ownerOf(lockDir: string): string {
+/**
+ * Remove this process's lock, `owner`, unless someone took it over meanwhile. Only a missing owner
+ * file means the lock is gone. One that can't be read for another reason is read again a few times,
+ * so a passing error doesn't leave the lock behind for every later run to wait on; should it stay
+ * unreadable, whose the lock is can't be told, and it stays (a waiter takes it over as owner-less).
+ */
+async function release(lockDir: string, owner: string): Promise<void> {
+  for (let tries = 1; tries <= RELEASE_TRIES; tries++) {
+    const current = readOwner(lockDir);
+    if (current !== null) {
+      if (current === owner) discard(lockDir, owner); // which checks again, once the lock is moved aside
+      return;
+    }
+    if (tries < RELEASE_TRIES) await sleep(RELEASE_RETRY_MS);
+  }
+}
+
+/** A lock folder's owner file: "" when it has none (not written yet, abandoned before it was, or gone), null when it can't be read now. */
+function readOwner(lockDir: string): string | null {
   try {
     return readFileSync(join(lockDir, "owner"), "utf8");
-  } catch {
-    return "";
+  } catch (error) {
+    return errorCode(error) === "ENOENT" ? "" : null;
   }
+}
+
+/** A lock folder's owner file, or "" when it has none or can't be read. */
+function ownerOf(lockDir: string): string {
+  return readOwner(lockDir) ?? "";
 }
 
 function isAlive(pid: number): boolean {
