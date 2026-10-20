@@ -56,16 +56,21 @@ Good to know:
   for that moment only), and the recording is dropped.
 - **Edit** works for as long as your agent is filing: it stops the agent at once. When you file
   the corrected words (or cancel), whatever that run already changed is undone first, then the note
-  is filed again.
+  is filed again. An edit survives quitting and a new dictation (your words wait in the inbox), and
+  the evening review leaves a note you are editing alone.
 - **Screen Recording**: macOS applies the permission only to a fresh start of the app. After you
   allow Avanzel in System Settings → Privacy & Security → Screen Recording, quit and reopen it.
 - **Quitting** while your agent is filing stops the agent; what it had changed is kept as its own
   commit (in a git library) and the note stays in the inbox for the evening review.
+- **Ask** waits for a filing in progress, and says so. A note you dictate while your agent answers
+  waits for the answer, and says so too; closing the Ask window cancels the question.
 - **No symlinks inside the library** for `inbox/`, `raw/` or `reviews/`: Avanzel never writes
-  through a link, so filings into a linked `raw/` fail, a linked `reviews/` gets no summary, and a
+  through a link, so filings into a linked `raw/` fail, a linked `reviews/` gets no summary, a
   capture an agent changes in a linked `inbox/` can't be put back (your words are kept in
-  `.avanzel/logs/` instead). To keep the library elsewhere (another disk, a synced folder), move
-  the whole library folder and choose it in Settings.
+  `.avanzel/logs/` instead), and recordings and screenshots aren't saved through one (what you said
+  is kept without its recording). Links an agent plants under `inbox/`, `raw/` or `reviews/` are
+  removed after its run. To keep the library elsewhere (another disk, a synced folder), move the
+  whole library folder and choose it in Settings.
 
 Run it from this repository (Node 22+):
 

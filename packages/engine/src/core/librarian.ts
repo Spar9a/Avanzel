@@ -44,7 +44,11 @@ export interface FileOutcome {
    * where they are kept instead, library-relative (null when that was not needed, or not possible).
    */
   savedOriginal: string | null;
-  /** Protected paths whose changes were undone. */
+  /**
+   * What the guard put back after the run (`undoProtected`): protected paths the agent changed (the library's
+   * rules, settings and tasks) and links it left in Avanzel's own paths (inbox/, raw/, reviews/, log.md), with
+   * any link that could not be checked or put back.
+   */
   guarded: string[];
   /**
    * The run's commit, for Undo: the filing, or what a failed, timed-out or cancelled run left
@@ -412,7 +416,10 @@ export class Librarian {
 
   // --- plumbing -----------------------------------------------------------------------------
 
-  /** One agent run; returns its result and the protected paths whose changes were undone. */
+  /**
+   * One agent run; returns its result and what the guard put back after it: changes to the protected paths and
+   * links the agent left in Avanzel's own paths (see `FileOutcome.guarded`).
+   */
   async #run(
     prompt: string,
     { write, images = [], signal }: { write: boolean; images?: readonly string[]; signal?: AbortSignal | undefined },
