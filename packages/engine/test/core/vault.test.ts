@@ -224,6 +224,17 @@ describe("inbox and archive", () => {
     writeFileSync(note, "milk");
     expect(vault.archive(note, NOW)).toBe(join(vault.root, "raw", "2026", "10", "groceries.txt"));
   });
+
+  it("archive refuses a destination that is a folder with an AvanzelError", () => {
+    const capture = vault.newCapture("hello", { source: "text", now: NOW });
+    const taken = join(vault.raw, "2026", "10", `${capture.id}.md`);
+    mkdirSync(taken, { recursive: true });
+    const error = thrownBy(() => vault.archive(capture.path));
+    expect(error).toBeInstanceOf(AvanzelError);
+    expect(error.message).toContain(`raw/2026/10/${capture.id}.md`);
+    expect(existsSync(capture.path)).toBe(true); // the capture stays in the inbox
+    expect(isDir(taken)).toBe(true); // and the folder is left as it was
+  });
 });
 
 describe("log", () => {

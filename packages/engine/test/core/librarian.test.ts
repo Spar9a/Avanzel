@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -119,6 +120,19 @@ describe("file", () => {
     expect(outcome.commit).toBeNull();
     expect(vault.pending()).toEqual([capture.path]);
     expect(vault.logMentions(capture.id)).toBe(false);
+  });
+
+  it("fails a capture whose agent cannot be started, and still tries the next", async () => {
+    const agent = write(tmp(), "bin/agent", "#!/avanzel/no/such/interpreter\n");
+    chmodSync(agent, 0o755); // executable, so it is picked, but its interpreter is missing: it cannot start
+    const harnesses = { fake: { name: "fake", headless: [agent, "{prompt}"], interactive: [] } };
+    librarian = new Librarian(vault, fakeSettings({ harnesses }), { clock: () => NOW });
+    const first = librarian.captureText("first");
+    const second = librarian.captureText("second");
+    const outcomes = await librarian.file();
+    expect(outcomes.map((outcome) => [outcome.captureId, outcome.ok])).toEqual([[first.id, false], [second.id, false]]);
+    for (const { error } of outcomes) expect(error).toContain(`Could not start \`${agent}\``);
+    expect(vault.pending()).toEqual([first.path, second.path]);
   });
 
   it("restores the owner's words when the agent edits the capture", async () => {
@@ -478,11 +492,14 @@ describe("file", () => {
 
   it("stops when cancelled, leaving the rest in the inbox", async () => {
     mode("slow-noisy");
+    const runs = recordRuns();
     const first = librarian.captureText("first");
     const second = librarian.captureText("second");
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 500);
-    const outcomes = await librarian.file(null, { signal: controller.signal });
+    const filing = librarian.file(null, { signal: controller.signal });
+    await vi.waitFor(() => expect(runs()).toHaveLength(1), { timeout: 10_000 }); // the agent has started
+    controller.abort();
+    const outcomes = await filing;
     expect(outcomes.map((outcome) => outcome.ok)).toEqual([false]);
     expect(errorLine(outcomes[0]?.error ?? "")).toBe("fake was cancelled");
     expect(vault.pending()).toEqual([first.path, second.path]);
@@ -877,8 +894,11 @@ describe.skipIf(!git.available())("with git", () => {
     mode("slow-messy");
     librarian.captureText("Takes forever");
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 500);
-    const review = await librarian.eveningReview({ signal: controller.signal });
+    const reviewing = librarian.eveningReview({ signal: controller.signal });
+    const half = join(versioned.root, "goals", "half.md");
+    await vi.waitFor(() => expect(existsSync(half)).toBe(true), { timeout: 10_000 }); // it has left something behind
+    controller.abort();
+    const review = await reviewing;
     const [cancelled] = review.outcomes;
     expect(cancelled?.ok).toBe(false);
     expect(cancelled?.commit).toMatch(/^[0-9a-f]{40}$/);
@@ -886,6 +906,40 @@ describe.skipIf(!git.available())("with git", () => {
     expect(review.commits).toEqual([cancelled?.commit, head()]);
     expect(await librarian.undo(review.commits)).toBe(2);
     expect(existsSync(join(versioned.root, "goals", "half.md"))).toBe(false);
+  });
+
+  it("a folder the agent leaves at the archive path fails only that capture", async () => {
+    mode("folder-at-archive");
+    const blocked = librarian.captureText("blocked-archive notes");
+    const plain = librarian.captureText("plain notes");
+    const review = await librarian.eveningReview();
+    const [stuck, filed] = review.outcomes;
+    expect([stuck?.captureId, stuck?.ok, filed?.captureId, filed?.ok]).toEqual([blocked.id, false, plain.id, true]);
+    const problem = `Could not archive ${blocked.id}: the agent left a folder at raw/2026/10/${blocked.id}.md.`;
+    expect(stuck?.error).toBe(problem);
+    expect(stuck?.commit).toMatch(/^[0-9a-f]{40}$/);
+    const leftovers = gitOut("show", "--name-only", "--format=%s", stuck?.commit ?? "");
+    expect(leftovers).toContain(`avanzel: leftovers of failed filing ${blocked.id}`);
+    expect(leftovers).toContain(`ideas/idea-${blocked.id}.md`); // what the run did is kept, and can be undone
+    expect(review.commits).toEqual([stuck?.commit, filed?.commit, head()]);
+    expect(read(review.digestPath ?? "")).toContain(`- [[${blocked.id}]]: ${problem} (still in the inbox)\n`);
+    expect(versioned.pending()).toEqual([blocked.path]);
+  });
+
+  it("the next review files it under a fresh id", async () => {
+    mode("folder-at-archive");
+    const blocked = librarian.captureText("blocked-archive notes");
+    await librarian.eveningReview();
+    mode("ok");
+    const review = await librarian.eveningReview();
+    const [outcome] = review.outcomes;
+    expect(review.outcomes).toHaveLength(1);
+    expect(outcome?.ok).toBe(true);
+    expect(outcome?.captureId).not.toBe(blocked.id);
+    expect(read(outcome?.archivedTo ?? "")).toContain("blocked-archive notes"); // the owner's words
+    const folder = join(versioned.raw, "2026", "10", `${blocked.id}.md`);
+    expect(lstatSync(folder).isDirectory()).toBe(true); // the old name is still taken by the agent's folder
+    expect(versioned.pending()).toEqual([]);
   });
 
   it("makes no commit for a failed run that changed nothing", async () => {

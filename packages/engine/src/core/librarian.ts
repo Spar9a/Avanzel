@@ -241,7 +241,12 @@ export class Librarian {
       }
       attempted.add(path);
       progress(`Filing ${basename(path)} with ${this.harness.name}…`);
-      outcomes.push(await this.#fileOne(path, instructions, signal));
+      try {
+        outcomes.push(await this.#fileOne(path, instructions, signal));
+      } catch (error) {
+        if (!(error instanceof AvanzelError)) throw error;
+        outcomes.push(outcome(stem(path), { error: error.message })); // this capture fails alone; the rest go on
+      }
     }
     return outcomes;
   }
@@ -307,6 +312,8 @@ export class Librarian {
     if (!realFoldersTo(this.vault.root, archiveRel, true)) {
       return `Could not archive ${captureId}: a folder on the way to ${archiveRel} is a symlink.`;
     }
+    const taken = lstatOrNull(join(this.vault.root, archiveRel));
+    if (taken && !taken.isFile()) return `Could not archive ${captureId}: the agent left a folder at ${archiveRel}.`;
     return null;
   }
 

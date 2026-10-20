@@ -219,12 +219,19 @@ export class Vault {
     return join(this.raw, year, month, name);
   }
 
-  /** Move a capture to its archive path; refuses when a folder on the way is a symlink (it could lead out of the library). */
+  /**
+   * Move a capture to its archive path. Refuses when a folder on the way is a symlink (it could lead
+   * out of the library), or when something that is not a file, such as a folder, is at the path.
+   */
   archive(capturePath: string, now?: Date): string {
     const destination = this.archivePath(capturePath, now);
     const rel = this.relativePath(destination);
     if (!realFoldersTo(this.root, rel, true)) {
       throw new AvanzelError(`Not archiving ${basename(capturePath)}: a folder on the way to ${rel} is a symlink.`);
+    }
+    const taken = lstatOrNull(destination);
+    if (taken && !taken.isFile()) {
+      throw new AvanzelError(`Not archiving ${basename(capturePath)}: ${rel} is already there, and it is not a file.`);
     }
     renameSync(capturePath, destination);
     return destination;
