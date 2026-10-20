@@ -628,14 +628,20 @@ export class Controller {
   }
 
   /**
-   * A fresh path in raw/audio/ for the recording. When the library refuses one (say, a link on the
-   * way), none, and why (`unkept`): the words are then saved without their recording, not lost with it.
+   * A fresh path in raw/audio/YYYY/MM/ for the recording. When there can't be one, none, and one short
+   * line saying why (`unkept`): the words are then saved without their recording, not lost with it.
    */
   private claimRecording(vault: Vault, now: Date): { audioPath: string | null; unkept?: string } {
     try {
       return { audioPath: vault.newAudioPath(now) };
     } catch (error) {
-      return { audioPath: null, unkept: `Only your words were kept, not the recording. ${errorMessage(error)}` };
+      if (error instanceof AvanzelError) {
+        // The library refuses one when a link is on the way.
+        const folder = `raw/audio/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}`;
+        return { audioPath: null, unkept: `Only your words were kept: ${folder} goes through a link.` };
+      }
+      console.error("recording", error);
+      return { audioPath: null, unkept: "Only your words were kept: the recording couldn't be saved." };
     }
   }
 

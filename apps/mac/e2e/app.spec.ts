@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
@@ -109,12 +109,12 @@ test("words whose recording the library won't keep are saved without it, and the
     FAKE_AGENT_DELAY_MS: "3000", // the filing card stays up long enough to read
   });
   const capsule = await windowFor(app, "capsule");
-  const note = capsule.getByText(/^Only your words were kept, not the recording\./);
+  // One short line, and why: the link on the way.
+  const note = capsule.getByText(/^Only your words were kept: raw\/audio\/\d{4}\/\d{2} goes through a link\.$/);
   // A dictation: filed without its recording.
   await call(app, "toggleDictate");
   await call(app, "toggleDictate");
   await expect(note).toBeVisible({ timeout: 30_000 });
-  await expect(note).toContainText("raw/audio/"); // why: the link on the way
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   const [filed, ...others] = archived(library);
   expect(others).toEqual([]);
@@ -136,6 +136,27 @@ test("words whose recording the library won't keep are saved without it, and the
   expect(filesUnder(library, "raw").filter((rel) => !rel.endsWith(".md") && !rel.endsWith(".png"))).toEqual([]);
   expect(readdirSync(outside)).toEqual([]);
   await app.close();
+});
+
+test("words whose recording can't be saved for another reason are kept, and the capsule says so plainly", async () => {
+  const library = await makeLibrary();
+  const audio = path.join(library, "raw", "audio");
+  mkdirSync(audio);
+  chmodSync(audio, 0o555); // the folder for this year's recordings can't be made
+  try {
+    const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("hello"), AVANZEL_FAKE_TRANSCRIPT: "Call the vet on Monday" });
+    const capsule = await windowFor(app, "capsule");
+    await call(app, "setApp", { fileMode: "evening" });
+    await call(app, "toggleDictate");
+    await call(app, "toggleDictate");
+    await expect(capsule.getByText("Only your words were kept: the recording couldn't be saved.", { exact: true })).toBeVisible({ timeout: 30_000 });
+    const [name] = inbox(library);
+    expect(read(library, `inbox/${name}`)).toContain("Call the vet on Monday");
+    expect(read(library, `inbox/${name}`)).not.toContain("audio:");
+    await app.close();
+  } finally {
+    chmodSync(audio, 0o755);
+  }
 });
 
 test("typing a thought files it", async () => {
