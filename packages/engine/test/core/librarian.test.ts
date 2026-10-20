@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  appendFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -23,6 +24,14 @@ import { FAKE_AGENT, NOW, binScripts, envHome, gitIdentity, useTmp, write } from
 const tmp = useTmp();
 const read = (path: string) => readFileSync(path, "utf8");
 const mode = (name: string) => vi.stubEnv("FAKE_AGENT_MODE", name);
+
+function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
+  try {
+    return lstatSync(path);
+  } catch {
+    return null;
+  }
+}
 
 function fakeSettings(overrides: Partial<Settings> = {}): Settings {
   return {
@@ -218,6 +227,62 @@ describe("file", () => {
     expect(lstatSync(join(vault.root, "tasks")).isDirectory()).toBe(true);
     for (const [name, text] of Object.entries(tasks)) expect(read(join(vault.root, "tasks", name))).toBe(text);
     expect(outcome.guarded).toEqual(["tasks", "tasks/evening-review.md", "tasks/weekly-review.md"]);
+  });
+
+  it("removes a settings file an agent links into a protected folder from elsewhere", async () => {
+    mode("link-settings");
+    write(vault.root, ".claude/settings.local.json", '{"permissions": {}}'); // left by interactive sessions
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(lstatOrNull(join(vault.root, ".claude", "settings.json"))).toBeNull();
+    expect(read(join(vault.root, ".claude", "settings.local.json"))).toBe('{"permissions": {}}');
+    expect(outcome.guarded).toEqual([".claude/settings.json"]);
+  });
+
+  it("never writes or deletes outside the library through a protected folder swapped for a symlink", async () => {
+    mode("link-commands");
+    const outside = join(tmp(), "outside");
+    write(outside, "tidy.md", "the outside folder's own file");
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    write(vault.root, ".claude/commands/tidy.md", "Tidy the inbox.");
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(readdirSync(outside)).toEqual(["tidy.md"]);
+    expect(read(join(outside, "tidy.md"))).toBe("the outside folder's own file");
+    expect(lstatSync(join(vault.root, ".claude", "commands")).isDirectory()).toBe(true); // the planted link is gone
+    expect(read(join(vault.root, ".claude", "commands", "tidy.md"))).toBe("Tidy the inbox.");
+    expect(outcome.guarded).toEqual([".claude/commands", ".claude/commands/tidy.md"]);
+  });
+
+  it("puts back the folder that holds the settings when an agent swaps it for a symlink", async () => {
+    mode("link-meta");
+    const outside = join(tmp(), "outside");
+    write(outside, "config.toml", 'harness = "evil"\n');
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    const config = read(join(vault.metaDir, "config.toml"));
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(readdirSync(outside)).toEqual(["config.toml"]);
+    expect(read(join(outside, "config.toml"))).toBe('harness = "evil"\n');
+    expect(lstatSync(vault.metaDir).isDirectory()).toBe(true);
+    expect(read(join(vault.metaDir, "config.toml"))).toBe(config);
+    expect(outcome.guarded).toEqual([".avanzel", ".avanzel/config.toml"]);
+  });
+
+  it("never writes its log line through a symlink an agent put at log.md", async () => {
+    mode("link-log");
+    const outside = write(tmp(), "outside/.zshrc", "export PATH=/usr/bin\n");
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    const capture = librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(read(outside)).toBe("export PATH=/usr/bin\n");
+    expect(lstatSync(vault.logPath).isFile()).toBe(true);
+    expect(read(vault.logPath)).toContain(`| file | [[${capture.id}]] → [[idea-${capture.id}]]\n`);
+    expect(outcome.guarded).toEqual(["log.md"]);
   });
 
   it("leaves the owner's own symlinks among the protected files alone", async () => {
@@ -561,8 +626,39 @@ describe.skipIf(!git.available())("with git", () => {
   it("commits each filing and returns the commit", async () => {
     const capture = librarian.captureText("Commit me");
     const outcome = await only(librarian.file());
-    expect(subjects()).toEqual([`avanzel: file ${capture.id}`, "avanzel: new library"]);
+    // What was pending (here: the capture itself) is committed first, on its own, as the owner's.
+    expect(subjects()).toEqual([
+      `avanzel: file ${capture.id}`,
+      `avanzel: owner's changes before file ${capture.id}`,
+      "avanzel: new library",
+    ]);
     expect(outcome.commit).toBe(head());
+    expect(gitOut("status", "--porcelain")).toBe("");
+  });
+
+  it("keeps what the owner wrote before a filing when the filing is undone", async () => {
+    write(versioned.root, "goals/mine.md", "# My own goal\n");
+    appendFileSync(versioned.indexPath, "- [[mine]] — my own goal\n");
+    const index = read(versioned.indexPath);
+    librarian.captureText("Build a tiny greenhouse");
+    const outcome = await only(librarian.file());
+    expect(await librarian.undo([outcome.commit ?? ""])).toBe(1);
+    expect(read(join(versioned.root, "goals", "mine.md"))).toBe("# My own goal\n");
+    expect(read(versioned.indexPath)).toBe(index);
+    expect(gitOut("status", "--porcelain")).toBe("");
+  });
+
+  it("keeps what the owner wrote before an evening review when all of it is undone", async () => {
+    write(versioned.root, "goals/mine.md", "# My own goal\n");
+    appendFileSync(versioned.indexPath, "- [[mine]] — my own goal\n");
+    const index = read(versioned.indexPath);
+    librarian.captureText("one");
+    librarian.captureText("two");
+    const review = await librarian.eveningReview();
+    expect(review.commits).toHaveLength(3);
+    expect(await librarian.undo(review.commits)).toBe(3);
+    expect(read(join(versioned.root, "goals", "mine.md"))).toBe("# My own goal\n");
+    expect(read(versioned.indexPath)).toBe(index);
     expect(gitOut("status", "--porcelain")).toBe("");
   });
 
@@ -574,6 +670,17 @@ describe.skipIf(!git.available())("with git", () => {
     expect(existsSync(join(versioned.root, ".git", "hooks", "post-commit"))).toBe(false);
     expect(existsSync(join(versioned.root, "HOOK_RAN"))).toBe(false);
     expect(subjects()[0]?.startsWith("avanzel: file ")).toBe(true);
+  });
+
+  it("does not hand git a half-made .git when an agent deletes the repository", async () => {
+    // git would take a .git holding only config and hooks for no repository, and commit in a folder above.
+    mode("drop-git");
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(outcome.commit).toBeNull();
+    expect(existsSync(join(versioned.root, ".git"))).toBe(false);
+    expect(outcome.guarded).toContain(".git/config");
   });
 
   it("leaves committing to the owner when auto_commit is off", async () => {
@@ -591,6 +698,9 @@ describe.skipIf(!git.available())("with git", () => {
     expect(subjects().slice(0, 3)).toEqual(["avanzel: evening review 2026-10-20", `avanzel: file ${two.id}`, `avanzel: file ${one.id}`]);
     expect(review.commits).toEqual(gitOut("log", "-3", "--format=%H").trim().split("\n").reverse());
     expect(review.outcomes.map((outcome) => outcome.commit)).toEqual(review.commits.slice(0, 2));
+    // the owner's pending changes went into a commit of their own, which is never handed out for undo
+    expect(subjects()[3]).toBe(`avanzel: owner's changes before file ${one.id}`);
+    expect(review.commits).not.toContain(gitOut("log", "-1", "--skip=3", "--format=%H").trim());
   });
 
   it("undoes a filing: pages reverted, the capture back in the inbox, waiting captures kept (undo_reverts_filing_commits)", async () => {
