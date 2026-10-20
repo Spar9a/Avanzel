@@ -1,0 +1,49 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(shell|exec_command|local_shell|Bash)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/packages/ui/checks/guard.mjs\" codex before-shell",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(apply_patch|Edit|Write)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/packages/ui/checks/guard.mjs\" codex after-edit",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "^(shell|exec_command|local_shell|Bash)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/packages/ui/checks/guard.mjs\" codex after-shell",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/packages/ui/checks/guard.mjs\" codex stop",
+            "timeout": 180
+          }
+        ]
+      }
+    ]
+  }
+}

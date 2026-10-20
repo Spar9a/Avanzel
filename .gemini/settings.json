@@ -1,0 +1,59 @@
+{
+  "context": {
+    "fileName": [
+      "AGENTS.md",
+      "GEMINI.md"
+    ]
+  },
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "avanzel-design-guard",
+            "command": "node \"$GEMINI_PROJECT_DIR/packages/ui/checks/guard.mjs\" gemini before-edit",
+            "timeout": 30000
+          }
+        ]
+      },
+      {
+        "matcher": "run_shell_command",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "avanzel-design-guard-shell",
+            "command": "node \"$GEMINI_PROJECT_DIR/packages/ui/checks/guard.mjs\" gemini before-shell",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "run_shell_command",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "avanzel-design-guard-after-shell",
+            "command": "node \"$GEMINI_PROJECT_DIR/packages/ui/checks/guard.mjs\" gemini after-shell",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "avanzel-design-guard-stop",
+            "command": "node \"$GEMINI_PROJECT_DIR/packages/ui/checks/guard.mjs\" gemini stop",
+            "timeout": 180000
+          }
+        ]
+      }
+    ]
+  }
+}

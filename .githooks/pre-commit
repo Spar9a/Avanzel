@@ -1,0 +1,4 @@
+#!/bin/sh
+# Avanzel's design check on what is being committed, whichever agent or person wrote it.
+# Turn it on once per clone: git config core.hooksPath .githooks
+exec node packages/ui/checks/design-check.mjs --staged
