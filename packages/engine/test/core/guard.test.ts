@@ -118,6 +118,26 @@ describe("the guard", () => {
     expect(read(join(outside, "config.toml"))).toBe('harness = "evil"\n');
   });
 
+  it("puts a swapped folder back before the owner's link inside it", () => {
+    const outsideA = join(tmp(), "outside-a");
+    const outsideB = join(tmp(), "outside-b");
+    write(outsideA, "a.md", "the owner's folder");
+    write(outsideB, "b.md", "the run's folder");
+    mkdirSync(join(root, ".claude"));
+    symlinkSync(outsideA, join(root, ".claude/commands"));
+    const before = protectedState(root);
+    linkTo(".claude", outsideB);
+    // Both links are reported either way; only the order shows on disk: the owner's link goes back
+    // into a real folder only when the swapped folder (shallower) has been dealt with first.
+    expect(undoProtected(root, before)).toEqual([".claude", ".claude/commands"]);
+    expect(lstatSync(join(root, ".claude")).isDirectory()).toBe(true);
+    expect(readlinkSync(join(root, ".claude/commands"))).toBe(outsideA);
+    expect(readdirSync(outsideA)).toEqual(["a.md"]);
+    expect(read(join(outsideA, "a.md"))).toBe("the owner's folder");
+    expect(readdirSync(outsideB)).toEqual(["b.md"]);
+    expect(read(join(outsideB, "b.md"))).toBe("the run's folder");
+  });
+
   it("changes nothing when nothing changed", () => {
     const rules = join(root, "AGENTS.md");
     utimesSync(rules, 1, 1); // long ago, so a rewrite would show
