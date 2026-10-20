@@ -39,14 +39,33 @@ shortcut.
 
 | Shortcut | What happens |
 |---|---|
-| ⌥ Space | Start talking; press again to stop. A capsule above the Dock shows the waveform, then the transcript while your agent files it (Edit fixes misheard words first), then the pages it touched, with Undo and Open. Esc cancels. |
+| ⌥ Space | Start talking; press again to stop. A capsule above the Dock shows the waveform, then the transcript while your agent files it, then the pages it touched, with Undo and Open. Esc cancels. |
 | ⌥⇧S | Capture the screen and say why it matters. The screenshot, the app, the page and your comment wait in the inbox for the evening review. |
 | ⌥⇧ Space | Type a thought. |
 | ⌥⇧A | Ask your library; the answer links to the pages it used. |
 
 The **evening review** (a shadow task, 21:00 by default) files the day's inbox, writes a summary to
-`reviews/`, and can be undone from the menu. A **weekly review** looks over the whole library.
-Shadow tasks are Markdown files in `tasks/`; edit their times and instructions in Settings.
+`reviews/`, and can be taken back with **Undo last evening review** in the menu bar menu. A
+**weekly review** looks over the whole library. Shadow tasks are Markdown files in `tasks/`; edit
+their times and instructions in Settings (a file Avanzel can't read is listed there with what is
+wrong with it).
+
+Good to know:
+
+- **Esc** cancels a dictation from any app while Avanzel is listening (it is a global shortcut
+  for that moment only), and the recording is dropped.
+- **Edit** works for as long as your agent is filing: it stops the agent at once. When you file
+  the corrected words (or cancel), whatever that run already changed is undone first, then the note
+  is filed again.
+- **Screen Recording**: macOS applies the permission only to a fresh start of the app. After you
+  allow Avanzel in System Settings → Privacy & Security → Screen Recording, quit and reopen it.
+- **Quitting** while your agent is filing stops the agent; what it had changed is kept as its own
+  commit (in a git library) and the note stays in the inbox for the evening review.
+- **No symlinks inside the library** for `inbox/`, `raw/` or `reviews/`: Avanzel never writes
+  through a link, so filings into a linked `raw/` fail, a linked `reviews/` gets no summary, and a
+  capture an agent changes in a linked `inbox/` can't be put back (your words are kept in
+  `.avanzel/logs/` instead). To keep the library elsewhere (another disk, a synced folder), move
+  the whole library folder and choose it in Settings.
 
 Run it from this repository (Node 22+):
 
@@ -59,8 +78,9 @@ npm run dist -w @avanzel/mac         # or build apps/mac/release/mac-arm64/Avanz
 On first launch, Avanzel asks where your library lives (`~/Avanzel` by default; an existing v0.1
 library works as is), finds your agent CLIs, and downloads the Parakeet speech model once (670 MB;
 an existing Hugging Face cache copy is reused). macOS asks for the microphone the first time you
-dictate, and for Screen Recording the first time you capture the screen. The local builds are
-unsigned, so macOS forgets those permissions whenever the app is rebuilt.
+dictate. The first screen capture shows where to allow Screen Recording (Open Settings); allow
+Avanzel there, then quit and reopen it. The local builds are unsigned, so macOS forgets those
+permissions whenever the app is rebuilt.
 
 ## Command line (Python, v0.1)
 

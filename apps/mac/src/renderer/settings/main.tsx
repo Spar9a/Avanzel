@@ -177,7 +177,10 @@ function Voice({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Setti
   const model = snap.model;
   return (
     <>
-      <Group label="Shortcuts" note="Press a shortcut once to start and again to stop. Esc cancels while the capsule is listening.">
+      <Group
+        label="Shortcuts"
+        note="Press a shortcut once to start and again to stop. While Avanzel listens, Esc cancels the dictation from any app. Edit, while your agent files a note, stops the agent, takes back what it did and files your corrected words instead."
+      >
         {rows.map(([key, label]) => (
           <div className="grow" key={key}>
             <span className="fill two">{label}{snap.shortcutProblems[key] && <span className="problem">{snap.shortcutProblems[key]}</span>}</span>
@@ -361,7 +364,7 @@ function Privacy({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Set
   };
   return (
     <>
-      <Group label="Permissions">
+      <Group label="Permissions" note="After you allow Screen Recording in System Settings, quit and reopen Avanzel: macOS applies it only then.">
         {row("microphone", "Microphone", "Only while the capsule is listening.")}
         {row("screen", "Screen Recording", "Only when you capture the screen with a comment.")}
       </Group>
