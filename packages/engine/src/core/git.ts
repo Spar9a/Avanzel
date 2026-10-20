@@ -45,8 +45,9 @@ export async function revert(root: string, sha: string): Promise<boolean> {
 
 /**
  * Like `revert`, with one difference: a file the revert would delete is kept when `keep` names a
- * path for it (its own path, or another one to move it to). Returns the new commit, or null — with
- * nothing left half-done — when the revert does not apply.
+ * path for it (its own path, or another one to move it to). A symlink it would delete is never kept
+ * (`keep` is not asked). Returns the new commit, or null — with nothing left half-done — when the
+ * revert does not apply.
  */
 export async function revertKeeping(
   root: string,
@@ -60,9 +61,10 @@ export async function revertKeeping(
     return null;
   }
   try {
-    const deleted = (await git(root, ["diff", "--cached", "--name-only", "--no-renames", "--diff-filter=D", "-z"])).stdout
-      .split("\0")
-      .filter(Boolean);
+    // With -z, every deletion is two fields: `:<old mode> <new mode> <old id> <new id> D`, then its
+    // path. Symlinks (old mode 120000) are left deleted.
+    const fields = (await git(root, ["diff", "--cached", "--raw", "-z", "--no-renames", "--diff-filter=D"])).stdout.split("\0");
+    const deleted = fields.flatMap((path, i) => (i % 2 === 1 && !fields[i - 1]?.startsWith(":120000 ") ? [path] : []));
     const targets = new Set<string>();
     const kept = deleted.flatMap((path) => {
       let target = keep(path);

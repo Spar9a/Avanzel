@@ -1,13 +1,15 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { uptime } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { defaultSettings, loadSettings } from "../../src/core/config.ts";
 import * as git from "../../src/core/git.ts";
-import { SHELVES, Vault, isoLocal, slugify } from "../../src/core/vault.ts";
+import { SHELVES, Vault, isoLocal, parseElapsed, slugify } from "../../src/core/vault.ts";
 import { AvanzelError } from "../../src/types.ts";
-import { NOW, envHome, gitIdentity, thrownBy, useTmp, write } from "./helpers.ts";
+import { NOW, binScripts, envHome, gitIdentity, thrownBy, useTmp, write } from "./helpers.ts";
 
 const tmp = useTmp();
 let vault: Vault;
@@ -185,6 +187,22 @@ describe("recordings and attachments", () => {
     expect(existsSync(first)).toBe(true);
     expect(vault.newAttachmentPath(NOW, ".png").split("/").at(-1)).toBe("2026-10-20-140312-2.png");
   });
+
+  it("never claims a recording or screenshot path through a linked folder", () => {
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    mkdirSync(join(vault.raw, "audio"));
+    symlinkSync(outside, join(vault.raw, "audio", "2026"));
+    const recording = thrownBy(() => vault.newAudioPath(NOW));
+    expect(recording).toBeInstanceOf(AvanzelError);
+    expect(recording.message).toContain("raw/audio/2026");
+    mkdirSync(join(vault.raw, "attachments", "2026"), { recursive: true });
+    symlinkSync(outside, join(vault.raw, "attachments", "2026", "10"));
+    const screenshot = thrownBy(() => vault.newAttachmentPath(NOW, ".png"));
+    expect(screenshot).toBeInstanceOf(AvanzelError);
+    expect(screenshot.message).toContain("raw/attachments/2026/10");
+    expect(readdirSync(outside)).toEqual([]);
+  });
 });
 
 describe("inbox and archive", () => {
@@ -207,6 +225,17 @@ describe("inbox and archive", () => {
     const note = join(vault.inbox, "groceries.txt");
     writeFileSync(note, "milk");
     expect(vault.archive(note, NOW)).toBe(join(vault.root, "raw", "2026", "10", "groceries.txt"));
+  });
+
+  it("archive refuses a destination that is a folder with an AvanzelError", () => {
+    const capture = vault.newCapture("hello", { source: "text", now: NOW });
+    const taken = join(vault.raw, "2026", "10", `${capture.id}.md`);
+    mkdirSync(taken, { recursive: true });
+    const error = thrownBy(() => vault.archive(capture.path));
+    expect(error).toBeInstanceOf(AvanzelError);
+    expect(error.message).toContain(`raw/2026/10/${capture.id}.md`);
+    expect(existsSync(capture.path)).toBe(true); // the capture stays in the inbox
+    expect(isDir(taken)).toBe(true); // and the folder is left as it was
   });
 });
 
@@ -253,6 +282,9 @@ describe("shelfCounts", () => {
 
 describe("withLock", () => {
   const owner = () => join(vault.lockDir, "owner");
+  // This boot and this process's start, to the second, as an owner line records them.
+  const bootSeconds = Math.round(Date.now() / 1000 - uptime());
+  const startSeconds = Math.round(Date.now() / 1000 - process.uptime());
   function holdLock(content: string): void {
     mkdirSync(vault.lockDir, { recursive: true });
     writeFileSync(owner(), content);
@@ -282,14 +314,48 @@ describe("withLock", () => {
     expect(existsSync(vault.lockDir)).toBe(false);
   });
 
+  it("waits while another process holds the lock, and takes it once that process lets go", async () => {
+    const vaultModule = new URL("../../src/core/vault.ts", import.meta.url).href;
+    const holder = `
+      const { Vault } = await import(${JSON.stringify(vaultModule)});
+      await new Vault(process.argv[1]).withLock(() => new Promise((resolve) => process.stdin.once("data", resolve)));
+    `;
+    const child = spawn(process.execPath, ["--input-type=module", "-e", holder, vault.root], { stdio: ["pipe", "ignore", "pipe"] });
+    onTestFinished(() => void child.kill());
+    let stderr = "";
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    const exit = new Promise((resolve) => child.on("close", resolve));
+    const holderPid = () => (existsSync(owner()) ? read(owner()).split(" ")[0] : "");
+    await vi.waitFor(() => expect(holderPid(), stderr).toBe(String(child.pid)), { timeout: 10_000 });
+    const onWait = vi.fn();
+    const run = vault.withLock(() => "ran", onWait);
+    await vi.waitFor(() => expect(onWait).toHaveBeenCalledTimes(1));
+    child.stdin.end("done\n");
+    expect(await run).toBe("ran");
+    expect(await exit, stderr).toBe(0);
+    expect(existsSync(vault.lockDir)).toBe(false);
+  });
+
   it("holds the lock with this process's pid and releases it when the work fails", async () => {
     await expect(
       vault.withLock(() => {
-        expect(read(owner()).split(/\s+/)[0]).toBe(String(process.pid));
+        const fields = read(owner()).trim().split(" ");
+        expect(fields).toHaveLength(4);
+        expect(fields[0]).toBe(String(process.pid));
+        expect(fields[3]).toHaveLength(36);
         throw new Error("boom");
       }),
     ).rejects.toThrow("boom");
     expect(existsSync(vault.lockDir)).toBe(false);
+  });
+
+  it("leaves a lock that someone else took over in place", async () => {
+    const theirs = `${process.pid} ${bootSeconds} ${startSeconds} ${randomUUID()}\n`;
+    await vault.withLock(() => {
+      rmSync(vault.lockDir, { recursive: true });
+      holdLock(theirs);
+    });
+    expect(read(owner())).toBe(theirs);
   });
 
   it("takes over a lock whose holder is gone", async () => {
@@ -304,6 +370,43 @@ describe("withLock", () => {
     const onWait = vi.fn();
     expect(await vault.withLock(() => "ran", onWait)).toBe("ran");
     expect(onWait).not.toHaveBeenCalled();
+  });
+
+  it("takes over a lock whose pid now belongs to a process started after the lock was taken", async () => {
+    holdLock(`${process.pid} ${bootSeconds} ${startSeconds - 3600} ${randomUUID()}\n`);
+    const onWait = vi.fn();
+    expect(await vault.withLock(() => "ran", onWait)).toBe("ran");
+    expect(onWait).not.toHaveBeenCalled();
+  });
+
+  it("waits on a lock held by a live process that started when it says", async () => {
+    holdLock(`${process.pid} ${bootSeconds} ${startSeconds} ${randomUUID()}\n`);
+    const events: string[] = [];
+    const run = vault.withLock(
+      () => events.push("acquired"),
+      () => events.push("waiting"),
+    );
+    await sleep(500); // a few polls: a waiter that took the holder for a reused pid would have run the work by now
+    expect(events).toEqual(["waiting"]);
+    rmSync(vault.lockDir, { recursive: true });
+    await run;
+    expect(events).toEqual(["waiting", "acquired"]);
+  });
+
+  it("asks ps once per owner line, and counts the lock as held when ps fails or prints something it can't read", async () => {
+    const calls = join(tmp(), "ps-calls");
+    for (const ps of ["exit 1", "echo soon"]) {
+      writeFileSync(calls, "");
+      vi.stubEnv("PATH", binScripts(tmp(), { ps: `echo called >> '${calls}'\n${ps}` }));
+      holdLock(`${process.pid} ${bootSeconds} ${startSeconds - 3600} ${randomUUID()}\n`);
+      const onWait = vi.fn();
+      const run = vault.withLock(() => "ran", onWait);
+      await sleep(500); // a few polls, each of which could have asked ps again
+      expect(onWait).toHaveBeenCalledTimes(1);
+      expect(read(calls)).toBe("called\n");
+      rmSync(vault.lockDir, { recursive: true });
+      expect(await run).toBe("ran");
+    }
   });
 
   it("waits on a lock folder whose owner is still being written, and takes it over once abandoned", async () => {
@@ -341,5 +444,12 @@ describe("helpers", () => {
 
   it("isoLocal is exported for apps", () => {
     expect(isoLocal(NOW)).toBe("2026-10-20T14:03:12+04:00");
+  });
+
+  it("parseElapsed reads ps's elapsed time, [[dd-]hh:]mm:ss, in seconds", () => {
+    expect(parseElapsed("05:07")).toBe(307);
+    expect(parseElapsed("01:02:03")).toBe(3723);
+    expect(parseElapsed("2-01:02:03")).toBe(176523);
+    for (const text of ["", "soon", "7", "05:07:", "2-05:07", "1:02:03:04"]) expect(parseElapsed(text), text).toBeNull();
   });
 });

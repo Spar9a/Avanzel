@@ -14,9 +14,12 @@
 // failing run first rewrites goals/run.md and adds a line to index.md) | slow-messy (writes
 // goals/half.md, then never finishes) | link-report (a dangling link to $FAKE_AGENT_OUTSIDE where
 // the review report goes, and a reply) | link-year (raw/2026 links to $FAKE_AGENT_OUTSIDE; the
-// capture is tampered with) | hardlink-log (log.md becomes a hard link to $FAKE_AGENT_OUTSIDE;
+// capture is tampered with) | link-audio, link-attachments (raw/audio/2026, raw/attachments/2026/10
+// link to $FAKE_AGENT_OUTSIDE) | hardlink-log (log.md becomes a hard link to $FAKE_AGENT_OUTSIDE;
 // skips its log line) | slow-once (the first run — until the file $FAKE_AGENT_ONCE exists —
-// writes goals/half.md and a line in index.md, then never finishes; later runs file normally).
+// writes goals/half.md and a line in index.md, then never finishes; later runs file normally) |
+// folder-at-archive (a capture whose words contain "blocked-archive" gets a folder where its
+// archived copy goes, raw/<yyyy>/<mm>/<id>.md, besides the usual filing; other captures file normally).
 // FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt, pid}.
 // FAKE_AGENT_DELAY_MS=<ms> waits that long before anything else (an agent that takes a moment).
 
@@ -187,6 +190,18 @@ if (mode === "link-year") {
   symlinkSync(process.env.FAKE_AGENT_OUTSIDE, join(root, "raw", "2026"));
 }
 
+if (mode === "link-audio") {
+  // links the recordings' year folder to a folder outside the library ($FAKE_AGENT_OUTSIDE)
+  mkdirSync(join(root, "raw", "audio"), { recursive: true });
+  symlinkSync(process.env.FAKE_AGENT_OUTSIDE, join(root, "raw", "audio", "2026"));
+}
+
+if (mode === "link-attachments") {
+  // links the screenshots' month folder to a folder outside the library ($FAKE_AGENT_OUTSIDE)
+  mkdirSync(join(root, "raw", "attachments", "2026"), { recursive: true });
+  symlinkSync(process.env.FAKE_AGENT_OUTSIDE, join(root, "raw", "attachments", "2026", "10"));
+}
+
 if (mode === "hardlink-log") {
   // makes log.md another name for a file outside the library ($FAKE_AGENT_OUTSIDE)
   rmSync(join(root, "log.md"));
@@ -212,6 +227,10 @@ if (task === "file") {
     }
     complain("agent crashed: cannot file this one\n");
     process.exit(3);
+  }
+  if (mode === "folder-at-archive" && words.includes("blocked-archive")) {
+    // leaves a folder where the capture will be archived, then files as usual
+    mkdirSync(join(root, "raw", captureId.slice(0, 4), captureId.slice(5, 7), basename(capture)), { recursive: true });
   }
   writeFileSync(
     join(root, "ideas", `idea-${captureId}.md`),

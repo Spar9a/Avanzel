@@ -26,7 +26,13 @@ export function realFoldersTo(root: string, rel: string, create: boolean): boole
     const stat = lstatOrNull(folder);
     if (stat === null) {
       if (!create || (depth === 1 && parts[0] === ".git")) return false;
-      mkdirSync(folder);
+      try {
+        mkdirSync(folder);
+      } catch (error) {
+        // Made meanwhile (two recordings starting a new month): fine if a real folder, not a link or a file.
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (!lstatOrNull(folder)?.isDirectory()) return false;
+      }
     } else if (!stat.isDirectory()) {
       return false; // a symlink, or a file, on the way
     }

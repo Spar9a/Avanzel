@@ -1,12 +1,14 @@
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -118,6 +120,19 @@ describe("file", () => {
     expect(outcome.commit).toBeNull();
     expect(vault.pending()).toEqual([capture.path]);
     expect(vault.logMentions(capture.id)).toBe(false);
+  });
+
+  it("fails a capture whose agent cannot be started, and still tries the next", async () => {
+    const agent = write(tmp(), "bin/agent", "#!/avanzel/no/such/interpreter\n");
+    chmodSync(agent, 0o755); // executable, so it is picked, but its interpreter is missing: it cannot start
+    const harnesses = { fake: { name: "fake", headless: [agent, "{prompt}"], interactive: [] } };
+    librarian = new Librarian(vault, fakeSettings({ harnesses }), { clock: () => NOW });
+    const first = librarian.captureText("first");
+    const second = librarian.captureText("second");
+    const outcomes = await librarian.file();
+    expect(outcomes.map((outcome) => [outcome.captureId, outcome.ok])).toEqual([[first.id, false], [second.id, false]]);
+    for (const { error } of outcomes) expect(error).toContain(`Could not start \`${agent}\``);
+    expect(vault.pending()).toEqual([first.path, second.path]);
   });
 
   it("restores the owner's words when the agent edits the capture", async () => {
@@ -341,13 +356,40 @@ describe("file", () => {
     write(outside, `10/${capture.id}.md`, "an outside file of the same name");
     vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
     const outcome = await only(librarian.file());
-    expect(outcome.ok).toBe(false);
-    expect(outcome.error).toContain("raw/2026/10");
     expect(readdirSync(join(outside, "10"))).toEqual([`${capture.id}.md`]);
     expect(read(join(outside, "10", `${capture.id}.md`))).toBe("an outside file of the same name");
-    expect(read(capture.path)).toBe(original); // the owner's words, back in the inbox
-    expect(outcome.archivedTo).toBeNull();
-    expect(vault.pending()).toEqual([capture.path]);
+    expect(outcome).toMatchObject({ ok: true, restored: true, guarded: ["raw/2026"] }); // the planted link is gone
+    const archived = join(vault.raw, "2026", "10", `${capture.id}.md`);
+    expect(outcome.archivedTo).toBe(archived);
+    expect(realpathSync(archived)).toBe(archived); // a real raw/2026/10/, inside the library
+    expect(read(archived)).toBe(original); // the owner's words
+    expect(vault.pending()).toEqual([]);
+  });
+
+  it("removes a link an agent planted under raw/audio, so later recordings stay in the library", async () => {
+    mode("link-audio");
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.guarded).toContain("raw/audio/2026");
+    expect(lstatOrNull(join(vault.raw, "audio", "2026"))?.isSymbolicLink() ?? false).toBe(false);
+    expect(realpathSync(vault.newAudioPath(NOW)).startsWith(`${vault.root}/`)).toBe(true);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("removes a link an agent planted under raw/attachments, so later screenshots stay in the library", async () => {
+    mode("link-attachments");
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.guarded).toContain("raw/attachments/2026/10");
+    expect(lstatOrNull(join(vault.raw, "attachments", "2026", "10"))?.isSymbolicLink() ?? false).toBe(false);
+    expect(realpathSync(vault.newAttachmentPath(NOW, ".png")).startsWith(`${vault.root}/`)).toBe(true);
+    expect(readdirSync(outside)).toEqual([]);
   });
 
   it("never changes a file outside the library that an agent hard-linked as log.md", async () => {
@@ -450,11 +492,14 @@ describe("file", () => {
 
   it("stops when cancelled, leaving the rest in the inbox", async () => {
     mode("slow-noisy");
+    const runs = recordRuns();
     const first = librarian.captureText("first");
     const second = librarian.captureText("second");
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 500);
-    const outcomes = await librarian.file(null, { signal: controller.signal });
+    const filing = librarian.file(null, { signal: controller.signal });
+    await vi.waitFor(() => expect(runs()).toHaveLength(1), { timeout: 10_000 }); // the agent has started
+    controller.abort();
+    const outcomes = await filing;
     expect(outcomes.map((outcome) => outcome.ok)).toEqual([false]);
     expect(errorLine(outcomes[0]?.error ?? "")).toBe("fake was cancelled");
     expect(vault.pending()).toEqual([first.path, second.path]);
@@ -620,7 +665,9 @@ describe("review", () => {
     const outcome = await librarian.review();
     expect(outcome.result.ok).toBe(true);
     expect(readdirSync(outside)).toEqual([]);
-    expect(outcome.report).toBeNull();
+    expect(outcome.guarded).toEqual(["reviews/2026-10-20.md"]); // the link is gone…
+    expect(outcome.report).toBe(join(vault.root, "reviews", "2026-10-20.md"));
+    expect(lstatSync(outcome.report ?? "").isFile()).toBe(true); // …so the reply is the report, inside the library
   });
 
   it("gets a new report name the second time on a day", async () => {
@@ -679,6 +726,19 @@ describe("eveningReview", () => {
     expect(read(review.digestPath ?? "")).toContain(
       `- [[${capture.id}]]: Filed into [[idea-${capture.id}]].\n  - New: [[idea-${capture.id}]]\n` +
         "  - The agent edited your capture; your original words were restored.\n",
+    );
+  });
+
+  it("notes the links it removed from Avanzel's own folders", async () => {
+    mode("link-audio");
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    librarian.captureText("harmless words");
+    const review = await librarian.eveningReview();
+    expect(read(review.digestPath ?? "")).toContain(
+      "  - Undid the agent's changes to raw/audio/2026 " +
+        "(library rules, settings and tasks are off-limits to it, and so are links in Avanzel's own folders).\n",
     );
   });
 
@@ -834,8 +894,11 @@ describe.skipIf(!git.available())("with git", () => {
     mode("slow-messy");
     librarian.captureText("Takes forever");
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 500);
-    const review = await librarian.eveningReview({ signal: controller.signal });
+    const reviewing = librarian.eveningReview({ signal: controller.signal });
+    const half = join(versioned.root, "goals", "half.md");
+    await vi.waitFor(() => expect(existsSync(half)).toBe(true), { timeout: 10_000 }); // it has left something behind
+    controller.abort();
+    const review = await reviewing;
     const [cancelled] = review.outcomes;
     expect(cancelled?.ok).toBe(false);
     expect(cancelled?.commit).toMatch(/^[0-9a-f]{40}$/);
@@ -843,6 +906,40 @@ describe.skipIf(!git.available())("with git", () => {
     expect(review.commits).toEqual([cancelled?.commit, head()]);
     expect(await librarian.undo(review.commits)).toBe(2);
     expect(existsSync(join(versioned.root, "goals", "half.md"))).toBe(false);
+  });
+
+  it("a folder the agent leaves at the archive path fails only that capture", async () => {
+    mode("folder-at-archive");
+    const blocked = librarian.captureText("blocked-archive notes");
+    const plain = librarian.captureText("plain notes");
+    const review = await librarian.eveningReview();
+    const [stuck, filed] = review.outcomes;
+    expect([stuck?.captureId, stuck?.ok, filed?.captureId, filed?.ok]).toEqual([blocked.id, false, plain.id, true]);
+    const problem = `Could not archive ${blocked.id}: the agent left a folder at raw/2026/10/${blocked.id}.md.`;
+    expect(stuck?.error).toBe(problem);
+    expect(stuck?.commit).toMatch(/^[0-9a-f]{40}$/);
+    const leftovers = gitOut("show", "--name-only", "--format=%s", stuck?.commit ?? "");
+    expect(leftovers).toContain(`avanzel: leftovers of failed filing ${blocked.id}`);
+    expect(leftovers).toContain(`ideas/idea-${blocked.id}.md`); // what the run did is kept, and can be undone
+    expect(review.commits).toEqual([stuck?.commit, filed?.commit, head()]);
+    expect(read(review.digestPath ?? "")).toContain(`- [[${blocked.id}]]: ${problem} (still in the inbox)\n`);
+    expect(versioned.pending()).toEqual([blocked.path]);
+  });
+
+  it("the next review files it under a fresh id", async () => {
+    mode("folder-at-archive");
+    const blocked = librarian.captureText("blocked-archive notes");
+    await librarian.eveningReview();
+    mode("ok");
+    const review = await librarian.eveningReview();
+    const [outcome] = review.outcomes;
+    expect(review.outcomes).toHaveLength(1);
+    expect(outcome?.ok).toBe(true);
+    expect(outcome?.captureId).not.toBe(blocked.id);
+    expect(read(outcome?.archivedTo ?? "")).toContain("blocked-archive notes"); // the owner's words
+    const folder = join(versioned.raw, "2026", "10", `${blocked.id}.md`);
+    expect(lstatSync(folder).isDirectory()).toBe(true); // the old name is still taken by the agent's folder
+    expect(versioned.pending()).toEqual([]);
   });
 
   it("makes no commit for a failed run that changed nothing", async () => {
@@ -923,6 +1020,19 @@ describe.skipIf(!git.available())("with git", () => {
     expect(gitOut("status", "--porcelain")).toBe("");
     // and the library works as before: the same captures file again
     expect((await librarian.file()).map((outcome) => outcome.ok)).toEqual([true, true]);
+  });
+
+  it("Undo removes a link a run committed under raw/", async () => {
+    // Committed straight with git: a library from before the guard removed such links may hold one.
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    symlinkSync(outside, join(versioned.raw, "2026"));
+    const screenshot = write(versioned.root, "raw/attachments/2026/10/2026-10-20-140312.png", "PNG");
+    const commit = await git.commitAll(versioned.root, "avanzel: file 2026-10-20-140312-harmless-words");
+    expect(await librarian.undo([commit ?? ""])).toBe(1);
+    expect(lstatOrNull(join(versioned.raw, "2026"))).toBeNull();
+    expect(read(screenshot)).toBe("PNG");
+    expect(gitOut("status", "--porcelain")).toBe("");
   });
 
   it("leaves the library alone when a filing can no longer be undone cleanly", async () => {
