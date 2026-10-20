@@ -66,3 +66,7 @@ textarea:focus { box-shadow: 0 0 0 2px var(--accent); }
 .ctx .meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .ctx .meta small { color: rgba(255, 255, 255, 0.6); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctx .meta b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A card from @avanzel/ui, as wide as the cards above; .fill takes the rest of its row. */
+.slot { width: 420px; max-width: 100%; }
+.slot .fill { flex: 1; min-width: 0; }

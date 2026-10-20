@@ -202,7 +202,7 @@ function Voice({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Setti
           {model.kind === "error" && (
             <>
               <span className="status-bad">{model.message}</span>
-              <button className="btn" onClick={async () => onChange(await api.downloadModel())}>Try again</button>
+              {model.cause === "download" && <button className="btn" onClick={async () => onChange(await api.downloadModel())}>Try again</button>}
             </>
           )}
         </div>

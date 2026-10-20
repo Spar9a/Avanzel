@@ -1,3 +1,4 @@
+import { Actions, Button, CapsuleNotice, Hud, Progress, Row, Stack, Text, Zel } from "@avanzel/ui";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AvanzelBridge, CapsuleState, FiledPage } from "../../shared/ipc.ts";
@@ -12,6 +13,9 @@ declare global {
 
 const api = window.avanzel.capsule;
 const BARS = 16;
+
+/** Whole megabytes, as macOS counts them. */
+const mb = (bytes: number) => Math.round(bytes / 1e6);
 
 function useLevels(listening: boolean, fake: boolean) {
   const [levels, setLevels] = useState<number[]>(() => Array(BARS).fill(0.08));
@@ -173,6 +177,44 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
             {state.action && <button className="btn" onClick={() => api.openSettingsFor(state.action ?? "")}>Open Settings</button>}
             <button className="btn primary" onClick={() => api.dismiss()}>OK</button>
           </div>
+        </div>
+      );
+    case "preparing":
+      return (
+        <div className="slot">
+          <Hud role="status">
+            <Row gap={12} align="start">
+              <Zel mood="thinking" size="small" />
+              <div className="fill">
+                <Stack gap={8}>
+                  <Text variant="headline">The speech model is still downloading</Text>
+                  <Progress label="Downloading the speech model" value={state.totalBytes ? state.receivedBytes / state.totalBytes : undefined} />
+                  <Text variant="footnote" tone="secondary" numeric>{mb(state.receivedBytes)} of {mb(state.totalBytes)} MB. Typing works now.</Text>
+                  <Actions>
+                    <Button variant="quiet" onClick={() => api.dismiss()}>Hide</Button>
+                    <Button variant="primary" onClick={() => api.typeInstead()}>Type instead</Button>
+                  </Actions>
+                </Stack>
+              </div>
+            </Row>
+          </Hud>
+        </div>
+      );
+    case "model-failed":
+      return (
+        <div className="slot">
+          <CapsuleNotice
+            title="The speech model didn't finish downloading."
+            actions={
+              <Actions>
+                <Button variant="quiet" onClick={() => api.dismiss()}>Hide</Button>
+                <Button variant="secondary" onClick={() => api.typeInstead()}>Type instead</Button>
+                <Button variant="primary" onClick={() => api.retryDownload()}>Try again</Button>
+              </Actions>
+            }
+          >
+            <Text variant="footnote">Typing works in the meantime. Settings → Voice shows what went wrong.</Text>
+          </CapsuleNotice>
         </div>
       );
   }

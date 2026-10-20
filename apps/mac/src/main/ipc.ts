@@ -24,6 +24,8 @@ export function registerIpc(controller: Controller): void {
   on("capsule:dismiss", () => controller.dismiss());
   on("capsule:keep-open", (_e, keep: boolean) => controller.setKeepOpen(keep));
   on("capsule:open-settings-for", (_e, action: string) => controller.openSettingsFor(action));
+  on("capsule:retry-download", () => controller.retryDownload());
+  on("capsule:type-instead", () => controller.typeInstead());
 
   // settings
   handle("settings:get", () => controller.snapshot());

@@ -167,6 +167,8 @@ function capsuleStates(): [string, CapsuleState, string][] {
     ["filed", { kind: "filed", agent: "Claude Code", seconds: 23, pages, canUndo: true, message: "Filed." }, "Filed by Claude Code"],
     ["saved", { kind: "saved", text: "This mic looks right for the podcast", thumbnail, context, note: "Saved to your inbox for tonight's review" }, "Saved to your inbox"],
     ["error", { kind: "error", message: "Claude Code couldn't file this note", detail: "Error: rate limited\nThe note is still in your inbox; the evening review will try again.", action: "open-settings" }, "Claude Code couldn't file this note"],
+    ["preparing", { kind: "preparing", receivedBytes: 412_000_000, totalBytes: 672_807_563 }, "The speech model is still downloading"],
+    ["model-failed", { kind: "model-failed" }, "The speech model didn't finish downloading."],
   ];
 }
 
@@ -207,7 +209,7 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   for (const [name, state, shows] of capsuleStates()) {
     await call(app, "setCapsule", state);
     await expect(capsule.getByText(shows)).toBeVisible();
-    await capsule.locator(".hud").hover(); // the close button shows on hover
+    await capsule.locator(".hud, .av-hud").first().hover(); // the close button shows on hover
     found.push(...(await readable(app, capsule, `capsule ${name}`, desktops)));
   }
   await app.close();

@@ -33,7 +33,16 @@ export type CapsuleState =
   | { kind: "editing"; text: string }
   | { kind: "filed"; agent: string; seconds: number; pages: FiledPage[]; canUndo: boolean; message: string }
   | { kind: "saved"; text: string; thumbnail?: string; context?: ScreenContext; note: string; detail?: string }
-  | { kind: "error"; message: string; detail?: string; action?: "open-microphone-settings" | "open-screen-settings" | "open-settings" };
+  | { kind: "error"; message: string; detail?: string; action?: "open-microphone-settings" | "open-screen-settings" | "open-settings" }
+  /** The shortcut, while the speech models download: how far along they are, and typing instead. */
+  | {
+      kind: "preparing";
+      receivedBytes: number;
+      /** 0 while the size isn't known. */
+      totalBytes: number;
+    }
+  /** The shortcut, after the speech models' download failed: typing instead, or Try again. */
+  | { kind: "model-failed" };
 
 export interface Shortcuts {
   dictate: string;
@@ -69,7 +78,12 @@ export type ModelStatus =
       bytes: number;
     }
   | { kind: "downloading"; receivedBytes: number; totalBytes: number }
-  | { kind: "error"; message: string };
+  | {
+      kind: "error";
+      /** download: the download failed, and trying again may work. settings: the library's [voice] settings can't be used, so nothing downloads. */
+      cause: "download" | "settings";
+      message: string;
+    };
 
 export interface TaskInfo {
   id: string;
@@ -146,6 +160,10 @@ export interface AvanzelBridge {
     dismiss(): void;
     keepOpen(keep: boolean): void;
     openSettingsFor(action: string): void;
+    /** Try again, after the speech models' download failed: it starts over, and the capsule shows its progress. */
+    retryDownload(): void;
+    /** Type instead, while Avanzel can't listen yet: the capsule hides and Quick opens. */
+    typeInstead(): void;
   };
   settings: {
     get(): Promise<SettingsSnapshot>;

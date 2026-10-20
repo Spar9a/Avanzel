@@ -25,6 +25,8 @@ const bridge: AvanzelBridge = {
     dismiss: () => ipcRenderer.send("capsule:dismiss"),
     keepOpen: (keep) => ipcRenderer.send("capsule:keep-open", keep),
     openSettingsFor: (action) => ipcRenderer.send("capsule:open-settings-for", action),
+    retryDownload: () => ipcRenderer.send("capsule:retry-download"),
+    typeInstead: () => ipcRenderer.send("capsule:type-instead"),
   },
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),

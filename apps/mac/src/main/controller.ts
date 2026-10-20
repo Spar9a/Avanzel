@@ -494,10 +494,9 @@ export class Controller {
       return false;
     }
     if (!process.env.AVANZEL_FAKE_TRANSCRIPT && this.model.kind !== "ready") {
-      if (this.model.kind === "missing" || this.model.kind === "error") void this.downloadModel();
-      const progress = this.model.kind === "downloading" && this.model.totalBytes
-        ? ` (${Math.round((100 * this.model.receivedBytes) / this.model.totalBytes)}%)` : "";
-      this.fail(`Downloading the speech model${progress}`, "Parakeet runs on this Mac and is downloaded once (670 MB). Avanzel can listen as soon as it's ready.", "open-settings");
+      // A failed download waits for Try again: pressing the shortcut says so and fetches nothing.
+      if (this.model.kind === "missing") void this.downloadModel();
+      this.showModelStatus();
       return false;
     }
     if (!(await requestMicrophone())) {
@@ -1042,6 +1041,12 @@ export class Controller {
     this.quickWindow?.hide();
   }
 
+  /** Type instead, on the capsule while Avanzel can't listen yet: the capsule goes and Quick opens. */
+  typeInstead(): void {
+    this.setCapsule({ kind: "hidden" });
+    this.openQuick();
+  }
+
   async submitQuick(text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -1304,7 +1309,7 @@ export class Controller {
       const [parakeet] = ids; // none for a command
       return { kind: "ready", dir: parakeet ? (locateModel(parakeet, this.modelsDir, voice.quantization) ?? "") : "" };
     } catch (error) {
-      return { kind: "error", message: errorMessage(error) };
+      return { kind: "error", cause: "settings", message: errorMessage(error) };
     }
   }
 
@@ -1318,25 +1323,30 @@ export class Controller {
     if (this.model.kind === "downloading" || this.model.kind === "ready") return this.snapshot();
     let voice: VoiceOptions;
     let missing: string[];
+    let bytes: number;
     try {
       voice = this.voiceOptions();
       missing = missingModels(speechModels(voice), this.modelsDir, voice.quantization);
+      bytes = downloadSize(missing, this.modelsDir, voice.quantization);
     } catch (error) {
-      this.model = { kind: "error", message: errorMessage(error) }; // [voice] settings it can't use: nothing to fetch
+      this.model = { kind: "error", cause: "settings", message: errorMessage(error) }; // [voice] settings it can't use: nothing to fetch
       this.broadcast();
       return this.snapshot();
     }
-    this.model = { kind: "downloading", receivedBytes: 0, totalBytes: 0 };
+    // The size is known before the first byte arrives, so the progress reads "0 of 673 MB" from the start.
+    this.model = { kind: "downloading", receivedBytes: 0, totalBytes: bytes };
     this.broadcast();
     let lastBroadcast = 0;
     void downloadModels(missing, this.modelsDir, {
       quantization: voice.quantization,
       baseUrl: process.env.AVANZEL_MODELS_URL || undefined, // unset: Hugging Face; the e2e tests set a local stand-in
       onProgress: (p) => {
-        this.model = { kind: "downloading", receivedBytes: p.overallReceived, totalBytes: p.overallTotal ?? 0 };
+        const progress = { receivedBytes: p.overallReceived, totalBytes: p.overallTotal ?? bytes };
+        this.model = { kind: "downloading", ...progress };
         if (Date.now() - lastBroadcast > 250) {
           lastBroadcast = Date.now();
           this.broadcast();
+          this.followDownload({ kind: "preparing", ...progress });
         }
       },
     })
@@ -1347,12 +1357,37 @@ export class Controller {
         if (this.model.kind === "ready") {
           this.notify("Avanzel is ready to listen", "The speech model is downloaded. Press the shortcut and start talking.");
         }
+        this.followDownload({ kind: "hidden" });
       })
       .catch((error) => {
-        this.model = { kind: "error", message: errorMessage(error) };
+        this.model = { kind: "error", cause: "download", message: errorMessage(error) };
+        this.followDownload({ kind: "model-failed" });
       })
       .finally(() => this.broadcast());
     return this.snapshot();
+  }
+
+  /** A capsule showing the download's progress follows it to its end; the download never opens the capsule itself. */
+  private followDownload(state: CapsuleState): void {
+    if (this.capsuleState.kind === "preparing") this.setCapsule(state);
+  }
+
+  /**
+   * What the shortcut shows while the speech models aren't ready: the download's progress, a failed download with Try
+   * again, or the [voice] settings that keep anything from downloading.
+   */
+  private showModelStatus(): void {
+    const model = this.model;
+    if (model.kind === "downloading") this.setCapsule({ kind: "preparing", receivedBytes: model.receivedBytes, totalBytes: model.totalBytes });
+    else if (model.kind === "error" && model.cause === "download") this.setCapsule({ kind: "model-failed" });
+    else if (model.kind === "error") this.fail("Avanzel can't use these voice settings", model.message);
+    else this.setCapsule({ kind: "hidden" }); // ready: nothing to wait for (missing never gets here: downloadModel() runs first)
+  }
+
+  /** Try again, on the capsule's notice of a failed download: the download starts over, and the capsule shows it. */
+  retryDownload(): void {
+    void this.downloadModel();
+    this.showModelStatus();
   }
 
   async requestPermission(kind: "microphone" | "screen"): Promise<SettingsSnapshot> {
