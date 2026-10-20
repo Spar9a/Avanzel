@@ -10,6 +10,7 @@ export {
   type DownloadOptions,
   type DownloadProgress,
   downloadModel,
+  downloadModelFiles,
   locateModel,
   MissingModelError,
   MODELS,

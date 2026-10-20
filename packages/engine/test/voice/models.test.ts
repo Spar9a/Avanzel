@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
@@ -9,16 +9,20 @@ import { AvanzelError } from "../../src/types.ts";
 import {
   type DownloadProgress,
   downloadModel,
+  downloadModelFiles,
   hfCacheDir,
   locateModel,
   MODELS,
+  type ModelSpec,
   modelFiles,
   parakeetFileNames,
+  VAD_MODEL,
 } from "../../src/voice/models.ts";
 import { tempDir, useHfCache } from "./helpers.ts";
 
 const V3 = "nemo-parakeet-tdt-0.6b-v3";
 const V3_REPO = "istupakov/parakeet-tdt-0.6b-v3-onnx";
+const REVISION = "0123456789abcdef0123456789abcdef01234567"; // what the test specs pin; no real commit
 const INT8 = ["encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "vocab.txt", "config.json"];
 const FULL = ["encoder-model.onnx", "encoder-model.onnx.data", "decoder_joint-model.onnx", "vocab.txt", "config.json"];
 
@@ -32,17 +36,21 @@ function writeFiles(dir: string, files: Record<string, string | Buffer>): void {
   for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
 }
 
-/** A Hugging Face cache snapshot of `repo` holding `files`, laid out like huggingface_hub does. */
-function hfSnapshot(repo: string, files: string[], revision = "0123abcd"): string {
+/**
+ * A Hugging Face cache snapshot of `repo`, laid out like huggingface_hub does. `files` are names (each holding
+ * "cached <name>") or names with the bytes to put in them.
+ */
+function hfSnapshot(repo: string, files: string[] | Record<string, string | Buffer>, revision = "0123abcd"): string {
+  const bodies = Array.isArray(files) ? Object.fromEntries(files.map((name) => [name, `cached ${name}`])) : files;
   const base = join(hub, `models--${repo.replace("/", "--")}`);
   const snapshot = join(base, "snapshots", revision);
   mkdirSync(join(base, "blobs"), { recursive: true });
   mkdirSync(snapshot, { recursive: true });
   mkdirSync(join(base, "refs"), { recursive: true });
   writeFileSync(join(base, "refs", "main"), revision);
-  for (const name of files) {
-    writeFileSync(join(base, "blobs", `blob-${name}`), `cached ${name}`);
-    symlinkSync(join("..", "..", "blobs", `blob-${name}`), join(snapshot, name));
+  for (const [name, body] of Object.entries(bodies)) {
+    writeFileSync(join(base, "blobs", `${revision}-${name}`), body);
+    symlinkSync(join("..", "..", "blobs", `${revision}-${name}`), join(snapshot, name));
   }
   return snapshot;
 }
@@ -69,6 +77,16 @@ describe("MODELS", () => {
     expect(() => modelFiles("whisper-base")).toThrow(AvanzelError);
     expect(() => modelFiles("constructor")).toThrow(AvanzelError);
     expect(() => modelFiles(V3, "fp16")).toThrow(/fp16/);
+  });
+
+  it("pins a revision, a size and a SHA-256 for every file it lists", () => {
+    for (const [id, model] of Object.entries(MODELS)) {
+      expect(model.revision, `${id} revision`).toMatch(/^[0-9a-f]{40}$/);
+      for (const name of Object.values(model.files).flat()) {
+        expect(model.digests[name]?.size, `${id} ${name} size`).toBeGreaterThan(0);
+        expect(model.digests[name]?.sha256, `${id} ${name} sha256`).toMatch(/^[0-9a-f]{64}$/);
+      }
+    }
   });
 });
 
@@ -139,32 +157,40 @@ describe("locateModel", () => {
   });
 });
 
-type Behaviour = { notFound?: string; truncate?: string; stall?: string };
+type Behaviour = { notFound?: string; truncate?: string; short?: string; stall?: string };
 
-/** A local stand-in for huggingface.co: serves `/<repo>/resolve/main/<file>` for `files` of `repo`. */
-async function fakeHub(repo: string, files: Record<string, Buffer>, behaviour: Behaviour = {}) {
+/**
+ * A local stand-in for huggingface.co: serves `/<repo>/resolve/<revision>/<file>` for `files` and records every
+ * request. `behaviour` names a file to answer 404, to cut the connection half way, to serve whole but only half as
+ * long (`short`), or to stall after the first kilobyte.
+ */
+async function fakeHub(
+  { repo, revision }: Pick<ModelSpec, "repo" | "revision">,
+  files: Record<string, Buffer>,
+  behaviour: Behaviour = {},
+) {
   const requests: string[] = [];
   const encodings = new Set<string | undefined>();
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     requests.push(`${req.method} ${req.url}`);
     encodings.add(req.headers["accept-encoding"]);
-    const prefix = `/${repo}/resolve/main/`;
+    const prefix = `/${repo}/resolve/${revision}/`;
     const name = req.url!.startsWith(prefix) ? decodeURIComponent(req.url!.slice(prefix.length)) : "";
     const body = files[name];
     if (body === undefined || name === behaviour.notFound) {
       res.writeHead(404).end("Entry not found");
       return;
     }
-    res.writeHead(200, { "content-length": body.length, "content-type": "application/octet-stream" });
-    if (req.method === "HEAD") {
-      res.end();
-    } else if (name === behaviour.truncate) {
-      res.write(body.subarray(0, body.length / 2));
+    const half = body.subarray(0, body.length / 2);
+    const sent = name === behaviour.short ? half : body;
+    res.writeHead(200, { "content-length": sent.length, "content-type": "application/octet-stream" });
+    if (name === behaviour.truncate) {
+      res.write(half);
       res.destroy();
     } else if (name === behaviour.stall) {
       res.write(body.subarray(0, 1024)); // then hang until the client gives up
     } else {
-      res.end(body);
+      res.end(sent);
     }
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -189,27 +215,38 @@ function v3Files(): Record<string, Buffer> {
   };
 }
 
-const get = (name: string) => `GET /${V3_REPO}/resolve/main/${name}`;
+/** Parakeet v3's spec pinned to `files`, as MODELS pins the real ones: a made-up revision, each file's size and SHA-256. */
+function pinnedSpec(files: Record<string, Buffer>): ModelSpec {
+  const digests = Object.entries(files).map(([name, body]) => [
+    name,
+    { size: body.length, sha256: createHash("sha256").update(body).digest("hex") },
+  ]);
+  return { repo: V3_REPO, revision: REVISION, files: { int8: INT8, "": FULL }, digests: Object.fromEntries(digests) };
+}
 
-describe("downloadModel", () => {
-  it("downloads every file into <modelsDir>/<id>/, reporting progress", async () => {
+const get = (name: string) => `GET /${V3_REPO}/resolve/${REVISION}/${name}`;
+
+describe("downloadModelFiles", () => {
+  it("downloads every file from the pinned revision, reporting progress against the pinned sizes", async () => {
     const files = v3Files();
-    const { baseUrl, requests, encodings } = await fakeHub(V3_REPO, files);
+    const model = pinnedSpec(files);
+    const { baseUrl, requests, encodings } = await fakeHub(model, files);
     const models = tempDir();
+    const dir = join(models, V3);
     const events: DownloadProgress[] = [];
-    const dir = await downloadModel(V3, models, { baseUrl, onProgress: (p) => events.push({ ...p }) });
+    expect(await downloadModelFiles(model, dir, { baseUrl, onProgress: (p) => events.push({ ...p }) })).toBe(dir);
 
-    expect(dir).toBe(join(models, V3));
     for (const name of INT8) expect(readFileSync(join(dir, name)).equals(files[name]!)).toBe(true);
     expect(readdirSync(dir).sort()).toEqual([...INT8].sort()); // no .part leftovers
     expect(locateModel(V3, models)).toBe(dir);
-    expect(requests.filter((r) => r.startsWith("GET")).sort()).toEqual(INT8.map(get).sort());
-    // Hugging Face gzips text files and then omits their length; identity keeps sizes known.
+    // One GET per file at the pinned revision, and no HEAD requests to ask how long they are.
+    expect(requests.sort()).toEqual(INT8.map(get).sort());
+    // Asked for as they are: no content encoding between the server's bytes and their digest.
     expect([...encodings]).toEqual(["identity"]);
 
     const total = INT8.reduce((sum, name) => sum + files[name]!.length, 0);
     expect(events.every((e) => e.overallTotal === total)).toBe(true);
-    expect(events.at(-1)?.overallReceived).toBe(total);
+    expect(events.at(-1)).toMatchObject({ overallReceived: total, overallTotal: total });
     for (const name of INT8) {
       const size = files[name]!.length;
       expect(events.filter((e) => e.file === name).at(-1)).toMatchObject({ receivedBytes: size, totalBytes: size });
@@ -219,57 +256,164 @@ describe("downloadModel", () => {
     expect(events.filter((e) => e.file === "encoder-model.int8.onnx").length).toBeGreaterThan(1);
   });
 
-  it("links what the Hugging Face cache has and downloads only the rest", async () => {
-    // The cache holds the int8 model (what onnx-asr fetched); the owner switches to full precision.
+  it("links what the Hugging Face cache has, downloading a cached file of the wrong size instead", async () => {
+    // The cache holds the int8 model (what onnx-asr fetched), except that its config.json is not the pinned one;
+    // the owner switches to full precision.
     const files = v3Files();
-    const { baseUrl, requests } = await fakeHub(V3_REPO, files);
-    const snapshot = hfSnapshot(V3_REPO, INT8);
+    const model = pinnedSpec(files);
+    const { baseUrl, requests } = await fakeHub(model, files);
+    const snapshot = hfSnapshot(V3_REPO, {
+      ...Object.fromEntries(INT8.map((name) => [name, files[name]!])),
+      "config.json": Buffer.concat([files["config.json"]!, Buffer.from("\n")]),
+    });
     const before = listTree(hub);
     const models = tempDir();
+    const events: DownloadProgress[] = [];
 
-    const dir = await downloadModel(V3, models, { baseUrl, quantization: "" });
+    const dir = await downloadModelFiles(model, join(models, V3), {
+      baseUrl,
+      quantization: "",
+      onProgress: (p) => events.push({ ...p }),
+    });
 
-    expect(requests.filter((r) => r.startsWith("GET")).sort()).toEqual(
-      ["encoder-model.onnx", "encoder-model.onnx.data", "decoder_joint-model.onnx"].map(get).sort(),
-    );
-    for (const name of ["vocab.txt", "config.json"]) {
-      expect(lstatSync(join(dir, name)).isSymbolicLink()).toBe(true);
-      expect(readlinkSync(join(dir, name))).toBe(join(snapshot, name));
-      expect(readFileSync(join(dir, name), "utf8")).toBe(`cached ${name}`);
+    const downloaded = ["encoder-model.onnx", "encoder-model.onnx.data", "decoder_joint-model.onnx", "config.json"];
+    expect(requests.sort()).toEqual(downloaded.map(get).sort());
+    const total = downloaded.reduce((sum, name) => sum + files[name]!.length, 0); // what is linked is not counted
+    expect(events.at(-1)).toMatchObject({ overallReceived: total, overallTotal: total });
+    expect(lstatSync(join(dir, "vocab.txt")).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(dir, "vocab.txt"))).toBe(join(snapshot, "vocab.txt"));
+    expect(lstatSync(join(dir, "config.json")).isSymbolicLink()).toBe(false);
+    for (const name of ["vocab.txt", "config.json", "encoder-model.onnx.data"]) {
+      expect(readFileSync(join(dir, name)).equals(files[name]!)).toBe(true);
     }
-    expect(readFileSync(join(dir, "encoder-model.onnx.data")).equals(files["encoder-model.onnx.data"]!)).toBe(true);
     expect(listTree(hub)).toEqual(before); // nothing written into the HF cache
     expect(locateModel(V3, models, "")).toBe(dir);
   });
 
-  it("keeps files that are already there", async () => {
-    const { baseUrl, requests } = await fakeHub(V3_REPO, v3Files());
+  it("links the snapshot whose copy has the pinned size when another snapshot holds an outdated one", async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl, requests } = await fakeHub(model, files);
+    const current = hfSnapshot(V3_REPO, { "vocab.txt": files["vocab.txt"]! }, "aaaa1111");
+    hfSnapshot(V3_REPO, { "vocab.txt": "an older vocab" }, "bbbb2222"); // refs/main names this one, so it is tried first
+    const dir = join(tempDir(), V3);
+
+    await downloadModelFiles(model, dir, { baseUrl });
+
+    expect(readlinkSync(join(dir, "vocab.txt"))).toBe(join(current, "vocab.txt"));
+    expect(requests.some((r) => r.endsWith("/vocab.txt"))).toBe(false);
+  });
+
+  it("replaces a dangling link left by a cache that was cleaned", async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl, requests } = await fakeHub(model, files);
     const models = tempDir();
-    writeFiles(join(models, V3), { "vocab.txt": "mine", "config.json": "{}" });
-    await downloadModel(V3, models, { baseUrl });
-    expect(readFileSync(join(models, V3, "vocab.txt"), "utf8")).toBe("mine");
+    const dir = join(models, V3);
+    mkdirSync(dir);
+    // An earlier run linked both into a cache that has since been cleaned out ...
+    for (const name of ["vocab.txt", "config.json"]) symlinkSync(join(hub, "cleaned", name), join(dir, name));
+    expect(locateModel(V3, models)).toBeNull();
+    // ... and the cache has config.json again.
+    const snapshot = hfSnapshot(V3_REPO, { "config.json": files["config.json"]! });
+
+    await downloadModelFiles(model, dir, { baseUrl });
+
+    expect(lstatSync(join(dir, "vocab.txt")).isSymbolicLink()).toBe(false); // downloaded over the link
+    expect(readFileSync(join(dir, "vocab.txt")).equals(files["vocab.txt"]!)).toBe(true);
+    expect(readlinkSync(join(dir, "config.json"))).toBe(join(snapshot, "config.json")); // linked afresh
+    expect(requests.some((r) => r.endsWith("/config.json"))).toBe(false);
+    expect(locateModel(V3, models)).toBe(dir);
+  });
+
+  it('fetches the full-precision files when quantization is ""', async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl, requests } = await fakeHub(model, files);
+    const dir = join(tempDir(), V3);
+    const events: DownloadProgress[] = [];
+
+    await downloadModelFiles(model, dir, { baseUrl, quantization: "", onProgress: (p) => events.push({ ...p }) });
+
+    expect(requests.sort()).toEqual(modelFiles(V3, "").map(get).sort());
+    expect(readdirSync(dir).sort()).toEqual([...FULL].sort());
+    expect(events.at(-1)?.overallTotal).toBe(FULL.reduce((sum, name) => sum + files[name]!.length, 0));
+  });
+
+  it("keeps files that are already there", async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl, requests } = await fakeHub(model, files);
+    const dir = join(tempDir(), V3);
+    writeFiles(dir, { "vocab.txt": "mine", "config.json": "{}" });
+    await downloadModelFiles(model, dir, { baseUrl });
+    expect(readFileSync(join(dir, "vocab.txt"), "utf8")).toBe("mine");
     expect(requests.some((r) => r.endsWith("/vocab.txt") || r.endsWith("/config.json"))).toBe(false);
   });
 
+  it("starts a file over when an earlier attempt left its .part behind", async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl } = await fakeHub(model, files);
+    const dir = join(tempDir(), V3);
+    writeFiles(dir, { "encoder-model.int8.onnx.part": randomBytes(500_000) }); // longer than the file itself
+    await downloadModelFiles(model, dir, { baseUrl });
+    expect(readdirSync(dir).sort()).toEqual([...INT8].sort());
+    expect(readFileSync(join(dir, "encoder-model.int8.onnx")).equals(files["encoder-model.int8.onnx"]!)).toBe(true);
+  });
+
   it("fails with an AvanzelError when a file is not found", async () => {
-    const { baseUrl } = await fakeHub(V3_REPO, v3Files(), { notFound: "vocab.txt" });
-    const download = downloadModel(V3, tempDir(), { baseUrl });
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl } = await fakeHub(model, files, { notFound: "vocab.txt" });
+    const download = downloadModelFiles(model, join(tempDir(), V3), { baseUrl });
     await expect(download).rejects.toThrow(AvanzelError);
     await expect(download).rejects.toThrow(/vocab\.txt.*404/);
   });
 
-  it("fails on a truncated download and leaves no partial file", async () => {
-    const { baseUrl } = await fakeHub(V3_REPO, v3Files(), { truncate: "encoder-model.int8.onnx" });
-    const models = tempDir();
-    await expect(downloadModel(V3, models, { baseUrl })).rejects.toThrow(AvanzelError);
-    expect(readdirSync(join(models, V3)).filter((name) => name.startsWith("encoder-model"))).toEqual([]);
+  it("refuses a file whose SHA-256 doesn't match, leaving nothing behind", async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const damaged = Buffer.from(files["encoder-model.int8.onnx"]!);
+    damaged[1000] = damaged[1000]! ^ 0xff; // the same size, one byte different
+    const { baseUrl } = await fakeHub(model, { ...files, "encoder-model.int8.onnx": damaged });
+    const dir = join(tempDir(), V3);
+
+    const download = downloadModelFiles(model, dir, { baseUrl });
+
+    await expect(download).rejects.toThrow(AvanzelError);
+    await expect(download).rejects.toThrow(/encoder-model\.int8\.onnx.*try again$/);
+    expect(readdirSync(dir)).toEqual([]); // neither the file nor its .part
+  });
+
+  it("refuses a short download, leaving nothing behind", async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl } = await fakeHub(model, files, { short: "encoder-model.int8.onnx" });
+    const dir = join(tempDir(), V3);
+
+    await expect(downloadModelFiles(model, dir, { baseUrl })).rejects.toThrow(
+      /encoder-model\.int8\.onnx.*got 150000 of 300000 bytes; try again$/,
+    );
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("fails when the connection drops half way and leaves no partial file", async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl } = await fakeHub(model, files, { truncate: "encoder-model.int8.onnx" });
+    const dir = join(tempDir(), V3);
+    await expect(downloadModelFiles(model, dir, { baseUrl })).rejects.toThrow(AvanzelError);
+    expect(readdirSync(dir)).toEqual([]);
   });
 
   it("stops when aborted and leaves no partial file", async () => {
-    const { baseUrl } = await fakeHub(V3_REPO, v3Files(), { stall: "encoder-model.int8.onnx" });
-    const models = tempDir();
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl } = await fakeHub(model, files, { stall: "encoder-model.int8.onnx" });
+    const dir = join(tempDir(), V3);
     const controller = new AbortController();
-    const download = downloadModel(V3, models, {
+    const download = downloadModelFiles(model, dir, {
       baseUrl,
       signal: controller.signal,
       onProgress: (p) => {
@@ -277,20 +421,42 @@ describe("downloadModel", () => {
       },
     });
     await expect(download).rejects.toMatchObject({ name: "AbortError" });
-    const left = existsSync(join(models, V3)) ? readdirSync(join(models, V3)) : [];
-    expect(left.filter((name) => name.startsWith("encoder-model"))).toEqual([]);
+    expect(readdirSync(dir)).toEqual([]);
   });
 
-  it("downloads Silero VAD from its own repo", async () => {
-    const vad = randomBytes(10_000);
-    const { baseUrl } = await fakeHub("istupakov/silero-vad-onnx", { "silero_vad.onnx": vad });
+  it("downloads nothing for a spec that pins no digest for a file it lists", async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const digests = Object.entries(model.digests).filter(([name]) => name !== "vocab.txt");
+    const { baseUrl, requests } = await fakeHub(model, files);
+    const download = downloadModelFiles({ ...model, digests: Object.fromEntries(digests) }, join(tempDir(), V3), { baseUrl });
+    await expect(download).rejects.toThrow(/vocab\.txt/);
+    expect(requests).toEqual([]);
+  });
+});
+
+describe("downloadModel", () => {
+  it("asks for the pinned revision of a real model", async () => {
+    const pin = { repo: "istupakov/silero-vad-onnx", revision: "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6" };
+    const { baseUrl, requests } = await fakeHub(pin, { "silero_vad.onnx": randomBytes(10_000) }); // not the real bytes
     const models = tempDir();
-    const dir = await downloadModel("silero-vad", models, { baseUrl });
-    expect(readFileSync(join(dir, "silero_vad.onnx")).equals(vad)).toBe(true);
-    expect(locateModel("silero-vad", models)).toBe(dir);
+
+    await expect(downloadModel(VAD_MODEL, models, { baseUrl })).rejects.toThrow(/silero_vad\.onnx.*try again$/);
+
+    expect(requests).toEqual([`GET /${pin.repo}/resolve/${pin.revision}/silero_vad.onnx`]);
+    expect(readdirSync(join(models, VAD_MODEL))).toEqual([]); // the wrong bytes were not kept
   });
 
-  it("rejects unknown models", async () => {
+  it("keeps a model's files in <modelsDir>/<id>/", async () => {
+    const { baseUrl, requests } = await fakeHub(MODELS[VAD_MODEL]!, {});
+    const models = tempDir();
+    writeFiles(join(models, VAD_MODEL), { "silero_vad.onnx": "already here" });
+    expect(await downloadModel(VAD_MODEL, models, { baseUrl })).toBe(join(models, VAD_MODEL));
+    expect(requests).toEqual([]);
+  });
+
+  it("rejects unknown models and quantizations", async () => {
     await expect(downloadModel("whisper-base", tempDir())).rejects.toThrow(AvanzelError);
+    await expect(downloadModel(V3, tempDir(), { quantization: "fp16" })).rejects.toThrow(/fp16/);
   });
 });
