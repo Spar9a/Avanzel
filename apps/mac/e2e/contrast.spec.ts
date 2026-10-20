@@ -18,7 +18,7 @@ interface Sample {
   color: string;
   fontSize: number;
   fontWeight: number;
-  /** A white label on an accent or danger fill (ON_FILL). */
+  /** An ON_FILL label that is white on the page's own accent or danger fill. */
   onFill: boolean;
   layers: { background: string; opacity: number }[];
 }
@@ -28,7 +28,8 @@ type Bases = (mode: Appearance, page: Page) => Promise<string[]>;
 
 const APPEARANCES: Appearance[] = ["light", "dark"];
 // Primary buttons, the selected sidebar row and the error badge: white on --accent or --danger, as
-// macOS draws them, at 3.4–4.0:1. The fills stay as they are; their labels are held to 3:1.
+// macOS draws them, at 3.4–4.0:1. The fills stay as they are; their labels are held to 3:1 while
+// they are white on exactly that fill, and to 4.5:1 otherwise.
 const ON_FILL = ".btn.primary, .ni.on, .warn";
 // The Settings sidebar's vibrancy, measured from screenshots of the real window.
 const sidebar: Bases = async (mode) => [mode === "light" ? "#e1e1e4" : "#464649"];
@@ -86,6 +87,14 @@ async function texts(page: Page): Promise<Sample[]> {
     Promise.all(document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined))));
   return page.evaluate((onFill) => {
     const name = (el: Element) => el.tagName.toLowerCase() + [...el.classList].map((c) => `.${c}`).join("");
+    // This page's accent and danger fills, resolved through a probe element (a page without one leaves it transparent).
+    const fills = ["--accent", "--danger"].map((variable) => {
+      const probe = document.body.appendChild(document.createElement("i"));
+      probe.style.backgroundColor = `var(${variable})`;
+      const fill = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return fill;
+    }).filter((fill) => fill !== "rgba(0, 0, 0, 0)");
     const found: Sample[] = [];
     for (const el of document.body.querySelectorAll("*")) {
       if (el.matches("option, optgroup, script, style") || el.closest(":disabled")) continue;
@@ -104,14 +113,15 @@ async function texts(page: Page): Promise<Sample[]> {
       if (!text.trim()) continue;
       const chain: Element[] = [];
       for (let up: Element | null = el; up; up = up.parentElement) chain.unshift(up);
-      const style = getComputedStyle(el, pseudo);
+      const own = getComputedStyle(el);
+      const style = pseudo ? getComputedStyle(el, pseudo) : own;
       found.push({
         selector: chain.slice(-3).map(name).join(" > "),
         text: text.trim().slice(0, 50),
         color: style.color,
         fontSize: parseFloat(style.fontSize),
         fontWeight: Number(style.fontWeight),
-        onFill: el.matches(onFill),
+        onFill: el.matches(onFill) && own.color === "rgb(255, 255, 255)" && fills.includes(own.backgroundColor),
         layers: chain.map((up) => ({ background: getComputedStyle(up).backgroundColor, opacity: Number(getComputedStyle(up).opacity) })),
       });
     }
