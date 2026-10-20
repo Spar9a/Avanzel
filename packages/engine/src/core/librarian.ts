@@ -21,7 +21,13 @@ import { askPrompt, filePrompt, reviewPrompt } from "./prompts.ts";
 import { AUDIO_EXTS, IMAGE_EXTS, TEXT_EXTS, type Capture, type Vault } from "./vault.ts";
 
 const SOURCES = ["inbox/", "raw/"];
-const WAITING = "Waiting for another Avanzel run on this library…";
+/** What `progress` hears when a run has to wait for the library lock. */
+export const WAITING = "Waiting for another Avanzel run on this library…";
+/**
+ * What an ask's `progress` hears, after `WAITING`, once the lock is its own and the agent is about to look:
+ * the words the Ask window shows for a question that never had to wait.
+ */
+const LOOKING = "Looking through your library…";
 
 export interface FileOutcome {
   captureId: string;
@@ -341,8 +347,9 @@ export class Librarian {
 
   /**
    * Answer from the library. It runs under the library lock even when read-only: the guard of an ask
-   * that ran alongside a filing could put back a change the filing's guard had just undone. While it
-   * waits for the lock, `progress` hears `WAITING` once.
+   * that ran alongside a filing could put back a change the filing's guard had just undone. When it
+   * has to wait for the lock, `progress` hears `WAITING` once, then `LOOKING` once the lock is held,
+   * before the agent starts; when the library is free, it hears nothing.
    */
   async ask(
     question: string,
@@ -350,7 +357,9 @@ export class Librarian {
   ): Promise<AgentOutcome> {
     if (!question.trim()) throw new AvanzelError('Ask a question, e.g. "what are my goals this year?"');
     const now = this.clock();
+    let waited = false;
     const answer = async (): Promise<AgentOutcome> => {
+      if (waited) progress(LOOKING);
       if (save) await this.#commitOwnerChanges("saving an answer");
       const before = snapshot(this.vault.root);
       const { result, guarded } = await this.#run(askPrompt(question, { save, now }), { write: save, signal });
@@ -366,7 +375,10 @@ export class Librarian {
       }
       return { result, changes, report: null, guarded };
     };
-    return this.vault.withLock(answer, () => progress(WAITING));
+    return this.vault.withLock(answer, () => {
+      waited = true;
+      progress(WAITING);
+    });
   }
 
   async review({ signal }: { signal?: AbortSignal } = {}): Promise<AgentOutcome> {

@@ -640,25 +640,31 @@ describe("ask", () => {
 
   it("a read-only ask waits for the library lock", async () => {
     const runs = recordRuns();
-    const progress = vi.fn();
+    const waiting = "Waiting for another Avanzel run on this library…";
+    const looking = "Looking through your library…";
+    const heard: Array<[message: string, agentRunsStarted: number]> = []; // each message, with the agent runs started by then
+    const progress = (message: string) => {
+      heard.push([message, runs().length]);
+    };
     let release = () => {};
     const held = vault.withLock(() => new Promise<void>((resolve) => (release = resolve))); // a filing, say, has the library
     const asking = librarian.ask("q", { progress });
-    await vi.waitFor(() => expect(progress).toHaveBeenCalledWith("Waiting for another Avanzel run on this library…"), { timeout: 300 });
+    await vi.waitFor(() => expect(heard).toEqual([[waiting, 0]]), { timeout: 300 });
     await sleep(500); // a few polls: an ask that did not wait would have started its agent by now
+    expect(heard).toEqual([[waiting, 0]]); // said once, however many polls
     expect(runs()).toEqual([]);
-    expect(progress).toHaveBeenCalledTimes(1);
     release();
     await held;
     const outcome = await asking;
     expect(outcome.result.ok).toBe(true);
     expect(runs()).toHaveLength(1);
+    expect(heard).toEqual([[waiting, 0], [looking, 0]]); // the wait is over: said before the agent starts
   });
 
   it("says nothing about waiting when the library is free", async () => {
     const progress = vi.fn();
     expect((await librarian.ask("q", { progress })).result.ok).toBe(true);
-    expect(progress).not.toHaveBeenCalled();
+    expect(progress).not.toHaveBeenCalled(); // neither the waiting message nor the one that follows it
   });
 
   it("files a saved answer and logs it", async () => {

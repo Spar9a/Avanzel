@@ -138,6 +138,9 @@ test("asking while a note is being filed says it is waiting, then answers", asyn
   await question.press("Enter");
   await expect(ask.getByText("Waiting for the filing in progress to finish…")).toBeVisible();
   await snap(ask, "9-ask-waiting");
+  // The filing ends and the question has the library: the row stops saying it waits and says what the agent is doing.
+  await expect(ask.getByText("Looking through your library…")).toBeVisible({ timeout: 15_000 });
+  await expect(ask.getByText("Waiting for the filing in progress to finish…")).toBeHidden();
   await expect(ask.getByText("Q: What are my goals?")).toBeVisible({ timeout: 60_000 });
   expect(inbox(library)).toEqual([]); // the filing finished, undisturbed
   expect(archived(library)).toHaveLength(1);

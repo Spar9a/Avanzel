@@ -17,6 +17,7 @@ import {
   AvanzelError,
   Librarian,
   Vault,
+  WAITING,
   downloadModel,
   ensureDefaultTasks,
   formatSchedule,
@@ -860,13 +861,14 @@ export class Controller {
   async ask(question: string): Promise<AskResult> {
     const agent = this.agentName();
     const started = performance.now();
-    // Another run, usually a filing, has the library: the engine says the question has to wait.
-    const waiting = () => {
+    // The engine's messages go to the Ask window as they are, except its waiting one: that names no run, and here it is usually a filing.
+    const progress = (message: string) => {
       const win = this.askWindow;
-      if (win && !win.isDestroyed()) win.webContents.send("ask:progress", "Waiting for the filing in progress to finish…");
+      if (!win || win.isDestroyed()) return;
+      win.webContents.send("ask:progress", message === WAITING ? "Waiting for the filing in progress to finish…" : message);
     };
     try {
-      const outcome = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal, progress: waiting }));
+      const outcome = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal, progress }));
       const seconds = (performance.now() - started) / 1000;
       return outcome.result.ok
         ? { ok: true, answer: outcome.result.output, agent, seconds }

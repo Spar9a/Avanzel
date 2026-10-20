@@ -25,7 +25,7 @@ function render(answer: string): string {
 function Ask() {
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
-  /** What the pending question is doing, when it is not just looking through the library. */
+  /** What the pending question is doing now, as main last reported it (null: nothing reported yet). */
   const [progress, setProgress] = useState<string | null>(null);
   const busy = turns.some((t) => t.result === null);
 
