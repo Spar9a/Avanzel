@@ -192,6 +192,8 @@ export class Controller {
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
   /** What each agent's check found in this app run, by harness name, for Settings → Agents. */
   private readonly agentChecks = new Map<string, AgentStatus>();
+  /** The agent checks going on, each by the controller that stops it when Avanzel quits. */
+  private readonly runningChecks = new Set<AbortController>();
   private recent: FiledPage[] = [];
   private running = new Set<string>();
   private lastEveningCommits: string[] = [];
@@ -242,14 +244,15 @@ export class Controller {
   }
 
   /**
-   * Before quitting: stop every agent run and keep an open edit (`keepEdit`), then wait (at most
-   * QUIT_WAIT_MS) while the engine does its bookkeeping: protected files put back, what a run left
-   * committed, the capture kept in the inbox. Nothing new starts meanwhile. Words the wait left only
-   * in memory (`saveUnwritten`) are saved all the same.
+   * Before quitting: stop every agent run and agent check, and keep an open edit (`keepEdit`), then
+   * wait (at most QUIT_WAIT_MS) while the engine does the runs' bookkeeping: protected files put
+   * back, what a run left committed, the capture kept in the inbox. A check isn't waited for. Nothing
+   * new starts meanwhile. Words the wait left only in memory (`saveUnwritten`) are saved all the same.
    */
   async stopForQuit(): Promise<void> {
     this.quitting = true;
     for (const abort of this.runs.keys()) abort.abort();
+    this.stopAgentChecks();
     this.keepEdit();
     let timer: NodeJS.Timeout | undefined;
     const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, QUIT_WAIT_MS)));
@@ -1348,16 +1351,30 @@ export class Controller {
     }
   }
 
-  /** One check, in the library: Settings shows it running, then what it found. */
+  /**
+   * When Avanzel quits: stops every agent check still going on, its agent too (it runs detached, and its timeout
+   * lives here). Quitting doesn't wait for them, and what they find is dropped.
+   */
+  stopAgentChecks(): void {
+    for (const abort of this.runningChecks) abort.abort();
+  }
+
+  /** One check, in the library: Settings shows it running, then what it found. Once Avanzel is quitting, none starts. */
   private async runAgentCheck(name: string, harness: Harness, vault: Vault): Promise<void> {
+    if (this.quitting) return;
+    const abort = new AbortController();
+    this.runningChecks.add(abort);
     this.agentChecks.set(name, { kind: "checking" });
     this.broadcast();
     let status: AgentStatus;
     try {
-      status = statusOf(await checkHarness(harness, vault.root));
+      status = statusOf(await checkHarness(harness, vault.root, { signal: abort.signal }));
     } catch (error) {
-      status = { kind: "failed", detail: errorMessage(error) }; // never left "checking"
+      status = { kind: "failed", detail: errorMessage(error) }; // a check that throws still ends
+    } finally {
+      this.runningChecks.delete(abort);
     }
+    if (abort.signal.aborted) return; // stopped for quitting: its "… was cancelled" is no news
     this.agentChecks.set(name, status);
     this.broadcast();
   }

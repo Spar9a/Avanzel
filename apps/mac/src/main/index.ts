@@ -24,8 +24,10 @@ if (!app.requestSingleInstanceLock()) {
   });
   // An agent still running when Avanzel quits is stopped first, and its run's bookkeeping finished:
   // otherwise it would go on editing the library unguarded, and its edits would never be undoable.
+  // An agent check is stopped too, but never waited for; stopForQuit stops them when it runs.
   app.on("before-quit", (event) => {
-    if (stopping || !controller?.busy()) return;
+    if (stopping || !controller) return;
+    if (!controller.busy()) return controller.stopAgentChecks();
     stopping = true;
     event.preventDefault();
     void controller.stopForQuit().finally(() => app.quit());
