@@ -1,7 +1,9 @@
 import { _electron as electron, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { Vault, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { MODELS, Vault, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,8 +60,76 @@ export async function launch(env: Record<string, string>, switches: string[] = [
     ...(packaged ? { executablePath: packaged } : {}),
     args: packaged ? switches : [appDir, ...switches],
     cwd: appDir,
-    env: { ...clean, AVANZEL_TEST: "1", AVANZEL_USER_DATA: userData, ...env },
+    // Nothing listens on port 9, so a speech model download fails at once unless the test passes a fakeModelHub's url.
+    env: { ...clean, AVANZEL_TEST: "1", AVANZEL_USER_DATA: userData, AVANZEL_MODELS_URL: "http://127.0.0.1:9", ...env },
   });
+}
+
+/** Servers `fakeModelHub` started that `closeModelHubs` hasn't closed yet. */
+const modelHubs = new Set<Server>();
+
+/**
+ * A local stand-in for huggingface.co, to pass as AVANZEL_MODELS_URL: it serves `/<repo>/resolve/<revision>/<file>`
+ * for the real MODELS and keeps every path asked for in `requests`. "stall" answers 200 with the file's pinned
+ * content-length, sends 64 KB and holds the connection, so the download stays in progress; "missing" answers 404, so
+ * it fails. A spec that uses it runs `test.afterEach(closeModelHubs)`, which closes it when the test ends.
+ */
+export async function fakeModelHub(mode: "stall" | "missing"): Promise<{ url: string; requests: string[] }> {
+  const sizes = new Map<string, number>();
+  for (const { repo, revision, digests } of Object.values(MODELS)) {
+    for (const [name, { size }] of Object.entries(digests)) sizes.set(`/${repo}/resolve/${revision}/${name}`, size);
+  }
+  const requests: string[] = [];
+  const server = createServer((req, res) => {
+    const url = req.url ?? "";
+    requests.push(url);
+    const size = sizes.get(url);
+    if (mode === "missing" || size === undefined) {
+      res.writeHead(404).end("Entry not found");
+      return;
+    }
+    res.writeHead(200, { "content-length": size, "content-type": "application/octet-stream" });
+    // 64 KB, or all but the last byte of a smaller file, and no more: the connection stays open until the hub closes.
+    res.write(Buffer.alloc(Math.min(64 * 1024, size - 1)));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  modelHubs.add(server);
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, requests };
+}
+
+/** Closes every `fakeModelHub` and the downloads it holds; for `test.afterEach`. */
+export function closeModelHubs(): void {
+  for (const server of modelHubs) {
+    server.closeAllConnections();
+    server.close();
+  }
+  modelHubs.clear();
+}
+
+/** A new, empty Hugging Face cache to pass as HF_HUB_CACHE, so the app never finds this Mac's own copy of a model. */
+export function emptyHfCache(): string {
+  return mkdtempSync(path.join(tmpdir(), "avz-e2e-hf-"));
+}
+
+/**
+ * A complete snapshot of model `id` in the Hugging Face cache `hub`, laid out as huggingface_hub does, with refs/main
+ * naming its pinned revision: each int8 file is as long as MODELS pins it but holds nothing (a hole, so no disk space).
+ */
+export function hfSnapshot(hub: string, id: string): void {
+  const { repo, revision, files, digests } = MODELS[id]!;
+  const base = path.join(hub, `models--${repo.replaceAll("/", "--")}`);
+  const snapshot = path.join(base, "snapshots", revision);
+  mkdirSync(path.join(base, "blobs"), { recursive: true });
+  mkdirSync(path.join(base, "refs"), { recursive: true });
+  mkdirSync(snapshot, { recursive: true });
+  writeFileSync(path.join(base, "refs", "main"), revision);
+  for (const name of files.int8!) {
+    const { size, sha256 } = digests[name]!;
+    const blob = path.join(base, "blobs", sha256);
+    writeFileSync(blob, "");
+    truncateSync(blob, size);
+    symlinkSync(path.join("..", "..", "blobs", sha256), path.join(snapshot, name));
+  }
 }
 
 type Controller = Record<string, (...args: unknown[]) => unknown>;

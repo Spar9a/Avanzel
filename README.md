@@ -81,7 +81,8 @@ npm run dist -w @avanzel/mac         # or build apps/mac/release/mac-arm64/Avanz
 ```
 
 On first launch, Avanzel asks where your library lives (`~/Avanzel` by default; an existing v0.1
-library works as is), finds your agent CLIs, and downloads the Parakeet speech model once (670 MB;
+library works as is) and finds your agent CLIs. As soon as there is a library, it downloads both
+speech models once: Parakeet and the Silero VAD, which splits long recordings (673 MB together;
 an existing Hugging Face cache copy is reused). macOS asks for the microphone the first time you
 dictate. The first screen capture shows where to allow Screen Recording (Open Settings); allow
 Avanzel there, then quit and reopen it. The local builds are unsigned, so macOS forgets those

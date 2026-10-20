@@ -192,7 +192,7 @@ function Voice({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Setti
         <div className="grow">
           <span className="fill two"><b>Parakeet v3</b><small>25 European languages, including English, Russian and Ukrainian</small></span>
           {model.kind === "ready" && <span className="status-ok">Ready</span>}
-          {model.kind === "missing" && <button className="btn primary" onClick={async () => onChange(await api.downloadModel())}>Download (670 MB)</button>}
+          {model.kind === "missing" && <button className="btn primary" onClick={async () => onChange(await api.downloadModel())}>Download ({Math.round(model.bytes / 1e6)} MB)</button>}
           {model.kind === "downloading" && (
             <>
               <span className="bar" aria-label="Download progress"><i style={{ width: `${model.totalBytes ? (100 * model.receivedBytes) / model.totalBytes : 0}%` }} /></span>

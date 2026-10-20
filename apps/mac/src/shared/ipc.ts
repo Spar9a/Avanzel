@@ -63,7 +63,11 @@ export interface HarnessInfo {
 
 export type ModelStatus =
   | { kind: "ready"; dir: string }
-  | { kind: "missing" }
+  | {
+      kind: "missing";
+      /** What downloading the missing speech models fetches; files in a Hugging Face cache aren't fetched again. */
+      bytes: number;
+    }
   | { kind: "downloading"; receivedBytes: number; totalBytes: number }
   | { kind: "error"; message: string };
 

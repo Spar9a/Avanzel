@@ -18,7 +18,9 @@ import {
   Librarian,
   Vault,
   WAITING,
-  downloadModel,
+  defaultSettings,
+  downloadModels,
+  downloadSize,
   ensureDefaultTasks,
   errorLine,
   formatSchedule,
@@ -28,6 +30,7 @@ import {
   loadTasksReport,
   locateModel,
   makeTranscriber,
+  missingModels,
   nextRun,
   parseSchedule,
   readWav,
@@ -36,6 +39,7 @@ import {
   saveSettings,
   saveTask,
   selectHarness,
+  speechModels,
   writeWav,
   type Capture,
   type CaptureOptions,
@@ -43,6 +47,7 @@ import {
   type Settings,
   type ShadowTask,
   type Transcriber,
+  type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
 import type {
@@ -76,7 +81,6 @@ import {
   placeQuick,
 } from "./windows.ts";
 
-const MODEL_ID = "nemo-parakeet-tdt-0.6b-v3";
 // Quitting waits at most this long for stopped agent runs to finish their bookkeeping.
 const QUIT_WAIT_MS = 10_000;
 // How long a stopped recording's audio may take to arrive from the capsule (tests shorten it).
@@ -171,7 +175,7 @@ export class Controller {
   private quitting = false;
   private transcriber: Transcriber | null = null;
   private transcriberKey = "";
-  private model: ModelStatus = { kind: "missing" };
+  private model: ModelStatus = { kind: "missing", bytes: 0 };
   private libraryProblem: string | null = null;
   private readonly runState: RunStateStore;
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
@@ -206,6 +210,8 @@ export class Controller {
     this.openLibrary(this.store.get().libraryPath);
     this.applyShortcuts();
     await this.refreshModelStatus();
+    // With a library the speech models download unasked; without one, Settings → Voice offers them.
+    if (this.vault && this.model.kind === "missing") void this.downloadModel();
     this.refreshMenu();
     setInterval(() => this.tick(), 60_000);
     powerMonitor.on("resume", () => this.tick());
@@ -1264,7 +1270,7 @@ export class Controller {
     return this.useLibrary(target);
   }
 
-  private useLibrary(target: string): SettingsSnapshot {
+  private async useLibrary(target: string): Promise<SettingsSnapshot> {
     this.store.update({ libraryPath: target });
     this.openLibrary(target);
     try {
@@ -1272,24 +1278,60 @@ export class Controller {
     } catch (error) {
       console.error("remember vault", error);
     }
+    await this.refreshModelStatus(); // its [voice] settings say which speech models it needs
+    if (this.vault && this.model.kind === "missing") void this.downloadModel();
     this.broadcast();
     return this.snapshot();
   }
 
   // ---------------------------------------------------------------- speech model
 
-  private async refreshModelStatus(): Promise<void> {
-    if (this.model.kind === "downloading") return;
-    const dir = locateModel(MODEL_ID, this.modelsDir);
-    this.model = dir ? { kind: "ready", dir } : { kind: "missing" };
+  /** The [voice] settings the speech models are for: the library's, or the defaults while there is none. */
+  private voiceOptions(): VoiceOptions {
+    return this.vault ? loadSettings(this.vault.root).voice : defaultSettings().voice;
   }
 
+  /**
+   * Whether this Mac has the speech models the voice settings need (a command needs none): ready, missing with the
+   * bytes a download would fetch, or an error saying why it can't tell, say a config.toml that doesn't load.
+   */
+  private modelStatus(): ModelStatus {
+    try {
+      const voice = this.voiceOptions();
+      const ids = speechModels(voice);
+      const missing = missingModels(ids, this.modelsDir, voice.quantization);
+      if (missing.length) return { kind: "missing", bytes: downloadSize(missing, this.modelsDir, voice.quantization) };
+      const [parakeet] = ids; // none for a command
+      return { kind: "ready", dir: parakeet ? (locateModel(parakeet, this.modelsDir, voice.quantization) ?? "") : "" };
+    } catch (error) {
+      return { kind: "error", message: errorMessage(error) };
+    }
+  }
+
+  /** The status from what is on this Mac now (`modelStatus`); a download in progress keeps its own. */
+  private async refreshModelStatus(): Promise<void> {
+    if (this.model.kind !== "downloading") this.model = this.modelStatus();
+  }
+
+  /** Fetches the speech models the voice settings need and this Mac doesn't have, in one download. */
   async downloadModel(): Promise<SettingsSnapshot> {
     if (this.model.kind === "downloading" || this.model.kind === "ready") return this.snapshot();
+    let voice: VoiceOptions;
+    let missing: string[];
+    try {
+      voice = this.voiceOptions();
+      missing = missingModels(speechModels(voice), this.modelsDir, voice.quantization);
+    } catch (error) {
+      this.model = { kind: "error", message: errorMessage(error) }; // [voice] settings it can't use: nothing to fetch
+      this.broadcast();
+      return this.snapshot();
+    }
     this.model = { kind: "downloading", receivedBytes: 0, totalBytes: 0 };
     this.broadcast();
     let lastBroadcast = 0;
-    void downloadModel(MODEL_ID, this.modelsDir, {
+    void downloadModels(missing, this.modelsDir, {
+      quantization: voice.quantization,
+      baseUrl: process.env.AVANZEL_MODELS_URL || undefined, // unset: Hugging Face; the e2e tests set a local stand-in
       onProgress: (p) => {
         this.model = { kind: "downloading", receivedBytes: p.overallReceived, totalBytes: p.overallTotal ?? 0 };
         if (Date.now() - lastBroadcast > 250) {
@@ -1298,10 +1340,13 @@ export class Controller {
         }
       },
     })
-      .then((dir) => {
-        this.model = { kind: "ready", dir };
+      .then(() => {
+        // Looked for again, not taken from the download: when only Silero was fetched, Parakeet is the cache copy.
+        this.model = this.modelStatus();
         this.dropTranscriber();
-        this.notify("Avanzel is ready to listen", "The speech model is downloaded. Press the shortcut and start talking.");
+        if (this.model.kind === "ready") {
+          this.notify("Avanzel is ready to listen", "The speech model is downloaded. Press the shortcut and start talking.");
+        }
       })
       .catch((error) => {
         this.model = { kind: "error", message: errorMessage(error) };
