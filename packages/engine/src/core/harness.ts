@@ -263,17 +263,28 @@ interface Collected {
 function collect(argv: string[], cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<Collected> {
   const [file = "", ...args] = argv;
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { cwd, env: childEnv(process.env), stdio: ["ignore", "pipe", "pipe"] });
+    // In a process group of its own, so stopping the agent stops whatever it started too.
+    const child = spawn(file, args, { cwd, env: childEnv(process.env), stdio: ["ignore", "pipe", "pipe"], detached: true });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let stopped: Collected["stopped"] = null;
     let killTimer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined;
+    const signalGroup = (name: NodeJS.Signals) => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(-child.pid, name);
+      } catch {
+        // the whole group is gone already
+      }
+    };
     const stop = (why: "timeout" | "cancel") => {
       if (stopped) return;
       stopped = why;
-      child.kill("SIGTERM");
-      killTimer = setTimeout(() => child.kill("SIGKILL"), KILL_AFTER_MS);
+      signalGroup("SIGTERM");
+      // Whatever ignores that is killed, even once the agent itself is gone; nobody waits for it.
+      killTimer = setTimeout(() => signalGroup("SIGKILL"), KILL_AFTER_MS);
+      killTimer.unref();
     };
     const timeout = setTimeout(() => stop("timeout"), Math.min(timeoutMs, MAX_TIMER_MS));
     const onAbort = () => stop("cancel");
@@ -284,7 +295,6 @@ function collect(argv: string[], cwd: string, timeoutMs: number, signal?: AbortS
     };
     const cleanUp = () => {
       exited();
-      clearTimeout(killTimer);
       clearTimeout(graceTimer);
     };
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

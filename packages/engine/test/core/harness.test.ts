@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, type CustomHarness, type Settings } from "../../src/core/config.ts";
 import { Harness, childEnv, errorLine, harnesses, runHeadless, selectHarness } from "../../src/core/harness.ts";
 import { AvanzelError } from "../../src/types.ts";
@@ -258,6 +258,60 @@ describe("runHeadless", () => {
     });
     expect(never.exitCode).toBe(130);
     expect(existsSync(join(tmp(), "RAN"))).toBe(false);
+  });
+
+  describe("stops what the agent started, too", () => {
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    /**
+     * An agent that starts a helper process (an MCP server, a build) and never finishes. The agent
+     * writes the helper's pid; the helper runs `helperCode`, then says it is ready.
+     */
+    const starter = (helperCode = "") => {
+      const pidFile = join(tmp(), "helper.pid");
+      const readyFile = join(tmp(), "helper.ready");
+      const helper = `${helperCode}; require('fs').writeFileSync(${JSON.stringify(readyFile)}, ''); setInterval(() => {}, 1000)`;
+      const harness = script(
+        `const helper = require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(helper)}], { stdio: 'ignore' });` +
+          ` require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(helper.pid)); setTimeout(() => {}, 30_000)`,
+      );
+      const helperPid = () => {
+        const pid = Number(readFileSync(pidFile, "utf8"));
+        pids.push(pid);
+        return pid;
+      };
+      const ready = () => vi.waitFor(() => expect(existsSync(readyFile)).toBe(true), { timeout: 10_000 });
+      return { harness, helperPid, ready };
+    };
+    const pids: number[] = [];
+    afterEach(() => {
+      for (const pid of pids.splice(0)) if (alive(pid)) process.kill(pid, "SIGKILL");
+    });
+
+    it("when it times out", async () => {
+      const { harness, helperPid } = starter();
+      const result = await runHeadless(harness, "x", tmp(), { write: false, timeoutSeconds: 2 });
+      expect(result.exitCode).toBe(124);
+      const pid = helperPid();
+      await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 5_000 });
+    });
+
+    it("when it is cancelled, even what ignores the polite signal", async () => {
+      const { harness, helperPid, ready } = starter("process.on('SIGTERM', () => {})");
+      const controller = new AbortController();
+      const running = runHeadless(harness, "x", tmp(), { write: false, timeoutSeconds: 30, signal: controller.signal });
+      await ready();
+      const pid = helperPid();
+      controller.abort();
+      expect((await running).exitCode).toBe(130);
+      await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 15_000 });
+    });
   });
 
   it("returns once the agent exits, even if something it started keeps the output open", async () => {
