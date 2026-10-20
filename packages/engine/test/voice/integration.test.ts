@@ -7,8 +7,8 @@ import { symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InferenceSession } from "onnxruntime-node";
-import { beforeAll, describe, expect, it } from "vitest";
-import type { Transcriber } from "../../src/types.ts";
+import { beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
+import { AvanzelError, type Transcriber } from "../../src/types.ts";
 import {
   downloadModel,
   locateModel,
@@ -59,7 +59,8 @@ describe.skipIf(process.env.AVANZEL_TEST_ASR !== "1")("Parakeet v3 end to end (A
 
   it("splits audio longer than 25 s with Silero VAD", async () => {
     const sentence = "The lighthouse keeper writes a long letter to the harbour master every single morning before sunrise.";
-    const wav = say("Samantha", Array(8).fill(sentence).join(" "), "long.wav");
+    const spoken = Array(8).fill(sentence).join(" ");
+    const wav = say("Samantha", spoken, "long.wav");
     const { samples } = readWav(wav);
 
     const vad = await InferenceSession.create(join(locateModel(VAD_MODEL, MODELS_DIR)!, modelFiles(VAD_MODEL)[0]!), SESSION_OPTIONS);
@@ -76,7 +77,10 @@ describe.skipIf(process.env.AVANZEL_TEST_ASR !== "1")("Parakeet v3 end to end (A
 
     const transcript = await transcriber.transcribe(wav);
     expect(transcript.seconds).toBeGreaterThan(25);
-    expect(transcript.text.match(/lighthouse/gi)?.length ?? 0).toBeGreaterThanOrEqual(6);
+    // The clip is the macOS voice Samantha (macOS 26.6) reading `spoken`. Avanzel v0.1 (OnnxAsrTranscriber, int8, onnx-asr
+    // 0.12.0) printed exactly that for it: eight sentences, each with its full stop, one space between them. If a macOS
+    // update changes the voice and this fails, run v0.1's transcriber on the new `say` output and expect what it prints.
+    expect(transcript.text).toBe(spoken);
   }, 60_000);
 
   it("reads other sample rates and channel counts", async () => {
@@ -107,5 +111,29 @@ describe.skipIf(process.env.AVANZEL_TEST_ASR !== "1")("Parakeet v3 end to end (A
     for (const length of [0, 100, 200, 319]) {
       expect((await transcriber.transcribe(new Float32Array(length))).text).toBe("");
     }
+  });
+
+  it("release frees the sessions and a released model refuses to transcribe", async () => {
+    const vadPath = join(locateModel(VAD_MODEL, MODELS_DIR)!, modelFiles(VAD_MODEL)[0]!);
+    // Still makes real sessions; the spy keeps them, so the test can ask each one whether it is freed.
+    const create = vi.spyOn(InferenceSession, "create");
+    onTestFinished(() => create.mockRestore());
+    const parakeet = await ParakeetTranscriber.load(locateModel(V3, MODELS_DIR)!, { model: V3, vadPath });
+    const sessions = await Promise.all(create.mock.results.map((result) => result.value as Promise<InferenceSession>));
+    expect(sessions).toHaveLength(4); // nemo128, encoder, decoder and Silero VAD
+
+    // Releasing while a transcription runs, twice: the transcription finishes, then the sessions are freed once.
+    const wav = say("Samantha", "I want to launch my podcast about indie game development before the end of the year.", "en.wav");
+    const transcribing = parakeet.transcribe(wav);
+    const releases = [parakeet.release(), parakeet.release()];
+    expect((await transcribing).text).toBe("I want to launch my podcast about indie game development before the end of the year.");
+    await Promise.all(releases);
+    // Releasing a session that is already freed fails; one the model had left alone would be freed here instead.
+    for (const session of sessions) await expect(session.release()).rejects.toThrow(/already disposed/);
+
+    const refused = parakeet.transcribe(wav);
+    await expect(refused).rejects.toThrow(AvanzelError);
+    await expect(refused).rejects.toThrow(/released/);
+    await expect(parakeet.transcribe(new Float32Array(16000))).rejects.toThrow(/released/);
   });
 });

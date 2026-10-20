@@ -1,6 +1,6 @@
 // Local speech-to-text: Parakeet through onnxruntime-node, or any speech-to-text CLI.
 import { join } from "node:path";
-import { AvanzelError, type Transcriber, type VoiceOptions } from "../types.ts";
+import { AvanzelError, type Transcriber, type Transcript, type VoiceOptions } from "../types.ts";
 import { CommandTranscriber } from "./command.ts";
 import { locateModel, MissingModelError, MODELS, modelFiles, VAD_MODEL } from "./models.ts";
 import { ParakeetTranscriber } from "./parakeet.ts";
@@ -46,17 +46,49 @@ export async function makeTranscriber(options: VoiceOptions, modelsDir: string):
   });
 }
 
-/** Loads on first use, and tries again after a failed load (say, once the models are downloaded). */
-function lazily(engine: string, load: () => Promise<Transcriber>): Transcriber {
+/**
+ * Loads on first use, and tries again after a failed load (say, once the models are downloaded). `release()` lets the
+ * transcriptions in progress finish, then frees what was loaded; the next `transcribe` loads again, once that is done,
+ * so there is never more than one copy of the model. Exported for tests; apps get theirs from `makeTranscriber`.
+ */
+export function lazily(engine: string, load: () => Promise<Transcriber>): Required<Transcriber> {
   let loading: Promise<Transcriber> | null = null;
+  /** Every transcription from the moment `transcribe` is called, even while it waits for the model to load. */
+  const running = new Set<Promise<unknown>>();
+  let releasing: Promise<void> | null = null;
+
+  async function loadAndTranscribe(audio: string | Float32Array, sampleRate?: number): Promise<Transcript> {
+    if (releasing) await releasing.catch(() => {}); // a failed release is for its caller to hear about, not this transcription
+    loading ??= load().catch((error: unknown) => {
+      loading = null;
+      throw error;
+    });
+    return (await loading).transcribe(audio, sampleRate);
+  }
+
+  async function freeModel(): Promise<void> {
+    await Promise.allSettled(running); // those started so far; later ones wait for the release in `loadAndTranscribe`
+    const model = loading;
+    loading = null;
+    await (await model)?.release?.();
+  }
+
   return {
     engine,
     async transcribe(audio, sampleRate) {
-      loading ??= load().catch((error: unknown) => {
-        loading = null;
-        throw error;
+      const run = loadAndTranscribe(audio, sampleRate);
+      running.add(run);
+      try {
+        return await run;
+      } finally {
+        running.delete(run);
+      }
+    },
+    release() {
+      releasing ??= freeModel().finally(() => {
+        releasing = null;
       });
-      return (await loading).transcribe(audio, sampleRate);
+      return releasing;
     },
   };
 }

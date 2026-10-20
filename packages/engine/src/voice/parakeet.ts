@@ -94,6 +94,26 @@ function argmax(values: Float32Array, from: number, to: number): number {
   return best;
 }
 
+/** Whether audio this long is cut into speech segments before it is recognised. */
+export function needsSegments(seconds: number): boolean {
+  return seconds > VAD_THRESHOLD_SECONDS;
+}
+
+/** Recognises `segments` of `samples` `batchSize` at a time; trims each text, drops empty ones, joins with one space. */
+export async function recognizeSegments(
+  samples: Float32Array,
+  segments: readonly (readonly [number, number])[],
+  recognize: (batch: Float32Array[]) => Promise<string[]>,
+  batchSize = VAD_BATCH_SIZE,
+): Promise<string> {
+  const texts: string[] = [];
+  for (let i = 0; i < segments.length; i += batchSize) {
+    const batch = segments.slice(i, i + batchSize).map(([start, end]) => samples.subarray(start, end));
+    texts.push(...(await recognize(batch)));
+  }
+  return texts.map((text) => text.trim()).filter(Boolean).join(" ");
+}
+
 export interface ParakeetOptions {
   /** Silero VAD model file; needed for audio longer than 25 s. */
   vadPath?: string;
@@ -118,6 +138,10 @@ export class ParakeetTranscriber implements Transcriber {
   readonly #vocab: Vocab;
   readonly #maxTokensPerStep: number;
   readonly #initialState: DecoderState;
+  /** The transcriptions in progress, which `release()` lets finish before it frees the sessions. */
+  readonly #running = new Set<Promise<unknown>>();
+  /** Set by the first `release()`; from then on the sessions are being freed, or are gone. */
+  #released: Promise<void> | null = null;
 
   private constructor(engine: string, sessions: Sessions, vocab: Vocab, maxTokensPerStep: number) {
     this.engine = engine;
@@ -167,8 +191,35 @@ export class ParakeetTranscriber implements Transcriber {
     }
   }
 
-  /** A WAV (or, with ffmpeg, any audio) file, or mono samples at `sampleRate`. */
+  /** A WAV (or, with ffmpeg, any audio) file, or mono samples at `sampleRate`. Refused once the model is released. */
   async transcribe(audio: string | Float32Array, sampleRate = SAMPLE_RATE): Promise<Transcript> {
+    if (this.#released) throw new AvanzelError("The speech model was released; load it again to transcribe.");
+    // Registered before anything is awaited, so a release() called right after this waits for the transcription.
+    const run = this.#transcribe(audio, sampleRate);
+    this.#running.add(run);
+    try {
+      return await run;
+    } finally {
+      this.#running.delete(run);
+    }
+  }
+
+  /**
+   * Waits for the transcriptions in progress, then frees the ONNX sessions (~700 MB). Once called, `transcribe`
+   * is refused; calling it again, even at the same time, waits for that same release.
+   */
+  release(): Promise<void> {
+    this.#released ??= this.#free();
+    return this.#released;
+  }
+
+  async #free(): Promise<void> {
+    await Promise.allSettled(this.#running);
+    const { preprocessor, encoder, decoder, vad } = this.#sessions;
+    await Promise.all([preprocessor, encoder, decoder, vad].map((session) => session?.release()));
+  }
+
+  async #transcribe(audio: string | Float32Array, sampleRate: number): Promise<Transcript> {
     const { samples, seconds } =
       typeof audio === "string"
         ? await loadAudio(audio)
@@ -176,16 +227,10 @@ export class ParakeetTranscriber implements Transcriber {
     let text: string;
     if (samples.length < MIN_SAMPLES) {
       text = "";
-    } else if (seconds > VAD_THRESHOLD_SECONDS) {
+    } else if (needsSegments(seconds)) {
       const { vad } = this.#sessions;
       if (!vad) throw new AvanzelError(`Audio longer than ${VAD_THRESHOLD_SECONDS} s needs the Silero VAD model.`);
-      const segments = await segmentSpeech(samples, vad);
-      const texts: string[] = [];
-      for (let i = 0; i < segments.length; i += VAD_BATCH_SIZE) {
-        const batch = segments.slice(i, i + VAD_BATCH_SIZE).map(([start, end]) => samples.subarray(start, end));
-        texts.push(...(await this.#recognize(batch)));
-      }
-      text = texts.map((segment) => segment.trim()).filter(Boolean).join(" ");
+      text = await recognizeSegments(samples, await segmentSpeech(samples, vad), (batch) => this.#recognize(batch));
     } else {
       text = (await this.#recognize([samples]))[0]!;
     }

@@ -42,6 +42,9 @@ export class CommandTranscriber implements Transcriber {
       rmSync(dir, { recursive: true, force: true });
     }
   }
+
+  /** Nothing to free: each transcription starts the command anew. */
+  async release(): Promise<void> {}
 }
 
 /** `audio` as a 16 kHz mono PCM16 WAV: the file itself when it already is one, else a converted copy in `dir`. */

@@ -12,6 +12,12 @@ export interface Transcriber {
   readonly engine: string;
   /** A WAV file path, or mono samples in [-1, 1] at `sampleRate` (16 kHz when omitted). */
   transcribe(audio: string | Float32Array, sampleRate?: number): Promise<Transcript>;
+  /**
+   * Waits for the transcriptions in progress, then frees the model (Parakeet's is ~700 MB). The transcriber from
+   * `makeTranscriber` loads it again on its next `transcribe`; a `ParakeetTranscriber` refuses to transcribe any more.
+   * Optional, so a transcriber made elsewhere (the app's stand-in) need not have it.
+   */
+  release?(): Promise<void>;
 }
 
 /** The `[voice]` table of `.avanzel/config.toml`, as the voice half needs it. */

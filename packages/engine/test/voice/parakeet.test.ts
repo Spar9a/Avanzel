@@ -2,9 +2,17 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { AvanzelError } from "../../src/types.ts";
-import { assetsDir, decodeTokens, greedyTdt, ParakeetTranscriber, parseVocab } from "../../src/voice/parakeet.ts";
+import {
+  assetsDir,
+  decodeTokens,
+  greedyTdt,
+  needsSegments,
+  ParakeetTranscriber,
+  parseVocab,
+  recognizeSegments,
+} from "../../src/voice/parakeet.ts";
 import { tempDir } from "./helpers.ts";
 
 /** Points AVANZEL_ASSETS at `dir` for the rest of the test. */
@@ -166,5 +174,50 @@ describe("greedyTdt", () => {
     const { calls, joint } = scripted([]);
     expect(await greedyTdt(0, 0, joint, { vocabSize, blank, maxTokensPerStep: 10 })).toEqual([]);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("needsSegments", () => {
+  it("splits only audio longer than 25 s", () => {
+    expect(needsSegments(25)).toBe(false);
+    expect(needsSegments(25.001)).toBe(true);
+  });
+});
+
+describe("recognizeSegments", () => {
+  const samples = Float32Array.from({ length: 400 }, (_, i) => i);
+  // 17 segments of 1 to 17 samples, so a wrong slice can't pass for a right one.
+  const segments = Array.from({ length: 17 }, (_, i): [number, number] => [20 * i, 20 * i + 1 + i]);
+  // What the recognizer hears in each segment, in order: padded, empty and blank texts included.
+  const heard = [" a ", "", "b", "  c", "d  ", " ", "e", "f", "", "g", "h ", " i", "j", "", "k", "l ", "m"];
+
+  /** A recognizer that answers from `heard` in order and keeps the batches it was given. */
+  function recognizer() {
+    const batches: Float32Array[][] = [];
+    const recognize = async (batch: Float32Array[]) => {
+      const done = batches.flat().length;
+      batches.push(batch);
+      return heard.slice(done, done + batch.length);
+    };
+    return { batches, recognize };
+  }
+
+  it("recognizes long audio eight segments at a time and joins the texts", async () => {
+    const { batches, recognize } = recognizer();
+    expect(await recognizeSegments(samples, segments, recognize)).toBe("a b c d e f g h i j k l m");
+    expect(batches.map((batch) => batch.length)).toEqual([8, 8, 1]);
+    expect(batches.flat()).toEqual(segments.map(([start, end]) => samples.subarray(start, end)));
+  });
+
+  it("takes the batch size as an argument", async () => {
+    const { batches, recognize } = recognizer();
+    await recognizeSegments(samples, segments, recognize, 5);
+    expect(batches.map((batch) => batch.length)).toEqual([5, 5, 5, 2]);
+  });
+
+  it("recognizes nothing when there are no segments", async () => {
+    const recognize = vi.fn(async () => ["never"]);
+    expect(await recognizeSegments(samples, [], recognize)).toBe("");
+    expect(recognize).not.toHaveBeenCalled();
   });
 });
