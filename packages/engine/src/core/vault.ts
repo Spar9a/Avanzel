@@ -26,6 +26,7 @@ import { CONFIG_NAME, defaultSettings, saveSettings, VAULT_MARKER } from "./conf
 import { idStamp, isoLocal, localMinute, yearMonth } from "./dates.ts";
 import { yamlScalar } from "./frontmatter.ts";
 import * as gitops from "./git.ts";
+import { lstatOrNull, realFoldersTo, replaceInside } from "./inside.ts";
 import { ensureDefaultTasks } from "./tasks.ts";
 import { template } from "./templates.ts";
 
@@ -218,9 +219,13 @@ export class Vault {
     return join(this.raw, year, month, name);
   }
 
+  /** Move a capture to its archive path; refuses when a folder on the way is a symlink (it could lead out of the library). */
   archive(capturePath: string, now?: Date): string {
     const destination = this.archivePath(capturePath, now);
-    mkdirSync(dirname(destination), { recursive: true });
+    const rel = this.relativePath(destination);
+    if (!realFoldersTo(this.root, rel, true)) {
+      throw new AvanzelError(`Not archiving ${basename(capturePath)}: a folder on the way to ${rel} is a symlink.`);
+    }
     renameSync(capturePath, destination);
     return destination;
   }
@@ -247,15 +252,15 @@ export class Vault {
     return `- ${localMinute(now)} | ${op} | ${details}`;
   }
 
+  /**
+   * Append one line to log.md. The new log is written aside and renamed into place: a symlink at
+   * log.md is replaced rather than followed (and not read through), and a file outside the library
+   * that an agent hard-linked as log.md is left as it was.
+   */
   appendLog(op: string, details: string, now = new Date()): void {
-    let existing = "# Log\n";
-    try {
-      existing = readFileSync(this.logPath, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+    const existing = lstatOrNull(this.logPath)?.isFile() ? readFileSync(this.logPath, "utf8") : "# Log\n";
     const separator = existing && !existing.endsWith("\n") ? "\n" : "";
-    writeFileSync(this.logPath, `${existing}${separator}${Vault.logLine(now, op, details)}\n`, "utf8");
+    replaceInside(this.root, "log.md", `${existing}${separator}${Vault.logLine(now, op, details)}\n`);
   }
 
   logMentions(captureId: string): boolean {

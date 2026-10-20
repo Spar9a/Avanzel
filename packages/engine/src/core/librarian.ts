@@ -9,21 +9,16 @@
 import {
   copyFileSync,
   existsSync,
-  lstatSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
   renameSync,
-  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
-  writeFileSync,
-  type Stats,
 } from "node:fs";
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { AvanzelError, type Transcriber } from "../types.ts";
 import { Changes, diff, snapshot } from "./changes.ts";
 import type { Settings } from "./config.ts";
@@ -31,6 +26,7 @@ import { localDate } from "./dates.ts";
 import { flowItems, frontmatterFields, splitFrontmatter } from "./frontmatter.ts";
 import * as gitops from "./git.ts";
 import { errorLine, runHeadless, selectHarness, type Harness, type RunResult } from "./harness.ts";
+import { createInside, lstatOrNull, realFoldersTo, removeInside, writeInside } from "./inside.ts";
 import { askPrompt, filePrompt, reviewPrompt } from "./prompts.ts";
 import { AUDIO_EXTS, IMAGE_EXTS, TEXT_EXTS, type Capture, type Vault } from "./vault.ts";
 
@@ -193,12 +189,14 @@ export class Librarian {
       if (!outcomes.length) return { outcomes, digestPath: null, commits: [] };
       const now = this.clock();
       await this.#commitOwnerChanges(`evening review ${localDate(now)}`);
+      const commits = outcomes.flatMap((outcome) => (outcome.commit ? [outcome.commit] : []));
       const digestPath = this.#newReportPath(`${localDate(now)}-evening`);
-      writeFileSync(digestPath, digest(outcomes, now), { encoding: "utf8", flag: "wx" });
+      if (!createInside(this.vault.root, this.vault.relativePath(digestPath), digest(outcomes, now))) {
+        return { outcomes, digestPath: null, commits }; // reviews/ is a symlink: no digest, rather than one written elsewhere
+      }
       this.vault.appendLog("review", `[[${stem(digestPath)}]]`, now);
       const digestCommit = await this.#commit(`avanzel: evening review ${localDate(now)}`);
-      const commits = [...outcomes.map((outcome) => outcome.commit), digestCommit].filter((sha) => sha !== null);
-      return { outcomes, digestPath, commits };
+      return { outcomes, digestPath, commits: digestCommit ? [...commits, digestCommit] : commits };
     }, () => (options.progress ?? quiet)(WAITING));
   }
 
@@ -280,22 +278,23 @@ export class Librarian {
     const now = this.clock();
     const captureId = stem(path);
     await this.#commitOwnerChanges(`file ${captureId}`);
+    const captureRel = this.vault.relativePath(path);
     const original = readFileSync(path);
-    const archiveTarget = this.vault.archivePath(path, now);
-    const archiveExisted = existsSync(archiveTarget);
+    const archiveRel = this.vault.relativePath(this.vault.archivePath(path, now));
+    const archiveExisted = lstatOrNull(join(root, archiveRel)) !== null;
     const attachments = this.#attachments(original.toString("utf8"));
     const before = snapshot(root);
-    const prompt = filePrompt(this.vault.relativePath(path), captureId, now, { attachments, instructions });
+    const prompt = filePrompt(captureRel, captureId, now, { attachments, instructions });
     const { result, guarded } = await this.#run(prompt, { write: true, images: attachments, signal });
-    const restored = restoreCapture(path, original, archiveExisted ? null : archiveTarget);
+    const restoral = restoreCapture(root, captureRel, original, archiveExisted ? null : archiveRel);
     const changes = diff(before, snapshot(root)).without([...SOURCES, ...guarded]);
-    const ran = { changes, message: result.output, restored, guarded };
-    if (!result.ok) return outcome(captureId, { ...ran, error: (result.stderr || result.output).trim().slice(-800) });
-    if (!changes.pages.length && !this.vault.logMentions(captureId)) {
-      // Exit 0 but nothing written: a denied tool, a refusal or a question back. Not filed.
-      const reply = collapse(result.output) || "(no reply)";
-      const error = `${this.harness.name} finished without filing anything. Its reply: ${reply.slice(0, 500)}`;
-      return outcome(captureId, { ...ran, error });
+    const ran = { changes, message: result.output, restored: restoral === "restored", guarded };
+    const error = this.#notFiled(result, restoral, changes, captureId, archiveRel);
+    if (error !== null) {
+      // What the run left behind (it failed, timed out, was cancelled or filed nothing) is its own
+      // commit, handed out with the outcome so Undo covers it; a run that changed nothing makes none.
+      const commit = await this.#commit(`avanzel: leftovers of failed filing ${captureId}`);
+      return outcome(captureId, { ...ran, error, commit });
     }
     if (!this.vault.logMentions(captureId)) {
       this.vault.appendLog("file", `[[${captureId}]] → ${changes.pages.map(wikilink).join(", ")}`, now);
@@ -303,6 +302,23 @@ export class Librarian {
     const archivedTo = this.vault.archive(path, now);
     const commit = await this.#commit(`avanzel: file ${captureId}`);
     return outcome(captureId, { ...ran, ok: true, archivedTo, commit });
+  }
+
+  /** Why a filing run did not file its capture, or null when it did. */
+  #notFiled(result: RunResult, restoral: Restoral, changes: Changes, captureId: string, archiveRel: string): string | null {
+    if (!result.ok) return (result.stderr || result.output).trim().slice(-800);
+    if (restoral === "blocked") {
+      return `The agent changed ${captureId}, and Avanzel does not write it back through a symlink in inbox/.`;
+    }
+    if (!changes.pages.length && !this.vault.logMentions(captureId)) {
+      // Exit 0 but nothing written: a denied tool, a refusal or a question back. Not filed.
+      const reply = collapse(result.output) || "(no reply)";
+      return `${this.harness.name} finished without filing anything. Its reply: ${reply.slice(0, 500)}`;
+    }
+    if (!realFoldersTo(this.vault.root, archiveRel, true)) {
+      return `Could not archive ${captureId}: a folder on the way to ${archiveRel} is a symlink.`;
+    }
+    return null;
   }
 
   /** The capture's screenshots that really are images inside the library, vault-relative. */
@@ -330,6 +346,8 @@ export class Librarian {
           this.vault.appendLog("ask", `${codePoints(collapse(question), 80)} → ${pages}`, now);
         }
         await this.#commit(`avanzel: save answer to “${codePoints(collapse(question), 60)}”`);
+      } else if (save) {
+        await this.#commit("avanzel: leftovers of an answer that was not saved"); // not the owner's
       }
       return { result, changes, report: null, guarded };
     };
@@ -339,19 +357,25 @@ export class Librarian {
   async review({ signal }: { signal?: AbortSignal } = {}): Promise<AgentOutcome> {
     const now = this.clock();
     return this.vault.withLock(async () => {
+      const root = this.vault.root;
       const report = this.#newReportPath(localDate(now));
+      const reportRel = this.vault.relativePath(report);
+      realFoldersTo(root, reportRel, true); // reviews/, for the agent to write into
       await this.#commitOwnerChanges(`review ${stem(report)}`);
-      const before = snapshot(this.vault.root);
-      const { result, guarded } = await this.#run(reviewPrompt(this.vault.relativePath(report), now), { write: true, signal });
-      if (result.ok && !existsSync(report) && result.output) {
-        writeFileSync(report, `# Review ${localDate(now)}\n\n${result.output}\n`, "utf8");
+      const before = snapshot(root);
+      const { result, guarded } = await this.#run(reviewPrompt(reportRel, now), { write: true, signal });
+      if (result.ok && result.output) {
+        // Only when the agent wrote no report; never through a link it may have put there.
+        createInside(root, reportRel, `# Review ${localDate(now)}\n\n${result.output}\n`);
       }
-      const changes = diff(before, snapshot(this.vault.root)).without(guarded);
+      const changes = diff(before, snapshot(root)).without(guarded);
       if (result.ok) {
         if (!this.vault.logMentions(stem(report))) this.vault.appendLog("review", `[[${stem(report)}]]`, now);
         await this.#commit(`avanzel: review ${stem(report)}`);
+      } else {
+        await this.#commit(`avanzel: leftovers of failed review ${stem(report)}`); // not the owner's
       }
-      return { result, changes, report: existsSync(report) ? report : null, guarded };
+      return { result, changes, report: isRegularFile(report) ? report : null, guarded };
     });
   }
 
@@ -400,10 +424,9 @@ export class Librarian {
   /** reviews/<name>.md, or <name>-2.md, <name>-3.md, … when taken. */
   #newReportPath(name: string): string {
     const folder = join(this.vault.root, "reviews");
-    mkdirSync(folder, { recursive: true });
     for (let counter = 1; ; counter++) {
       const candidate = join(folder, counter === 1 ? `${name}.md` : `${name}-${counter}.md`);
-      if (!existsSync(candidate)) return candidate;
+      if (!lstatOrNull(candidate)) return candidate; // a dangling link counts as taken
     }
   }
 
@@ -484,29 +507,28 @@ function digest(outcomes: readonly FileOutcome[], now: Date): string {
   return `${lines.join("\n")}\n`;
 }
 
-/**
- * Put the capture back exactly as the owner said it; true if the agent had changed it.
- * `archiveTarget` is where the agent may have archived it itself (null if that file predates the run).
- */
-function restoreCapture(path: string, original: Buffer, archiveTarget: string | null): boolean {
-  if (isRegularFile(path) && readFileSync(path).equals(original)) return false;
-  if (archiveTarget && !existsSync(path) && isRegularFile(archiveTarget) && readFileSync(archiveTarget).equals(original)) {
-    renameSync(archiveTarget, path); // the agent archived it itself; that is fine
-    return false;
-  }
-  rewrite(path, original);
-  if (archiveTarget) rmSync(archiveTarget, { recursive: true, force: true });
-  return true;
-}
+/** How the capture came out of a run: as the owner left it, put back, or not put back (a symlink in the way). */
+type Restoral = "same" | "restored" | "blocked";
 
 /**
- * Write `data` to `path` itself, replacing a symlink an agent may have put at that name. (Used for
- * the capture, in the inbox: unlike the protected paths, the inbox may be a symlink on purpose.)
+ * Put the capture (`rel`) back exactly as the owner said it. `archiveRel` is where the agent may have
+ * archived it itself (null if that file predates the run). Nothing is written, moved or deleted
+ * through a symlink below the library root.
  */
-function rewrite(path: string, data: Buffer): void {
-  if (lstatOrNull(path)) rmSync(path, { recursive: true, force: true });
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, data);
+function restoreCapture(root: string, rel: string, original: Buffer, archiveRel: string | null): Restoral {
+  const path = join(root, rel);
+  if (isRegularFile(path) && readFileSync(path).equals(original)) return "same";
+  if (archiveRel && !lstatOrNull(path) && realFoldersTo(root, archiveRel, false) && realFoldersTo(root, rel, true)) {
+    const archived = join(root, archiveRel);
+    if (isRegularFile(archived) && readFileSync(archived).equals(original)) {
+      renameSync(archived, path); // the agent archived it itself; that is fine
+      return "same";
+    }
+  }
+  if (!realFoldersTo(root, rel, true)) return "blocked";
+  writeInside(root, rel, original);
+  if (archiveRel) removeInside(root, archiveRel);
+  return "restored";
 }
 
 /** The protected paths as they are, never looking through a symlink: files, symlinks (and where they point), folders. */
@@ -540,13 +562,13 @@ function protectedState(root: string): ProtectedState {
 }
 
 /**
- * Undo every change to the protected paths since `before`; returns the paths that were changed.
- * Symlinks go first, shallowest first: one an agent put anywhere on or under a protected path is
- * removed (and one the owner had is put back) before anything is restored. Nothing is written or
- * deleted through a symlink, or outside the library.
+ * Undo every change to the protected paths since `before`; returns the files and links that were
+ * changed. Nothing is written or deleted through a symlink, or outside the library.
  */
 function undoProtected(root: string, before: ProtectedState): string[] {
   const touched = new Set<string>();
+  // Links first, shallowest first: one an agent put anywhere on or under a protected path goes (one
+  // the owner had is put back), so nothing below it is read or written through it.
   for (const rel of byDepth(new Set([...before.links.keys(), ...protectedState(root).links.keys()]))) {
     const path = join(root, rel);
     const link = lstatOrNull(path)?.isSymbolicLink() ? readlinkSync(path) : undefined;
@@ -556,53 +578,26 @@ function undoProtected(root: string, before: ProtectedState): string[] {
     if (link !== undefined || (original !== undefined && lstatOrNull(path))) removeInside(root, rel);
     if (original !== undefined && realFoldersTo(root, rel, true)) symlinkSync(original, path);
   }
-  const after = protectedState(root);
-  for (const rel of new Set([...before.files.keys(), ...after.files.keys()])) {
-    const original = before.files.get(rel);
-    if (original && after.files.get(rel)?.equals(original)) continue;
-    touched.add(rel);
-    if (original) writeInside(root, rel, original);
-    else removeInside(root, rel);
+  // Then, shallowest first, whatever the run added, or turned from a file into a folder or the other
+  // way round: so nothing it added stays, and nothing is in the way of what is put back next.
+  const now = protectedState(root);
+  for (const rel of byDepth([...now.files.keys(), ...now.dirs])) {
+    if (kindOf(now, rel) !== kindOf(before, rel)) removeInside(root, rel);
   }
-  for (const rel of byDepth(after.dirs)) {
-    if (!before.dirs.has(rel)) removeInside(root, rel); // a folder the run created
+  for (const [rel, data] of before.files) {
+    if (!now.files.get(rel)?.equals(data)) writeInside(root, rel, data);
+  }
+  for (const rel of new Set([...before.files.keys(), ...now.files.keys()])) {
+    const was = before.files.get(rel);
+    if (!was || !now.files.get(rel)?.equals(was)) touched.add(rel);
   }
   return [...touched].sort();
 }
 
-/** Write `data` at `rel` itself, never through a symlink or outside the library (else not at all). */
-function writeInside(root: string, rel: string, data: Buffer): void {
-  if (!realFoldersTo(root, rel, true)) return;
-  const path = join(root, rel);
-  if (lstatOrNull(path)) rmSync(path, { recursive: true, force: true });
-  writeFileSync(path, data);
-}
-
-/** Remove `rel` itself (a symlink, not what it points to), never through a symlink or outside the library. */
-function removeInside(root: string, rel: string): void {
-  if (realFoldersTo(root, rel, false)) rmSync(join(root, rel), { recursive: true, force: true });
-}
-
-/**
- * Whether every folder from the library root down to `rel` is a real folder inside the library,
- * creating missing ones when asked — except `.git`: git takes a half-made `.git` for no repository
- * at all and goes looking for one in the folders above the library.
- */
-function realFoldersTo(root: string, rel: string, create: boolean): boolean {
-  const parts = rel.split("/").slice(0, -1);
-  for (let depth = 1; depth <= parts.length; depth++) {
-    const folder = join(root, ...parts.slice(0, depth));
-    const stat = lstatOrNull(folder);
-    if (stat === null) {
-      if (!create || (depth === 1 && parts[0] === ".git")) return false;
-      mkdirSync(folder);
-    } else if (!stat.isDirectory()) {
-      return false; // a symlink, or a file, on the way
-    }
-  }
-  const realRoot = realpathSync(root);
-  const realFolder = realpathSync(join(root, ...parts));
-  return realFolder === realRoot || realFolder.startsWith(`${realRoot}${sep}`);
+function kindOf(state: ProtectedState, rel: string): "file" | "folder" | "link" | "none" {
+  if (state.files.has(rel)) return "file";
+  if (state.dirs.has(rel)) return "folder";
+  return state.links.has(rel) ? "link" : "none";
 }
 
 /** Whether a folder between the library root and `rel` is a symlink (or no folder at all). */
@@ -651,14 +646,6 @@ function codePoints(text: string, count: number): string {
 
 function ellipsize(text: string, max: number): string {
   return Array.from(text).length > max ? `${codePoints(text, max - 1)}…` : text;
-}
-
-function lstatOrNull(path: string): Stats | null {
-  try {
-    return lstatSync(path);
-  } catch {
-    return null;
-  }
 }
 
 function isRegularFile(path: string): boolean {
