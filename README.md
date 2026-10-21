@@ -54,6 +54,10 @@ Good to know:
 
 - **Esc** cancels a dictation from any app while Avanzel is listening (it is a global shortcut
   for that moment only), and the recording is dropped.
+- **A shortcut another app holds** does nothing when pressed (⌥ Space is also the default of
+  Alfred, Raycast, ChatGPT and Superwhisper). The capsule names it at launch, with the app that
+  probably holds it and two free shortcuts to pick; Settings → Voice offers the same, and the menu
+  bar menu stops showing the taken one.
 - **Edit** works for as long as your agent is filing: it stops the agent at once. When you file
   the corrected words (or cancel), whatever that run already changed is undone first, then the note
   is filed again. An edit survives quitting and a new dictation (your words wait in the inbox), and
@@ -64,6 +68,9 @@ Good to know:
   commit (in a git library) and the note stays in the inbox for the evening review.
 - **Ask** waits for a filing in progress, and says so. A note you dictate while your agent answers
   waits for the answer, and says so too; closing the Ask window cancels the question.
+- **Settings → Agents** checks that each agent is signed in. For Claude Code and Codex it reads
+  their own sign-in status when the pane opens, which asks the model nothing; any other agent is
+  asked one short question when you press Check.
 - **No symlinks inside the library** for `inbox/`, `raw/` or `reviews/`: Avanzel never writes
   through a link, so filings into a linked `raw/` fail, a linked `reviews/` gets no summary, a
   capture an agent changes in a linked `inbox/` can't be put back (your words are kept in

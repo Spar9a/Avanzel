@@ -169,6 +169,16 @@ function capsuleStates(): [string, CapsuleState, string][] {
     ["error", { kind: "error", message: "Claude Code couldn't file this note", detail: "Error: rate limited\nThe note is still in your inbox; the evening review will try again.", action: "open-settings:agents" }, "Claude Code couldn't file this note"],
     ["preparing", { kind: "preparing", receivedBytes: 412_000_000, totalBytes: 672_807_563 }, "The speech model is still downloading"],
     ["model-failed", { kind: "model-failed" }, "The speech model didn't finish downloading."],
+    [
+      "shortcut-taken",
+      { kind: "shortcut-taken", key: "dictate", accelerator: "Alt+Space", holder: "Alfred", alternatives: ["Control+Shift+Space", "Control+Alt+R"] },
+      "⌥Space is used by another app, probably Alfred.",
+    ],
+    [
+      "shortcut-taken, none free",
+      { kind: "shortcut-taken", key: "dictate", accelerator: "Alt+Space", holder: null, alternatives: [] },
+      "⌥Space is used by another app.",
+    ],
   ];
 }
 

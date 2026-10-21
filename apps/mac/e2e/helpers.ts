@@ -61,7 +61,16 @@ export async function launch(env: Record<string, string>, switches: string[] = [
     args: packaged ? switches : [appDir, ...switches],
     cwd: appDir,
     // Nothing listens on port 9, so a speech model download fails at once unless the test passes a fakeModelHub's url.
-    env: { ...clean, AVANZEL_TEST: "1", AVANZEL_USER_DATA: userData, AVANZEL_MODELS_URL: "http://127.0.0.1:9", ...env },
+    // The shortcuts register with a stand-in that holds none for real and finds none taken unless the test lists them,
+    // so no test depends on which shortcuts this Mac's other apps hold.
+    env: {
+      ...clean,
+      AVANZEL_TEST: "1",
+      AVANZEL_USER_DATA: userData,
+      AVANZEL_MODELS_URL: "http://127.0.0.1:9",
+      AVANZEL_FAKE_TAKEN_SHORTCUTS: "",
+      ...env,
+    },
   });
 }
 

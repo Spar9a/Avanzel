@@ -1,6 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
-import { registerShortcuts } from "../src/main/shortcuts.ts";
+import { ALTERNATIVES, freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "../src/main/shortcuts.ts";
 import { DEFAULT_SETTINGS } from "../src/main/store.ts";
+
+const handlers = () => ({ dictate: vi.fn(), capture: vi.fn(), type: vi.fn(), ask: vi.fn() });
+
+/** Global shortcuts as other apps leave them: `taken` are held elsewhere, `invalid` throw, and `registered` is what this app holds. */
+function fakeApi({ taken = [], invalid = [] }: { taken?: readonly string[]; invalid?: readonly string[] } = {}) {
+  const registered = new Set<string>();
+  const api: ShortcutApi = {
+    register: (accelerator) => {
+      if (invalid.includes(accelerator)) throw new Error("bad accelerator");
+      if (taken.includes(accelerator) || registered.has(accelerator)) return false;
+      registered.add(accelerator);
+      return true;
+    },
+    unregister: (accelerator) => void registered.delete(accelerator),
+    unregisterAll: () => registered.clear(),
+  };
+  return { api, registered };
+}
 
 describe("global shortcuts", () => {
   it("registers each action and reports the ones another app already holds", () => {
@@ -11,25 +29,65 @@ describe("global shortcuts", () => {
         registered.push(accelerator);
         return true;
       }),
+      unregister: vi.fn(),
       unregisterAll: vi.fn(),
     };
-    const handlers = { dictate: vi.fn(), capture: vi.fn(), type: vi.fn(), ask: vi.fn() };
-    const problems = registerShortcuts(DEFAULT_SETTINGS.shortcuts, handlers, api);
+    const { problems, taken } = registerShortcuts(DEFAULT_SETTINGS.shortcuts, handlers(), api);
     expect(api.unregisterAll).toHaveBeenCalledOnce();
     expect(registered).toEqual(["Alt+Shift+S", "Alt+Shift+Space", "Alt+Shift+A"]);
-    expect(problems).toEqual({ dictate: "⌥Space is already used by another app. Pick another shortcut." });
+    expect(problems).toEqual({ dictate: "⌥Space is used by another app. Pick another shortcut." });
+    expect(taken).toEqual(["dictate"]);
   });
 
   it("reports shortcuts Electron cannot parse", () => {
-    const api = {
-      register: vi.fn((accelerator: string) => {
-        if (accelerator === "Hyper+Q") throw new Error("bad accelerator");
-        return true;
-      }),
-      unregisterAll: vi.fn(),
-    };
-    const handlers = { dictate: vi.fn(), capture: vi.fn(), type: vi.fn(), ask: vi.fn() };
-    const problems = registerShortcuts({ ...DEFAULT_SETTINGS.shortcuts, ask: "Hyper+Q" }, handlers, api);
+    const { api } = fakeApi({ invalid: ["Hyper+Q"] });
+    const { problems, taken } = registerShortcuts({ ...DEFAULT_SETTINGS.shortcuts, ask: "Hyper+Q" }, handlers(), api);
     expect(problems).toEqual({ ask: "“Hyper+Q” is not a shortcut macOS understands." });
+    expect(taken).toEqual([]); // no other app holds it: macOS doesn't understand it
+  });
+
+  it("names the app that probably holds ⌥Space", () => {
+    const { api } = fakeApi({ taken: ["Alt+Space"] });
+    expect(registerShortcuts(DEFAULT_SETTINGS.shortcuts, handlers(), api, ["Finder", "Alfred"]).problems).toEqual({
+      dictate: "⌥Space is used by another app, probably Alfred. Pick another shortcut.",
+    });
+    expect(registerShortcuts(DEFAULT_SETTINGS.shortcuts, handlers(), api).problems).toEqual({
+      dictate: "⌥Space is used by another app. Pick another shortcut.",
+    });
+  });
+
+  it("only ⌥Space has a likely holder", () => {
+    expect(likelyHolder("Alt+Shift+S", ["Alfred"])).toBeNull();
+    expect(likelyHolder("Alt+Space", ["superwhisper"])).toBe("Superwhisper");
+    expect(likelyHolder("Alt+Space", ["superwhisper", "RAYCAST"])).toBe("Raycast"); // Raycast comes first in the list
+    expect(likelyHolder("Alt+Space", ["Finder"])).toBeNull();
+  });
+});
+
+describe("free alternatives", () => {
+  it("offers the first two free alternatives and leaves none registered", () => {
+    const { api, registered } = fakeApi({ taken: ["Control+Shift+Space"] });
+    expect(freeAlternatives("dictate", DEFAULT_SETTINGS.shortcuts, api)).toEqual(["Control+Alt+R", "Control+Alt+D"]);
+    expect([...registered]).toEqual([]);
+  });
+
+  it("never offers a shortcut Avanzel already uses", () => {
+    const { api } = fakeApi();
+    expect(freeAlternatives("dictate", { ...DEFAULT_SETTINGS.shortcuts, type: "Control+Alt+R" }, api)).toEqual([
+      "Control+Shift+Space",
+      "Control+Alt+D",
+    ]);
+  });
+
+  it("offers nothing when every candidate is taken", () => {
+    // One that throws counts as taken too.
+    const { api } = fakeApi({ taken: ["Control+Shift+Space", "Control+Alt+R"], invalid: ["Control+Alt+D"] });
+    expect(freeAlternatives("dictate", DEFAULT_SETTINGS.shortcuts, api)).toEqual([]);
+  });
+
+  it("keeps clear of the shortcuts macOS has for itself", () => {
+    const system = ["⌃Space", "⌃⌥Space", "⌘Space", "⌥⌘Space", "⌃⌘Space", "⌥⌘D"];
+    const candidates = Object.values(ALTERNATIVES).flat();
+    expect(candidates.filter((candidate) => system.includes(prettyAccelerator(candidate)))).toEqual([]);
   });
 });

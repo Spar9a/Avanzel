@@ -73,9 +73,10 @@ import { captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
 import { RunStateStore } from "./run-state.ts";
+import { runningAppNames } from "./running-apps.ts";
 import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
-import { prettyAccelerator, registerShortcuts } from "./shortcuts.ts";
+import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
 import {
@@ -156,6 +157,20 @@ function statusOf(check: AgentCheck): AgentStatus {
   return { kind: check.why };
 }
 
+/** The capsule's notice of a shortcut another app holds. */
+type TakenShortcut = Extract<CapsuleState, { kind: "shortcut-taken" }>;
+
+/**
+ * Electron's global shortcuts or, when AVANZEL_FAKE_TAKEN_SHORTCUTS is set (comma-separated, possibly empty; the e2e
+ * tests set it), a stand-in that registers nothing for real and refuses exactly the accelerators it lists.
+ */
+function shortcutApi(): ShortcutApi {
+  const fake = process.env.AVANZEL_FAKE_TAKEN_SHORTCUTS;
+  if (fake === undefined) return globalShortcut;
+  const taken = new Set(fake.split(",").map((accelerator) => accelerator.trim()).filter(Boolean));
+  return { register: (accelerator) => !taken.has(accelerator), unregister: () => {}, unregisterAll: () => {} };
+}
+
 export class Controller {
   private readonly store: SettingsStore;
   private readonly modelsDir: string;
@@ -192,6 +207,8 @@ export class Controller {
   private libraryProblem: string | null = null;
   private readonly runState: RunStateStore;
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
+  /** The notice of each shortcut another app holds, with its free alternatives, in the order they register. */
+  private takenShortcuts: TakenShortcut[] = [];
   /** What each agent's check found in this app run, by harness name, for Settings → Agents. */
   private readonly agentChecks = new Map<string, AgentStatus>();
   /** The agent checks going on, each by the controller that stops it when Avanzel quits. */
@@ -225,7 +242,10 @@ export class Controller {
     const envLibrary = process.env.AVANZEL_LIBRARY;
     if (envLibrary) this.store.update({ libraryPath: envLibrary });
     this.openLibrary(this.store.get().libraryPath);
-    this.applyShortcuts();
+    await this.applyShortcuts();
+    // A shortcut another app holds does nothing when pressed: the capsule says so at once, with free ones to pick.
+    const [taken] = this.takenShortcuts;
+    if (taken) this.setCapsule(taken);
     await this.refreshModelStatus();
     // With a library the speech models download unasked; without one, Settings → Voice offers them.
     if (this.vault && this.model.kind === "missing") void this.downloadModel();
@@ -341,17 +361,54 @@ export class Controller {
 
   // ---------------------------------------------------------------- shortcuts & menu
 
-  private applyShortcuts(): void {
-    this.shortcutProblems = registerShortcuts(
-      this.store.get().shortcuts,
-      {
-        dictate: () => void this.toggleDictate(),
-        capture: () => void this.toggleCapture(),
-        type: () => this.openQuick(),
-        ask: () => this.openAsk(),
-      },
-      globalShortcut,
-    );
+  /**
+   * Registers the shortcuts. When another app holds one, they are registered again with the running apps, which name
+   * the app that probably holds it, and free alternatives are found for it. Each registration reads the shortcuts as
+   * they are then, so one that ends after a newer change still registers what the settings say.
+   */
+  private async applyShortcuts(): Promise<void> {
+    const api = shortcutApi();
+    const handlers = {
+      dictate: () => void this.toggleDictate(),
+      capture: () => void this.toggleCapture(),
+      type: () => this.openQuick(),
+      ask: () => this.openAsk(),
+    };
+    let shortcuts = this.store.get().shortcuts;
+    let registration = registerShortcuts(shortcuts, handlers, api);
+    let running: string[] = [];
+    if (registration.taken.length) {
+      running = await runningAppNames();
+      shortcuts = this.store.get().shortcuts;
+      registration = registerShortcuts(shortcuts, handlers, api, running);
+    }
+    this.shortcutProblems = registration.problems;
+    this.takenShortcuts = registration.taken.map((key) => ({
+      kind: "shortcut-taken",
+      key,
+      accelerator: shortcuts[key],
+      holder: likelyHolder(shortcuts[key], running),
+      alternatives: freeAlternatives(key, shortcuts, api),
+    }));
+  }
+
+  /**
+   * Use, on the capsule's notice of a taken shortcut: `accelerator` becomes `key`'s shortcut, the way Settings sets one.
+   * The notice follows (`followShortcuts`): it goes once that shortcut works, and names it, with fresh alternatives,
+   * if another app took it meanwhile.
+   */
+  async useShortcut(key: keyof Shortcuts, accelerator: string): Promise<void> {
+    await this.setApp({ shortcuts: { ...this.store.get().shortcuts, [key]: accelerator } });
+  }
+
+  /**
+   * A capsule showing the notice of a taken shortcut keeps up with the shortcuts, wherever they were changed: it hides
+   * once that action's shortcut works, and shows the shortcut it has now, with fresh alternatives, while it doesn't.
+   */
+  private followShortcuts(): void {
+    const state = this.capsuleState;
+    if (state.kind !== "shortcut-taken") return;
+    this.setCapsule(this.takenShortcuts.find((taken) => taken.key === state.key) ?? { kind: "hidden" });
   }
 
   private async menuAction(action: string): Promise<void> {
@@ -386,6 +443,7 @@ export class Controller {
       })),
       recording: !!this.recording,
       shortcuts: this.store.get().shortcuts,
+      takenShortcuts: this.takenShortcuts.map((taken) => taken.key),
       undoableReview: this.lastEveningCommits.length > 0,
     };
   }
@@ -1253,14 +1311,19 @@ export class Controller {
       })),
       taskProblems: report.problems.map((p) => ({ file: vault ? vault.relativePath(p.file) : p.file, message: p.message })),
       shortcutProblems: this.shortcutProblems,
+      shortcutAlternatives: Object.fromEntries(this.takenShortcuts.map((taken) => [taken.key, taken.alternatives])),
       obsidian: this.obsidianInstalled(),
     };
   }
 
-  setApp(patch: Partial<AppSettings>): SettingsSnapshot {
+  /** Changed shortcuts are registered before it returns, so its snapshot says which are taken, with their alternatives. */
+  async setApp(patch: Partial<AppSettings>): Promise<SettingsSnapshot> {
     const before = this.store.get();
     const after = this.store.update(patch);
-    if (JSON.stringify(before.shortcuts) !== JSON.stringify(after.shortcuts)) this.applyShortcuts();
+    if (JSON.stringify(before.shortcuts) !== JSON.stringify(after.shortcuts)) {
+      await this.applyShortcuts();
+      this.followShortcuts();
+    }
     if (patch.launchAtLogin !== undefined) app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
     this.broadcast();
     return this.snapshot();

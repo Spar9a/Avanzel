@@ -186,12 +186,30 @@ function Voice({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Setti
         label="Shortcuts"
         note="Press a shortcut once to start and again to stop. While Avanzel listens, Esc cancels the dictation from any app. Edit, while your agent files a note, stops the agent, takes back what it did and files your corrected words instead."
       >
-        {rows.map(([key, label]) => (
-          <div className="grow" key={key}>
-            <span className="fill two">{label}{snap.shortcutProblems[key] && <span className="problem">{snap.shortcutProblems[key]}</span>}</span>
-            <ShortcutField label={label} value={snap.app.shortcuts[key]} onChange={async (v) => onChange(await api.setApp({ shortcuts: { ...snap.app.shortcuts, [key]: v } }))} />
-          </div>
-        ))}
+        {rows.map(([key, label]) => {
+          const use = async (accelerator: string) => onChange(await api.setApp({ shortcuts: { ...snap.app.shortcuts, [key]: accelerator } }));
+          const alternatives = snap.shortcutAlternatives[key] ?? [];
+          return (
+            <div className="grow" key={key}>
+              <div className="fill two">
+                {label}
+                {snap.shortcutProblems[key] && <span className="problem">{snap.shortcutProblems[key]}</span>}
+                {alternatives.length > 0 && (
+                  <div className="alternatives">
+                    <Row gap={6}>
+                      {alternatives.map((alternative) => (
+                        <Button key={alternative} size="small" variant="secondary" onClick={() => void use(alternative)}>
+                          {`Use ${prettyAccelerator(alternative)}`}
+                        </Button>
+                      ))}
+                    </Row>
+                  </div>
+                )}
+              </div>
+              <ShortcutField label={label} value={snap.app.shortcuts[key]} onChange={use} />
+            </div>
+          );
+        })}
       </Group>
       <Group label="Speech model" note="Speech models run on this Mac. Your voice never leaves it.">
         <div className="grow">

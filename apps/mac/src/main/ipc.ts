@@ -1,6 +1,6 @@
 // Wires the preload bridge's channels to the controller.
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
-import type { AppSettings, TaskInfo } from "../shared/ipc.ts";
+import type { AppSettings, Shortcuts, TaskInfo } from "../shared/ipc.ts";
 import type { Controller } from "./controller.ts";
 
 type Handler = (event: IpcMainInvokeEvent, ...args: never[]) => unknown;
@@ -26,6 +26,7 @@ export function registerIpc(controller: Controller): void {
   on("capsule:open-settings-for", (_e, action: string) => controller.openSettingsFor(action));
   on("capsule:retry-download", () => controller.retryDownload());
   on("capsule:type-instead", () => controller.typeInstead());
+  on("capsule:use-shortcut", (_e, key: keyof Shortcuts, accelerator: string) => void controller.useShortcut(key, accelerator));
 
   // settings
   handle("settings:get", () => controller.snapshot());

@@ -48,7 +48,17 @@ export type CapsuleState =
       totalBytes: number;
     }
   /** The shortcut, after the speech models' download failed: typing instead, or Try again. */
-  | { kind: "model-failed" };
+  | { kind: "model-failed" }
+  /** At launch, and as the shortcuts change while it shows: another app holds `key`'s shortcut, `accelerator`. */
+  | {
+      kind: "shortcut-taken";
+      key: keyof Shortcuts;
+      accelerator: string;
+      /** The app that probably holds it: a running app whose default shortcut it is. */
+      holder: string | null;
+      /** Free shortcuts to use instead, best first; with none, the notice offers Settings. */
+      alternatives: string[];
+    };
 
 export interface Shortcuts {
   dictate: string;
@@ -153,6 +163,8 @@ export interface SettingsSnapshot {
   tasks: TaskInfo[];
   taskProblems: TaskFileProblem[];
   shortcutProblems: Partial<Record<keyof Shortcuts, string>>;
+  /** For each shortcut another app holds, the free ones to use instead, best first (empty when none of them is free). */
+  shortcutAlternatives: Partial<Record<keyof Shortcuts, string[]>>;
   obsidian: boolean;
 }
 
@@ -187,6 +199,8 @@ export interface AvanzelBridge {
     retryDownload(): void;
     /** Type instead, while Avanzel can't listen yet: the capsule hides and Quick opens. */
     typeInstead(): void;
+    /** Use, on the notice of a taken shortcut: `accelerator` becomes `key`'s shortcut. */
+    useShortcut(key: keyof Shortcuts, accelerator: string): void;
   };
   settings: {
     get(): Promise<SettingsSnapshot>;

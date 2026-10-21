@@ -1,7 +1,8 @@
 import { Actions, Button, CapsuleNotice, Hud, Progress, Row, Stack, Text, Zel } from "@avanzel/ui";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { AvanzelBridge, CapsuleState, FiledPage } from "../../shared/ipc.ts";
+import { prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
+import type { AvanzelBridge, CapsuleState, FiledPage, Shortcuts } from "../../shared/ipc.ts";
 import { Recorder } from "./recorder.ts";
 import "./styles.css";
 
@@ -16,6 +17,14 @@ const BARS = 16;
 
 /** Whole megabytes, as macOS counts them. */
 const mb = (bytes: number) => Math.round(bytes / 1e6);
+
+/** Each action as the menu bar names it. */
+const ACTION_NAMES: Record<keyof Shortcuts, string> = {
+  dictate: "Record a thought",
+  capture: "Capture screen with a comment",
+  type: "Type a thought",
+  ask: "Ask your library",
+};
 
 function useLevels(listening: boolean, fake: boolean) {
   const [levels, setLevels] = useState<number[]>(() => Array(BARS).fill(0.08));
@@ -217,6 +226,31 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
           </CapsuleNotice>
         </div>
       );
+    case "shortcut-taken": {
+      // The best one is the primary, so it goes last; with none free, Settings → Voice has the way out.
+      const uses = state.alternatives
+        .map((alternative, i) => (
+          <Button key={alternative} variant={i === 0 ? "primary" : "secondary"} onClick={() => api.useShortcut(state.key, alternative)}>
+            {`Use ${prettyAccelerator(alternative)}`}
+          </Button>
+        ))
+        .reverse();
+      return (
+        <div className="slot">
+          <CapsuleNotice
+            title={takenMessage(state.accelerator, state.holder)}
+            actions={
+              <Actions>
+                <Button variant="quiet" onClick={() => api.dismiss()}>Hide</Button>
+                {uses.length ? uses : <Button variant="primary" onClick={() => api.openSettingsFor("open-settings:voice")}>Open Settings</Button>}
+              </Actions>
+            }
+          >
+            Pick another shortcut. {ACTION_NAMES[state.key]} is still in the menu bar.
+          </CapsuleNotice>
+        </div>
+      );
+    }
   }
 }
 

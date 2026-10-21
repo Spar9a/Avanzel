@@ -18,6 +18,7 @@ function input(overrides: Partial<MenuInput> = {}): MenuInput {
     ],
     recording: false,
     shortcuts: DEFAULT_SETTINGS.shortcuts,
+    takenShortcuts: [],
     undoableReview: false,
     ...overrides,
   };
@@ -62,6 +63,15 @@ describe("tray menu", () => {
     expect(record).toMatchObject({ action: "dictate", accelerator: "Alt+Space" });
     const weekly = items.find((i) => i.type === "item" && i.label === "Weekly review");
     expect(weekly).toMatchObject({ action: "task:weekly-review", detail: "Sun 18:00" });
+  });
+
+  it("a taken shortcut is not shown in the menu", () => {
+    const items = buildMenuModel(input({ takenShortcuts: ["dictate"] }), now);
+    const item = (action: string) => items.find((i) => i.type === "item" && i.action === action);
+    expect(item("dictate")).toEqual({ type: "item", label: "Record a thought", action: "dictate" });
+    expect(item("capture")).toMatchObject({ accelerator: "Alt+Shift+S" });
+    expect(item("type")).toMatchObject({ accelerator: "Alt+Shift+Space" });
+    expect(item("ask")).toMatchObject({ accelerator: "Alt+Shift+A" });
   });
 
   it("turns the first item into Stop while recording", () => {

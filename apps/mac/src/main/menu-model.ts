@@ -18,6 +18,8 @@ export interface MenuInput {
   tasks: MenuTask[];
   recording: boolean;
   shortcuts: Shortcuts;
+  /** The actions whose shortcut another app holds: pressing it does nothing, so their items don't show it. */
+  takenShortcuts: readonly (keyof Shortcuts)[];
   undoableReview: boolean;
 }
 
@@ -70,18 +72,14 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     .filter((t): t is MenuTask & { at: Date } => t.enabled && t.at !== null)
     .sort((a, b) => a.at.getTime() - b.at.getTime())[0];
 
+  const shortcut = (key: keyof Shortcuts) => (input.takenShortcuts.includes(key) ? {} : { accelerator: input.shortcuts[key] });
   const items: MenuItemModel[] = [
     { type: "item", label: inbox, action: "open-inbox", sublabel: upcoming && `Next: ${upcoming.name} ${nextPhrase(upcoming.at, now)}` },
     SEP,
-    {
-      type: "item",
-      label: input.recording ? "Stop recording" : "Record a thought",
-      action: "dictate",
-      accelerator: input.shortcuts.dictate,
-    },
-    { type: "item", label: "Capture screen with a comment", action: "capture", accelerator: input.shortcuts.capture },
-    { type: "item", label: "Type a thought…", action: "type", accelerator: input.shortcuts.type },
-    { type: "item", label: "Ask your library…", action: "ask", accelerator: input.shortcuts.ask },
+    { type: "item", label: input.recording ? "Stop recording" : "Record a thought", action: "dictate", ...shortcut("dictate") },
+    { type: "item", label: "Capture screen with a comment", action: "capture", ...shortcut("capture") },
+    { type: "item", label: "Type a thought…", action: "type", ...shortcut("type") },
+    { type: "item", label: "Ask your library…", action: "ask", ...shortcut("ask") },
     SEP,
   ];
 
