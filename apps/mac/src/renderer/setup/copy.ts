@@ -107,6 +107,19 @@ export function askingLine(seconds: number): string {
   return `Looking through your library: ${Math.max(0, Math.floor(seconds))} s`;
 }
 
+/**
+ * The evening review's switch on the last step, from its schedule as Settings writes it: "daily 21:00" runs "every day
+ * at 21:00", and "weekly sun 18:00" names its day in full, "every Sunday at 18:00".
+ */
+export function reviewLabel(schedule: string): string {
+  const [every = "", ...rest] = schedule.trim().split(/\s+/);
+  const time = rest.at(-1) ?? "";
+  if (every !== "weekly") return `Review my inbox every day at ${time}`;
+  const short = rest[0] ?? "";
+  const day = WEEKDAYS.find((name) => name.slice(0, 3).toLowerCase() === short) ?? short;
+  return `Review my inbox every ${day} at ${time}`;
+}
+
 /** The most characters of a page's title its link under "Pages I used:" shows: the step is about 340 px wide. */
 const SOURCE_CHARS = 40;
 

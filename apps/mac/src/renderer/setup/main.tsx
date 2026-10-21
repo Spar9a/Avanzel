@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AvanzelBridge, SetupSnapshot, SetupStep } from "../../shared/ipc.ts";
 import { Ask } from "./steps/Ask.tsx";
+import { Done } from "./steps/Done.tsx";
 import { Filing } from "./steps/Filing.tsx";
 import { Found } from "./steps/Found.tsx";
 import { Hello } from "./steps/Hello.tsx";
@@ -31,8 +32,11 @@ function Setup() {
   if (step === "think" && snap?.filing) setStep("filing");
   if (!snap) return null;
   const go = (next: SetupStep) => {
-    setStep(next);
-    void api.enter(next).then(setSnap);
+    const entered = api.enter(next).then(setSnap);
+    // The last step shows once the controller has entered it, which turns opening at login on: drawn before that, its
+    // switch would show off for a frame, then slide on by itself.
+    if (next === "done") void entered.finally(() => setStep(next));
+    else setStep(next);
   };
   switch (step) {
     case "hello":
@@ -45,8 +49,8 @@ function Setup() {
       return <Filing snap={snap} go={go} />;
     case "ask":
       return <Ask snap={snap} go={go} />;
-    default:
-      return null; // a step whose change hasn't come yet
+    case "done":
+      return <Done snap={snap} go={go} />;
   }
 }
 

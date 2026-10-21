@@ -15,6 +15,7 @@ import {
   ownLine,
   pagesLine,
   receiptPages,
+  reviewLabel,
   sourceTitle,
   stampDate,
   transcribingLine,
@@ -148,6 +149,13 @@ describe("setup copy", () => {
     expect(transcribingLine(9.9)).toBe("Turning your voice into text on this Mac…");
     expect(transcribingLine(10)).toBe("Turning your voice into text on this Mac… 10 s");
     expect(transcribingLine(12.7)).toBe("Turning your voice into text on this Mac… 12 s");
+  });
+
+  it("reviewLabel says when the review runs", () => {
+    expect(reviewLabel("daily 21:00")).toBe("Review my inbox every day at 21:00");
+    expect(reviewLabel("weekly sun 18:00")).toBe("Review my inbox every Sunday at 18:00");
+    // Every weekday by its whole name, not only the first one of the week.
+    expect(reviewLabel("weekly thu 07:30")).toBe("Review my inbox every Thursday at 07:30");
   });
 
   it("a failed filing says what the agent said and that the words are safe, except of a note gone from the inbox", () => {

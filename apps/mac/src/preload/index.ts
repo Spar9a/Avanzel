@@ -75,6 +75,7 @@ const bridge: AvanzelBridge = {
     fileAnyway: () => ipcRenderer.send("setup:file-anyway"),
     ask: (question) => ipcRenderer.invoke("setup:ask", question),
     skipAsk: () => ipcRenderer.send("setup:skip-ask"),
+    finish: () => ipcRenderer.send("setup:finish"),
   },
 };
 

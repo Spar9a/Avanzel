@@ -359,6 +359,10 @@ export interface SetupSnapshot {
   suggestion: string | null;
   /** The question on the Ask step and how it went; null until one is asked, and again after Skip. */
   answer: SetupAnswer | null;
+  /** Avanzel opens when the person logs in (AppSettings.launchAtLogin): the last step turns it on the first time it shows. */
+  launchAtLogin: boolean;
+  /** The library's evening review, the shadow task whose kind is "evening-review"; null without a library, or one that has none. */
+  eveningReview: TaskInfo | null;
 }
 
 export interface AskResult {
@@ -482,5 +486,7 @@ export interface AvanzelBridge {
     ask(question: string): Promise<SetupSnapshot>;
     /** Skip, on the Ask step: the question being answered is given up, and the answer cleared. */
     skipAsk(): void;
+    /** Start using Avanzel, on the last step: setup ends, and its window closes. Avanzel waits in the menu bar. */
+    finish(): void;
   };
 }

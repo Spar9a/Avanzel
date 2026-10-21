@@ -70,4 +70,5 @@ export function registerIpc(controller: Controller): void {
   on("setup:try-again", () => controller.retrySetupThought());
   on("setup:file-anyway", () => controller.fileSetupAnyway());
   on("setup:skip-ask", () => controller.skipSetupAsk());
+  on("setup:finish", () => void controller.finishSetup());
 }

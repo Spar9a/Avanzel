@@ -219,6 +219,8 @@ interface SetupSession {
   answer: SetupAnswer | null;
   /** Stops the question being answered (Skip, or the window closing); null while none is. */
   askAbort: AbortController | null;
+  /** The last step has shown: it turned opening at login on, which happens once a session. */
+  doneEntered: boolean;
 }
 
 /** Words filed after Edit, on their way to the inbox: only in memory until the refile's `recapture` writes them. */
@@ -1537,22 +1539,30 @@ export class Controller {
       model: this.model,
       permissions: { microphone: permissionStatus("microphone"), screen: permissionStatus("screen") },
       libraryProblem: this.libraryProblem,
-      tasks: report.tasks.map((t): TaskInfo => ({
-        id: t.id,
-        name: t.name,
-        schedule: formatSchedule(t.schedule),
-        kind: t.kind,
-        agent: t.agent,
-        enabled: t.enabled,
-        instructions: t.instructions,
-        lastRun: stateRuns[t.id] ?? null,
-        nextRun: t.enabled ? nextRun(t.schedule, now).toISOString() : null,
-        running: this.running.has(t.id),
-      })),
+      tasks: report.tasks.map((task) => this.taskInfo(task, stateRuns, now)),
       taskProblems: report.problems.map((p) => ({ file: vault ? vault.relativePath(p.file) : p.file, message: p.message })),
       shortcutProblems: this.shortcutProblems,
       shortcutAlternatives: Object.fromEntries(this.takenShortcuts.map((taken) => [taken.key, taken.alternatives])),
       obsidian: this.obsidianInstalled(),
+    };
+  }
+
+  /**
+   * A shadow task as Settings lists it, and setup's last step shows the evening review: its schedule as text ("daily
+   * 21:00"), when it last ran (`ran`, by task) and runs next, and whether it is running.
+   */
+  private taskInfo(task: ShadowTask, ran: Record<string, string>, now: Date): TaskInfo {
+    return {
+      id: task.id,
+      name: task.name,
+      schedule: formatSchedule(task.schedule),
+      kind: task.kind,
+      agent: task.agent,
+      enabled: task.enabled,
+      instructions: task.instructions,
+      lastRun: ran[task.id] ?? null,
+      nextRun: task.enabled ? nextRun(task.schedule, now).toISOString() : null,
+      running: this.running.has(task.id),
     };
   }
 
@@ -1564,7 +1574,8 @@ export class Controller {
   /**
    * setApp, for `picked`'s shortcut chosen on the capsule's notice of a taken one, when it is (`useShortcut`). A new
    * Record a thought shortcut while setup's first-thought step shows starts that step's press test over, wherever it was
-   * set: on the step itself, or in Settings → Voice, where the step's Open Settings leads.
+   * set: on the step itself, or in Settings → Voice, where the step's Open Settings leads. Opening at login is saved,
+   * and macOS's login items follow it, except with AVANZEL_TEST=1, which leaves this Mac's login items be.
    */
   private async changeApp(patch: Partial<AppSettings>, picked?: keyof Shortcuts): Promise<SettingsSnapshot> {
     const before = this.store.get();
@@ -1574,7 +1585,7 @@ export class Controller {
       this.followShortcuts(picked);
       if (before.shortcuts.dictate !== after.shortcuts.dictate && this.setup?.step === "think") this.listenForPress(this.setup);
     }
-    if (patch.launchAtLogin !== undefined) app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
+    if (patch.launchAtLogin !== undefined && process.env.AVANZEL_TEST !== "1") app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
     this.broadcast();
     return this.snapshot();
   }
@@ -1699,6 +1710,7 @@ export class Controller {
       askingMicrophone: false,
       answer: null,
       askAbort: null,
+      doneEntered: false,
     };
   }
 
@@ -1752,7 +1764,19 @@ export class Controller {
       opensInObsidian: !!this.vault && obsidianUrl(this.vault.root, "") !== null && this.obsidianInstalled(),
       suggestion: suggestQuestion(standing),
       answer: this.setup?.answer ?? null,
+      launchAtLogin: this.store.get().launchAtLogin,
+      eveningReview: this.eveningReview(),
     };
+  }
+
+  /**
+   * The library's evening review, as Settings lists it, for the last step's switch: its first task whose kind is
+   * "evening-review". Null without a library, and when the library has none (its owner deleted the file, say).
+   */
+  private eveningReview(): TaskInfo | null {
+    const vault = this.vault;
+    const task = vault ? this.safeTasks(vault).find((t) => t.kind === "evening-review") : undefined;
+    return vault && task ? this.taskInfo(task, this.readRunState(vault).ran, new Date()) : null;
   }
 
   /**
@@ -1791,7 +1815,8 @@ export class Controller {
    * The setup window shows `step` now; anything that isn't a step is ignored. Each step's work hangs on this: the first
    * time Found is entered, Set me up's work; each time the first-thought step is, its press test (`listenForPress`),
    * which any other step stops, and its spoken thought afresh, so coming back never shows the last visit's Notice. A
-   * mic check stays, since its note waits in the inbox for File it anyway or Try again.
+   * mic check stays, since its note waits in the inbox for File it anyway or Try again. The first time the last step is
+   * entered, opening at login turns on, so its switch shows the spec's default; what the person sets there then stays.
    */
   enterSetupStep(step: SetupStep): SetupSnapshot {
     const session = this.setup;
@@ -1802,6 +1827,11 @@ export class Controller {
         if (session.thought.kind !== "test") session.thought = { kind: "waiting" };
         this.listenForPress(session);
       } else this.stopPressTest(session);
+      if (step === "done" && !session.doneEntered) {
+        session.doneEntered = true;
+        // Saved before this returns (changeApp waits only when shortcuts change), so the snapshot below has it on.
+        void this.changeApp({ launchAtLogin: true }).catch((error: unknown) => console.error("launch at login", error));
+      }
     }
     return this.setupSnapshot();
   }
@@ -2321,6 +2351,16 @@ export class Controller {
       }
     });
     return { paragraphs, sources };
+  }
+
+  /**
+   * Start using Avanzel, on the last step: setup ends, and its window closes, which ends the session (`endSetup`).
+   * Avanzel waits in the menu bar, where Record a thought is now. Only the last step finishes setup.
+   */
+  async finishSetup(): Promise<void> {
+    const session = this.setup;
+    if (session?.step !== "done" || session.window.isDestroyed()) return;
+    session.window.close();
   }
 
   // ---------------------------------------------------------------- agent checks

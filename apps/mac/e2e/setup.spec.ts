@@ -23,11 +23,13 @@ import {
   launch,
   noAgents,
   onceMarker,
+  read,
   recentlyFiled,
   SIGNED_OUT_CLAUDE,
   snap,
   speechWav,
   throughFound,
+  toDone,
   typeFirstThought,
   UNREADABLE_CLAUDE,
   windowFor,
@@ -1790,5 +1792,104 @@ test("a long title fits Ask: the card holds the question, and a long source titl
   await source.click();
   await expect.poll(() => openedWith(app)).toHaveLength(1);
   expect(realpathSync((await openedWith(app))[0] ?? "")).toBe(realpathSync(path.join(library, "ideas", `${name}.md`)));
+  await app.close();
+});
+
+// You're all set: the last step. Entering it turns opening at login on, and its two switches, opening at login and the
+// library's evening review, apply at once, as Settings' own do. Start using Avanzel ends setup: the window closes, and
+// Avanzel waits in the menu bar. With AVANZEL_TEST=1 the login setting is saved, and this Mac's login items are left be.
+
+/**
+ * Stands in for macOS's login items: from now on, each call that would change them is noted for `loginItemCalls`, and
+ * none reaches this Mac. A stand-in that couldn't be put in place fails the test at once.
+ */
+async function stubLoginItems(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ app: electronApp }) => {
+    const calls: unknown[] = [];
+    (globalThis as { loginItemCalls?: unknown[] }).loginItemCalls = calls;
+    const standIn: typeof electronApp.setLoginItemSettings = (settings) => {
+      calls.push(settings);
+    };
+    electronApp.setLoginItemSettings = standIn;
+    if (electronApp.setLoginItemSettings !== standIn) throw new Error("The login items' stand-in didn't take.");
+  });
+}
+
+const loginItemCalls = (app: ElectronApplication) => app.evaluate(() => (globalThis as { loginItemCalls?: unknown[] }).loginItemCalls ?? []);
+
+/**
+ * From now on, notes what the first switch to appear in `page` says as it is drawn: on Done, its opening at login, since
+ * no step before it has a switch. For `firstSwitch`.
+ */
+async function watchFirstSwitch(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const observer = new MutationObserver(() => {
+      const first = document.querySelector('[role="switch"]');
+      if (!first) return;
+      observer.disconnect();
+      (window as { firstSwitch?: string | null }).firstSwitch = first.getAttribute("aria-checked");
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  });
+}
+
+const firstSwitch = (page: Page) => page.evaluate(() => (window as { firstSwitch?: string | null }).firstSwitch ?? null);
+
+test("the last step turns on opening at login, and both switches apply at once", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch(env);
+  await stubLoginItems(app);
+  await watchFirstSwitch(await windowFor(app, "setup"));
+  const library = path.join(home, "Avanzel");
+  expect((await settingsSnap(app)).app.launchAtLogin).toBe(false); // a new Mac's setting
+  const setup = await toDone(app);
+  await expect.poll(async () => (await settingsSnap(app)).app.launchAtLogin).toBe(true);
+  const login = setup.getByRole("switch", { name: "Open Avanzel when I log in" });
+  await expect(login).toHaveAttribute("aria-checked", "true");
+  // On from the moment it is drawn: it never shows off, then slides on by itself.
+  expect(await firstSwitch(setup)).toBe("true");
+  await login.click();
+  await expect.poll(async () => (await settingsSnap(app)).app.launchAtLogin).toBe(false);
+  await expect(login).toHaveAttribute("aria-checked", "false");
+  // Only the step's first showing in a session turns it on: showing it again leaves the person's choice be.
+  await call(app, "enterSetupStep", "done");
+  expect((await settingsSnap(app)).app.launchAtLogin).toBe(false);
+  // The library's evening review, as a new library has it: every day at 21:00, and on.
+  const review = setup.getByRole("switch", { name: "Review my inbox every day at 21:00" });
+  await expect(review).toHaveAttribute("aria-checked", "true");
+  await expect(review).toHaveAccessibleDescription("Files anything still in the inbox and writes a short summary.");
+  await review.click();
+  await expect.poll(() => read(library, "tasks/evening-review.md")).toContain("enabled: false");
+  await expect(review).toHaveAttribute("aria-checked", "false");
+  // A library without an evening review has no switch for it: here its file goes, and the next change redraws the step.
+  rmSync(path.join(library, "tasks", "evening-review.md"));
+  await login.click();
+  await expect(login).toHaveAttribute("aria-checked", "true");
+  await expect(setup.getByRole("switch")).toHaveCount(1);
+  // None of it reached this Mac's login items.
+  expect(await loginItemCalls(app)).toEqual([]);
+  await app.close();
+});
+
+test("Start using Avanzel closes the window, and the menu bar is where Avanzel lives", async () => {
+  const app = await launch(firstRun({ claude: filingClaude() }).env);
+  const setup = await toDone(app);
+  // The step says how to talk to Avanzel and where it waits, beside Zel at rest. Start using Avanzel is its one
+  // primary, and there is no Back.
+  await expect(setup.getByText(/^Press ⌥Space anywhere to talk to me\. I'll wait in the menu bar\.$/)).toBeVisible();
+  await expect(zel(setup)).toHaveAttribute("data-mood", "idle");
+  await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Start using Avanzel"]);
+  await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
+  await setup.getByRole("button", { name: "Start using Avanzel" }).click();
+  await expect.poll(() => shown(app, "setup"), { timeout: 5_000 }).toBe(false);
+  // Closed, not hidden away: the session has ended with its window.
+  await expect.poll(() => windowsTitled(app, "Set up Avanzel"), { timeout: 5_000 }).toBe(0);
+  expect(await call(app, "setupStepForTests")).toBeNull();
+  const menu = (await call(app, "menuForTests")) as MenuItemModel[];
+  expect(menu).toContainEqual(expect.objectContaining({ type: "item", label: "Record a thought", action: "dictate" }));
+  // Opening Avanzel again opens Settings now, as it does once there is a library, rather than setup.
+  await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
+  expect(await windowsTitled(app, "Avanzel Settings")).toBe(1);
+  expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
   await app.close();
 });

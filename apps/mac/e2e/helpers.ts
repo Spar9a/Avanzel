@@ -273,6 +273,22 @@ export async function typeFirstThought(setup: Page, words: string): Promise<void
   await setup.getByRole("button", { name: "File it", exact: true }).click();
 }
 
+/**
+ * A first run from Hello to the last step, as a person goes: throughFound, a typed thought filed, Continue to Ask, then
+ * Skip. The app's `claude` must file and write a page (filingClaude), so Continue goes on to Ask. Returns the setup
+ * window, on "You're all set.".
+ */
+export async function toDone(app: ElectronApplication): Promise<Page> {
+  const setup = await throughFound(app);
+  await typeFirstThought(setup, "Plant tulips in October");
+  await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
+  await setup.getByRole("button", { name: "Continue" }).click();
+  await expect(setup.getByRole("heading", { name: "Ask me about it." })).toBeVisible();
+  await setup.getByRole("button", { name: "Skip" }).click();
+  await expect(setup.getByRole("heading", { name: "You're all set." })).toBeVisible();
+  return setup;
+}
+
 export async function snap(page: Page, name: string): Promise<void> {
   mkdirSync(shots, { recursive: true });
   await page.waitForTimeout(350); // let the appear animation finish
