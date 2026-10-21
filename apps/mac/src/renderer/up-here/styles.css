@@ -1,0 +1,9 @@
+/* The bubble window's layout. It only arranges: Zel's bubble comes from @avanzel/ui. The bubble sits at the window's
+   top right, which puts the tip of its tail 42 px in from the window's right edge, at its top: main places the window
+   so that point is under the menu bar icon (upHerePlace). */
+#root {
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  padding: var(--av-space-8) var(--av-space-16);
+}

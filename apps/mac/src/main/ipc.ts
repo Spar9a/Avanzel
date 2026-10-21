@@ -71,4 +71,8 @@ export function registerIpc(controller: Controller): void {
   on("setup:file-anyway", () => controller.fileSetupAnyway());
   on("setup:skip-ask", () => controller.skipSetupAsk());
   on("setup:finish", () => void controller.finishSetup());
+
+  // the bubble under the menu bar icon, once setup has ended
+  on("up-here:try-it", () => controller.tryItNow());
+  on("up-here:close", () => controller.closeUpHere());
 }

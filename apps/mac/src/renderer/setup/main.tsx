@@ -19,6 +19,25 @@ declare global {
 }
 
 const api = window.avanzel.setup;
+const root = document.getElementById("root")!;
+
+/**
+ * Start using Avanzel: the page blanks itself (`data-leaving`), so the window flies into the menu bar as blank paper,
+ * then tells main. Main's flight holds its thread while macOS animates the frame, so main hears once the blank page is
+ * drawn, after the next frame; should no frame come, as for a window out of sight, a moment later all the same.
+ */
+function finish(): void {
+  if ("leaving" in root.dataset) return;
+  root.dataset.leaving = "";
+  let told = false;
+  const tell = () => {
+    if (told) return;
+    told = true;
+    api.finish();
+  };
+  requestAnimationFrame(() => requestAnimationFrame(tell));
+  setTimeout(tell, 250);
+}
 
 function Setup() {
   const [snap, setSnap] = useState<SetupSnapshot | null>(null);
@@ -50,8 +69,8 @@ function Setup() {
     case "ask":
       return <Ask snap={snap} go={go} />;
     case "done":
-      return <Done snap={snap} go={go} />;
+      return <Done snap={snap} go={go} finish={finish} />;
   }
 }
 
-createRoot(document.getElementById("root")!).render(<Setup />);
+createRoot(root).render(<Setup />);

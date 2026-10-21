@@ -1,15 +1,15 @@
 // Step 6, You're all set: how to talk to Avanzel from now on, and where it waits, beside Zel at rest. Two switches apply
 // at once, as Settings' own do: opening at login, which this step turned on the first time it showed, and the library's
 // evening review, which isn't there when the library has none. Each comes back through setup:changed. Start using
-// Avanzel ends setup; there is no Back.
+// Avanzel ends setup (`finish`): the window flies into the menu bar. There is no Back.
 import { Button, Group, Kbd, Stack, Switch, Text, Zel } from "@avanzel/ui";
 import { prettyAccelerator } from "../../../main/shortcuts.ts";
 import { reviewLabel } from "../copy.ts";
 import { Frame, type StepProps } from "../frame.tsx";
 
-const { setup, settings } = window.avanzel;
+const { settings } = window.avanzel;
 
-export function Done({ snap }: StepProps) {
+export function Done({ snap, finish }: StepProps & { finish(): void }) {
   const review = snap.eveningReview;
   return (
     <Frame
@@ -19,7 +19,7 @@ export function Done({ snap }: StepProps) {
           <Zel mood="idle" size="large" />
         </div>
       }
-      actions={<Button variant="primary" onClick={() => setup.finish()}>Start using Avanzel</Button>}
+      actions={<Button variant="primary" onClick={() => finish()}>Start using Avanzel</Button>}
     >
       <Stack gap={12}>
         <Text variant="heading">You're all set.</Text>

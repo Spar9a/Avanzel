@@ -486,7 +486,18 @@ export interface AvanzelBridge {
     ask(question: string): Promise<SetupSnapshot>;
     /** Skip, on the Ask step: the question being answered is given up, and the answer cleared. */
     skipAsk(): void;
-    /** Start using Avanzel, on the last step: setup ends, and its window closes. Avanzel waits in the menu bar. */
+    /**
+     * Start using Avanzel, on the last step: setup ends, and its window flies into the menu bar icon and closes. Zel's
+     * bubble then says Avanzel waits up there (upHere). Under Reduce Motion the window just closes. With the icon hidden
+     * it just closes too, and no bubble opens.
+     */
     finish(): void;
+  };
+  /** Zel's bubble under the menu bar icon, once setup has ended there: "I'm up here." */
+  upHere: {
+    /** Try it now: the bubble goes, and Record a thought starts, as its shortcut would start it. */
+    tryIt(): void;
+    /** Not now, or Esc: the bubble goes, and nothing brings it back. */
+    close(): void;
   };
 }

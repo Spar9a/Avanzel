@@ -9,7 +9,9 @@ import {
   nativeImage,
   Notification,
   powerMonitor,
+  screen,
   shell,
+  systemPreferences,
   type OpenDialogOptions,
 } from "electron";
 import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
@@ -86,7 +88,18 @@ import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
-import { answerSources, bestAgent, libraryAgent, libraryFolder, looksLikeATest, suggestQuestion, tildePath } from "./setup-model.ts";
+import {
+  answerSources,
+  bestAgent,
+  flightTarget,
+  libraryAgent,
+  libraryFolder,
+  looksLikeATest,
+  suggestQuestion,
+  tildePath,
+  upHerePlace,
+  type Box,
+} from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
@@ -96,8 +109,11 @@ import {
   createQuickWindow,
   createSettingsWindow,
   createSetupWindow,
+  createUpHereWindow,
+  FLIGHT_MS,
   placeCapsule,
   placeQuick,
+  UP_HERE_SIZE,
 } from "./windows.ts";
 
 // Quitting waits at most this long for stopped agent runs to finish their bookkeeping.
@@ -295,6 +311,8 @@ export class Controller {
   private settingsWindow: BrowserWindow | null = null;
   private quickWindow: BrowserWindow | null = null;
   private askWindow: BrowserWindow | null = null;
+  /** Zel's bubble under the menu bar icon, from the end of setup until it is put away (`closeUpHere`). */
+  private upHereWindow: BrowserWindow | null = null;
   /** The setup window's session while it is open. */
   private setup: SetupSession | null = null;
   private menuBar!: MenuBar;
@@ -2371,16 +2389,65 @@ export class Controller {
   }
 
   /**
-   * Start using Avanzel, on the last step: setup ends, and its window closes, which ends the session (`endSetup`).
-   * Avanzel waits in the menu bar, where Record a thought is now. Only the last step finishes setup, which is noted
-   * (`firstRun`) before the window closes, so that its closing isn't noted as one in the middle of setup.
+   * Start using Avanzel, on the last step: setup ends, once, and Avanzel waits in the menu bar, where Record a thought
+   * is now. Only the last step finishes setup. That is noted (`firstRun`) before the window goes, so its closing, even
+   * during the flight, isn't noted as a close in the middle of setup (`endSetup`).
+   *
+   * The window, whose page has blanked itself, flies onto a 24 px square on the menu bar icon (flightTarget): macOS
+   * animates its frame, holding this thread until it lands, and the window closes once FLIGHT_MS has passed in all.
+   * Closing it ends the session. Then Zel's bubble says it's up there (openUpHere). Under Reduce Motion the window just
+   * closes. So it does when the icon is hidden, and there is no bubble, since there is nothing to point at: opening
+   * Avanzel again finds it (`showHome`). A window closed during the flight, or by quitting, gets no bubble either.
    */
   async finishSetup(): Promise<void> {
     const session = this.setup;
-    if (session?.step !== "done" || session.window.isDestroyed()) return;
+    if (session?.step !== "done" || session.finished || session.window.isDestroyed()) return;
     session.finished = true;
     this.firstRun.finished(new Date());
-    session.window.close();
+    const win = session.window;
+    const tray = this.menuBar.bounds();
+    const target = flightTarget(tray);
+    if (target && !systemPreferences.getAnimationSettings().prefersReducedMotion) {
+      const start = Date.now();
+      win.setWindowButtonVisibility(false);
+      win.setBounds(target, true);
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, FLIGHT_MS - (Date.now() - start))));
+      if (win.isDestroyed()) return;
+    }
+    // Once the window has gone, so the bubble takes the focus from nothing on its way out.
+    if (target) win.once("closed", () => this.openUpHere(tray));
+    win.close();
+  }
+
+  /**
+   * Zel's bubble, once the setup window has gone into the menu bar icon at `tray`: on the icon's display, its tail
+   * under the icon (upHerePlace). Like Quick, it takes focus, and a click elsewhere puts it away. Nothing brings it back.
+   */
+  private openUpHere(tray: Box): void {
+    this.closeUpHere();
+    const win = createUpHereWindow();
+    this.upHereWindow = win;
+    const { x, y } = upHerePlace(tray, screen.getDisplayMatching(tray).workArea, UP_HERE_SIZE);
+    win.setPosition(x, y);
+    app.focus({ steal: true });
+    win.show();
+    win.focus();
+    win.on("blur", () => {
+      if (this.upHereWindow === win) this.closeUpHere();
+    });
+  }
+
+  /** Try it now, in the bubble: it goes, and Record a thought starts, as its shortcut would start it. */
+  tryItNow(): void {
+    this.closeUpHere();
+    void this.toggleDictate();
+  }
+
+  /** Not now, Esc or a click elsewhere: the bubble goes, for good. */
+  closeUpHere(): void {
+    const win = this.upHereWindow;
+    this.upHereWindow = null;
+    if (win && !win.isDestroyed()) win.close();
   }
 
   // ---------------------------------------------------------------- agent checks

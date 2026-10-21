@@ -77,6 +77,10 @@ const bridge: AvanzelBridge = {
     skipAsk: () => ipcRenderer.send("setup:skip-ask"),
     finish: () => ipcRenderer.send("setup:finish"),
   },
+  upHere: {
+    tryIt: () => ipcRenderer.send("up-here:try-it"),
+    close: () => ipcRenderer.send("up-here:close"),
+  },
 };
 
 contextBridge.exposeInMainWorld("avanzel", bridge);

@@ -1953,3 +1953,137 @@ test("a thought filed after the window was closed is the first filed thought all
   expect(noted).toMatchObject({ finishedAt: null, closedOn: "filing" });
   await app.close();
 });
+
+// The ending: Start using Avanzel flies the blank setup window onto the menu bar icon, then Zel says it's up there in a
+// bubble under the icon. AVANZEL_FAKE_TRAY_BOUNDS stands in for the icon's place, and `reduceMotion` for the Reduce
+// Motion main reads, so neither the flight nor the bubble depends on this Mac's own menu bar or settings.
+
+/** The menu bar icon in these tests, as AVANZEL_FAKE_TRAY_BOUNDS gives it: "x,y,width,height". */
+const ICON = "1000,0,24,24";
+
+/** A first run whose microphone hears "hello" as "Call the vet on Monday", with the menu bar icon at ICON. */
+const endingRun = (): Record<string, string> => ({
+  ...firstRun({ claude: filingClaude() }).env,
+  AVANZEL_FAKE_AUDIO: speechWav("hello"),
+  AVANZEL_FAKE_TRANSCRIPT: "Call the vet on Monday",
+  AVANZEL_FAKE_TRAY_BOUNDS: ICON,
+});
+
+/**
+ * Stands in for Reduce Motion as main reads it (systemPreferences.getAnimationSettings): on, or off. A stand-in that
+ * couldn't be put in place fails the test at once.
+ */
+async function reduceMotion(app: ElectronApplication, on: boolean): Promise<void> {
+  await app.evaluate(({ systemPreferences }, reduce) => {
+    const real = systemPreferences.getAnimationSettings.bind(systemPreferences);
+    const standIn: typeof systemPreferences.getAnimationSettings = () => ({ ...real(), prefersReducedMotion: reduce });
+    systemPreferences.getAnimationSettings = standIn;
+    if (systemPreferences.getAnimationSettings !== standIn) throw new Error("The Reduce Motion stand-in didn't take.");
+  }, on);
+}
+
+/** From now on, notes each frame the setup window is given (setBounds), and whether macOS animates it, for `flights`. */
+async function watchFlight(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ BrowserWindow }) => {
+    const setup = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"));
+    if (!setup) throw new Error("There is no setup window to watch.");
+    const flights: unknown[] = [];
+    (globalThis as { flights?: unknown[] }).flights = flights;
+    const setBounds = setup.setBounds.bind(setup);
+    setup.setBounds = (bounds, animate) => {
+      flights.push({ bounds, animate: animate === true });
+      setBounds(bounds, animate);
+    };
+  });
+}
+
+const flights = (app: ElectronApplication) => app.evaluate(() => (globalThis as { flights?: unknown[] }).flights ?? []);
+
+/** Where the bubble's window is, and the work area of the display that holds the icon. */
+const bubblePlace = (app: ElectronApplication) =>
+  app.evaluate(({ BrowserWindow, screen }) => {
+    const bubble = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/up-here/"));
+    return { bounds: bubble?.getBounds() ?? null, work: screen.getDisplayMatching({ x: 1000, y: 0, width: 24, height: 24 }).workArea };
+  });
+
+test("Start using Avanzel flies the window to the menu bar, Zel says it's up there, and Try it now records", async () => {
+  const app = await launch(endingRun());
+  const setup = await toDone(app);
+  await reduceMotion(app, false);
+  await watchFlight(app);
+  await setup.getByRole("button", { name: "Start using Avanzel" }).click();
+  // The page blanks itself at once, so the window flies as blank paper (the flight leaves it 700 ms to be read).
+  expect(await setup.evaluate(() => getComputedStyle(document.getElementById("root")!).visibility)).toBe("hidden");
+  await expect.poll(() => shown(app, "setup"), { timeout: 5_000 }).toBe(false);
+  // It flew: macOS animated its frame onto a 24 px square centred on the icon.
+  expect(await flights(app)).toEqual([{ bounds: { x: 1000, y: 0, width: 24, height: 24 }, animate: true }]);
+  const bubble = await windowFor(app, "up-here");
+  await expect.poll(() => shown(app, "up-here")).toBe(true);
+  await expect(bubble.getByText("I'm up here.", { exact: true })).toBeVisible();
+  await expect(bubble.getByText("⌥Space", { exact: true })).toBeVisible();
+  await expect(bubble.getByText(/^Press ⌥Space anywhere, say what's on your mind, and press it again\.$/)).toBeVisible();
+  await expect(bubble.locator('button[data-variant="primary"]')).toHaveText(["Try it now"]);
+  // Its tail's tip, 42 px in from the window's right edge, is under the icon's centre (x 1012), and the window's top is
+  // the top of the work area, under the menu bar. This display is wider than 1054 pt, so nothing moves it back in.
+  const { bounds, work } = await bubblePlace(app);
+  expect(bounds).toEqual({ x: 1012 + 42 - 320, y: Math.max(work.y, 24), width: 320, height: 200 });
+  await bubble.getByRole("button", { name: "Try it now" }).click();
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await expect.poll(() => shown(app, "up-here")).toBe(false);
+  await call(app, "cancelRecording");
+  await app.close();
+});
+
+test("Not now and Esc put the bubble away", async () => {
+  test.setTimeout(180_000); // two first runs, each walked to the end
+  for (const dismiss of ["Not now", "Esc"] as const) {
+    const app = await launch(endingRun());
+    const setup = await toDone(app);
+    await setup.getByRole("button", { name: "Start using Avanzel" }).click();
+    const bubble = await windowFor(app, "up-here");
+    await expect.poll(() => shown(app, "up-here")).toBe(true);
+    if (dismiss === "Not now") await bubble.getByRole("button", { name: "Not now" }).click();
+    else await bubble.keyboard.down("Escape"); // the bubble goes at once, before the key comes back up
+    await expect.poll(() => shown(app, "up-here"), { message: dismiss }).toBe(false);
+    expect(await capsuleKind(app)).toBe("hidden"); // and nothing records
+    await app.close();
+  }
+});
+
+test("under Reduce Motion the window just closes, Zel still says it's up there, and a click elsewhere puts it away", async () => {
+  const app = await launch(endingRun());
+  const setup = await toDone(app);
+  await reduceMotion(app, true);
+  await watchFlight(app);
+  await setup.getByRole("button", { name: "Start using Avanzel" }).click();
+  await expect.poll(() => shown(app, "setup"), { timeout: 5_000 }).toBe(false);
+  expect(await flights(app)).toEqual([]); // it closed where it was
+  const bubble = await windowFor(app, "up-here");
+  await expect.poll(() => shown(app, "up-here")).toBe(true);
+  await expect(bubble.getByText("I'm up here.", { exact: true })).toBeVisible();
+  // A click elsewhere takes the focus from it, and macOS tells its window so (blur). The app under test may not be this
+  // Mac's active app, which would have no focus to lose, so the test tells the window itself.
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/up-here/"))?.emit("blur");
+  });
+  await expect.poll(() => shown(app, "up-here")).toBe(false);
+  await app.close();
+});
+
+test("with the menu bar icon hidden, the window just closes, and no bubble points at it", async () => {
+  const app = await launch({ ...endingRun(), AVANZEL_FAKE_TRAY_BOUNDS: "0,0,0,0" });
+  const setup = await toDone(app);
+  await reduceMotion(app, false);
+  await watchFlight(app);
+  // The bubble's window is titled "Avanzel", and so is the capsule's, which has no title of its own but the app's name.
+  const titled = await windowsTitled(app, "Avanzel");
+  await setup.getByRole("button", { name: "Start using Avanzel" }).click();
+  await expect.poll(() => windowsTitled(app, "Set up Avanzel"), { timeout: 5_000 }).toBe(0);
+  expect(await flights(app)).toEqual([]);
+  // A bubble is made as the window closes, if at all: none was.
+  expect(await windowsTitled(app, "Avanzel")).toBe(titled);
+  // Opening Avanzel again finds it: Settings, now that there is a library.
+  await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
+  expect(await windowsTitled(app, "Avanzel Settings")).toBe(1);
+  await app.close();
+});

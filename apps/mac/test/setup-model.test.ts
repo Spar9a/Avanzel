@@ -3,7 +3,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadSettings, saveSettings, Vault } from "@avanzel/engine";
-import { answerSources, bestAgent, libraryAgent, libraryFolder, looksLikeATest, suggestQuestion, tildePath } from "../src/main/setup-model.ts";
+import {
+  answerSources,
+  bestAgent,
+  flightTarget,
+  libraryAgent,
+  libraryFolder,
+  looksLikeATest,
+  suggestQuestion,
+  tildePath,
+  upHerePlace,
+} from "../src/main/setup-model.ts";
 import { agentWorks, type AgentStatus, type FiledPage, type SetupAgent } from "../src/shared/ipc.ts";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "avz-setup-"));
@@ -131,5 +141,20 @@ describe("bestAgent", () => {
     expect(bestAgent([agent("claude", signedIn), agent("codex", signedIn)], "gemini")).toBe("claude");
     expect(bestAgent([agent("claude", signedIn), agent("codex", signedIn)], "auto")).toBe("claude");
     expect(bestAgent([agent("codex", signedIn)], null)).toBe("codex");
+  });
+});
+
+describe("the flight into the menu bar", () => {
+  it("flightTarget centres a 24 px square on the icon, and has none without one", () => {
+    expect(flightTarget({ x: 1000, y: 2, width: 30, height: 22 })).toEqual({ x: 1003, y: 1, width: 24, height: 24 });
+    expect(flightTarget({ x: 0, y: 0, width: 0, height: 0 })).toBeNull(); // macOS isn't showing the icon
+  });
+
+  it("upHerePlace puts the tail under the icon and keeps the bubble on the display", () => {
+    const work = { x: 0, y: 25, width: 1440, height: 875 };
+    const size = { width: 320, height: 200 };
+    expect(upHerePlace({ x: 1000, y: 0, width: 24, height: 24 }, work, size)).toEqual({ x: 734, y: 25 });
+    // An icon near the display's right edge: the window stays on the display, its tail no longer under the icon.
+    expect(upHerePlace({ x: 1420, y: 0, width: 20, height: 24 }, work, size).x).toBe(1120);
   });
 });

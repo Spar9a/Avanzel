@@ -91,6 +91,41 @@ export function createSetupWindow(): BrowserWindow {
   return win;
 }
 
+/**
+ * How long the setup window's flight into the menu bar takes at the end of setup, as long as --av-duration-drawer:
+ * macOS's own animation of its frame, then what is left of this before the window closes.
+ */
+export const FLIGHT_MS = 700;
+
+export const UP_HERE_SIZE = { width: 320, height: 200 };
+
+/**
+ * Zel's bubble under the menu bar icon, once setup has flown there: a see-through panel the page draws the bubble on,
+ * at its top right (upHerePlace puts its tail under the icon). Like Quick, it takes focus, so Esc reaches it.
+ */
+export function createUpHereWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    ...UP_HERE_SIZE,
+    show: false,
+    title: "Avanzel",
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    hasShadow: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    type: "panel",
+    webPreferences,
+  });
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  void win.loadFile(pagePath("up-here"));
+  return win;
+}
+
 export function createQuickWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 660,

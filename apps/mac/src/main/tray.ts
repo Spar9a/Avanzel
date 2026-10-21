@@ -1,5 +1,5 @@
-// The menu bar icon and its menu, rebuilt from MenuInput whenever something changes.
-import { Menu, Tray, nativeImage, type MenuItemConstructorOptions, type NativeImage } from "electron";
+// The menu bar icon and its menu, rebuilt from MenuInput whenever something changes, and where the icon is on screen.
+import { Menu, Tray, nativeImage, type MenuItemConstructorOptions, type NativeImage, type Rectangle } from "electron";
 import { buildMenuModel, menuLabel, type MenuInput } from "./menu-model.ts";
 import { dotIcon, encodePng, trayIcon } from "./png.ts";
 
@@ -47,5 +47,17 @@ export class MenuBar {
       };
     });
     this.tray.setContextMenu(Menu.buildFromTemplate(template));
+  }
+
+  /**
+   * Where the icon is on screen, in points; with no width or height while macOS isn't showing it, as people can hide
+   * it. With AVANZEL_TEST=1, AVANZEL_FAKE_TRAY_BOUNDS ("x,y,width,height") stands in for it, so the flight at the end
+   * of setup and the bubble under the icon don't depend on this Mac's own menu bar.
+   */
+  bounds(): Rectangle {
+    const fake = process.env.AVANZEL_TEST === "1" ? process.env.AVANZEL_FAKE_TRAY_BOUNDS : undefined;
+    if (!fake) return this.tray.getBounds();
+    const [x = 0, y = 0, width = 0, height = 0] = fake.split(",").map(Number);
+    return { x, y, width, height };
   }
 }

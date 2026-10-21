@@ -1,6 +1,6 @@
 // What the setup window decides from plain data: names for places, what is at the library's place, the agent that
-// files, a mic check told from a thought, the question to suggest and the pages an answer used. No Electron, so the
-// tests run them as they are.
+// files, a mic check told from a thought, the question to suggest, the pages an answer used, and at the end where the
+// window flies and where Zel's bubble goes. No Electron, so the tests run them as they are.
 import { existsSync, opendirSync, statSync } from "node:fs";
 import { loadSettings, Vault } from "@avanzel/engine";
 import { agentWorks, type FiledPage, type LibraryFolder, type SetupAgent } from "../shared/ipc.ts";
@@ -92,6 +92,44 @@ export function answerSources(answer: string): { paragraphs: string[]; names: st
     .map((line) => line.trim().replace(/^#+/, "").replaceAll("**", "").trim())
     .filter(Boolean);
   return { paragraphs, names };
+}
+
+/** A rectangle on screen, in points from the top left of the main display: the menu bar icon, a window, a work area. */
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Where the setup window flies when setup ends: a 24 × 24 square centred on the menu bar icon at `tray`, in whole
+ * points. None (null) when the icon has no width or height, as when macOS hides it: there is nothing to fly to.
+ */
+export function flightTarget(tray: Box): Box | null {
+  if (!(tray.width > 0 && tray.height > 0)) return null;
+  return { x: Math.round(tray.x + tray.width / 2 - 12), y: Math.round(tray.y + tray.height / 2 - 12), width: 24, height: 24 };
+}
+
+/**
+ * How far in from the bubble window's right edge the tip of Bubble's tail is: the tail is an 11 px square turned on its
+ * corner, 20 px in from the bubble's right edge, so its tip is 20 + 11 / 2 px in, and the page pads the bubble 16 px in
+ * from the window's edge. 41.5, rounded.
+ */
+const TAIL_TIP = 42;
+
+/**
+ * Where the window of Zel's bubble goes (its top left), so that the tip of its tail, TAIL_TIP in from the window's right
+ * edge, is under the centre of the menu bar icon at `tray`, at the top of `work` or the icon's bottom, whichever is
+ * lower. The window then moves back into `work`, the work area of the icon's display, as far as it has to.
+ */
+export function upHerePlace(tray: Box, work: Box, size: { width: number; height: number }): { x: number; y: number } {
+  const x = Math.round(tray.x + tray.width / 2 + TAIL_TIP - size.width);
+  const y = Math.round(Math.max(work.y, tray.y + tray.height));
+  return {
+    x: Math.min(Math.max(x, work.x), work.x + work.width - size.width),
+    y: Math.min(Math.max(y, work.y), work.y + work.height - size.height),
+  };
 }
 
 /** Whether `folder` holds nothing but .DS_Store. It reads no further than the first other entry: setup asks often. */

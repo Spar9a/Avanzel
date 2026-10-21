@@ -2,6 +2,12 @@
 #root {
   height: 100%;
 }
+/* Start using Avanzel: the window flies into the menu bar as blank paper, its page hidden (main.tsx's finish). Nothing
+   overflows it either, so no scroll bar shows as the window shrinks past the step's size. */
+#root[data-leaving] {
+  visibility: hidden;
+  overflow: hidden;
+}
 
 /* A strip to drag the window by, where the traffic lights sit; the stage beside the step; the footer. */
 .frame {
