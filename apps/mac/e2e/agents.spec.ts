@@ -187,6 +187,12 @@ test("Open Settings moves a Settings window that is open to the pane, and a pane
   await expect(paneButton(settings, "Privacy")).toHaveAttribute("aria-current", "page");
   await call(app, "openSettingsFor", "open-settings"); // an action that names no pane
   await expect(paneButton(settings, "General")).toHaveAttribute("aria-current", "page");
+  // The open window gets settings:show-pane with whatever pane it is asked for; one it doesn't have means General.
+  await call(app, "openSettingsFor", "open-settings:privacy");
+  await expect(paneButton(settings, "Privacy")).toHaveAttribute("aria-current", "page");
+  await call(app, "showSettings", "no-such-pane");
+  await expect(paneButton(settings, "General")).toHaveAttribute("aria-current", "page");
+  await expect(settings.getByRole("heading", { name: "General" })).toBeVisible();
   await app.close();
 });
 

@@ -18,8 +18,11 @@ export interface MenuInput {
   tasks: MenuTask[];
   recording: boolean;
   shortcuts: Shortcuts;
-  /** The actions whose shortcut another app holds: pressing it does nothing, so their items don't show it. */
-  takenShortcuts: readonly (keyof Shortcuts)[];
+  /**
+   * The actions whose shortcut didn't register: another app holds it, an earlier action has it, or macOS doesn't
+   * understand it. Pressing it does nothing for them, so their items don't show it.
+   */
+  unregisteredShortcuts: readonly (keyof Shortcuts)[];
   undoableReview: boolean;
 }
 
@@ -72,7 +75,7 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     .filter((t): t is MenuTask & { at: Date } => t.enabled && t.at !== null)
     .sort((a, b) => a.at.getTime() - b.at.getTime())[0];
 
-  const shortcut = (key: keyof Shortcuts) => (input.takenShortcuts.includes(key) ? {} : { accelerator: input.shortcuts[key] });
+  const shortcut = (key: keyof Shortcuts) => (input.unregisteredShortcuts.includes(key) ? {} : { accelerator: input.shortcuts[key] });
   const items: MenuItemModel[] = [
     { type: "item", label: inbox, action: "open-inbox", sublabel: upcoming && `Next: ${upcoming.name} ${nextPhrase(upcoming.at, now)}` },
     SEP,

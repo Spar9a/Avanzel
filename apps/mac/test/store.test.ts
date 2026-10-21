@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS, SettingsStore, normalizeSettings } from "../src/main/store.ts";
+import { DEFAULT_SETTINGS, NoticedShortcuts, SettingsStore, normalizeSettings } from "../src/main/store.ts";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "avz-store-"));
 
@@ -37,5 +37,31 @@ describe("settings store", () => {
     store.update({ fileMode: "evening", libraryPath: "/tmp/lib" });
     expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ fileMode: "evening", libraryPath: "/tmp/lib" });
     expect(new SettingsStore(file).get().fileMode).toBe("evening");
+  });
+});
+
+describe("noticed shortcuts", () => {
+  it("remember a noticed shortcut from one app run to the next, until it works", () => {
+    const file = path.join(tmp(), "noticed-shortcuts.json");
+    const noticed = new NoticedShortcuts(file);
+    expect(noticed.has("Alt+Space")).toBe(false);
+    noticed.add("Alt+Space");
+    noticed.add("Alt+Space");
+    noticed.add("Control+Alt+D");
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(["Alt+Space", "Control+Alt+D"]);
+    const later = new NoticedShortcuts(file); // the next launch
+    expect(later.has("Alt+Space")).toBe(true);
+    later.forget(["Alt+Space", "Alt+Shift+S"]);
+    expect(later.has("Alt+Space")).toBe(false);
+    expect(later.has("Control+Alt+D")).toBe(true);
+  });
+
+  it("start from none when the file is missing or isn't a list", () => {
+    const file = path.join(tmp(), "noticed-shortcuts.json");
+    expect(new NoticedShortcuts(file).has("Alt+Space")).toBe(false);
+    writeFileSync(file, '{"Alt+Space": true}');
+    expect(new NoticedShortcuts(file).has("Alt+Space")).toBe(false);
+    writeFileSync(file, '["Alt+Space", 7]');
+    expect(new NoticedShortcuts(file).has("Alt+Space")).toBe(true);
   });
 });

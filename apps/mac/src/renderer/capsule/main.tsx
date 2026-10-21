@@ -1,8 +1,8 @@
-import { Actions, Button, CapsuleNotice, Hud, Progress, Row, Stack, Text, Zel } from "@avanzel/ui";
+import { Actions, Button, CapsuleBar, CapsuleNotice, Hud, Progress, Row, Stack, Text, Zel } from "@avanzel/ui";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
-import type { AvanzelBridge, CapsuleState, FiledPage, Shortcuts } from "../../shared/ipc.ts";
+import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
+import type { AvanzelBridge, CapsuleState, FiledPage } from "../../shared/ipc.ts";
 import { Recorder } from "./recorder.ts";
 import "./styles.css";
 
@@ -17,14 +17,6 @@ const BARS = 16;
 
 /** Whole megabytes, as macOS counts them. */
 const mb = (bytes: number) => Math.round(bytes / 1e6);
-
-/** Each action as the menu bar names it. */
-const ACTION_NAMES: Record<keyof Shortcuts, string> = {
-  dictate: "Record a thought",
-  capture: "Capture screen with a comment",
-  type: "Type a thought",
-  ask: "Ask your library",
-};
 
 function useLevels(listening: boolean, fake: boolean) {
   const [levels, setLevels] = useState<number[]>(() => Array(BARS).fill(0.08));
@@ -249,11 +241,13 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
               </Actions>
             }
           >
-            Pick another shortcut. {ACTION_NAMES[state.key]} is still in the menu bar.
+            Pick another shortcut. “{ACTION_NAMES[state.key]}” is still in the menu bar.
           </CapsuleNotice>
         </div>
       );
     }
+    case "shortcut-picked":
+      return <CapsuleBar mood="filed">{`${ACTION_NAMES[state.key]} now uses ${prettyAccelerator(state.accelerator)}`}</CapsuleBar>;
   }
 }
 

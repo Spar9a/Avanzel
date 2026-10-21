@@ -1,4 +1,5 @@
-// App-level preferences (not per library): where the library is, shortcuts, how notes are filed.
+// App-level preferences (not per library): where the library is, shortcuts, how notes are filed. And, apart from
+// them, the taken shortcuts the capsule has named.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AppSettings, Shortcuts } from "../shared/ipc.ts";
@@ -65,5 +66,45 @@ export class SettingsStore {
     } catch {
       return normalizeSettings({});
     }
+  }
+}
+
+/**
+ * The shortcuts (accelerators, "Alt+Space") whose notice the capsule has shown because another app holds them, kept
+ * with the app, not the library: each is named once, and again only after it has worked in between.
+ */
+export class NoticedShortcuts {
+  constructor(private readonly file: string) {}
+
+  has(accelerator: string): boolean {
+    return this.load().includes(accelerator);
+  }
+
+  add(accelerator: string): void {
+    const noticed = this.load();
+    if (!noticed.includes(accelerator)) this.save([...noticed, accelerator]);
+  }
+
+  /** Forgets the `working` ones: they registered fine, so a later taker gets the notice again. */
+  forget(working: readonly string[]): void {
+    const noticed = this.load();
+    const kept = noticed.filter((accelerator) => !working.includes(accelerator));
+    if (kept.length !== noticed.length) this.save(kept);
+  }
+
+  private load(): string[] {
+    try {
+      const raw: unknown = JSON.parse(readFileSync(this.file, "utf8"));
+      return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private save(noticed: readonly string[]): void {
+    mkdirSync(path.dirname(this.file), { recursive: true });
+    const partial = `${this.file}.tmp`;
+    writeFileSync(partial, `${JSON.stringify(noticed, null, 2)}\n`);
+    renameSync(partial, this.file);
   }
 }

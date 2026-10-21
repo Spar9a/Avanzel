@@ -179,6 +179,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
       { kind: "shortcut-taken", key: "dictate", accelerator: "Alt+Space", holder: null, alternatives: [] },
       "⌥Space is used by another app.",
     ],
+    ["shortcut-picked", { kind: "shortcut-picked", key: "dictate", accelerator: "Control+Shift+Space" }, "Record a thought now uses ⌃⇧Space"],
   ];
 }
 

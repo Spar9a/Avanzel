@@ -18,7 +18,7 @@ function input(overrides: Partial<MenuInput> = {}): MenuInput {
     ],
     recording: false,
     shortcuts: DEFAULT_SETTINGS.shortcuts,
-    takenShortcuts: [],
+    unregisteredShortcuts: [],
     undoableReview: false,
     ...overrides,
   };
@@ -65,8 +65,8 @@ describe("tray menu", () => {
     expect(weekly).toMatchObject({ action: "task:weekly-review", detail: "Sun 18:00" });
   });
 
-  it("a taken shortcut is not shown in the menu", () => {
-    const items = buildMenuModel(input({ takenShortcuts: ["dictate"] }), now);
+  it("a shortcut that didn't register is not shown in the menu", () => {
+    const items = buildMenuModel(input({ unregisteredShortcuts: ["dictate"] }), now);
     const item = (action: string) => items.find((i) => i.type === "item" && i.action === action);
     expect(item("dictate")).toEqual({ type: "item", label: "Record a thought", action: "dictate" });
     expect(item("capture")).toMatchObject({ accelerator: "Alt+Shift+S" });

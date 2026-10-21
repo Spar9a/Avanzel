@@ -77,7 +77,7 @@ import { runningAppNames } from "./running-apps.ts";
 import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
-import { SettingsStore } from "./store.ts";
+import { NoticedShortcuts, SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
 import {
   createAskWindow,
@@ -94,6 +94,8 @@ const QUIT_WAIT_MS = 10_000;
 const AUDIO_TIMEOUT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_AUDIO_TIMEOUT_MS)) || 15_000;
 // How long the download's progress stays in the capsule by itself; Settings → Voice keeps showing it (tests change it).
 const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PREPARING_SHOW_MS)) || 8_000;
+// How long the capsule says that a shortcut picked on its notice works.
+const PICKED_SHOW_MS = 3_000;
 const HARNESS_NAMES: Record<string, string> = {
   claude: "Claude Code", codex: "Codex", opencode: "OpenCode", "cursor-agent": "Cursor Agent", gemini: "Gemini CLI",
 };
@@ -212,6 +214,8 @@ export class Controller {
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
   /** The notice of each shortcut another app holds, with its free alternatives, in the order they register. */
   private takenShortcuts: TakenShortcut[] = [];
+  /** The taken shortcuts whose notice the capsule has shown, in this app run or an earlier one. */
+  private readonly noticed: NoticedShortcuts;
   /** What each agent's check found in this app run, by harness name, for Settings → Agents. */
   private readonly agentChecks = new Map<string, AgentStatus>();
   /** The agent checks going on, each by the controller that stops it when Avanzel quits. */
@@ -232,6 +236,7 @@ export class Controller {
     this.store = new SettingsStore(path.join(userData, "settings.json"));
     this.modelsDir = path.join(userData, "models");
     this.runState = new RunStateStore(path.join(userData, "run-state.json"));
+    this.noticed = new NoticedShortcuts(path.join(userData, "noticed-shortcuts.json"));
   }
 
   // ---------------------------------------------------------------- lifecycle
@@ -250,11 +255,7 @@ export class Controller {
     // Before the shortcuts: one pressed while ps runs (applyShortcuts) finds what this Mac has, not "missing, 0 bytes".
     await this.refreshModelStatus();
     await this.applyShortcuts();
-    // A shortcut another app holds does nothing when pressed: the capsule says so at once, with free ones to pick. Not
-    // without a library, whose menu has no Record a thought yet (Settings opens below, and its Voice pane offers the
-    // free ones), and never over what the capsule already shows, such as a shortcut pressed while ps ran.
-    const [taken] = this.takenShortcuts;
-    if (taken && this.vault && this.capsuleState.kind === "hidden") this.setCapsule(taken);
+    this.noticeTakenShortcut();
     // With a library the speech models download unasked; without one, Settings → Voice offers them.
     if (this.vault && this.model.kind === "missing") void this.downloadModel();
     this.refreshMenu();
@@ -398,25 +399,52 @@ export class Controller {
       holder: likelyHolder(shortcuts[key], running),
       alternatives: freeAlternatives(key, shortcuts, api),
     }));
+    // A shortcut that works now is named again should another app take it later.
+    const keys = Object.keys(shortcuts) as (keyof Shortcuts)[];
+    this.noticed.forget(keys.filter((key) => shortcuts[key] && !registration.problems[key]).map((key) => shortcuts[key]));
+  }
+
+  /**
+   * At launch and when a library is set up, the capsule names a shortcut another app holds, with free ones to pick: one
+   * it hasn't named before (`noticed`), since another app's shortcut stays taken from launch to launch. Not without a
+   * library, whose menu has no Record a thought yet (Settings → Voice offers the free ones meanwhile), and never over
+   * what the capsule already shows, such as a shortcut pressed while ps ran.
+   */
+  private noticeTakenShortcut(): void {
+    if (!this.vault || this.capsuleState.kind !== "hidden") return;
+    const taken = this.takenShortcuts.find((notice) => !this.noticed.has(notice.accelerator));
+    if (taken) this.showTaken(taken);
+  }
+
+  /** The notice of a taken shortcut, which is then not shown at a later launch while it stays taken. */
+  private showTaken(taken: TakenShortcut): void {
+    this.noticed.add(taken.accelerator);
+    this.setCapsule(taken);
   }
 
   /**
    * Use, on the capsule's notice of a taken shortcut: `accelerator` becomes `key`'s shortcut, the way Settings sets one.
-   * The notice follows (`followShortcuts`): it goes once that shortcut works, and names it, with fresh alternatives,
-   * if another app took it meanwhile.
+   * The notice follows (`followShortcuts`): once that shortcut works, the capsule says so for a moment; if another app
+   * took it meanwhile, the notice names it, with fresh alternatives.
    */
   async useShortcut(key: keyof Shortcuts, accelerator: string): Promise<void> {
-    await this.setApp({ shortcuts: { ...this.store.get().shortcuts, [key]: accelerator } });
+    await this.changeApp({ shortcuts: { ...this.store.get().shortcuts, [key]: accelerator } }, key);
   }
 
   /**
-   * A capsule showing the notice of a taken shortcut keeps up with the shortcuts, wherever they were changed: it hides
-   * once that action's shortcut works, and shows the shortcut it has now, with fresh alternatives, while it doesn't.
+   * A capsule showing the notice of a taken shortcut keeps up with the shortcuts, wherever they were changed: while that
+   * action's shortcut doesn't work, it shows the shortcut it has now, with fresh alternatives. Once it works, it hides,
+   * or says it works when the notice's own Use picked it (`picked`).
    */
-  private followShortcuts(): void {
+  private followShortcuts(picked?: keyof Shortcuts): void {
     const state = this.capsuleState;
     if (state.kind !== "shortcut-taken") return;
-    this.setCapsule(this.takenShortcuts.find((taken) => taken.key === state.key) ?? { kind: "hidden" });
+    const taken = this.takenShortcuts.find((notice) => notice.key === state.key);
+    if (taken) return this.showTaken(taken);
+    if (picked === state.key && !this.shortcutProblems[picked]) {
+      return this.setCapsule({ kind: "shortcut-picked", key: picked, accelerator: this.store.get().shortcuts[picked] }, PICKED_SHOW_MS);
+    }
+    this.setCapsule({ kind: "hidden" });
   }
 
   private async menuAction(action: string): Promise<void> {
@@ -451,7 +479,7 @@ export class Controller {
       })),
       recording: !!this.recording,
       shortcuts: this.store.get().shortcuts,
-      takenShortcuts: this.takenShortcuts.map((taken) => taken.key),
+      unregisteredShortcuts: Object.keys(this.shortcutProblems) as (keyof Shortcuts)[],
       undoableReview: this.lastEveningCommits.length > 0,
     };
   }
@@ -1326,11 +1354,16 @@ export class Controller {
 
   /** Changed shortcuts are registered before it returns, so its snapshot says which are taken, with their alternatives. */
   async setApp(patch: Partial<AppSettings>): Promise<SettingsSnapshot> {
+    return this.changeApp(patch);
+  }
+
+  /** setApp, for `picked`'s shortcut chosen on the capsule's notice of a taken one, when it is (`useShortcut`). */
+  private async changeApp(patch: Partial<AppSettings>, picked?: keyof Shortcuts): Promise<SettingsSnapshot> {
     const before = this.store.get();
     const after = this.store.update(patch);
     if (JSON.stringify(before.shortcuts) !== JSON.stringify(after.shortcuts)) {
       await this.applyShortcuts();
-      this.followShortcuts();
+      this.followShortcuts(picked);
     }
     if (patch.launchAtLogin !== undefined) app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
     this.broadcast();
@@ -1397,6 +1430,7 @@ export class Controller {
     await this.refreshModelStatus(); // its [voice] settings say which speech models it needs
     if (this.vault && this.model.kind === "missing") void this.downloadModel();
     this.checkAgents();
+    this.noticeTakenShortcut(); // the menu has Record a thought now
     this.broadcast();
     return this.snapshot();
   }

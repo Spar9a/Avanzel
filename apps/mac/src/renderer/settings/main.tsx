@@ -1,8 +1,8 @@
 import { Button, Row, Text } from "@avanzel/ui";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { createRoot } from "react-dom/client";
 import { SETTINGS_PANES, isSettingsPane, type AgentStatus, type AvanzelBridge, type SettingsPane, type SettingsSnapshot, type Shortcuts, type TaskInfo } from "../../shared/ipc.ts";
-import { prettyAccelerator } from "../../main/shortcuts.ts";
+import { ACTION_NAMES, prettyAccelerator } from "../../main/shortcuts.ts";
 import "../common/mac.css";
 import "./styles.css";
 
@@ -55,10 +55,11 @@ function toAccelerator(e: React.KeyboardEvent): string | null {
   return [...mods, key].join("+");
 }
 
-function ShortcutField({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) {
+function ShortcutField({ value, onChange, label, ref }: { value: string; onChange: (v: string) => void; label: string; ref?: Ref<HTMLButtonElement> }) {
   const [recording, setRecording] = useState(false);
   return (
     <button
+      ref={ref}
       className={`btn keys${recording ? " recording" : ""}`}
       aria-label={`${label} shortcut`}
       onClick={() => setRecording(true)}
@@ -177,12 +178,9 @@ function Voice({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Setti
   useEffect(() => {
     navigator.mediaDevices.enumerateDevices().then((all) => setMics(all.filter((d) => d.kind === "audioinput" && d.deviceId !== "default")));
   }, []);
-  const rows: [keyof Shortcuts, string][] = [
-    ["dictate", "Record a thought"],
-    ["capture", "Capture screen with a comment"],
-    ["type", "Type a thought"],
-    ["ask", "Ask your library"],
-  ];
+  const rows = Object.entries(ACTION_NAMES) as [keyof Shortcuts, string][];
+  // Each row's shortcut field: a picked "Use …" goes with the others, so the focus moves to the field it changed.
+  const fields = useRef<Partial<Record<keyof Shortcuts, HTMLButtonElement | null>>>({});
   const model = snap.model;
   return (
     <>
@@ -192,6 +190,10 @@ function Voice({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Setti
       >
         {rows.map(([key, label]) => {
           const use = async (accelerator: string) => onChange(await api.setApp({ shortcuts: { ...snap.app.shortcuts, [key]: accelerator } }));
+          const pick = async (accelerator: string) => {
+            await use(accelerator);
+            fields.current[key]?.focus();
+          };
           const alternatives = snap.shortcutAlternatives[key] ?? [];
           return (
             <div className="grow" key={key}>
@@ -202,7 +204,7 @@ function Voice({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Setti
                   <div className="alternatives">
                     <Row gap={6}>
                       {alternatives.map((alternative) => (
-                        <Button key={alternative} size="small" variant="secondary" onClick={() => void use(alternative)}>
+                        <Button key={alternative} size="small" variant="secondary" onClick={() => void pick(alternative)}>
                           {`Use ${prettyAccelerator(alternative)}`}
                         </Button>
                       ))}
@@ -210,7 +212,7 @@ function Voice({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Setti
                   </div>
                 )}
               </div>
-              <ShortcutField label={label} value={snap.app.shortcuts[key]} onChange={use} />
+              <ShortcutField ref={(field) => { fields.current[key] = field; }} label={label} value={snap.app.shortcuts[key]} onChange={use} />
             </div>
           );
         })}
@@ -479,7 +481,8 @@ function App() {
     api.get().then(setSnap);
     return api.onChanged(setSnap);
   }, []);
-  useEffect(() => api.onShowPane(setPane), []); // an error card's Open Settings, while this window is open
+  // An error card's Open Settings, while this window is open: a pane Settings doesn't have means General.
+  useEffect(() => api.onShowPane((next) => setPane(isSettingsPane(next) ? next : "general")), []);
   if (!snap) return null;
   const props = { snap, onChange: setSnap };
   return (

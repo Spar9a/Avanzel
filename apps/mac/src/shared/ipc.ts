@@ -49,7 +49,10 @@ export type CapsuleState =
     }
   /** The shortcut, after the speech models' download failed: typing instead, or Try again. */
   | { kind: "model-failed" }
-  /** At launch, and as the shortcuts change while it shows: another app holds `key`'s shortcut, `accelerator`. */
+  /**
+   * At launch or when a library is set up, once per shortcut, and as the shortcuts change while it shows: another app
+   * holds `key`'s shortcut, `accelerator`.
+   */
   | {
       kind: "shortcut-taken";
       key: keyof Shortcuts;
@@ -58,7 +61,9 @@ export type CapsuleState =
       holder: string | null;
       /** Free shortcuts to use instead, best first; with none, the notice offers Settings. */
       alternatives: string[];
-    };
+    }
+  /** A free shortcut picked on that notice works: `key` now uses `accelerator`. It hides by itself. */
+  | { kind: "shortcut-picked"; key: keyof Shortcuts; accelerator: string };
 
 export interface Shortcuts {
   dictate: string;

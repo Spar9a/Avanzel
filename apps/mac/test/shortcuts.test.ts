@@ -39,6 +39,25 @@ describe("global shortcuts", () => {
     expect(taken).toEqual(["dictate"]);
   });
 
+  it("a shortcut an earlier action has is that action's, not another app's", () => {
+    const { api, registered } = fakeApi();
+    // Written another way, ⌥Space is still Record a thought's.
+    const { problems, taken } = registerShortcuts({ ...DEFAULT_SETTINGS.shortcuts, type: "Option+space" }, handlers(), api, ["Alfred"]);
+    expect(problems).toEqual({ type: "⌥Space is already the shortcut for Record a thought. Pick another shortcut." });
+    expect(taken).toEqual([]); // so no launch notice and no free ones
+    expect([...registered]).toEqual(["Alt+Space", "Alt+Shift+S", "Alt+Shift+A"]); // and it isn't tried again
+  });
+
+  it("a shortcut an earlier action has is that action's even when another app holds it", () => {
+    const { api } = fakeApi({ taken: ["Alt+Space"] });
+    const { problems, taken } = registerShortcuts({ ...DEFAULT_SETTINGS.shortcuts, ask: "Alt+Space" }, handlers(), api);
+    expect(problems).toEqual({
+      dictate: "⌥Space is used by another app. Pick another shortcut.",
+      ask: "⌥Space is already the shortcut for Record a thought. Pick another shortcut.",
+    });
+    expect(taken).toEqual(["dictate"]);
+  });
+
   it("reports shortcuts Electron cannot parse", () => {
     const { api } = fakeApi({ invalid: ["Hyper+Q"] });
     const { problems, taken } = registerShortcuts({ ...DEFAULT_SETTINGS.shortcuts, ask: "Hyper+Q" }, handlers(), api);

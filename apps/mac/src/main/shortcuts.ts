@@ -8,6 +8,14 @@ export interface ShortcutApi {
   unregisterAll(): void;
 }
 
+/** Each action by its role name: its item in the menu bar menu, which adds "…" to some. */
+export const ACTION_NAMES: Readonly<Record<keyof Shortcuts, string>> = {
+  dictate: "Record a thought",
+  capture: "Capture screen with a comment",
+  type: "Type a thought",
+  ask: "Ask your library",
+};
+
 const ORDER = ["Control", "Alt", "Shift", "Command"] as const;
 const SYMBOL: Record<(typeof ORDER)[number], string> = { Control: "⌃", Alt: "⌥", Shift: "⇧", Command: "⌘" };
 const ALIASES: Record<string, (typeof ORDER)[number]> = {
@@ -57,11 +65,20 @@ export function takenMessage(accelerator: string, holder: string | null): string
 export interface Registration {
   /** What Settings → Voice says of each shortcut that didn't register. */
   problems: Partial<Record<keyof Shortcuts, string>>;
-  /** The actions whose shortcut another app holds, in the order they register; not one macOS doesn't understand. */
+  /**
+   * The actions whose shortcut another app holds, in the order they register: not one macOS doesn't understand, nor
+   * one an earlier action of Avanzel's has.
+   */
   taken: (keyof Shortcuts)[];
 }
 
-/** Registers every action's shortcut. `running` (process names) names the app that probably holds a taken one. */
+/** The same shortcut however it is written ("Alt+Space", "Option+space"): as macOS shows it, in one case. */
+const sameShortcut = (accelerator: string) => prettyAccelerator(accelerator).toLowerCase();
+
+/**
+ * Registers every action's shortcut. One an earlier action has already is not registered again: it isn't another
+ * app's, and gets no free ones. `running` (process names) names the app that probably holds a taken one.
+ */
 export function registerShortcuts(
   shortcuts: Shortcuts,
   handlers: Record<keyof Shortcuts, () => void>,
@@ -71,14 +88,21 @@ export function registerShortcuts(
   api.unregisterAll();
   const problems: Partial<Record<keyof Shortcuts, string>> = {};
   const taken: (keyof Shortcuts)[] = [];
+  const owners = new Map<string, keyof Shortcuts>(); // each shortcut macOS understands, by the action that has it
   for (const key of ["dictate", "capture", "type", "ask"] as const) {
     const accelerator = shortcuts[key];
     if (!accelerator) continue;
+    const owner = owners.get(sameShortcut(accelerator));
+    if (owner) {
+      problems[key] = `${prettyAccelerator(shortcuts[owner])} is already the shortcut for ${ACTION_NAMES[owner]}. Pick another shortcut.`;
+      continue;
+    }
     try {
       if (!api.register(accelerator, handlers[key])) {
         problems[key] = `${takenMessage(accelerator, likelyHolder(accelerator, running))} Pick another shortcut.`;
         taken.push(key);
       }
+      owners.set(sameShortcut(accelerator), key);
     } catch {
       problems[key] = `“${accelerator}” is not a shortcut macOS understands.`;
     }
