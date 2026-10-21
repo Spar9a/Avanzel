@@ -200,6 +200,20 @@ export interface SetupAgent {
   status: AgentStatus | null;
 }
 
+/** How the press of Record a thought's shortcut went on the first-thought step. */
+export interface SetupPress {
+  /** Registering it failed: another app holds it. */
+  taken: boolean;
+  /** A press arrived since the step asked for one: the shortcut works. */
+  heard: boolean;
+  /** No press arrived within the wait (3 s), and none since. */
+  silent: boolean;
+  /** The running app whose default shortcut it is, if one is running. */
+  holder: string | null;
+  /** Free shortcuts to use instead, best first: filled when taken or silent. */
+  alternatives: string[];
+}
+
 /** Everything the setup window shows, in one snapshot (setup:changed). Later tasks add fields. */
 export interface SetupSnapshot {
   /** Where Looks good makes or uses the library: the stored libraryPath, else ~/Avanzel, until Change… picks another. */
@@ -229,6 +243,11 @@ export interface SetupSnapshot {
   agent: string | null;
   /** Why Looks good couldn't make or use the library at libraryPath; null until a try fails, and again once one works or Change… picks a folder. */
   makeProblem: string | null;
+  /**
+   * The first-thought step's test of `shortcut`: whether another app holds it, or else whether a press arrived. It starts
+   * over each time the step is entered and each time the shortcut changes there.
+   */
+  press: SetupPress;
 }
 
 export interface AskResult {
@@ -320,5 +339,10 @@ export interface AvanzelBridge {
     openTerminal(): void;
     /** Copy, beside an install command on Found: `text` goes to the clipboard. */
     copy(text: string): void;
+    /**
+     * Use {shortcut}, on the first-thought step's Notice of a taken or silent shortcut: `accelerator` becomes Record a
+     * thought's shortcut, and the step listens for a press of it afresh; setup:changed follows.
+     */
+    useShortcut(accelerator: string): Promise<SetupSnapshot>;
   };
 }

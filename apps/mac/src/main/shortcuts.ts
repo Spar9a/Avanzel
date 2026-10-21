@@ -23,12 +23,18 @@ const ALIASES: Record<string, (typeof ORDER)[number]> = {
   cmd: "Command", command: "Command", commandorcontrol: "Command", cmdorctrl: "Command", super: "Command", meta: "Command",
 };
 
-/** "Alt+Shift+S" → "⌥⇧S", in the modifier order macOS menus use. */
-export function prettyAccelerator(accelerator: string): string {
+/** "Alt+Space" → ["⌥", "Space"]: the keys to press, each modifier as its symbol in the order macOS menus use, then the key. */
+export function keyCaps(accelerator: string): string[] {
   const parts = accelerator.split("+");
   const key = parts.pop() ?? "";
   const mods = new Set(parts.map((p) => ALIASES[p.toLowerCase()]).filter(Boolean));
-  return ORDER.filter((m) => mods.has(m)).map((m) => SYMBOL[m]).join("") + key;
+  const caps = ORDER.filter((m) => mods.has(m)).map((m) => SYMBOL[m]);
+  return key ? [...caps, key] : caps;
+}
+
+/** "Alt+Shift+S" → "⌥⇧S", in the modifier order macOS menus use. */
+export function prettyAccelerator(accelerator: string): string {
+  return keyCaps(accelerator).join("");
 }
 
 /**

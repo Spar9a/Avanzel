@@ -65,6 +65,7 @@ const bridge: AvanzelBridge = {
     chooseFolder: () => ipcRenderer.invoke("setup:choose-folder"),
     openTerminal: () => ipcRenderer.send("setup:open-terminal"),
     copy: (text) => ipcRenderer.send("setup:copy", text),
+    useShortcut: (accelerator) => ipcRenderer.invoke("setup:use-shortcut", accelerator),
   },
 };
 

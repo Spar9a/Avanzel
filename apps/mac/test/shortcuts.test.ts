@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ALTERNATIVES, freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "../src/main/shortcuts.ts";
+import { ALTERNATIVES, freeAlternatives, keyCaps, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "../src/main/shortcuts.ts";
 import { DEFAULT_SETTINGS } from "../src/main/store.ts";
 
 const handlers = () => ({ dictate: vi.fn(), capture: vi.fn(), type: vi.fn(), ask: vi.fn() });
@@ -80,6 +80,12 @@ describe("global shortcuts", () => {
     expect(likelyHolder("Alt+Space", ["superwhisper"])).toBe("Superwhisper");
     expect(likelyHolder("Alt+Space", ["superwhisper", "RAYCAST"])).toBe("Raycast"); // Raycast comes first in the list
     expect(likelyHolder("Alt+Space", ["Finder"])).toBeNull();
+  });
+
+  it("keyCaps splits a shortcut into keycaps in macOS order", () => {
+    expect(keyCaps("Alt+Space")).toEqual(["⌥", "Space"]);
+    expect(keyCaps("Control+Shift+Space")).toEqual(["⌃", "⇧", "Space"]);
+    expect(keyCaps("Command+Alt+K")).toEqual(["⌥", "⌘", "K"]); // written in another order, drawn in macOS's
   });
 });
 

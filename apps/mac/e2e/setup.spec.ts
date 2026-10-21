@@ -57,6 +57,12 @@ const HAS_FILES = "This folder has files already. I'll add the shelves, an AGENT
 /** The heading of the step after Found. */
 const THINK = "What's on your mind this week?";
 
+/** The first-thought step's instruction, which holds Record a thought's shortcut. */
+const INSTRUCTION = /^Press .+, ramble for half a minute, then press it again\. I'll sort it out\.$/;
+
+/** The nudge the first-thought step shows when no press of the shortcut arrives within the wait. */
+const NUDGE = /^Did .+ do nothing\?$/;
+
 /** The install commands Found shows when no agent is installed: each vendor's own, as its install docs give it. */
 const CLAUDE_INSTALL = "curl -fsSL https://claude.ai/install.sh | bash";
 const CODEX_INSTALL = "curl -fsSL https://chatgpt.com/codex/install.sh | sh";
@@ -95,6 +101,26 @@ async function withinStep(control: Locator, step: Locator): Promise<boolean> {
 
 /** How far the setup step scrolls sideways: 0 while every line fits its width, a long path's included. */
 const sideways = (setup: Page) => setup.getByRole("main").evaluate((el) => el.scrollWidth - el.clientWidth);
+
+/** From now on, notes the kind of every state sent to the capsule, for sentToCapsule. */
+async function watchCapsule(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ BrowserWindow }) => {
+    const capsule = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/capsule/"));
+    if (!capsule) throw new Error("There is no capsule window to watch.");
+    const sent: string[] = [];
+    (globalThis as { sentToCapsule?: string[] }).sentToCapsule = sent;
+    const send = capsule.webContents.send.bind(capsule.webContents);
+    capsule.webContents.send = (channel: string, ...args: unknown[]) => {
+      if (channel === "capsule:state") sent.push((args[0] as { kind: string }).kind);
+      send(channel, ...args);
+    };
+  });
+}
+
+const sentToCapsule = (app: ElectronApplication) => app.evaluate(() => (globalThis as { sentToCapsule?: string[] }).sentToCapsule ?? []);
+
+/** The stage's keycaps, as the first-thought step draws Record a thought's shortcut. */
+const keycaps = (setup: Page) => setup.locator('kbd[data-size="key"]');
 
 /** Closes the setup window, as its red button does, and waits until it has gone. */
 async function closeSetup(app: ElectronApplication): Promise<void> {
@@ -690,5 +716,137 @@ test("with five agents, a problem that shows above the part of the list in view 
   await setup.getByRole("main").evaluate((el) => el.scrollTo(0, el.scrollHeight));
   await setup.getByRole("button", { name: "Use this folder" }).click();
   await expect(setup.getByRole("alert").getByRole("button", { name: "Change…" })).toBeInViewport({ ratio: 1, timeout: 20_000 });
+  await app.close();
+});
+
+// The first-thought step tests the shortcut with a real press: macOS lets an app register a shortcut another app holds,
+// so only a press that arrives says it works. firstRun() makes the wait 60 s, so these tests set it when they need it.
+
+test("a press of the shortcut is heard, and setup says it is free", async () => {
+  const app = await launch(firstRun().env);
+  const setup = await throughFound(app);
+  await expect(setup.getByText(INSTRUCTION)).toContainText("⌥Space");
+  await expect(setup.getByText("If you're stuck, try a goal, someone you work with, or an idea you keep coming back to.", { exact: true })).toBeVisible();
+  await expect(setup.getByText("Your words will appear here.", { exact: true })).toBeVisible();
+  // The stage draws the shortcut as keycaps, one per key.
+  await expect(keycaps(setup)).toHaveText(["⌥", "Space"]);
+  await expect.poll(() => call(app, "setupStepForTests")).toBe("think");
+  await call(app, "toggleDictate");
+  await expect(setup.getByText("⌥Space is free on this Mac, so it works in every app. Esc cancels.", { exact: true })).toBeVisible();
+  // The press only says that the shortcut works: nothing records yet, so the capsule shows nothing.
+  expect(await capsuleKind(app)).toBe("hidden");
+  await expect(setup.getByText(NUDGE)).toHaveCount(0);
+  await app.close();
+});
+
+test("no press within the wait offers two free shortcuts, and the one picked is the one to press", async () => {
+  const app = await launch({ ...firstRun().env, AVANZEL_PRESS_WAIT_MS: "300" });
+  const setup = await throughFound(app);
+  await expect(setup.getByText("Did ⌥Space do nothing?", { exact: true })).toBeVisible();
+  // Whatever this Mac runs: a running Alfred, Raycast, ChatGPT or Superwhisper is named as the likely holder.
+  await expect(setup.getByText(/^Another app may be using it(, probably \w+)?\. Try another shortcut\.$/)).toBeVisible();
+  // The best one last, as the primary.
+  const uses = setup.getByRole("button", { name: /^Use / });
+  await expect(uses).toHaveText(["Use ⌃⌥R", "Use ⌃⇧Space"]);
+  await expect(uses.last()).toHaveAttribute("data-variant", "primary");
+  // Whether the step is ever without the nudge from here on, even for a frame.
+  await setup.evaluate(() => {
+    const page = window as { cleared?: boolean };
+    page.cleared = false;
+    new MutationObserver(() => {
+      if (!/do nothing\?/.test(document.querySelector("main")?.textContent ?? "")) page.cleared = true;
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+  await setup.getByRole("button", { name: "Use ⌃⇧Space" }).click();
+  await expect.poll(async () => (await settingsSnap(app)).app.shortcuts.dictate).toBe("Control+Shift+Space");
+  await expect(setup.getByText(INSTRUCTION)).toContainText("⌃⇧Space");
+  await expect(keycaps(setup)).toHaveText(["⌃", "⇧", "Space"]);
+  // The wait starts over for the new shortcut: the nudge goes with the pick, comes back once the new one goes unpressed
+  // as long, and a press ends it.
+  await expect(setup.getByText("Did ⌃⇧Space do nothing?", { exact: true })).toBeVisible();
+  expect(await setup.evaluate(() => (window as { cleared?: boolean }).cleared)).toBe(true);
+  await call(app, "toggleDictate");
+  await expect(setup.getByText(NUDGE)).toHaveCount(0);
+  await expect(setup.getByText("⌃⇧Space is free on this Mac, so it works in every app. Esc cancels.", { exact: true })).toBeVisible();
+  await app.close();
+});
+
+test("a ⌥Space another app holds is named at once, and the capsule doesn't name it too", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({ ...firstRun().env, AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space", AVANZEL_USER_DATA: userData });
+  await call(app, "snapshot"); // it has started: a launch notice would show by now
+  expect(await capsuleKind(app)).toBe("hidden");
+  await watchCapsule(app);
+  const setup = await throughFound(app);
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText(/^⌥Space is used by another app/)).toBeVisible();
+  await expect(notice.getByText("Pick another shortcut.", { exact: true })).toBeVisible();
+  await expect(notice.getByRole("button", { name: /^Use / })).toHaveText(["Use ⌃⌥R", "Use ⌃⇧Space"]);
+  await expect(notice.getByRole("button", { name: "Use ⌃⇧Space" })).toHaveAttribute("data-variant", "primary");
+  // From launch to here the capsule showed nothing: no state but hidden was sent to it.
+  expect(await capsuleKind(app)).toBe("hidden");
+  expect((await sentToCapsule(app)).filter((kind) => kind !== "hidden")).toEqual([]);
+  // Named here, so the capsule won't name it at the next launch either.
+  expect(JSON.parse(readFileSync(path.join(userData, "noticed-shortcuts.json"), "utf8"))).toContain("Alt+Space");
+  await app.close();
+});
+
+test("with no free shortcut, setup offers Settings, and the shortcut set there is the one it listens for", async () => {
+  const app = await launch({
+    ...firstRun().env,
+    AVANZEL_PRESS_WAIT_MS: "300",
+    // ⌥Space and every one Record a thought could move to.
+    AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space,Control+Shift+Space,Control+Alt+R,Control+Alt+D",
+  });
+  const setup = await throughFound(app);
+  const taken = setup.getByRole("alert");
+  await expect(taken.getByText(/^⌥Space is used by another app/)).toBeVisible();
+  await expect(taken.getByText("Pick another one in Settings → Voice.", { exact: true })).toBeVisible();
+  await expect(setup.getByRole("button", { name: /^Use / })).toHaveCount(0);
+  const open = taken.getByRole("button", { name: "Open Settings" });
+  await expect(open).toHaveAttribute("data-variant", "primary");
+  await open.click();
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("heading", { name: "Voice" })).toBeVisible();
+  // A shortcut set in Settings is the one the step listens for now, from the start of a new wait.
+  await call(app, "setApp", { shortcuts: { ...(await settingsSnap(app)).app.shortcuts, dictate: "Control+Alt+K" } });
+  await expect(taken).toHaveCount(0);
+  await expect(setup.getByText(INSTRUCTION)).toContainText("⌃⌥K");
+  await expect(setup.getByText("Did ⌃⌥K do nothing?", { exact: true })).toBeVisible();
+  await expect(setup.getByText("Another app may be using it. Pick another one in Settings → Voice.", { exact: true })).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Open Settings" })).toHaveAttribute("data-variant", "primary");
+  await app.close();
+});
+
+test("the keycaps press themselves twice each time the step opens, and stay still under Reduce Motion", async () => {
+  const app = await launch(firstRun().env);
+  const setup = await windowFor(app, "setup");
+  // Each keycap drawn pressed, by its key, from before the step first opens.
+  await setup.evaluate(() => {
+    const page = window as { presses?: string[] };
+    page.presses = [];
+    new MutationObserver((records) => {
+      for (const { target } of records) {
+        if (target instanceof Element && target.hasAttribute("data-pressed")) page.presses?.push(target.textContent ?? "");
+      }
+    }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["data-pressed"] });
+  });
+  const presses = () => setup.evaluate(() => (window as { presses?: string[] }).presses ?? []);
+  await throughFound(app);
+  await expect.poll(presses, { timeout: 10_000 }).toEqual(["⌥", "Space", "⌥", "Space"]);
+  await expect(setup.locator("kbd[data-pressed]")).toHaveCount(0); // they end up, unpressed
+  // Again on the way back to the step.
+  await setup.getByRole("button", { name: "Back" }).click();
+  await setup.getByRole("button", { name: "Use this folder" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  await expect.poll(presses, { timeout: 10_000 }).toHaveLength(8);
+  // Under Reduce Motion the step opens on their last frame, unpressed, and they stay so.
+  await setup.emulateMedia({ reducedMotion: "reduce" });
+  await setup.getByRole("button", { name: "Back" }).click();
+  await setup.getByRole("button", { name: "Use this folder" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  await setup.waitForTimeout(2_500); // past the time of both presses
+  expect(await presses()).toHaveLength(8);
+  await expect(keycaps(setup)).toHaveText(["⌥", "Space"]);
   await app.close();
 });

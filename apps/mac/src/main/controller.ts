@@ -68,6 +68,7 @@ import type {
   SettingsPane,
   SettingsSnapshot,
   SetupAgent,
+  SetupPress,
   SetupSnapshot,
   SetupStep,
   Shortcuts,
@@ -107,6 +108,11 @@ const PICKED_SHOW_MS = 3_000;
 const LIBRARY_PICKER: OpenDialogOptions = { title: "Choose your library folder", properties: ["openDirectory", "createDirectory"] };
 /** How often setup looks for an installed agent while this Mac has none: Found says it notices one. */
 const AGENT_POLL_MS = 2_000;
+/**
+ * How long the first-thought step waits for a press of Record a thought's shortcut before it offers free ones (§5.2).
+ * macOS lets an app register a shortcut another app holds, so only a press that arrives says it works (tests change it).
+ */
+const PRESS_WAIT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PRESS_WAIT_MS)) || 3_000;
 /** Where Open Terminal goes: the person signs an agent in there. */
 const TERMINAL = "/System/Applications/Utilities/Terminal.app";
 const HARNESS_NAMES: Record<string, string> = {
@@ -170,6 +176,19 @@ interface SetupSession {
    * `libraryProblem`, which says why a stored library didn't open (showHome() and the menu read that one).
    */
   makeProblem: string | null;
+  /**
+   * While the first-thought step waits for a press of the shortcut: the wait's timer (PRESS_WAIT_MS), which stays set
+   * until the wait has ended, the running apps' read included (`noPressArrived`). Null otherwise.
+   */
+  pressTimer: NodeJS.Timeout | null;
+  /** A press of the shortcut arrived since the step asked for one. */
+  heard: boolean;
+  /** No press arrived within the wait, and none since. */
+  silent: boolean;
+  /** While silent: the running app whose default shortcut it is, if one is running. */
+  holder: string | null;
+  /** While silent: free shortcuts to use instead, best first. */
+  alternatives: string[];
 }
 
 /** Words filed after Edit, on their way to the inbox: only in memory until the refile's `recapture` writes them. */
@@ -603,6 +622,7 @@ export class Controller {
   // ---------------------------------------------------------------- recording
 
   async toggleDictate(): Promise<void> {
+    if (this.setupTakesPress()) return this.setupPress();
     if (this.recording) return this.stopRecording();
     return this.startRecording("dictate");
   }
@@ -1410,13 +1430,18 @@ export class Controller {
     return this.changeApp(patch);
   }
 
-  /** setApp, for `picked`'s shortcut chosen on the capsule's notice of a taken one, when it is (`useShortcut`). */
+  /**
+   * setApp, for `picked`'s shortcut chosen on the capsule's notice of a taken one, when it is (`useShortcut`). A new
+   * Record a thought shortcut while setup's first-thought step shows starts that step's press test over, wherever it was
+   * set: on the step itself, or in Settings → Voice, where the step's Open Settings leads.
+   */
   private async changeApp(patch: Partial<AppSettings>, picked?: keyof Shortcuts): Promise<SettingsSnapshot> {
     const before = this.store.get();
     const after = this.store.update(patch);
     if (JSON.stringify(before.shortcuts) !== JSON.stringify(after.shortcuts)) {
       await this.applyShortcuts();
       this.followShortcuts(picked);
+      if (before.shortcuts.dictate !== after.shortcuts.dictate && this.setup?.step === "think") this.listenForPress(this.setup);
     }
     if (patch.launchAtLogin !== undefined) app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
     this.broadcast();
@@ -1530,14 +1555,23 @@ export class Controller {
       pollTimer: null,
       picked: null,
       makeProblem: null,
+      pressTimer: null,
+      heard: false,
+      silent: false,
+      holder: null,
+      alternatives: [],
     };
   }
 
-  /** The setup window closed: its session ends with it, and stops looking for agents. A newer window's session is its own. */
+  /**
+   * The setup window closed: its session ends with it, stops looking for agents, and stops waiting for a press, so the
+   * wait can't end against a closed window. A newer window's session is its own.
+   */
   private endSetup(win: BrowserWindow): void {
     const session = this.setup;
     if (session?.window !== win) return;
     this.stopPolling(session);
+    this.stopPressTest(session);
     this.setup = null;
   }
 
@@ -1565,6 +1599,24 @@ export class Controller {
       agents,
       agent: this.setup?.picked ?? bestAgent(agents, folder === "library" ? libraryAgent(libraryPath) : null),
       makeProblem: this.setup?.makeProblem ?? null,
+      press: this.setupPressState(),
+    };
+  }
+
+  /**
+   * The press test as the first-thought step shows it: a shortcut another app holds, with the holder and the free ones
+   * its registration found (takenShortcuts); otherwise what the session heard, or didn't within the wait.
+   */
+  private setupPressState(): SetupPress {
+    const taken = this.takenShortcuts.find((notice) => notice.key === "dictate");
+    if (taken) return { taken: true, heard: false, silent: false, holder: taken.holder, alternatives: taken.alternatives };
+    const session = this.setup;
+    return {
+      taken: false,
+      heard: session?.heard ?? false,
+      silent: session?.silent ?? false,
+      holder: session?.holder ?? null,
+      alternatives: session?.alternatives ?? [],
     };
   }
 
@@ -1583,12 +1635,18 @@ export class Controller {
     });
   }
 
-  /** The setup window shows `step` now; anything that isn't a step is ignored. Each step's work hangs on this. */
+  /**
+   * The setup window shows `step` now; anything that isn't a step is ignored. Each step's work hangs on this: the first
+   * time Found is entered, Set me up's work; each time the first-thought step is, its press test (`listenForPress`),
+   * which any other step stops.
+   */
   enterSetupStep(step: SetupStep): SetupSnapshot {
     const session = this.setup;
     if (session && isSetupStep(step)) {
       session.step = step;
       if (step === "found" && !session.begun) this.beginSetup(session);
+      if (step === "think") this.listenForPress(session);
+      else this.stopPressTest(session);
     }
     return this.setupSnapshot();
   }
@@ -1713,6 +1771,69 @@ export class Controller {
   copyText(text: string): void {
     if (process.env.AVANZEL_TEST === "1") this.copied.push(text);
     else clipboard.writeText(text);
+  }
+
+  /** A press of Record a thought's shortcut is setup's while the first-thought step shows and nothing records. */
+  private setupTakesPress(): boolean {
+    return this.setup?.step === "think" && !this.recording;
+  }
+
+  /** The shortcut was pressed on the first-thought step: it works, so the wait ends and the step says so. */
+  private async setupPress(): Promise<void> {
+    const session = this.setup;
+    if (!session) return;
+    this.stopPressTest(session);
+    session.heard = true;
+    this.broadcast();
+  }
+
+  /**
+   * The first-thought step asks for a press of Record a thought's shortcut, afresh: nothing heard or missed yet. One
+   * another app holds is named by the step at once, so it is noticed (the capsule won't name it at the next launch), and
+   * no press is waited for, since none can arrive. Otherwise the step waits PRESS_WAIT_MS for one (`noPressArrived`).
+   */
+  private listenForPress(session: SetupSession): void {
+    this.stopPressTest(session);
+    const taken = this.takenShortcuts.find((notice) => notice.key === "dictate");
+    if (taken) return this.noticed.add(taken.accelerator);
+    const timer: NodeJS.Timeout = setTimeout(() => void this.noPressArrived(session, timer), PRESS_WAIT_MS);
+    session.pressTimer = timer;
+  }
+
+  /**
+   * No press arrived within the wait: the shortcut may be another app's, though it registered. The step says so, naming
+   * the running app whose default it is, with free ones to use instead. A press, another shortcut or step, or the window
+   * closing while the running apps are read ends this wait first (`stopPressTest`), and it says nothing.
+   */
+  private async noPressArrived(session: SetupSession, timer: NodeJS.Timeout): Promise<void> {
+    const running = await runningAppNames();
+    if (session.pressTimer !== timer) return;
+    session.pressTimer = null;
+    const shortcuts = this.store.get().shortcuts;
+    session.silent = true;
+    session.holder = likelyHolder(shortcuts.dictate, running);
+    session.alternatives = freeAlternatives("dictate", shortcuts, shortcutApi());
+    this.broadcast();
+  }
+
+  /** The press test stops: no wait goes on, and nothing is heard or missed. The first-thought step starts it again. */
+  private stopPressTest(session: SetupSession): void {
+    if (session.pressTimer) clearTimeout(session.pressTimer);
+    session.pressTimer = null;
+    session.heard = false;
+    session.silent = false;
+    session.holder = null;
+    session.alternatives = [];
+  }
+
+  /**
+   * Use {shortcut}, on the first-thought step's Notice of a taken or silent shortcut: `accelerator` becomes Record a
+   * thought's shortcut, the way the capsule's Use sets one. Changing it starts the step's press test over (changeApp),
+   * so the window never shows the new shortcut beside what the old one's test found.
+   */
+  async useSetupShortcut(accelerator: string): Promise<SetupSnapshot> {
+    await this.useShortcut("dictate", accelerator);
+    return this.setupSnapshot();
   }
 
   // ---------------------------------------------------------------- agent checks

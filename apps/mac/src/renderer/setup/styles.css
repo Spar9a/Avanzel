@@ -81,3 +81,12 @@
 .found-footnote {
   padding: 0 var(--av-space-4);
 }
+
+/* Think's stage: the empty card the words will fill, the shortcut's keycaps under it, and Zel waiting by them. */
+.think {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--av-space-24);
+  height: 100%;
+}
