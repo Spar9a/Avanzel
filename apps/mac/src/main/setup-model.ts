@@ -1,5 +1,5 @@
-// What the setup window decides from plain data: names for places, what is at the library's place, and the agent
-// that files. No Electron, so the tests run them as they are.
+// What the setup window decides from plain data: names for places, what is at the library's place, the agent that
+// files, and a mic check told from a thought. No Electron, so the tests run them as they are.
 import { existsSync, opendirSync, statSync } from "node:fs";
 import { loadSettings, Vault } from "@avanzel/engine";
 import { agentWorks, type LibraryFolder, type SetupAgent } from "../shared/ipc.ts";
@@ -42,6 +42,21 @@ export function libraryAgent(root: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** The words of a mic check: "Testing, testing", "One, two, three", "Can you hear me?", "Is this on?". */
+const MIC_CHECK: ReadonlySet<string> = new Set([
+  "test", "testing", "tested", "hello", "hi", "hey", "one", "two", "three", "check", "checking", "mic", "microphone",
+  "can", "you", "hear", "me", "is", "this", "on", "ok", "okay",
+]);
+
+/**
+ * Whether the first spoken thought's `words` are a mic check rather than a thought: one to eight words, each of them
+ * one of MIC_CHECK's, in lower case and without punctuation. Setup answers one warmly instead of filing it.
+ */
+export function looksLikeATest(words: string): boolean {
+  const list = words.toLowerCase().split(/\s+/).map((word) => word.replace(/[^\p{L}\p{N}]/gu, "")).filter(Boolean);
+  return list.length >= 1 && list.length <= 8 && list.every((word) => MIC_CHECK.has(word));
 }
 
 /** Whether `folder` holds nothing but .DS_Store. It reads no further than the first other entry: setup asks often. */

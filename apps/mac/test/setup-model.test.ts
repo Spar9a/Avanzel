@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadSettings, saveSettings, Vault } from "@avanzel/engine";
-import { bestAgent, libraryAgent, libraryFolder, tildePath } from "../src/main/setup-model.ts";
+import { bestAgent, libraryAgent, libraryFolder, looksLikeATest, tildePath } from "../src/main/setup-model.ts";
 import { agentWorks, type AgentStatus, type SetupAgent } from "../src/shared/ipc.ts";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "avz-setup-"));
@@ -47,6 +47,13 @@ describe("setup model", () => {
     expect(libraryAgent(library)).toBe("codex");
     writeFileSync(path.join(library, ".avanzel", "config.toml"), "harness = [\n");
     expect(libraryAgent(library)).toBeNull();
+  });
+
+  it("looksLikeATest knows a mic check from a thought", () => {
+    const checks = ["Testing, testing.", "Test test one two three", "Hello?", "Can you hear me?", "Is this on?"];
+    expect(checks.map(looksLikeATest)).toEqual([true, true, true, true, true]);
+    const thoughts = ["Testing the podcast idea with Mark", "Hello, I want to run a marathon in spring", ""];
+    expect(thoughts.map(looksLikeATest)).toEqual([false, false, false]);
   });
 });
 

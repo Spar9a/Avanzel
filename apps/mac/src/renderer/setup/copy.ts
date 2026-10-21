@@ -1,7 +1,7 @@
 // The setup window's words that are made from values: sizes, dates, what an agent's check found and how a filing went,
 // as its copy table writes them, and which of those findings is a problem for the person to fix.
 import { SHELVES, type ReceiptPage, type Shelf } from "@avanzel/ui";
-import { NOTE_GONE, type AgentStatus, type FiledPage } from "../../shared/ipc.ts";
+import { NOTE_GONE, type AgentStatus, type FiledPage, type ModelStatus } from "../../shared/ipc.ts";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] as const;
@@ -69,6 +69,19 @@ export function ownLine(detail: string): string {
   if (!line) return "";
   const sentence = line.charAt(0).toUpperCase() + line.slice(1);
   return /[.?…]$/.test(sentence) ? sentence : `${sentence}.`;
+}
+
+/**
+ * Why the first-thought step can't hear yet, while the speech model is on its way or its download failed: typing is the
+ * way meanwhile. It promises nothing about keeping a recording, since nothing records. Null once it hears, and for
+ * [voice] settings that can't be used, which have no line of their own.
+ */
+export function earsLine(model: ModelStatus): string | null {
+  if (model.kind === "missing" || model.kind === "downloading") return "My ears are still arriving. Type it instead, or talk to me once they land.";
+  if (model.kind === "error" && model.cause === "download") {
+    return "The speech model didn't finish downloading, so I can't hear you yet. Type it instead, or try the download again.";
+  }
+  return null;
 }
 
 /** About how long a first filing takes, in seconds: the working line counts towards it. */

@@ -215,6 +215,26 @@ export interface SetupPress {
 }
 
 /**
+ * The first spoken thought, from the press to its words, on the first-thought step. The capsule records it; once the
+ * words exist, a thought moves on to its filing (`filing`), and only a mic check stays here.
+ */
+export type SetupThought =
+  /** Nothing is under way: the step asks for a press. */
+  | { kind: "waiting" }
+  /** macOS hasn't asked about the microphone yet: the primer says it will, and Continue has it ask. */
+  | { kind: "primer" }
+  /** The microphone is turned down (or restricted): the step says where to allow it. */
+  | { kind: "denied" }
+  /** The capsule records it; `startedAt` is the recording's Date.now(). */
+  | { kind: "listening"; startedAt: number }
+  /** The recording has stopped, and its words are being made. */
+  | { kind: "transcribing" }
+  /** Its words are a mic check ("Testing, testing"), kept in the inbox until File it anyway or Try again. */
+  | { kind: "test"; words: string }
+  /** The recording or its transcription went wrong, as the capsule's card would have said. */
+  | { kind: "failed"; message: string; detail: string | null };
+
+/**
  * The line a setup filing fails with when its note left the inbox before its agent could start, as when another Avanzel
  * filed it meanwhile: the words aren't in the inbox then, and filing that note again can't work.
  */
@@ -305,6 +325,10 @@ export interface SetupSnapshot {
   filing: SetupFiling | null;
   /** Why a typed thought wasn't taken (empty words, or a capture that couldn't be written); null once one is. */
   typeProblem: string | null;
+  /** The first spoken thought on the first-thought step; waiting until a press, and again once its words are handed over. */
+  thought: SetupThought;
+  /** Setup can turn speech into words: the speech models are ready, or AVANZEL_FAKE_TRANSCRIPT stands in for them. */
+  hears: boolean;
 }
 
 export interface AskResult {
@@ -410,5 +434,14 @@ export interface AvanzelBridge {
     cancelFiling(): void;
     /** File it again, or Try again, once a filing has stopped short: the same note is filed in a new run. */
     fileAgain(): void;
+    /** Continue, on the microphone's primer: macOS asks, and a grant starts the recording; setup:changed follows. */
+    allowMicrophone(): void;
+    /**
+     * Try again, on a mic check's answer or a recording problem's Notice: a mic check's note and its recording leave the
+     * library, and the step asks for the thought afresh; setup:changed follows.
+     */
+    tryAgain(): void;
+    /** File it anyway, on a mic check's answer: its note is filed as the first thought; setup:changed follows. */
+    fileAnyway(): void;
   };
 }

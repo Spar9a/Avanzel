@@ -4,6 +4,7 @@ import {
   agentProblemTitle,
   cancelledLine,
   cardDate,
+  earsLine,
   ESTIMATE_SECONDS,
   failedLine,
   filedHeading,
@@ -90,6 +91,18 @@ describe("setup copy", () => {
     expect(cancelledLine("Claude Code", true)).toBe(
       "Your words are back in the inbox, untouched. Claude Code's partial edits are kept as their own commit in the library's history.",
     );
+  });
+
+  it("the first-thought step says why it can't hear yet, without promising to keep a recording", () => {
+    const arriving = "My ears are still arriving. Type it instead, or talk to me once they land.";
+    expect(earsLine({ kind: "missing", bytes: 672_807_563 })).toBe(arriving);
+    expect(earsLine({ kind: "downloading", receivedBytes: 1, totalBytes: 2 })).toBe(arriving);
+    expect(earsLine({ kind: "error", cause: "download", message: "fetch failed" })).toBe(
+      "The speech model didn't finish downloading, so I can't hear you yet. Type it instead, or try the download again.",
+    );
+    // Ready: it hears. [voice] settings it can't use: the copy has no line for them.
+    expect(earsLine({ kind: "ready", dir: "/models" })).toBeNull();
+    expect(earsLine({ kind: "error", cause: "settings", message: "bad" })).toBeNull();
   });
 
   it("a failed filing says what the agent said and that the words are safe, except of a note gone from the inbox", () => {

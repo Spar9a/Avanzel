@@ -92,6 +92,12 @@
   gap: var(--av-space-24);
   height: 100%;
 }
+/* While macOS is about to ask about the microphone, its primer is the step, in the middle of it. */
+.think-primer {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+}
 
 /* Filing's stage: the card with the person's words, Zel by it, and the shelves' tabs below. A thought longer than the
    stage scrolls on its card, so Zel and the tabs stay in view; the card's box keeps room for its shadow and edge. */

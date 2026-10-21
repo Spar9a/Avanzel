@@ -69,6 +69,9 @@ const bridge: AvanzelBridge = {
     typeThought: (words) => ipcRenderer.invoke("setup:type-thought", words),
     cancelFiling: () => ipcRenderer.send("setup:cancel-filing"),
     fileAgain: () => ipcRenderer.send("setup:file-again"),
+    allowMicrophone: () => ipcRenderer.send("setup:allow-microphone"),
+    tryAgain: () => ipcRenderer.send("setup:try-again"),
+    fileAnyway: () => ipcRenderer.send("setup:file-anyway"),
   },
 };
 
