@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, type CustomHarness, type Settings } from "../../src/core/config.ts";
-import { Harness, checkAgent, childEnv, errorLine, harnesses, runHeadless, selectHarness } from "../../src/core/harness.ts";
+import { Harness, asksToSignIn, checkAgent, childEnv, errorLine, harnesses, runHeadless, selectHarness } from "../../src/core/harness.ts";
 import { AvanzelError } from "../../src/types.ts";
 import { binScripts, thrownBy, useTmp } from "./helpers.ts";
 
@@ -154,6 +154,13 @@ describe("errorLine", () => {
   it("falls back to the last line, without colours", () => {
     expect(errorLine("first\n\n  \x1b[31msecond\x1b[0m  \n\n")).toBe("second");
     expect(errorLine("")).toBe("");
+  });
+});
+
+describe("asksToSignIn", () => {
+  it("asksToSignIn knows a sign-in line", () => {
+    expect(asksToSignIn("Error: not logged in. Run cursor-agent login")).toBe(true);
+    expect(asksToSignIn("Error: usage limit reached")).toBe(false);
   });
 });
 

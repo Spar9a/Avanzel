@@ -305,8 +305,12 @@ export interface CheckOptions {
 }
 
 const CHECK_PROMPT = "Reply with the single word: ready.";
-// A failed reply whose telling line matches is the agent asking its owner to sign in.
 const SIGN_IN_LINE = /sign in|log in|login|not logged|unauthori[sz]ed|authenticat/i;
+
+/** Whether a failed run's telling line (`errorLine`) is the agent asking its owner to sign in. */
+export function asksToSignIn(line: string): boolean {
+  return SIGN_IN_LINE.test(line);
+}
 
 /**
  * Check that an agent works: read its sign-in from its status command when it has one. When it has none, or the
@@ -330,7 +334,7 @@ export async function checkAgent(
     if (run.ok) return { ok: true, how: "replied", seconds: run.seconds };
     const detail = errorLine(`${run.output}\n${run.stderr}`);
     // 124 is what runHeadless reports for a run that ran out of time.
-    const why = run.exitCode === 124 ? "timeout" : SIGN_IN_LINE.test(detail) ? "signed-out" : "failed";
+    const why = run.exitCode === 124 ? "timeout" : asksToSignIn(detail) ? "signed-out" : "failed";
     return { ok: false, why, detail, seconds: run.seconds };
   } catch (error) {
     if (!(error instanceof AvanzelError)) throw error;

@@ -20,6 +20,7 @@ import {
   Librarian,
   Vault,
   WAITING,
+  asksToSignIn,
   checkAgent as checkHarness,
   defaultSettings,
   downloadModels,
@@ -55,7 +56,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { agentWorks, isSettingsPane, isSetupStep } from "../shared/ipc.ts";
+import { agentWorks, isSettingsPane, isSetupStep, NOTE_GONE } from "../shared/ipc.ts";
 import type {
   AgentStatus,
   AppSettings,
@@ -68,6 +69,7 @@ import type {
   SettingsPane,
   SettingsSnapshot,
   SetupAgent,
+  SetupFiling,
   SetupPress,
   SetupSnapshot,
   SetupStep,
@@ -148,6 +150,13 @@ interface FilingJob {
   waiting?: boolean;
   outcome?: FileOutcome;
   pages?: FiledPage[];
+  /**
+   * Setup's first thought (`takeThought`): it reports to the setup window while the window shows it (its session's
+   * `job`), and once the window has closed, by notification, as any filing whose card isn't showing does.
+   */
+  setup?: boolean;
+  /** Cancel, in setup, stopped the run: what it did is taken back (`cancelSetupFiling`), not shown. */
+  cancelled?: boolean;
 }
 
 /** The setup window and what it is doing, from the moment it opens until it closes. */
@@ -189,6 +198,12 @@ interface SetupSession {
   holder: string | null;
   /** While silent: free shortcuts to use instead, best first. */
   alternatives: string[];
+  /** The first thought's filing, from the moment its words exist (`takeThought`); the newest one after File it again. */
+  job: FilingJob | null;
+  /** What the window shows of that filing; null before the thought is handed over. */
+  filing: SetupFiling | null;
+  /** Why the last typed thought wasn't taken; each try clears it. */
+  typeProblem: string | null;
 }
 
 /** Words filed after Edit, on their way to the inbox: only in memory until the refile's `recapture` writes them. */
@@ -893,13 +908,19 @@ export class Controller {
 
   /**
    * What the engine says of `job`'s filing: `WAITING` while another run (a question, a review, another
-   * Avanzel) has the library, then the start of its own run. Its card shows the wait until the run starts.
+   * Avanzel) has the library, then the start of its own run. Its card, or the setup window, shows the wait
+   * until the run starts; the window's working line then counts from that start.
    */
   private filingProgress(job: FilingJob, message: string): void {
     const waiting = message === WAITING;
     if (!!job.waiting === waiting) return;
     job.waiting = waiting;
     if (this.job === job && this.capsuleState.kind === "filing") this.showFiling(job);
+    const session = this.setup;
+    if (session?.job === job && session.filing?.kind === "running") {
+      session.filing = { ...session.filing, waiting, ...(waiting ? {} : { startedAt: Date.now() }) };
+      this.broadcast();
+    }
   }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
@@ -923,9 +944,11 @@ export class Controller {
 
   private async runFiling(job: FilingJob): Promise<void> {
     this.queuedToFile.delete(job.capturePath); // its turn: should it not file the capture, a review may
-    if (job.abort.signal.aborted) return; // Edit stopped it before its turn came
+    if (job.abort.signal.aborted) return; // Edit, or Cancel in setup, stopped it before its turn came
     if (!existsSync(job.capturePath)) {
-      // Already filed meanwhile (e.g. by another Avanzel on this library); nothing left to do.
+      // Already filed meanwhile (e.g. by another Avanzel on this library); nothing left to do. The setup window, which
+      // is waiting on this filing, says the note has gone.
+      if (this.setup?.job === job) return this.setupFailed(this.setup, job, NOTE_GONE);
       if (this.job === job && this.capsuleState.kind === "filing") this.setCapsule({ kind: "hidden" });
       return;
     }
@@ -935,17 +958,23 @@ export class Controller {
     try {
       [outcome] = await this.withRun(async (signal) => (await this.librarian()).file([job.capturePath], { signal, progress }), job.abort);
     } catch (error) {
-      if (job.edited || this.quitting) return;
+      if (job.edited || job.cancelled || this.quitting) return;
       return this.filingFailed(job, errorMessage(error));
     }
     job.outcome = outcome;
-    if (job.edited || this.quitting) return; // Edit takes back what this run did (`refile`)
+    // Edit takes back what this run did (`refile`), and so does Cancel in setup (`cancelSetupFiling`).
+    if (job.edited || job.cancelled || this.quitting) return;
     const seconds = (performance.now() - started) / 1000;
+    // No outcome at all: the capture left the inbox while the run waited for the library. Setup says so, in its window
+    // or its notification; the capsule's card would say the note is still in the inbox, so it keeps its own words.
+    if (!outcome && job.setup) return this.filingFailed(job, NOTE_GONE);
     if (!outcome || !outcome.ok) return this.filingFailed(job, outcome?.error || outcome?.message || "The agent stopped without filing.", outcome);
     const vault = this.requireVault();
     job.pages = filedPages(vault.root, outcome.changes);
     this.recent = [...job.pages, ...this.recent.filter((p) => !job.pages?.some((q) => q.path === p.path))].slice(0, 3);
-    if (this.job === job && this.capsuleState.kind === "filing") {
+    if (this.setup?.job === job) {
+      this.setupFiled(this.setup, job, outcome, job.pages);
+    } else if (this.job === job && this.capsuleState.kind === "filing") {
       this.setCapsule(
         { kind: "filed", agent: job.agent, seconds, pages: job.pages, canUndo: !!outcome.commit, message: outcome.message || "Filed." },
         8000,
@@ -959,6 +988,7 @@ export class Controller {
 
   /** `where`: what the card says of the owner's words when it isn't the usual (in the inbox, or kept aside by the engine). */
   private filingFailed(job: FilingJob, error: string, outcome?: FileOutcome, where?: string): void {
+    if (this.setup?.job === job) return this.setupFailed(this.setup, job, errorLine(error));
     where ??= outcome?.savedOriginal
       ? `Your words are kept in ${outcome.savedOriginal}; the inbox now holds the agent's version.`
       : "The note is still in your inbox; the evening review will try again.";
@@ -1560,12 +1590,16 @@ export class Controller {
       silent: false,
       holder: null,
       alternatives: [],
+      job: null,
+      filing: null,
+      typeProblem: null,
     };
   }
 
   /**
    * The setup window closed: its session ends with it, stops looking for agents, and stops waiting for a press, so the
-   * wait can't end against a closed window. A newer window's session is its own.
+   * wait can't end against a closed window. A filing it started goes on, and says how it went by notification
+   * (`runFiling`). A newer window's session is its own.
    */
   private endSetup(win: BrowserWindow): void {
     const session = this.setup;
@@ -1600,6 +1634,8 @@ export class Controller {
       agent: this.setup?.picked ?? bestAgent(agents, folder === "library" ? libraryAgent(libraryPath) : null),
       makeProblem: this.setup?.makeProblem ?? null,
       press: this.setupPressState(),
+      filing: this.setup?.filing ?? null,
+      typeProblem: this.setup?.typeProblem ?? null,
     };
   }
 
@@ -1834,6 +1870,115 @@ export class Controller {
   async useSetupShortcut(accelerator: string): Promise<SetupSnapshot> {
     await this.useShortcut("dictate", accelerator);
     return this.setupSnapshot();
+  }
+
+  /**
+   * File it, on the first-thought step's typing rows: the words become a capture in the inbox, which setup files
+   * (`takeThought`). It never throws: empty words, or a capture that can't be written, are the session's `typeProblem`,
+   * which the step shows under the box, and each try clears the last one. Only the first-thought step takes a thought.
+   */
+  typeSetupThought(words: string): SetupSnapshot {
+    const session = this.setup;
+    if (session?.step !== "think") return this.setupSnapshot();
+    session.typeProblem = null;
+    const trimmed = words.trim();
+    let capture: Capture | null = null;
+    if (!trimmed) session.typeProblem = "Type a thought first.";
+    else {
+      try {
+        capture = this.requireVault().newCapture(trimmed, { source: "text", now: new Date() });
+      } catch (error) {
+        session.typeProblem = errorMessage(error);
+      }
+    }
+    if (capture) this.takeThought(capture.path, trimmed, null);
+    else this.broadcast();
+    return this.setupSnapshot();
+  }
+
+  /**
+   * The first thought's words exist, as the capture at `capturePath`: the window shows its filing from now on (entered as
+   * any step is, so what hangs on entering one runs), and the capsule hides. It files as any filing does, in queue order
+   * and in `withRun`, but no Edit reaches it: it is never the capsule's `job`. While the window shows it, `runFiling`
+   * reports to it; once the window has closed, by notification.
+   */
+  private takeThought(capturePath: string, words: string, transcribedIn: number | null): void {
+    const session = this.setup;
+    if (!session) return;
+    this.enterSetupStep("filing");
+    if (this.capsuleState.kind !== "hidden") this.setCapsule({ kind: "hidden" });
+    const job: FilingJob = { capturePath, text: words, transcribedIn, agent: this.agentName(), abort: new AbortController(), edited: false, setup: true };
+    session.job = job;
+    session.filing = { kind: "running", words, agent: job.agent, startedAt: Date.now(), waiting: false, cancelling: false };
+    this.queuedToFile.add(capturePath);
+    void this.enqueue(() => this.runFiling(job));
+    this.broadcast();
+  }
+
+  /**
+   * Cancel, while the first thought is filed: its run stops at once, and once that run is over (queue order), what it did
+   * is taken back. Then the filing is cancelled, its words back in the inbox; `partial` says that what the run did stays
+   * as its own commit, because taking it back failed.
+   */
+  cancelSetupFiling(): void {
+    const session = this.setup;
+    const job = session?.job;
+    if (!session || !job || job.cancelled || session.filing?.kind !== "running") return;
+    job.cancelled = true;
+    job.abort.abort();
+    session.filing = { ...session.filing, cancelling: true };
+    this.broadcast();
+    void this.enqueue(async () => {
+      const problem = await this.takeBack(job);
+      if (this.setup !== session || session.job !== job) return; // the window has closed: there is nothing to tell
+      session.filing = { kind: "cancelled", words: job.text, agent: job.agent, partial: problem !== null };
+      this.broadcast();
+    });
+  }
+
+  /**
+   * File it again, or Try again: once the first thought's filing has stopped short or been taken back (any state but
+   * running and filed), the same capture is filed in a new run.
+   */
+  fileSetupAgain(): void {
+    const job = this.setup?.job;
+    const kind = this.setup?.filing?.kind;
+    if (!job || kind === undefined || kind === "running" || kind === "filed") return;
+    this.takeThought(job.capturePath, job.text, job.transcribedIn);
+  }
+
+  /**
+   * The setup window's filing is filed: its pages, new ones first, and how long the agent took, as the window's working
+   * line counted it.
+   */
+  private setupFiled(session: SetupSession, job: FilingJob, outcome: FileOutcome, pages: FiledPage[]): void {
+    const startedAt = session.filing?.kind === "running" ? session.filing.startedAt : Date.now();
+    session.filing = {
+      kind: "filed",
+      words: job.text,
+      agent: job.agent,
+      seconds: (Date.now() - startedAt) / 1000,
+      pages,
+      created: pages.filter((page) => outcome.changes.created.includes(page.path)).length,
+      restored: outcome.restored,
+      canUndo: !!outcome.commit,
+    };
+    this.broadcast();
+  }
+
+  /** The setup window's filing failed: the line that says why, and whether it asks to sign in. The capture stays put. */
+  private setupFailed(session: SetupSession, job: FilingJob, line: string): void {
+    session.filing = { kind: "failed", words: job.text, agent: job.agent, harness: this.libraryHarness() ?? "", line, signedOut: asksToSignIn(line) };
+    this.broadcast();
+  }
+
+  /** The harness the library files with, by name ("claude"); null when its settings don't say. */
+  private libraryHarness(): string | null {
+    try {
+      return this.vault ? selectHarness(loadSettings(this.vault.root)).name : null;
+    } catch {
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------- agent checks

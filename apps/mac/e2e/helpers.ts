@@ -66,6 +66,14 @@ export const SIGNED_OUT_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo '{"l
 export const UNREADABLE_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo "unknown command: auth"; exit 1; else echo ready; fi`;
 
 /**
+ * A `claude` for agentStubs that files: signed in, and any other call runs the engine's fake agent with the prompt,
+ * which Claude Code's argv puts after -p. The FAKE_AGENT_* variables a test launches with steer it.
+ */
+export function filingClaude(): string {
+  return `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else exec '${process.execPath}' '${fakeAgent}' "$2"; fi`;
+}
+
+/**
  * A new folder of stand-ins for Claude Code and Codex: shell scripts answering as SIGNED_IN does, except for the
  * `answers` given (script bodies, by binary). Each one notes how it was called, "claude auth status", in calls.log
  * beside it (see agentCalls).
@@ -249,6 +257,13 @@ export async function throughFound(app: ElectronApplication): Promise<Page> {
   await setup.getByRole("button", { name: "Looks good" }).click();
   await expect(setup.getByRole("heading", { name: "What's on your mind this week?" })).toBeVisible({ timeout: 20_000 });
   return setup;
+}
+
+/** On the first-thought step, the person types `words` instead of saying them, and files them. */
+export async function typeFirstThought(setup: Page, words: string): Promise<void> {
+  await setup.getByRole("button", { name: "Type it instead" }).click();
+  await setup.getByRole("textbox", { name: "Your thought" }).fill(words);
+  await setup.getByRole("button", { name: "File it", exact: true }).click();
 }
 
 export async function snap(page: Page, name: string): Promise<void> {

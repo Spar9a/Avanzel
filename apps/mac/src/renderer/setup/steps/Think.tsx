@@ -3,7 +3,8 @@
 // moment, which Reduce Motion leaves out, the keycaps up from the start. A press says the shortcut is free. One another
 // app holds is named at once, and with no press within the wait the step asks whether it did nothing; both offer free
 // ones to use instead, or Settings → Voice when none is free. Zel waits on the stage. Recording the thought comes later.
-import { Actions, Button, Card, Kbd, Notice, Row, Stack, Text, Zel } from "@avanzel/ui";
+// Type it instead opens a box for the thought, and File it hands the words to setup, which moves on to filing them.
+import { Actions, Button, Card, Kbd, Notice, Row, Stack, Text, TextArea, Zel } from "@avanzel/ui";
 import { useEffect, useState } from "react";
 import { keyCaps, prettyAccelerator, takenMessage } from "../../../main/shortcuts.ts";
 import type { SetupPress } from "../../../shared/ipc.ts";
@@ -25,10 +26,21 @@ export function Think({ snap, go }: StepProps) {
     const timer = setTimeout(() => setBeat(beat + 1), BEATS[beat]);
     return () => clearTimeout(timer);
   }, [still, beat]);
+  // The typed thought: its box is open, and File it is on its way to the controller.
+  const [typing, setTyping] = useState(false);
+  const [words, setWords] = useState("");
+  const [sending, setSending] = useState(false);
   const { press } = snap;
   // The odd beats are down. Once a press is heard the hint has done its work, and the keycaps stay up.
   const pressed = !still && !press.heard && beat % 2 === 1;
   const shortcut = prettyAccelerator(snap.shortcut);
+  // A thought taken moves the window on to its filing; one that isn't comes back as typeProblem, shown under the box.
+  const file = () => {
+    if (sending) return;
+    setSending(true);
+    const sent = () => setSending(false);
+    void api.typeThought(words).then(sent, sent);
+  };
   return (
     <Frame
       model={snap.model}
@@ -54,7 +66,33 @@ export function Think({ snap, go }: StepProps) {
         </Text>
         <Text variant="footnote" tone="secondary">If you're stuck, try a goal, someone you work with, or an idea you keep coming back to.</Text>
         {press.heard && <Text variant="footnote" tone="secondary">{`${shortcut} is free on this Mac, so it works in every app. Esc cancels.`}</Text>}
-        <PressNotice press={press} accelerator={snap.shortcut} />
+        {typing ? (
+          // While the person types, File it is the moment's one primary, so the shortcut's Notice waits until the box
+          // is put away. The words stay in the box when it is.
+          <Stack gap={8}>
+            <TextArea
+              label="Your thought"
+              placeholder="What's on your mind?"
+              value={words}
+              onChange={setWords}
+              onEnter={file}
+              onEscape={() => setTyping(false)}
+              description={snap.typeProblem ?? undefined}
+              autoFocus
+            />
+            <Actions>
+              <Button variant="quiet" onClick={() => setTyping(false)}>Cancel</Button>
+              <Button variant="primary" busy={sending} onClick={file}>File it</Button>
+            </Actions>
+          </Stack>
+        ) : (
+          <>
+            <PressNotice press={press} accelerator={snap.shortcut} />
+            <Actions align="start">
+              <Button onClick={() => setTyping(true)}>Type it instead</Button>
+            </Actions>
+          </>
+        )}
       </Stack>
     </Frame>
   );

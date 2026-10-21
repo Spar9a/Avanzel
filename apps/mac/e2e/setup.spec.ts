@@ -2,7 +2,7 @@
 // run there. Every test launches as a first run (firstRun): a new HOME, an empty Hugging Face cache, and only
 // stand-in agents on PATH: Claude Code and Codex, and the others a test adds, or none at all (noAgents).
 import { expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
@@ -14,14 +14,20 @@ import {
   call,
   capsuleKind,
   closeModelHubs,
+  exists,
   fakeModelHub,
+  filesUnder,
+  filingClaude,
   firstRun,
   gitOut,
   launch,
   noAgents,
+  onceMarker,
   SIGNED_OUT_CLAUDE,
   snap,
+  speechWav,
   throughFound,
+  typeFirstThought,
   UNREADABLE_CLAUDE,
   windowFor,
 } from "./helpers.ts";
@@ -849,4 +855,197 @@ test("the keycaps press themselves twice each time the step opens, and stay stil
   expect(await presses()).toHaveLength(8);
   await expect(keycaps(setup)).toHaveText(["⌥", "Space"]);
   await app.close();
+});
+
+// The first thought, typed: setup files it in its own window while the person watches, with the time, Cancel, and
+// one fix when it fails. The stand-in Claude Code runs the engine's fake agent (filingClaude), and ~/Avanzel is the
+// library Looks good made.
+
+/** The captures waiting in `library`'s inbox. */
+const inbox = (library: string) => filesUnder(library, "inbox");
+
+/** Zel's mood on the stage. */
+const zel = (setup: Page) => setup.locator("svg[data-mood]");
+
+/** A `claude` that is signed in, but whose filing fails: it prints `line` on stderr and exits 1, as a CLI does. */
+const failingClaude = (line: string) => `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else echo '${line}' >&2; exit 1; fi`;
+
+test("a typed first thought is filed in the window, with the time shown", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch({ ...env, FAKE_AGENT_DELAY_MS: "1500", FAKE_AGENT_DELAY_TASK: "file" });
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  await typeFirstThought(setup, "Plant tulips in October");
+  await expect(setup.getByRole("heading", { name: "Watch me file it." })).toBeVisible();
+  await expect(setup.getByText(/^Claude Code is working: \d+ s of about 15$/)).toBeVisible();
+  await expect(setup.getByRole("heading", { name: /^All filed\. Claude Code took \d+ s\.$/ })).toBeVisible({ timeout: 30_000 });
+  await expect(setup.getByRole("listitem")).toHaveCount(1); // the receipt: the new page, on its shelf
+  await expect(setup.getByRole("listitem")).toContainText(["Plant tulips in October"]);
+  await expect(setup.getByRole("listitem")).toContainText(["Ideas"]);
+  await expect(zel(setup)).toHaveAttribute("data-mood", "filed");
+  await expect(setup.getByRole("button", { name: "Continue" })).toHaveAttribute("data-variant", "primary");
+  await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
+  expect(filesUnder(library, "ideas")).toHaveLength(1);
+  expect(inbox(library)).toEqual([]);
+  // The setup window showed the filing, so the capsule showed nothing.
+  expect(await capsuleKind(app)).toBe("hidden");
+  // Only the first-thought step takes a typed thought: one sent from here (a second click, say) makes no capture.
+  await call(app, "typeSetupThought", "A second thought");
+  expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("an empty thought isn't filed, and the box says why", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  await setup.getByRole("button", { name: "Type it instead" }).click();
+  const box = setup.getByRole("textbox", { name: "Your thought" });
+  await expect(box).toBeFocused();
+  await box.fill("   ");
+  await box.press("Enter"); // Return files, as File it does
+  await expect(box).toHaveAccessibleDescription("Type a thought first.");
+  expect(inbox(path.join(home, "Avanzel"))).toEqual([]);
+  expect(await call(app, "setupStepForTests")).toBe("think");
+  // Cancel puts the box away, and Type it instead brings it back.
+  await setup.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(box).toHaveCount(0);
+  await setup.getByRole("button", { name: "Type it instead" }).click();
+  await expect(box).toBeVisible();
+  await app.close();
+});
+
+test("Cancel stops the agent, takes back what it did, and File it again files it", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch({ ...env, FAKE_AGENT_MODE: "slow-once", FAKE_AGENT_ONCE: onceMarker() });
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  await typeFirstThought(setup, "Plant tulips in October");
+  // The stalled run has changed something, and hangs.
+  await expect.poll(() => exists(library, "goals/half.md"), { timeout: 30_000 }).toBe(true);
+  await expect(setup.getByText(/^Claude Code is working: \d+ s( of about 15)?$/)).toBeVisible();
+  await expect(zel(setup)).toHaveAttribute("data-mood", "thinking");
+  // While it runs, Cancel is the only way on: the footer has no Continue, and no step has Back here.
+  await expect(setup.getByRole("button", { name: "Continue" })).toHaveCount(0);
+  await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
+  // Whether the stopped run is ever shown as a failure, even for a frame, before it is cancelled.
+  await setup.evaluate(() => {
+    const page = window as { sawFailure?: boolean };
+    page.sawFailure = false;
+    new MutationObserver(() => {
+      if (document.querySelector('[role="alert"]')) page.sawFailure = true;
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  await setup.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(setup.getByRole("heading", { name: "Cancelled." })).toBeVisible({ timeout: 30_000 });
+  await expect(setup.getByText("Your words are back in the inbox, untouched, and nothing else changed.", { exact: true })).toBeVisible();
+  expect(await setup.evaluate(() => (window as { sawFailure?: boolean }).sawFailure)).toBe(false);
+  expect(exists(library, "goals/half.md")).toBe(false);
+  expect(inbox(library)).toHaveLength(1);
+  await expect(zel(setup)).toHaveAttribute("data-mood", "idle");
+  // File it again is the moment's primary; Continue steps back (one primary per moment).
+  const again = setup.getByRole("button", { name: "File it again" });
+  await expect(again).toHaveAttribute("data-variant", "primary");
+  await expect(again).toBeFocused(); // where Cancel was
+  await expect(setup.getByRole("button", { name: "Continue" })).toHaveAttribute("data-variant", "secondary");
+  await again.click();
+  await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
+  expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("a filing that asks to sign in names it and offers Open Terminal", async () => {
+  const { env, home } = firstRun({ claude: failingClaude("Error: not logged in") });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  await typeFirstThought(setup, "Plant tulips in October");
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code isn't signed in on this Mac.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(notice).toContainText("Run claude once in Terminal and sign in, then try again. Your words are safe in the inbox.");
+  await expect(notice.getByText("claude", { exact: true })).toBeVisible(); // the command, set as code
+  const tryAgain = notice.getByRole("button", { name: "Try again", exact: true });
+  await expect(tryAgain).toHaveAttribute("data-variant", "primary");
+  await expect(setup.getByRole("button", { name: "Continue" })).toHaveAttribute("data-variant", "secondary");
+  await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
+  await expect(zel(setup)).toHaveAttribute("data-mood", "needs-you");
+  expect(inbox(path.join(home, "Avanzel"))).toHaveLength(1);
+  await notice.getByRole("button", { name: "Open Terminal" }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["Terminal"]);
+  await app.close();
+});
+
+test("another failure shows its own line", async () => {
+  const { env, home } = firstRun({ claude: failingClaude("Error: usage limit reached") });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  await typeFirstThought(setup, "Plant tulips in October");
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code couldn't file it.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(notice.getByText("Usage limit reached. Your words are safe in the inbox.", { exact: true })).toBeVisible();
+  await expect(notice.getByRole("button", { name: "Open Terminal" })).toHaveCount(0); // signing in isn't the fix
+  expect(inbox(path.join(home, "Avanzel"))).toHaveLength(1);
+  // Try again files the same note again: the agent is asked once more.
+  const filings = async () => (await callsTo(app, "claude")).filter((line) => line.startsWith("claude -p ")).length;
+  expect(await filings()).toBe(1);
+  await notice.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect.poll(filings, { timeout: 30_000 }).toBe(2);
+  await expect(notice.getByText("Claude Code couldn't file it.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  expect(inbox(path.join(home, "Avanzel"))).toHaveLength(1);
+  await app.close();
+});
+
+test("a filing that waits for the library says so, and a note gone from the inbox meanwhile is named", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  // Another Avanzel run has the library: this test holds its lock, and the filing waits for it.
+  let letGo = () => {};
+  const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
+  try {
+    await typeFirstThought(setup, "Plant tulips in October");
+    await expect(setup.getByText("Waiting for another Avanzel run to finish…", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(setup.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+    // Meanwhile the note leaves the inbox, as when another Avanzel files it.
+    for (const name of inbox(library)) rmSync(path.join(library, "inbox", name));
+  } finally {
+    letGo();
+    await held;
+  }
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code couldn't file it.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  // Nothing says the words are safe in the inbox, and there is nothing to try again: Continue is the way on.
+  await expect(notice.getByText("The note isn't in the inbox any more.", { exact: true })).toBeVisible();
+  await expect(notice.getByRole("button")).toHaveCount(0);
+  await expect(setup.getByRole("button", { name: "Continue" })).toHaveAttribute("data-variant", "primary");
+  await app.close();
+});
+
+test("closing setup during the filing still files the thought and says so", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const words = "Plant tulips in October";
+  const voice = { AVANZEL_USER_DATA: userData, AVANZEL_FAKE_AUDIO: speechWav(words), AVANZEL_FAKE_TRANSCRIPT: words };
+  const app = await launch({ ...env, ...voice, FAKE_AGENT_DELAY_MS: "3000", FAKE_AGENT_DELAY_TASK: "file" });
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  await typeFirstThought(setup, words);
+  await expect(setup.getByRole("heading", { name: "Watch me file it." })).toBeVisible();
+  await closeSetup(app);
+  await call(app, "idleForTests");
+  const notes = (await call(app, "notificationsForTests")) as { title: string; body: string }[];
+  expect(notes.map((note) => note.title)).toContain("Filed by Claude Code");
+  expect(filesUnder(library, "ideas")).toHaveLength(1);
+  expect(await shown(app, "setup")).toBe(false);
+  // The shortcut works as it does everywhere: a dictation starts in the capsule.
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await call(app, "cancelRecording");
+  await app.close();
+  // The next launch has a library, so setup doesn't open.
+  const next = await launch({ ...env, ...voice });
+  expect((await settingsSnap(next)).library?.path).toBe(library);
+  expect(await shown(next, "setup")).toBe(false);
+  expect(await windowsTitled(next, "Set up Avanzel")).toBe(0);
+  await next.close();
 });

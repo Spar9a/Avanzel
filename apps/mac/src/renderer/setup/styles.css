@@ -18,10 +18,12 @@
   grid-area: drag;
   -webkit-app-region: drag;
 }
-/* A grid stretches its one child both ways, so the stage fills its column. */
+/* A grid stretches its one child both ways, so the stage fills its column. Its one row is as tall as the column and no
+   taller, so a step's stage fits in the window however much it holds. */
 .stage {
   grid-area: stage;
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   padding-left: var(--av-space-16);
 }
 /* The step scrolls when it holds more than fits, under the footer, which stays put. A word too long for its line, such
@@ -89,4 +91,19 @@
   justify-content: center;
   gap: var(--av-space-24);
   height: 100%;
+}
+
+/* Filing's stage: the card with the person's words, Zel by it, and the shelves' tabs below. A thought longer than the
+   stage scrolls on its card, so Zel and the tabs stay in view; the card's box keeps room for its shadow and edge. */
+.filing {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--av-space-16);
+  height: 100%;
+}
+.filing-card {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--av-space-2) var(--av-space-2) var(--av-space-12);
 }

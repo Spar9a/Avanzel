@@ -1,6 +1,7 @@
-// The setup window's words that are made from values: sizes, dates and what an agent's check found, as its copy
-// table writes them, and which of those findings is a problem for the person to fix.
-import type { AgentStatus } from "../../shared/ipc.ts";
+// The setup window's words that are made from values: sizes, dates, what an agent's check found and how a filing went,
+// as its copy table writes them, and which of those findings is a problem for the person to fix.
+import { SHELVES, type ReceiptPage, type Shelf } from "@avanzel/ui";
+import { NOTE_GONE, type AgentStatus, type FiledPage } from "../../shared/ipc.ts";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] as const;
@@ -68,4 +69,42 @@ export function ownLine(detail: string): string {
   if (!line) return "";
   const sentence = line.charAt(0).toUpperCase() + line.slice(1);
   return /[.?…]$/.test(sentence) ? sentence : `${sentence}.`;
+}
+
+/** About how long a first filing takes, in seconds: the working line counts towards it. */
+export const ESTIMATE_SECONDS = 15;
+
+/** The line under "Watch me file it.": the agent's whole seconds so far, "of about 15" until it gets there. */
+export function workingLine(agent: string, seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  return whole < ESTIMATE_SECONDS ? `${agent} is working: ${whole} s of about ${ESTIMATE_SECONDS}` : `${agent} is working: ${whole} s`;
+}
+
+/** The heading once the thought is filed, in whole seconds, and never "0 s". */
+export function filedHeading(agent: string, seconds: number): string {
+  return `All filed. ${agent} took ${Math.max(1, Math.round(seconds))} s.`;
+}
+
+/** What a cancelled filing says of the words and the library: `partial` when the stopped run's edits stay. */
+export function cancelledLine(agent: string, partial: boolean): string {
+  return partial
+    ? `Your words are back in the inbox, untouched. ${agent}'s partial edits are kept as their own commit in the library's history.`
+    : "Your words are back in the inbox, untouched, and nothing else changed.";
+}
+
+/**
+ * The body of a failed filing's Notice when signing in isn't the fix: the agent's own line, then that the words are
+ * safe. A note gone from the inbox says only that, since the words aren't there to be safe.
+ */
+export function failedLine(line: string): string {
+  if (line === NOTE_GONE) return line;
+  return `${ownLine(line)} Your words are safe in the inbox.`.trim();
+}
+
+const isShelf = (shelf: string): shelf is Shelf => (SHELVES as readonly string[]).includes(shelf);
+
+/** A filing's pages as its receipt lists them: those on the six shelves, in order, and how many others it wrote. */
+export function receiptPages(pages: readonly FiledPage[]): { pages: ReceiptPage[]; others: number } {
+  const rows = pages.flatMap(({ title, shelf }) => (isShelf(shelf) ? [{ title, shelf }] : []));
+  return { pages: rows, others: pages.length - rows.length };
 }

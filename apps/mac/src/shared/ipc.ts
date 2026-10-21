@@ -214,6 +214,59 @@ export interface SetupPress {
   alternatives: string[];
 }
 
+/**
+ * The line a setup filing fails with when its note left the inbox before its agent could start, as when another Avanzel
+ * filed it meanwhile: the words aren't in the inbox then, and filing that note again can't work.
+ */
+export const NOTE_GONE = "The note isn't in the inbox any more.";
+
+/** The first thought's filing, in the setup window. */
+export type SetupFiling =
+  | {
+      kind: "running";
+      words: string;
+      agent: string;
+      /** Date.now() at the start: when the filing began, or when its wait for the library ended. */
+      startedAt: number;
+      /** Another run has the library. */
+      waiting: boolean;
+      /** Cancel was pressed; it is stopping. */
+      cancelling: boolean;
+    }
+  | {
+      kind: "filed";
+      words: string;
+      agent: string;
+      seconds: number;
+      /** New pages first. */
+      pages: FiledPage[];
+      /** How many of pages are new. */
+      created: number;
+      /** The engine put the words back. */
+      restored: boolean;
+      /** The filing is its own commit. */
+      canUndo: boolean;
+    }
+  | {
+      kind: "cancelled";
+      words: string;
+      /** Whose run was stopped: the copy names it when its partial edits stay. */
+      agent: string;
+      /** What the stopped run did stays, as its own commit. */
+      partial: boolean;
+    }
+  | {
+      kind: "failed";
+      words: string;
+      agent: string;
+      /** The harness name, "claude". */
+      harness: string;
+      /** errorLine of the failure, or NOTE_GONE. */
+      line: string;
+      /** That line asks to sign in. */
+      signedOut: boolean;
+    };
+
 /** Everything the setup window shows, in one snapshot (setup:changed). Later tasks add fields. */
 export interface SetupSnapshot {
   /** Where Looks good makes or uses the library: the stored libraryPath, else ~/Avanzel, until Change… picks another. */
@@ -248,6 +301,10 @@ export interface SetupSnapshot {
    * over each time the step is entered and each time the shortcut changes there.
    */
   press: SetupPress;
+  /** The first thought's filing, from the moment the thought is handed over; null before. */
+  filing: SetupFiling | null;
+  /** Why a typed thought wasn't taken (empty words, or a capture that couldn't be written); null once one is. */
+  typeProblem: string | null;
 }
 
 export interface AskResult {
@@ -344,5 +401,14 @@ export interface AvanzelBridge {
      * thought's shortcut, and the step listens for a press of it afresh; setup:changed follows.
      */
     useShortcut(accelerator: string): Promise<SetupSnapshot>;
+    /**
+     * File it, on the first-thought step's typing rows: `words` become a note in the inbox, which setup files while the
+     * window shows it; setup:changed follows. Words it can't take come back as typeProblem: nothing is thrown.
+     */
+    typeThought(words: string): Promise<SetupSnapshot>;
+    /** Cancel, while the first thought is filed: its agent stops, and what it did is taken back. */
+    cancelFiling(): void;
+    /** File it again, or Try again, once a filing has stopped short: the same note is filed in a new run. */
+    fileAgain(): void;
   };
 }

@@ -4,6 +4,7 @@ import "@avanzel/ui/base.css";
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AvanzelBridge, SetupSnapshot, SetupStep } from "../../shared/ipc.ts";
+import { Filing } from "./steps/Filing.tsx";
 import { Found } from "./steps/Found.tsx";
 import { Hello } from "./steps/Hello.tsx";
 import { Think } from "./steps/Think.tsx";
@@ -24,6 +25,9 @@ function Setup() {
     void api.get().then(setSnap);
     return api.onChanged(setSnap);
   }, []);
+  // A thought handed over on the first-thought step is being filed: the window follows it there. The controller has
+  // entered that step already as it took the thought, so this only shows it (React redraws at once, before painting).
+  if (step === "think" && snap?.filing) setStep("filing");
   if (!snap) return null;
   const go = (next: SetupStep) => {
     setStep(next);
@@ -36,6 +40,8 @@ function Setup() {
       return <Found snap={snap} go={go} />;
     case "think":
       return <Think snap={snap} go={go} />;
+    case "filing":
+      return <Filing snap={snap} go={go} />;
     default:
       return null; // a step whose change hasn't come yet
   }
