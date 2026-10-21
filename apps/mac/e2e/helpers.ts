@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { MenuItemModel } from "../src/main/menu-model.ts";
 import { encodePng } from "../src/main/png.ts";
 import type { SetupSnapshot } from "../src/shared/ipc.ts";
 
@@ -239,6 +240,12 @@ export async function call(app: ElectronApplication, method: string, ...args: un
 export async function capsuleKind(app: ElectronApplication): Promise<string> {
   const state = (await call(app, "capsuleStateForTests")) as { kind: string };
   return state.kind;
+}
+
+/** The titles under "Recently filed" in the menu bar menu. */
+export async function recentlyFiled(app: ElectronApplication): Promise<string[]> {
+  const menu = (await call(app, "menuForTests")) as MenuItemModel[];
+  return menu.flatMap((item) => (item.type === "item" && item.action.startsWith("open:") ? [item.label] : []));
 }
 
 export async function windowFor(app: ElectronApplication, name: string): Promise<Page> {

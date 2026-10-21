@@ -1,9 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { alive, call, capsuleKind, exists, filesUnder, launch, makeLibrary, read, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
+import { git, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
+import { alive, call, capsuleKind, exists, filesUnder, launch, makeLibrary, read, recentlyFiled, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
 
 const inbox = (root: string) => readdirSync(path.join(root, "inbox")).filter((n) => !n.startsWith("."));
 const archived = (root: string) => {
@@ -171,6 +171,54 @@ test("typing a thought files it", async () => {
   await quick.getByRole("textbox", { name: "Type a thought" }).press("Enter");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+/**
+ * "Plant tulips in October", typed in Quick and filed by the fake agent into a library with git, so the filing is its
+ * own commit: the capsule shows the filed card, with Undo. The pointer then rests on the card, which keeps it open
+ * past its 8 s, as a person's would.
+ */
+async function typedAndFiled(): Promise<{ library: string; app: ElectronApplication; capsule: Page }> {
+  const library = await makeLibrary({ git: true });
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "openQuick");
+  const quick = await windowFor(app, "quick");
+  await quick.getByRole("textbox", { name: "Type a thought" }).fill("Plant tulips in October");
+  await quick.getByRole("textbox", { name: "Type a thought" }).press("Enter");
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await capsule.getByRole("button", { name: "Undo" }).hover();
+  return { library, app, capsule };
+}
+
+test("Undo on the filed card takes the filing back, and the note waits in the inbox again", async () => {
+  const { library, app, capsule } = await typedAndFiled();
+  expect(filesUnder(library, "ideas")).toHaveLength(1);
+  expect(await recentlyFiled(app)).toEqual(["Plant tulips in October"]);
+  await capsule.getByRole("button", { name: "Undo" }).click();
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
+  await expect(capsule.getByText("Undone. The note is back in your inbox.")).toBeVisible();
+  expect(inbox(library)).toHaveLength(1);
+  expect(filesUnder(library, "ideas")).toEqual([]);
+  expect(await recentlyFiled(app)).toEqual([]);
+  await app.close();
+});
+
+test("an Undo git refuses says so on the card, and the edit made since stays", async () => {
+  const { library, app, capsule } = await typedAndFiled();
+  // Meanwhile the new page is edited by hand, and the edit committed: undoing the filing would take the edit with it.
+  const [page = ""] = filesUnder(library, "ideas");
+  const file = path.join(library, "ideas", page);
+  writeFileSync(file, "# Tulips, by hand\n");
+  expect(await git.commitAll(library, "An edit by hand")).not.toBeNull();
+  await capsule.getByRole("button", { name: "Undo" }).click();
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+  await expect(capsule.getByText("Couldn't undo")).toBeVisible();
+  expect(readFileSync(file, "utf8")).toBe("# Tulips, by hand\n");
+  expect(inbox(library)).toEqual([]);
+  // The menu's Recently filed is read again all the same: the page is there, under the title the edit gave it.
+  expect(await recentlyFiled(app)).toEqual(["Tulips, by hand"]);
   await app.close();
 });
 

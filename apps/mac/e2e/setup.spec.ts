@@ -23,6 +23,7 @@ import {
   launch,
   noAgents,
   onceMarker,
+  recentlyFiled,
   SIGNED_OUT_CLAUDE,
   snap,
   speechWav,
@@ -1380,10 +1381,6 @@ test("Record a thought in the menu records on the first-thought step, but isn't 
 
 /** The heading once the first thought is filed. */
 const FILED = /^All filed\. Claude Code took \d+ s\.$/;
-
-/** The titles under "Recently filed" in the menu bar menu. */
-const recentlyFiled = async (app: ElectronApplication) =>
-  ((await call(app, "menuForTests")) as MenuItemModel[]).flatMap((item) => (item.type === "item" && item.action.startsWith("open:") ? [item.label] : []));
 
 /** The stage's shelf tabs, each read as its name and then its count, when it has one: "Ideas1". */
 const tabs = (setup: Page) => setup.locator('[data-shelf][data-variant="tab"]');
