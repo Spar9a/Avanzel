@@ -68,6 +68,7 @@ import type {
   CapsuleState,
   FiledPage,
   ModelStatus,
+  RecordingProblem,
   ScreenContext,
   SettingsPane,
   SettingsSnapshot,
@@ -80,6 +81,7 @@ import type {
   SetupThought,
   Shortcuts,
   TaskInfo,
+  UpHereSnapshot,
 } from "../shared/ipc.ts";
 import { frontContext } from "./front-app.ts";
 import { captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
@@ -112,7 +114,6 @@ import {
   createSettingsWindow,
   createSetupWindow,
   createUpHereWindow,
-  FLIGHT_MS,
   placeCapsule,
   placeQuick,
   UP_HERE_SIZE,
@@ -711,11 +712,18 @@ export class Controller {
   }
 
   /**
-   * `recording` went wrong: the capsule's card says so, unless it is setup's first spoken thought, which the setup window
-   * says instead (`setupLost`).
+   * `recording` went wrong: the capsule's card says so (`message`, `detail`), unless it is setup's first spoken thought,
+   * which the setup window says in its own words instead (`setupLost`): the `problem`, and whether the recording is
+   * `kept` in the library, which nothing else of it is.
    */
-  private recordingFailed(recording: Recording, message: string, detail?: string, action?: ErrorAction): void {
-    if (!this.setupLost(recording, { kind: "failed", message, detail: detail ?? null })) this.fail(message, detail, action);
+  private recordingFailed(
+    recording: Recording,
+    { problem, kept = false }: { problem: RecordingProblem; kept?: boolean },
+    message: string,
+    detail?: string,
+    action?: ErrorAction,
+  ): void {
+    if (!this.setupLost(recording, { kind: "failed", problem, kept })) this.fail(message, detail, action);
   }
 
   // ---------------------------------------------------------------- recording
@@ -857,7 +865,13 @@ export class Controller {
       this.audioTimeout = null;
       if (this.recording !== recording) return; // only ever this recording, never a newer one
       this.abandonRecording(recording);
-      this.recordingFailed(recording, "The recording didn't arrive", "Try again; if it keeps happening, check the microphone in Settings → Voice.", "open-settings:voice");
+      this.recordingFailed(
+        recording,
+        { problem: "lost" },
+        "The recording didn't arrive",
+        "Try again; if it keeps happening, check the microphone in Settings → Voice.",
+        "open-settings:voice",
+      );
     }, AUDIO_TIMEOUT_MS);
   }
 
@@ -878,7 +892,13 @@ export class Controller {
     const recording = this.recording;
     if (!recording) return;
     this.abandonRecording(recording);
-    this.recordingFailed(recording, "The microphone didn't start", `${message}\nCheck Settings → Voice and System Settings → Privacy & Security → Microphone.`, "open-microphone-settings");
+    this.recordingFailed(
+      recording,
+      { problem: "microphone" },
+      "The microphone didn't start",
+      `${message}\nCheck Settings → Voice and System Settings → Privacy & Security → Microphone.`,
+      "open-microphone-settings",
+    );
   }
 
   /** Give a recording up without its audio: the capsule lets go of the microphone, and a screenshot taken for it goes. */
@@ -903,14 +923,19 @@ export class Controller {
     this.recording = null;
     const vault = this.requireVault();
     const now = new Date();
+    // What a failure can say is safe: the recording, once written to the library, and whether its words were made.
+    let written: string | null = null;
+    let text = "";
     try {
       const samples = process.env.AVANZEL_FAKE_AUDIO ? await this.fakeAudio(process.env.AVANZEL_FAKE_AUDIO) : received;
       const { audioPath, unkept } = this.claimRecording(vault, now);
-      let text = "";
       let engine = "";
       let seconds: number | null = null;
       if (samples.length >= 16000 * 0.3) {
-        if (audioPath) writeWav(audioPath, samples, 16000);
+        if (audioPath) {
+          writeWav(audioPath, samples, 16000);
+          written = audioPath;
+        }
         const started = performance.now();
         const transcript = await this.transcribe(samples);
         seconds = (performance.now() - started) / 1000;
@@ -940,13 +965,22 @@ export class Controller {
         return;
       }
       if (!text) {
-        return this.recordingFailed(recording, "No speech recognized", "If you did speak, check the microphone in Settings → Voice.", "open-settings:voice");
+        // Its recording went with it: nothing is kept.
+        return this.recordingFailed(
+          recording,
+          { problem: "silence" },
+          "No speech recognized",
+          "If you did speak, check the microphone in Settings → Voice.",
+          "open-settings:voice",
+        );
       }
       const capture = vault.newCapture(text, { source: "voice", audio: audioPath, transcriber: engine, now });
       this.afterCapture(capture.path, text, seconds, unkept, recording);
     } catch (error) {
+      console.error("recording", error);
       this.recordingFailed(
         recording,
+        { problem: text ? "unsaved" : "unheard", kept: written !== null && existsSync(written) },
         error instanceof AvanzelError ? error.message : "Couldn't transcribe that",
         error instanceof AvanzelError ? undefined : errorMessage(error),
         "open-settings:voice",
@@ -1810,6 +1844,7 @@ export class Controller {
       libraryReady: !!this.vault,
       model: this.model,
       shortcut: this.store.get().shortcuts.dictate,
+      typeShortcut: this.store.get().shortcuts.type,
       noAgent: this.setup?.begun === true && this.setup.installed.length === 0,
       agents,
       agent: this.setup?.picked ?? bestAgent(agents, folder === "library" ? libraryAgent(libraryPath) : null),
@@ -2473,11 +2508,12 @@ export class Controller {
    * is now. Only the last step finishes setup. That is noted (`firstRun`) before the window goes, so its closing, even
    * during the flight, isn't noted as a close in the middle of setup (`endSetup`).
    *
-   * The window, whose page has blanked itself, flies onto a 24 px square on the menu bar icon (flightTarget): macOS
-   * animates its frame, holding this thread until it lands, and the window closes once FLIGHT_MS has passed in all.
-   * Closing it ends the session. Then Zel's bubble says it's up there (openUpHere). Under Reduce Motion the window just
-   * closes. So it does when the icon is hidden, and there is no bubble, since there is nothing to point at: opening
-   * Avanzel again finds it (`showHome`). A window closed during the flight, or by quitting, gets no bubble either.
+   * The window, whose page now shows Zel alone in its middle, flies onto a 24 px square on the menu bar icon
+   * (flightTarget): macOS animates its frame, holding this thread until it lands, and the window closes the moment it
+   * has. Closing it ends the session. Then Zel's bubble says it's up there (openUpHere). Under Reduce Motion the window
+   * just closes. So it does when the icon is hidden, and there is no bubble, since there is nothing to point at:
+   * opening Avanzel again finds it (`showHome`). A window closed during the flight, or by quitting, gets no bubble
+   * either.
    */
   async finishSetup(): Promise<void> {
     const session = this.setup;
@@ -2488,10 +2524,8 @@ export class Controller {
     const tray = this.menuBar.bounds();
     const target = flightTarget(tray);
     if (target && !systemPreferences.getAnimationSettings().prefersReducedMotion) {
-      const start = Date.now();
       win.setWindowButtonVisibility(false);
-      win.setBounds(target, true);
-      await new Promise((resolve) => setTimeout(resolve, Math.max(0, FLIGHT_MS - (Date.now() - start))));
+      win.setBounds(target, true); // returns once it has landed
       if (win.isDestroyed()) return;
     }
     // Once the window has gone, so the bubble takes the focus from nothing on its way out.
@@ -2517,10 +2551,22 @@ export class Controller {
     });
   }
 
+  /** What Zel's bubble says: the shortcuts to talk and to type, and whether Avanzel can hear yet (`hears`). */
+  upHereSnapshot(): UpHereSnapshot {
+    const { dictate, type } = this.store.get().shortcuts;
+    return { shortcut: dictate, typeShortcut: type, hears: this.hears() };
+  }
+
   /** Try it now, in the bubble: it goes, and Record a thought starts, as its shortcut would start it. */
   tryItNow(): void {
     this.closeUpHere();
     void this.toggleDictate();
+  }
+
+  /** Type a thought, in the bubble while Avanzel can't hear yet: it goes, and Quick opens for the thought. */
+  typeFromUpHere(): void {
+    this.closeUpHere();
+    this.openQuick();
   }
 
   /** Not now, Esc or a click elsewhere: the bubble goes, for good. */

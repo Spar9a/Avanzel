@@ -5,7 +5,7 @@
 // shows once the window has the focus again. With no agent at all, Found says how to install one and setup notices
 // when it arrives. Change… picks another place.
 // Looks good (Use this folder, when the folder holds files or a library already) makes the library there with the
-// chosen agent. Zel waits on the stage.
+// chosen agent. Zel waits on the stage, looking at the step, and is worried while a problem there needs the person.
 import { Actions, Button, Group, GroupRow, Icon, Notice, Row, Stack, Text, Zel } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AGENT_INSTALLS, agentWorks, type AgentInstall, type LibraryFolder, type SetupAgent, type SetupSnapshot } from "../../../shared/ipc.ts";
@@ -75,7 +75,8 @@ export function Found({ snap, go }: StepProps) {
       model={snap.model}
       stage={
         <div className="found">
-          <Zel mood="idle" size="large" />
+          {/* Zel looks over at the step, and is worried while a problem there needs the person. */}
+          <Zel mood={problem || trouble ? "needs-you" : "idle"} size="large" look="right" />
         </div>
       }
       actions={

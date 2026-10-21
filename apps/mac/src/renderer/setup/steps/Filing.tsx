@@ -76,8 +76,9 @@ function heading(filing: SetupFiling): string {
 }
 
 /**
- * The stage: the card with the person's words, which are in the inbox until they are filed, Zel by it, and the six
- * shelves' tabs below, where the filing goes. Once filed, the card is stamped, and each tab counts its filed pages.
+ * The stage: the card with the person's words, which are in the inbox until they are filed, Zel under it looking up at
+ * it, and the six shelves' tabs below, where the filing goes. Once filed, the card is stamped, and each tab counts its
+ * filed pages.
  */
 function FilingStage({ filing }: { filing: SetupFiling }) {
   const inInbox = filing.kind !== "filed" && !(filing.kind === "failed" && filing.line === NOTE_GONE);
@@ -88,7 +89,7 @@ function FilingStage({ filing }: { filing: SetupFiling }) {
         {filing.kind === "filed" ? <FiledCard words={filing.words} /> : <Card label="Thought" meta={inInbox ? "Inbox" : undefined}>{filing.words}</Card>}
       </div>
       <Row justify="end">
-        <Zel mood={MOOD[filing.kind]} size="medium" />
+        <Zel mood={MOOD[filing.kind]} size="medium" look="up" />
       </Row>
       <Row gap={4} wrap justify="center">
         {SHELVES.map((shelf) => <ShelfTag key={shelf} shelf={shelf} variant="tab" count={filed.filter((page) => page.shelf === shelf).length} />)}
@@ -137,7 +138,7 @@ function Outcome({ filing, where, inObsidian }: { filing: Filed; where: string; 
   const first = filing.pages[0];
   return (
     <>
-      {filing.pages.length > 0 && <Text variant="voice">Your first idea has a home.</Text>}
+      {filing.pages.length > 0 && <Text variant="voice">Your first thought has a home.</Text>}
       <Stack gap={4}>
         <Text variant="footnote" tone="secondary">{pagesLine(created, rows.length - created, where) ?? `${filing.agent} noted it in the log.`}</Text>
         {more && <Text variant="footnote" tone="secondary">{more}</Text>}

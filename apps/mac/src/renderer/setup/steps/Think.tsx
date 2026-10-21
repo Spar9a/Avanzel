@@ -7,13 +7,16 @@
 // A press also records the thought with the real capsule. When macOS hasn't asked about the microphone yet, the
 // microphone's primer comes first, and a microphone turned down says where to allow it. Zel listens on the stage while
 // the capsule records; once the words exist, a mic check ("Testing, testing") gets a warm answer, and anything else moves
-// on to its filing. Until the speech models are here, the step says so and typing is the way. Type it instead opens a
+// on to its filing. A recording that goes wrong says so in setup's own words: what happened, what is safe, and Try
+// again or typing. Until the speech models are here, the step says so and typing is the way. Type it instead opens a
 // box for the thought, and File it hands the words to setup, which moves on to filing them.
+// VoiceOver hears one short sentence as each moment comes (listening, the words being made, the answer to a mic check,
+// a press heard): never the prompts, nor the seconds that count while the words are made.
 import { Actions, Button, Card, Kbd, Notice, PermissionPrimer, Row, Spinner, Stack, Text, TextArea, Zel, type ZelMood } from "@avanzel/ui";
 import { useEffect, useState, type ReactNode } from "react";
 import { keyCaps, prettyAccelerator, reachKey, takenMessage } from "../../../main/shortcuts.ts";
 import type { SetupPress, SetupThought } from "../../../shared/ipc.ts";
-import { earsLine, transcribingLine } from "../copy.ts";
+import { earsLine, recordingProblem, slowSeconds, TRANSCRIBING } from "../copy.ts";
 import { Frame, useNow, type StepProps } from "../frame.tsx";
 
 const api = window.avanzel.setup;
@@ -74,6 +77,8 @@ export function Think({ snap, go }: StepProps) {
     const sent = () => setSending(false);
     void api.typeThought(words).then(sent, sent);
   };
+  // The card the words will fill, the shortcut's keycaps, and Zel looking up at them. The microphone's primer has a Zel
+  // of its own, so while it shows the stage has none.
   const stage = (
     <div className="think">
       <Card label="Thought" placeholder="Your words will appear here.">{thought.kind === "test" ? thought.words : undefined}</Card>
@@ -82,9 +87,11 @@ export function Think({ snap, go }: StepProps) {
           <Kbd key={i} size="key" pressed={pressed}>{cap}</Kbd>
         ))}
       </Row>
-      <Row justify="end">
-        <Zel mood={MOOD[thought.kind]} size="medium" />
-      </Row>
+      {thought.kind !== "primer" && (
+        <Row justify="end">
+          <Zel mood={MOOD[thought.kind]} size="medium" look="up" />
+        </Row>
+      )}
     </div>
   );
   if (thought.kind === "primer") {
@@ -103,10 +110,12 @@ export function Think({ snap, go }: StepProps) {
   const talking = asking || thought.kind === "listening";
   const ears = asking && !snap.hears ? earsLine(snap.model) : null;
   // At most one Notice, the thought's own first. While one shows, its actions hold the primary, so Type it instead steps
-  // back; until the ears are here, it is the way on otherwise. While the microphone is turned down it is the Notice's.
+  // back; until the ears are here, it is the way on otherwise. While the microphone is turned down, or a recording went
+  // wrong, it is the Notice's own.
+  const typeInstead = () => setTyping(true);
   let notice: ReactNode = null;
-  if (thought.kind === "denied") notice = <DeniedNotice onType={() => setTyping(true)} />;
-  else if (thought.kind === "failed") notice = <FailedNotice thought={thought} />;
+  if (thought.kind === "denied") notice = <DeniedNotice onType={typeInstead} />;
+  else if (thought.kind === "failed") notice = <FailedNotice thought={thought} onType={typeInstead} />;
   else if (press.taken || press.silent) notice = <PressNotice press={press} accelerator={snap.shortcut} />;
   return (
     <Frame
@@ -116,18 +125,18 @@ export function Think({ snap, go }: StepProps) {
     >
       <Stack gap={12}>
         <Text variant="heading">What's on your mind this week?</Text>
-        {/* VoiceOver hears where the thought is: listening, its words being made, the answer to a mic check. */}
-        <div role="status">
-          <Stack gap={12}>
-            <Lead thought={thought} shortcut={shortcut} />
-            {talking && <Text variant="footnote" tone="secondary">If you're stuck, try a goal, someone you work with, or an idea you keep coming back to.</Text>}
-            {/* Esc cancels only a recording: it is promised only while one runs. */}
-            {talking && press.heard && (
-              <Text variant="footnote" tone="secondary">
-                {`${shortcut} is free on this Mac, so it works in every app.${thought.kind === "listening" ? " Esc cancels." : ""}`}
-              </Text>
-            )}
-          </Stack>
+        <div>
+          <Lead thought={thought} shortcut={shortcut} />
+          {talking && (
+            <div className="think-line">
+              <Text variant="footnote" tone="secondary">If you're stuck, try a goal, someone you work with, or an idea you keep coming back to.</Text>
+            </div>
+          )}
+          {/* The press test's answer, which VoiceOver hears as it comes: a live region that stays in place, taking no
+              room until it says something. */}
+          <div role="status" className="think-heard">
+            {talking && press.heard && <Text variant="footnote" tone="secondary">{`${shortcut} is free on this Mac, so it works in every app.`}</Text>}
+          </div>
         </div>
         {thought.kind === "test" && (
           <Actions align="start">
@@ -158,9 +167,9 @@ export function Think({ snap, go }: StepProps) {
         ) : (
           <>
             {notice}
-            {thought.kind !== "denied" && (
+            {thought.kind !== "denied" && thought.kind !== "failed" && (
               <Actions align="start">
-                <Button variant={!snap.hears && notice === null ? "primary" : "secondary"} onClick={() => setTyping(true)}>Type it instead</Button>
+                <Button variant={!snap.hears && notice === null ? "primary" : "secondary"} onClick={typeInstead}>Type it instead</Button>
               </Actions>
             )}
           </>
@@ -170,33 +179,63 @@ export function Think({ snap, go }: StepProps) {
   );
 }
 
-/** The step's first line: what to do, or where the spoken thought is. */
+/**
+ * The step's lead: where the spoken thought is, then what to do. Only where it is (`said`) sits in a live region, which
+ * stays in place from one moment to the next, so VoiceOver hears one short sentence as each moment comes: never the
+ * prompt and instructions, nor the seconds that count while the words are made, which follow it outside.
+ */
 function Lead({ thought, shortcut }: { thought: SetupThought; shortcut: string }) {
+  const where = said(thought);
+  const next = then(thought, shortcut);
+  return (
+    <Row gap={8}>
+      {thought.kind === "transcribing" && <Spinner size="small" />}
+      <div className="think-lead">
+        <span role="status">{where}</span>
+        {where && next ? " " : null}
+        {next}
+      </div>
+    </Row>
+  );
+}
+
+/** Where the spoken thought is, in one short sentence, as VoiceOver hears it; nothing while the step asks for it. */
+function said(thought: SetupThought): ReactNode {
   switch (thought.kind) {
     case "listening":
-      return <Text variant="callout">I'm listening. Press <Kbd>{shortcut}</Kbd> again when you're done.</Text>;
+      return <Text variant="callout" as="span">I'm listening.</Text>;
     case "transcribing":
-      return <Transcribing startedAt={thought.startedAt} />;
+      return <Text variant="callout" as="span">{TRANSCRIBING}</Text>;
     case "test":
-      return <Text variant="voice">Heard you. Want to try a real thought?</Text>;
+      return <Text variant="voice" as="span">Heard you. Want to try a real thought?</Text>;
+    default:
+      return null;
+  }
+}
+
+/** What follows that sentence: what to do now (Esc's cancel promised only while a recording runs), or how long the words take. */
+function then(thought: SetupThought, shortcut: string): ReactNode {
+  switch (thought.kind) {
+    case "listening":
+      return <Text variant="callout" as="span">Press <Kbd>{shortcut}</Kbd> again when you're done. Esc cancels.</Text>;
+    case "transcribing":
+      return <Seconds startedAt={thought.startedAt} />;
+    case "test":
+      return null;
     default:
       return (
-        <Text variant="callout">
+        <Text variant="callout" as="span">
           Press <Kbd>{shortcut}</Kbd>, ramble for half a minute, then press it again. I'll sort it out.
         </Text>
       );
   }
 }
 
-/** While the words are made: a spinner and its line, which gives the seconds once they pass 10. Only this redraws as they count. */
-function Transcribing({ startedAt }: { startedAt: number }) {
+/** How long the words have taken, once past 10 s: the only part of the step that redraws as they count. */
+function Seconds({ startedAt }: { startedAt: number }) {
   const now = useNow(TICK_MS);
-  return (
-    <Row gap={8}>
-      <Spinner size="small" />
-      <Text variant="callout" numeric>{transcribingLine((now - startedAt) / 1000)}</Text>
-    </Row>
-  );
+  const seconds = slowSeconds((now - startedAt) / 1000);
+  return seconds ? <Text variant="callout" as="span" numeric>{seconds}</Text> : null;
 }
 
 /**
@@ -220,27 +259,32 @@ function DeniedNotice({ onType }: { onType: () => void }) {
   );
 }
 
-/** The recording or its words went wrong: what the capsule's card would have said, and Try again. */
-function FailedNotice({ thought }: { thought: Extract<SetupThought, { kind: "failed" }> }) {
+/**
+ * The recording or its words went wrong, in setup's own words (recordingProblem): what happened, what is safe, and the
+ * way on, Try again or typing. Its Type it instead stands in for the step's own, so there is one button of that name.
+ */
+function FailedNotice({ thought, onType }: { thought: Extract<SetupThought, { kind: "failed" }>; onType: () => void }) {
+  const { title, body } = recordingProblem(thought.problem, thought.kept);
   return (
     <Notice
       tone="error"
-      title={thought.message}
+      title={title}
       actions={
         <Actions align="start">
+          <Button size="small" onClick={onType}>Type it instead</Button>
           <Button size="small" variant="primary" onClick={() => api.tryAgain()}>Try again</Button>
         </Actions>
       }
     >
-      {thought.detail ?? undefined}
+      {body}
     </Notice>
   );
 }
 
 /**
- * The Notice of a shortcut that may not work: another app holds it (an error), or no press arrived within the wait, so
- * another app may hold it though it registered. Each offers the free ones, the best last as the primary, or Settings →
- * Voice when none is free. Nothing while the shortcut works or the step still waits for a press.
+ * The Notice of a shortcut that may not work: another app holds it (an error), or no press followed the person's reach
+ * for it within the wait, so another app may hold it though it registered. Each offers the free ones, the best last as
+ * the primary, or Settings → Voice when none is free. Nothing while the shortcut works or the step still waits.
  */
 function PressNotice({ press, accelerator }: { press: SetupPress; accelerator: string }) {
   if (!press.taken && !press.silent) return null;

@@ -91,12 +91,6 @@ export function createSetupWindow(): BrowserWindow {
   return win;
 }
 
-/**
- * How long the setup window's flight into the menu bar takes at the end of setup, as long as --av-duration-drawer:
- * macOS's own animation of its frame, then what is left of this before the window closes.
- */
-export const FLIGHT_MS = 700;
-
 export const UP_HERE_SIZE = { width: 320, height: 200 };
 
 /**

@@ -93,13 +93,13 @@ export function looksLikeATest(words: string): boolean {
 
 /**
  * The question the Ask step suggests about the pages the first filing wrote: about the first person among them, else
- * about the first page, wherever it is; none without a page.
+ * about the first page, wherever it is, its title in quotation marks; none without a page.
  */
 export function suggestQuestion(pages: readonly FiledPage[]): string | null {
   const person = pages.find((page) => page.shelf === "people");
   if (person) return `What am I doing with ${person.title}?`;
   const first = pages[0];
-  return first ? `What did I say about ${first.title}?` : null;
+  return first ? `What did I say about “${first.title}”?` : null;
 }
 
 /**

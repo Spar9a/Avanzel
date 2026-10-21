@@ -2,10 +2,12 @@
 #root {
   height: 100%;
 }
-/* Start using Avanzel: the window flies into the menu bar as blank paper, its page hidden (main.tsx's finish). Nothing
-   overflows it either, so no scroll bar shows as the window shrinks past the step's size. */
-#root[data-leaving] {
-  visibility: hidden;
+/* Start using Avanzel: the window flies into the menu bar with Zel alone in its middle (main.tsx's Leaving). Nothing
+   overflows it, so no scroll bar shows as the window shrinks past Zel's size. */
+.leaving {
+  display: grid;
+  place-items: center;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -58,21 +60,13 @@
   max-width: 160px;
 }
 
-/* Hello's stage: the card, with Zel under the stamp it has just put on the card's lines. */
+/* Hello's stage: the card with its stamp, and Zel under it. */
 .hello {
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: var(--av-space-24);
   height: 100%;
-}
-.hello-card {
-  position: relative;
-}
-.hello-stamp {
-  position: absolute;
-  right: var(--av-space-16);
-  bottom: var(--av-space-4);
 }
 
 /* Found's stage and Done's: Zel in the middle, waiting while the step is read. */
@@ -105,6 +99,16 @@
   place-items: center;
   min-height: 100%;
 }
+/* Think's lead takes the line beside its spinner; its small print and the press test's line sit 12 under it. The press
+   test's line is a live region that stays in place, so it takes no room while it says nothing. */
+.think-lead {
+  flex: 1;
+  min-width: 0;
+}
+.think-line,
+.think-heard:not(:empty) {
+  padding-top: var(--av-space-12);
+}
 
 /* Filing's stage: the card with the person's words, Zel by it, and the shelves' tabs below; Ask's: the question's card
    and Zel. A thought or question longer than the stage scrolls on its card, so Zel and the tabs stay in view; the
@@ -122,4 +126,9 @@
   min-height: 0;
   overflow-y: auto;
   padding: var(--av-space-2) var(--av-space-2) var(--av-space-12);
+}
+/* Ask's suggestion in words takes the line beside its button, and wraps there. */
+.ask-offer {
+  flex: 1;
+  min-width: 0;
 }

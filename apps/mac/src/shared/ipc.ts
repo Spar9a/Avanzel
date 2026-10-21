@@ -235,6 +235,13 @@ export interface SetupPress {
 }
 
 /**
+ * What went wrong with the first spoken thought's recording, which setup says in its own words: the recording never
+ * reached Avanzel ("lost"), the microphone didn't start, no words were heard in it ("silence"), its words couldn't be
+ * made ("unheard"), or they were made but couldn't be saved ("unsaved").
+ */
+export type RecordingProblem = "lost" | "microphone" | "silence" | "unheard" | "unsaved";
+
+/**
  * The first spoken thought, from the press to its words, on the first-thought step. The capsule records it; once the
  * words exist, a thought moves on to its filing (`filing`), and only a mic check stays here.
  */
@@ -251,8 +258,11 @@ export type SetupThought =
   | { kind: "transcribing"; startedAt: number }
   /** Its words are a mic check ("Testing, testing"), kept in the inbox until File it anyway or Try again. */
   | { kind: "test"; words: string }
-  /** The recording or its transcription went wrong, as the capsule's card would have said. */
-  | { kind: "failed"; message: string; detail: string | null };
+  /**
+   * The recording or its transcription went wrong (`problem`). `kept`: its recording is kept in the library, under
+   * raw/audio/; nothing else of it is.
+   */
+  | { kind: "failed"; problem: RecordingProblem; kept: boolean };
 
 /**
  * The line a setup filing fails with when its note left the inbox before its agent could start, as when another Avanzel
@@ -345,6 +355,8 @@ export interface SetupSnapshot {
   model: ModelStatus;
   /** Record a thought's shortcut, "Alt+Space". */
   shortcut: string;
+  /** Type a thought's shortcut, "Alt+Shift+Space": the last step offers it while Avanzel can't hear yet. */
+  typeShortcut: string;
   /**
    * Set me up found no agent installed on this Mac, and setup looks for one until it comes: Found says how to install
    * one. False before Set me up, and once one is installed.
@@ -388,6 +400,16 @@ export interface SetupSnapshot {
   launchAtLogin: boolean;
   /** The library's evening review, the shadow task whose kind is "evening-review"; null without a library, or one that has none. */
   eveningReview: TaskInfo | null;
+}
+
+/** What Zel's bubble says, once setup has ended in the menu bar. */
+export interface UpHereSnapshot {
+  /** Record a thought's shortcut, "Alt+Space". */
+  shortcut: string;
+  /** Type a thought's shortcut, "Alt+Shift+Space". */
+  typeShortcut: string;
+  /** Avanzel can turn speech into words: until it can, the bubble offers typing instead of talking. */
+  hears: boolean;
 }
 
 export interface AskResult {
@@ -525,8 +547,11 @@ export interface AvanzelBridge {
   };
   /** Zel's bubble under the menu bar icon, once setup has ended there: "I'm up here." */
   upHere: {
+    get(): Promise<UpHereSnapshot>;
     /** Try it now: the bubble goes, and Record a thought starts, as its shortcut would start it. */
     tryIt(): void;
+    /** Type a thought, while Avanzel can't hear yet: the bubble goes, and Quick opens for the thought. */
+    typeIt(): void;
     /** Not now, or Esc: the bubble goes, and nothing brings it back. */
     close(): void;
   };

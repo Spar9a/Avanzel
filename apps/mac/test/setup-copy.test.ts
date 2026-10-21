@@ -4,7 +4,6 @@ import {
   agentProblemTitle,
   askingLine,
   cancelledLine,
-  cardDate,
   earsLine,
   ESTIMATE_SECONDS,
   failedLine,
@@ -15,10 +14,12 @@ import {
   ownLine,
   pagesLine,
   receiptPages,
+  recordingProblem,
   reviewLabel,
+  slowSeconds,
   sourceTitle,
   stampDate,
-  transcribingLine,
+  TRANSCRIBING,
   workingLine,
 } from "../src/renderer/setup/copy.ts";
 import { NOTE_GONE, type AgentStatus, type FiledPage } from "../src/shared/ipc.ts";
@@ -30,9 +31,8 @@ const filed = (rel: string): FiledPage => {
 };
 
 describe("setup copy", () => {
-  it("dates read as the card and the stamp print them", () => {
+  it("dates read as the stamp prints them", () => {
     const day = new Date(2026, 9, 21);
-    expect(cardDate(day)).toBe("Wednesday 21 October");
     expect(stampDate(day)).toBe("21 Oct 2026");
     expect(megabytes(672_807_563)).toBe(673);
   });
@@ -144,11 +144,30 @@ describe("setup copy", () => {
     expect(earsLine({ kind: "error", cause: "settings", message: "bad" })).toBeNull();
   });
 
-  it("the transcribing line gives its whole seconds once the words have taken 10 s", () => {
-    expect(transcribingLine(0)).toBe("Turning your voice into text on this Mac…");
-    expect(transcribingLine(9.9)).toBe("Turning your voice into text on this Mac…");
-    expect(transcribingLine(10)).toBe("Turning your voice into text on this Mac… 10 s");
-    expect(transcribingLine(12.7)).toBe("Turning your voice into text on this Mac… 12 s");
+  it("the transcribing line stays as it is, and its whole seconds show beside it once the words have taken 10 s", () => {
+    expect(TRANSCRIBING).toBe("Turning your voice into text on this Mac…");
+    expect(slowSeconds(0)).toBeNull();
+    expect(slowSeconds(9.9)).toBeNull();
+    expect(slowSeconds(10)).toBe("10 s");
+    expect(slowSeconds(12.7)).toBe("12 s");
+  });
+
+  it("a recording problem says what happened, then only what is true of what is kept, and Try again or typing", () => {
+    expect(recordingProblem("lost", false)).toEqual({ title: "Your recording didn't reach me.", body: "Nothing was saved. Try again, or type it instead." });
+    expect(recordingProblem("microphone", false)).toEqual({ title: "The microphone didn't start.", body: "Nothing was recorded. Try again, or type it instead." });
+    expect(recordingProblem("silence", false)).toEqual({
+      title: "I didn't hear any words.",
+      body: "Nothing was saved. Try again a little closer to the microphone, or type it instead.",
+    });
+    expect(recordingProblem("unheard", false)).toEqual({ title: "I couldn't turn your voice into words.", body: "Nothing was saved. Try again, or type it instead." });
+    expect(recordingProblem("unheard", true).body).toBe("Your recording is kept in the library, under raw/audio. Try again, or type it instead.");
+    expect(recordingProblem("unsaved", true)).toEqual({
+      title: "I couldn't save your words.",
+      body: "Your recording is kept in the library, under raw/audio. Try again, or type it instead.",
+    });
+    // None sends the person to Settings.
+    const all = (["lost", "microphone", "silence", "unheard", "unsaved"] as const).flatMap((problem) => [true, false].map((kept) => recordingProblem(problem, kept)));
+    expect(all.filter(({ title, body }) => /Settings/.test(`${title} ${body}`))).toEqual([]);
   });
 
   it("reviewLabel says when the review runs", () => {

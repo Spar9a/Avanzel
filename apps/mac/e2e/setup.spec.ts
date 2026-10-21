@@ -166,7 +166,11 @@ test("a first launch without a library opens setup on Hello, not Settings", asyn
   const setup = await windowFor(app, "setup");
   await expect(setup.getByRole("heading", { name: "Hi, I'm Zel." })).toBeVisible();
   await expect(setup.getByText(/Talk to me anytime with/)).toContainText("⌥Space");
-  await expect(setup.getByRole("img", { name: /^Hello, \d{1,2} [A-Z][a-z]{2} \d{4}$/ })).toBeVisible();
+  // The stamp is the card's own, in its corner, and carries the day: the card's header has no date of its own.
+  await expect(setup.getByRole("article").getByRole("img", { name: /^Hello, \d{1,2} [A-Z][a-z]{2} \d{4}$/ })).toBeVisible();
+  await expect(setup.getByRole("article")).not.toContainText(/(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day/);
+  // Zel looks up at the card it stamped, not at the person.
+  await expect(setup.locator("svg[data-mood]")).toHaveAttribute("data-look", "up");
   await expect(setup.getByText("Speech model, 673 MB. Downloads when you continue.")).toBeVisible();
   const title = await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"))?.getTitle());
@@ -733,9 +737,14 @@ test("a library that can't be made says why, and Change… is the way out", asyn
   await expect(change).toHaveAttribute("data-variant", "primary");
   await expect(setup.getByRole("button", { name: "Change…" })).toHaveCount(1);
   await expect(use).toHaveAttribute("data-variant", "secondary");
+  // Zel looks over at the step, worried while the problem needs the person.
+  const zelOnStage = setup.locator("svg[data-mood]");
+  await expect(zelOnStage).toHaveAttribute("data-mood", "needs-you");
+  await expect(zelOnStage).toHaveAttribute("data-look", "right");
   await snap(setup, "setup-found-problem");
   await change.click();
   await expect(notice).toHaveCount(0);
+  await expect(zelOnStage).toHaveAttribute("data-mood", "idle");
   await expect(setup.getByText(other, { exact: true })).toBeVisible();
   await expect(setup.getByRole("button", { name: "Looks good" })).toHaveAttribute("data-variant", "primary");
   await setup.getByRole("button", { name: "Looks good" }).click();
@@ -987,6 +996,13 @@ const inbox = (library: string) => filesUnder(library, "inbox");
 /** Zel's mood on the stage. */
 const zel = (setup: Page) => setup.locator("svg[data-mood]");
 
+/**
+ * What the step's live regions hold now, in page order, the empty ones left out: what VoiceOver hears as each changes.
+ * A Notice is one too.
+ */
+const live = (setup: Page) =>
+  setup.getByRole("main").locator('[role="status"], [role="alert"]').evaluateAll((regions) => regions.map((region) => region.textContent?.trim() ?? "").filter(Boolean));
+
 /** A `claude` that is signed in, but whose filing fails: it prints `line` on stderr and exits 1, as a CLI does. */
 const failingClaude = (line: string) => `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else echo '${line}' >&2; exit 1; fi`;
 
@@ -1236,11 +1252,11 @@ const LISTENING = "I'm listening.";
 /** Zel's answer to a mic check. */
 const HEARD_YOU = "Heard you. Want to try a real thought?";
 
-/** The footnote a press of the shortcut brings, while nothing records. */
+/** The footnote a press of the shortcut brings. */
 const FREE = /is free on this Mac, so it works in every app\.$/;
 
-/** The same footnote while the capsule records, which Esc cancels. */
-const FREE_RECORDING = /is free on this Mac, so it works in every app\. Esc cancels\.$/;
+/** What the step says to do while the capsule records, which Esc cancels. */
+const DONE_TALKING = /^Press .+ again when you're done\. Esc cancels\.$/;
 
 /** Esc's promise, which holds only while a recording runs. */
 const ESC = /Esc cancels/;
@@ -1271,7 +1287,10 @@ test("the first press asks about the microphone behind one Continue, then record
   const primer = setup.getByRole("dialog");
   await expect(primer.getByText("Next, macOS asks about the microphone.", { exact: true })).toBeVisible();
   // The primer is the step: its one button is Continue, with no Back beside it, and nothing records until macOS asks.
+  // It has its own Zel, so the stage has none meanwhile.
   await expect(setup.getByRole("main").getByRole("button")).toHaveText(["Continue"]);
+  await expect(zel(setup)).toHaveCount(1);
+  await expect(primer.locator("svg[data-mood]")).toHaveCount(1);
   await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
   expect(await capsuleKind(app)).toBe("hidden");
   await snap(setup, "setup-think-primer");
@@ -1279,7 +1298,9 @@ test("the first press asks about the microphone behind one Continue, then record
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await expect(setup.getByText(LISTENING)).toBeVisible();
   await expect(zel(setup)).toHaveAttribute("data-mood", "listening");
-  await expect(setup.getByText(FREE_RECORDING)).toBeVisible(); // the first press was heard, and Esc cancels now
+  await expect(zel(setup)).toHaveAttribute("data-look", "up"); // at the card the words will fill
+  await expect(setup.getByText(FREE)).toBeVisible(); // the first press was heard
+  await expect(setup.getByText(DONE_TALKING)).toBeVisible(); // and Esc cancels now
   await snap(setup, "setup-think-listening");
   await pressShortcut(app);
   await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
@@ -1476,7 +1497,8 @@ test("Esc while listening cancels, and setup asks again", async () => {
   await pressShortcut(app);
   await expect(setup.getByText(LISTENING)).toBeVisible();
   await expect(setup.getByText(INSTRUCTION)).toHaveCount(0);
-  await expect(setup.getByText(FREE_RECORDING)).toBeVisible();
+  await expect(setup.getByText(FREE)).toBeVisible();
+  await expect(setup.getByText(DONE_TALKING)).toBeVisible();
   expect(await app.evaluate(() => {
     const pressEsc = (globalThis as { pressEsc?: () => void }).pressEsc;
     pressEsc?.();
@@ -1498,10 +1520,11 @@ test("Esc while listening cancels, and setup asks again", async () => {
   await app.close();
 });
 
-test("a recording that goes wrong says so in the window, not in the capsule, and Try again asks again", async () => {
-  const { env } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October", AVANZEL_AUDIO_TIMEOUT_MS: "1000" });
+test("a recording that goes wrong says so in the window, in setup's own words, and Try again asks again", async () => {
+  const { env, home } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October", AVANZEL_AUDIO_TIMEOUT_MS: "1000" });
   const app = await launch(env);
   const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
   // The audio is lost on its way from the capsule.
   await app.evaluate(({ ipcMain }) => {
     ipcMain.removeHandler("capsule:audio");
@@ -1509,20 +1532,62 @@ test("a recording that goes wrong says so in the window, not in the capsule, and
   });
   await watchCapsule(app);
   await sayThought(app, setup);
+  // What happened, what is safe (nothing was saved, and nothing was), and the way on: no trip to Settings.
   const notice = setup.getByRole("alert");
-  await expect(notice.getByText("The recording didn't arrive", { exact: true })).toBeVisible({ timeout: 20_000 });
-  await expect(notice.getByText("Try again; if it keeps happening, check the microphone in Settings → Voice.", { exact: true })).toBeVisible();
+  await expect(notice.getByText("Your recording didn't reach me.", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(notice.getByText("Nothing was saved. Try again, or type it instead.", { exact: true })).toBeVisible();
+  await expect(notice).not.toContainText("Settings");
+  expect(inbox(library)).toEqual([]);
+  expect(filesUnder(library, "raw/audio")).toEqual([]);
   // The capsule hid and showed no card: the window says it. Nothing records now, so nothing says Esc cancels.
   expect(await capsuleKind(app)).toBe("hidden");
   expect(await sentToCapsule(app)).not.toContain("error");
   await expect(setup.getByText(FREE)).toBeVisible();
   await expect(setup.getByText(ESC)).toHaveCount(0);
+  await expect(zel(setup)).toHaveAttribute("data-mood", "needs-you");
+  // Try again is the primary; Type it instead is the Notice's, the only button of that name.
   const tryAgain = notice.getByRole("button", { name: "Try again", exact: true });
   await expect(tryAgain).toHaveAttribute("data-variant", "primary");
-  await expect(setup.getByRole("button", { name: "Type it instead" })).toHaveAttribute("data-variant", "secondary");
+  await expect(setup.getByRole("button", { name: "Type it instead" })).toHaveCount(1);
+  await expect(notice.getByRole("button", { name: "Type it instead" })).toHaveAttribute("data-variant", "secondary");
+  await snap(setup, "setup-think-lost");
   await tryAgain.click();
   await expect(notice).toHaveCount(0);
   await expect(setup.getByText(INSTRUCTION)).toBeVisible();
+  await app.close();
+});
+
+test("a recording with no words in it says so, and that nothing was saved, which is true", async () => {
+  // The words come out empty, as from a recording of silence.
+  const { env, home } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "   " });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  await sayThought(app, setup);
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("I didn't hear any words.", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(notice.getByText("Nothing was saved. Try again a little closer to the microphone, or type it instead.", { exact: true })).toBeVisible();
+  expect(inbox(library)).toEqual([]);
+  expect(filesUnder(library, "raw/audio")).toEqual([]);
+  expect(await capsuleKind(app)).toBe("hidden");
+  // Type it instead, in the Notice, opens the box for the thought.
+  await notice.getByRole("button", { name: "Type it instead" }).click();
+  await expect(setup.getByRole("textbox", { name: "Your thought" })).toBeFocused();
+  await app.close();
+});
+
+test("a recording whose words can't be made says so, and that nothing was saved, which is true", async () => {
+  // The recording can't be read, so no words are made from it, and it is never written to the library.
+  const { env, home } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October" });
+  const app = await launch({ ...env, AVANZEL_FAKE_AUDIO: path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-wav-")), "missing.wav") });
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  await sayThought(app, setup);
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("I couldn't turn your voice into words.", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(notice.getByText("Nothing was saved. Try again, or type it instead.", { exact: true })).toBeVisible();
+  expect(inbox(library)).toEqual([]);
+  expect(filesUnder(library, "raw/audio")).toEqual([]);
   await app.close();
 });
 
@@ -1538,11 +1603,32 @@ test("words slow to come say how long they have taken, from 10 s on", async () =
   });
   await setup.clock.install();
   await sayThought(app, setup);
-  const line = setup.getByText(/^Turning your voice into text on this Mac…/);
-  await expect(line).toHaveText("Turning your voice into text on this Mac…");
+  await expect(setup.getByText("Turning your voice into text on this Mac…", { exact: true })).toBeVisible();
+  await expect(setup.getByText(/^\d+ s$/)).toHaveCount(0);
   await expect(zel(setup)).toHaveAttribute("data-mood", "thinking");
   await setup.clock.fastForward(11_000);
-  await expect(line).toHaveText(/^Turning your voice into text on this Mac… \d+ s$/);
+  // The seconds show beside the line, outside the live region: VoiceOver hears the line once, not each second.
+  await expect(setup.getByText(/^1\d s$/)).toBeVisible();
+  expect(await live(setup)).toEqual(["Turning your voice into text on this Mac…"]);
+  await app.close();
+});
+
+test("each moment of the first thought is one short sentence for VoiceOver, never the prompts", async () => {
+  const { env } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Testing, testing.", AVANZEL_AUDIO_TIMEOUT_MS: "60000" });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  // Asking: the prompts are read as the step is, and nothing is announced.
+  await expect(setup.getByText(INSTRUCTION)).toBeVisible();
+  expect(await live(setup)).toEqual([]);
+  // A press is heard, and the capsule listens: the line that it is listening, and the press test's answer, which came
+  // with the press. Not the instructions after them.
+  await pressShortcut(app);
+  await expect(setup.getByText(LISTENING)).toBeVisible();
+  expect(await live(setup)).toEqual(["I'm listening.", "⌥Space is free on this Mac, so it works in every app."]);
+  // Its words are made, then answered as a mic check: one sentence each.
+  await pressShortcut(app);
+  await expect(setup.getByText(HEARD_YOU, { exact: true })).toBeVisible({ timeout: 30_000 });
+  expect(await live(setup)).toEqual([HEARD_YOU]);
   await app.close();
 });
 
@@ -1611,13 +1697,13 @@ test("a filed thought shows its stamp, its page and how to undo it, and Undo put
   await expect(setup.getByRole("img", { name: /^Filed, / })).toBeVisible();
   await expect(tabs(setup)).toHaveText(["Goals", "Ideas1", "Problems", "Memories", "People", "Topics"]);
   // The step, in order: the heading, Zel's praise, what the filing wrote, how to undo it, the receipt and its buttons.
-  await expect(setup.getByText("Your first idea has a home.", { exact: true })).toBeVisible();
+  await expect(setup.getByText("Your first thought has a home.", { exact: true })).toBeVisible();
   await expect(setup.getByText("1 new page, all plain Markdown in ~/Avanzel.", { exact: true })).toBeVisible();
   await expect(setup.getByText("Press ⌘Z or Undo to put everything back.", { exact: true })).toBeVisible();
   await expect(setup.getByText("Your exact words are kept.")).toHaveCount(0); // the agent left them be
   await expect(setup.getByRole("listitem")).toHaveText(["Plant tulips in OctoberIdeas"]);
   await expect(setup.getByRole("main")).toHaveText(
-    /^All filed\. .+Your first idea has a home\.1 new page, .+Press ⌘Z or Undo .+Plant tulips in OctoberIdeasUndoOpen the page$/,
+    /^All filed\. .+Your first thought has a home\.1 new page, .+Press ⌘Z or Undo .+Plant tulips in OctoberIdeasUndoOpen the page$/,
   );
   // Continue is the one primary, and there is no Back.
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Continue"]);
@@ -1686,7 +1772,7 @@ test("a filing that wrote no page says its agent noted it in the log, and Contin
   const { app, setup } = await filedFirstThought({ ...env, FAKE_AGENT_MODE: "logonly" });
   await expect(setup.getByText("Claude Code noted it in the log.", { exact: true })).toBeVisible();
   // No line claims a page, no tab counts one, and nothing offers to open one (Review Focus 5).
-  await expect(setup.getByText("Your first idea has a home.")).toHaveCount(0);
+  await expect(setup.getByText("Your first thought has a home.")).toHaveCount(0);
   await expect(setup.getByText(/plain Markdown|in other folders/)).toHaveCount(0);
   await expect(setup.getByRole("listitem")).toHaveCount(0);
   await expect(tabs(setup)).toHaveText(["Goals", "Ideas", "Problems", "Memories", "People", "Topics"]);
@@ -1777,7 +1863,7 @@ test("in a library Obsidian has opened as a vault, the new page opens in Obsidia
 // pages; a [[link]] in the question comes back in its answer, as an agent cites a page.
 
 /** The question setup suggests once "Plant tulips in October" is filed as an idea. */
-const SUGGESTED = "What did I say about Plant tulips in October?";
+const SUGGESTED = "What did I say about “Plant tulips in October”?";
 
 /** A first run launched with `env`, where "Plant tulips in October" is typed and filed, then Continue pressed: on Ask. */
 async function onAsk(env: Record<string, string>): Promise<{ app: ElectronApplication; setup: Page }> {
@@ -1804,11 +1890,13 @@ test("Ask suggests a question about the new page and answers it", async () => {
   await setup.getByRole("button", { name: "Continue" }).click();
   await expect(setup.getByRole("heading", { name: "Ask me about it." })).toBeVisible();
   await expect(setup.getByText("I answer from your library only, and show you the pages I used.", { exact: true })).toBeVisible();
-  // The suggestion is on the stage's card, and a secondary Ask this asks it. Before an answer, Skip is the quiet way on,
-  // nothing is primary, and there is no Back.
+  // The suggestion is on the stage's card, and in words beside the secondary Ask this, which asks it, its title quoted.
+  // Before an answer, Skip is the quiet way on, nothing is primary, and there is no Back. Zel looks up at the card.
   await expect(setup.getByRole("article")).toContainText(SUGGESTED);
   const suggestion = askThis(setup);
   await expect(suggestion).toHaveAttribute("data-variant", "secondary");
+  await expect(setup.getByRole("group", { name: SUGGESTED }).getByText(SUGGESTED, { exact: true })).toBeVisible();
+  await expect(zel(setup)).toHaveAttribute("data-look", "up");
   await expect(setup.getByRole("button", { name: "Skip" })).toHaveAttribute("data-variant", "quiet");
   await expect(setup.locator('button[data-variant="primary"]')).toHaveCount(0);
   await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
@@ -1889,14 +1977,22 @@ test("an answer that fails says why, and the suggestion asks again", async () =>
   const notice = setup.getByRole("alert");
   await expect(notice.getByText("Claude Code couldn't answer.", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(notice.getByText("Usage limit reached.", { exact: true })).toBeVisible();
-  // There is no answer: Skip stays the way on, and Continue doesn't show.
+  // There is no answer: Skip stays the way on, and Continue doesn't show. Zel is worried beside the failure.
   await expect(setup.getByRole("button", { name: "Skip" })).toBeVisible();
   await expect(setup.getByRole("button", { name: "Continue" })).toHaveCount(0);
-  await expect(zel(setup)).toHaveAttribute("data-mood", "idle");
+  await expect(zel(setup)).toHaveAttribute("data-mood", "needs-you");
   expect(await questionsAsked(app)).toBe(1);
   await askThis(setup).click();
   await expect.poll(() => questionsAsked(app), { timeout: 30_000 }).toBe(2);
   await expect(notice.getByText("Claude Code couldn't answer.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  // A question of the person's own that fails is the one on the card: Ask this, which would ask another, isn't offered.
+  const field = setup.getByRole("textbox", { name: "Ask your library" });
+  await field.fill("Where are the bulbs?");
+  await field.press("Enter");
+  await expect.poll(() => questionsAsked(app), { timeout: 30_000 }).toBe(3);
+  await expect.poll(async () => (await setupSnap(app)).answer, { timeout: 30_000 }).toMatchObject({ kind: "failed", question: "Where are the bulbs?" });
+  await expect(setup.getByRole("article")).toContainText("Where are the bulbs?");
+  await expect(setup.getByRole("button", { name: "Ask this" })).toHaveCount(0);
   await app.close();
 });
 
@@ -1957,7 +2053,7 @@ test("a long title fits Ask: the card holds the question, and a long source titl
   await setup.getByRole("button", { name: "Continue" }).click();
   await expect(setup.getByRole("heading", { name: "Ask me about it." })).toBeVisible();
   // The card holds the whole suggested question, Ask this asks it, and nothing runs past the step's edge.
-  const question = `What did I say about ${words}?`;
+  const question = `What did I say about “${words}”?`;
   await expect(setup.getByRole("article")).toContainText(question);
   await expect(askThis(setup, question)).toBeVisible();
   expect(await sideways(setup)).toBe(0);
@@ -2056,13 +2152,20 @@ test("the last step turns on opening at login, and both switches apply at once",
 
 test("Start using Avanzel closes the window, and the menu bar is where Avanzel lives", async () => {
   // With the menu bar icon hidden (empty bounds) the window just closes, with no flight and no bubble, so this test
-  // doesn't depend on where this Mac's own menu bar icon is.
-  const app = await launch({ ...firstRun({ claude: filingClaude() }).env, AVANZEL_FAKE_TRAY_BOUNDS: "0,0,0,0" });
+  // doesn't depend on where this Mac's own menu bar icon is. AVANZEL_FAKE_TRANSCRIPT stands in for a speech model
+  // that is ready.
+  const app = await launch({
+    ...firstRun({ claude: filingClaude() }).env,
+    AVANZEL_FAKE_TRAY_BOUNDS: "0,0,0,0",
+    AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
+  });
   const setup = await toDone(app);
-  // The step says how to talk to Avanzel and where it waits, beside Zel at rest. Start using Avanzel is its one
-  // primary, and there is no Back.
+  // The step says how to talk to Avanzel and where it waits, beside Zel at rest, looking at the step. Start using
+  // Avanzel is its one primary, and there is no Back.
   await expect(setup.getByText(/^Press ⌥Space anywhere to talk to me\. I'll wait in the menu bar\.$/)).toBeVisible();
+  await expect(setup.getByText(/My ears|type a thought/)).toHaveCount(0);
   await expect(zel(setup)).toHaveAttribute("data-mood", "idle");
+  await expect(zel(setup)).toHaveAttribute("data-look", "right");
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Start using Avanzel"]);
   await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
   await setup.getByRole("button", { name: "Start using Avanzel" }).click();
@@ -2167,22 +2270,37 @@ async function reduceMotion(app: ElectronApplication, on: boolean): Promise<void
   }, on);
 }
 
-/** From now on, notes each frame the setup window is given (setBounds), and whether macOS animates it, for `flights`. */
-async function watchFlight(app: ElectronApplication): Promise<void> {
-  await app.evaluate(({ BrowserWindow }) => {
+/**
+ * From now on, notes each frame the setup window is given (setBounds), and whether macOS animates it, for `flights`;
+ * and when the last one landed and when the window was told to close, for `flightTimes`. With `holdClose`, the window
+ * closes that many ms after it is told to, so a test can read what it showed as it flew.
+ */
+async function watchFlight(app: ElectronApplication, holdClose = 0): Promise<void> {
+  await app.evaluate(({ BrowserWindow }, hold) => {
     const setup = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"));
     if (!setup) throw new Error("There is no setup window to watch.");
     const flights: unknown[] = [];
-    (globalThis as { flights?: unknown[] }).flights = flights;
+    const times: { landed?: number; closed?: number } = {};
+    Object.assign(globalThis, { flights, flightTimes: times });
     const setBounds = setup.setBounds.bind(setup);
     setup.setBounds = (bounds, animate) => {
       flights.push({ bounds, animate: animate === true });
-      setBounds(bounds, animate);
+      setBounds(bounds, animate); // with animate, macOS returns once the frame has landed
+      times.landed = Date.now();
     };
-  });
+    const close = setup.close.bind(setup);
+    setup.close = () => {
+      times.closed = Date.now();
+      if (hold) setTimeout(close, hold);
+      else close();
+    };
+  }, holdClose);
 }
 
 const flights = (app: ElectronApplication) => app.evaluate(() => (globalThis as { flights?: unknown[] }).flights ?? []);
+
+const flightTimes = (app: ElectronApplication) =>
+  app.evaluate(() => (globalThis as { flightTimes?: { landed?: number; closed?: number } }).flightTimes ?? {});
 
 /** Where the bubble's window is, and the work area of the display that holds the icon. */
 const bubblePlace = (app: ElectronApplication) =>
@@ -2195,13 +2313,20 @@ test("Start using Avanzel flies the window to the menu bar, Zel says it's up the
   const app = await launch(endingRun());
   const setup = await toDone(app);
   await reduceMotion(app, false);
-  await watchFlight(app);
+  await watchFlight(app, 1_500); // the window stays a moment after the flight, for the test to see what flew
   await setup.getByRole("button", { name: "Start using Avanzel" }).click();
-  // The page blanks itself at once, so the window flies as blank paper (the flight leaves it 700 ms to be read).
-  expect(await setup.evaluate(() => getComputedStyle(document.getElementById("root")!).visibility)).toBe("hidden");
-  await expect.poll(() => shown(app, "setup"), { timeout: 5_000 }).toBe(false);
-  // It flew: macOS animated its frame onto a 24 px square centred on the icon.
+  // The window flies with Zel alone in its middle, looking up where it goes: no step, and no blank page.
+  await expect(setup.getByRole("main")).toHaveCount(0);
+  await expect(zel(setup)).toHaveCount(1);
+  await expect(zel(setup)).toHaveAttribute("data-look", "up");
+  // It flew: macOS animated its frame onto a 24 px square centred on the icon, and the window was closed the moment it
+  // landed, with no wait for the rest of a set time.
+  await expect.poll(async () => (await flightTimes(app)).closed ?? 0, { timeout: 5_000 }).toBeGreaterThan(0);
+  const { landed = 0, closed = 0 } = await flightTimes(app);
+  expect(landed).toBeGreaterThan(0);
+  expect(closed - landed).toBeLessThan(100);
   expect(await flights(app)).toEqual([{ bounds: { x: 1000, y: 0, width: 24, height: 24 }, animate: true }]);
+  await expect.poll(() => shown(app, "setup"), { timeout: 5_000 }).toBe(false);
   const bubble = await windowFor(app, "up-here");
   await expect.poll(() => shown(app, "up-here")).toBe(true);
   await expect(bubble.getByText("I'm up here.", { exact: true })).toBeVisible();
@@ -2216,6 +2341,34 @@ test("Start using Avanzel flies the window to the menu bar, Zel says it's up the
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await expect.poll(() => shown(app, "up-here")).toBe(false);
   await call(app, "cancelRecording");
+  await app.close();
+});
+
+test("while the speech model isn't ready, Done and Zel's bubble offer typing, not talking", async () => {
+  // No speech model here (its download fails), and nothing stands in for one.
+  const app = await launch({ ...firstRun({ claude: filingClaude() }).env, AVANZEL_FAKE_TRAY_BOUNDS: ICON });
+  const setup = await toDone(app);
+  // Done says the ears aren't here, as the first-thought step does, and how to type a thought from anywhere.
+  const ears = "The speech model didn't finish downloading, so I can't hear you yet. Type it instead, or try the download again.";
+  await expect(setup.getByText(ears, { exact: true })).toBeVisible();
+  await expect(setup.getByText(/^Press ⌥⇧Space anywhere to type a thought\. I'll wait in the menu bar\.$/)).toBeVisible();
+  await expect(setup.getByText(/anywhere to talk to me/)).toHaveCount(0);
+  await snap(setup, "setup-done-no-ears");
+  await reduceMotion(app, true); // it just closes: no flight on this Mac's screen
+  await setup.getByRole("button", { name: "Start using Avanzel" }).click();
+  // The bubble says the same, and its primary types a thought: Quick opens, and nothing records.
+  const bubble = await windowFor(app, "up-here");
+  await expect(bubble.getByText("I'm up here.", { exact: true })).toBeVisible();
+  await expect(bubble.getByText(/^My ears are still arriving\. Press ⌥⇧Space anywhere to type a thought\.$/)).toBeVisible();
+  await expect(bubble.locator('button[data-variant="primary"]')).toHaveText(["Type a thought"]);
+  await expect(bubble.getByRole("button", { name: "Try it now" })).toHaveCount(0);
+  await snap(bubble, "up-here-no-ears");
+  await bubble.getByRole("button", { name: "Type a thought" }).click();
+  const quickOpened = () =>
+    app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes("/renderer/quick/")));
+  await expect.poll(quickOpened).toBe(true);
+  await expect.poll(() => shown(app, "up-here")).toBe(false);
+  expect(await capsuleKind(app)).toBe("hidden");
   await app.close();
 });
 

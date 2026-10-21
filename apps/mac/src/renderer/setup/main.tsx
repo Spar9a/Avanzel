@@ -1,6 +1,7 @@
 // The setup window: the first run, one step at a time. It holds the step it shows and the snapshot from main; each
-// step draws itself in the Frame.
+// step draws itself in the Frame. At the end, Zel alone flies with the window into the menu bar.
 import "@avanzel/ui/base.css";
+import { Zel } from "@avanzel/ui";
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AvanzelBridge, SetupSnapshot, SetupStep } from "../../shared/ipc.ts";
@@ -19,16 +20,13 @@ declare global {
 }
 
 const api = window.avanzel.setup;
-const root = document.getElementById("root")!;
 
 /**
- * Start using Avanzel: the page blanks itself (`data-leaving`), so the window flies into the menu bar as blank paper,
- * then tells main. Main's flight holds its thread while macOS animates the frame, so main hears once the blank page is
- * drawn, after the next frame; should no frame come, as for a window out of sight, a moment later all the same.
+ * Start using Avanzel, once the window shows Zel alone (Leaving): main is told, and flies the window into the menu bar
+ * with Zel aboard. Main's flight holds its thread while macOS animates the frame, so main hears once Zel is drawn, after
+ * the next frame; should no frame come, as for a window out of sight, a moment later all the same.
  */
-function finish(): void {
-  if ("leaving" in root.dataset) return;
-  root.dataset.leaving = "";
+function tellMain(): void {
   let told = false;
   const tell = () => {
     if (told) return;
@@ -39,9 +37,19 @@ function finish(): void {
   setTimeout(tell, 250);
 }
 
+/** The window as it flies into the menu bar: Zel alone in its middle, looking up, where it goes. */
+function Leaving() {
+  return (
+    <div className="leaving">
+      <Zel mood="idle" size="medium" look="up" />
+    </div>
+  );
+}
+
 function Setup() {
   const [snap, setSnap] = useState<SetupSnapshot | null>(null);
   const [step, setStep] = useState<SetupStep>("hello");
+  const [leaving, setLeaving] = useState(false);
   useEffect(() => {
     void api.get().then(setSnap);
     return api.onChanged(setSnap);
@@ -49,6 +57,7 @@ function Setup() {
   // A thought handed over on the first-thought step is being filed: the window follows it there. The controller has
   // entered that step already as it took the thought, so this only shows it (React redraws at once, before painting).
   if (step === "think" && snap?.filing) setStep("filing");
+  if (leaving) return <Leaving />;
   if (!snap) return null;
   const go = (next: SetupStep) => {
     const entered = api.enter(next).then(setSnap);
@@ -56,6 +65,11 @@ function Setup() {
     // switch would show off for a frame, then slide on by itself.
     if (next === "done") void entered.finally(() => setStep(next));
     else setStep(next);
+  };
+  const finish = () => {
+    if (leaving) return;
+    setLeaving(true);
+    tellMain();
   };
   switch (step) {
     case "hello":
@@ -73,4 +87,4 @@ function Setup() {
   }
 }
 
-createRoot(root).render(<Setup />);
+createRoot(document.getElementById("root")!).render(<Setup />);

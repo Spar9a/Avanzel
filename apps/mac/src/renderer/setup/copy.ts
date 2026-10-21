@@ -1,7 +1,8 @@
-// The setup window's words that are made from values: sizes, dates, what an agent's check found and how a filing went,
-// as its copy table writes them, and which of those findings is a problem for the person to fix.
+// The setup window's words that are made from values: sizes, dates, what an agent's check found, what went wrong with a
+// recording and how a filing went, as its copy table writes them, and which of those findings is a problem for the
+// person to fix.
 import { SHELVES, type ReceiptPage, type Shelf } from "@avanzel/ui";
-import { NOTE_GONE, type AgentProblem, type AgentStatus, type FiledPage, type ModelStatus } from "../../shared/ipc.ts";
+import { NOTE_GONE, type AgentProblem, type AgentStatus, type FiledPage, type ModelStatus, type RecordingProblem } from "../../shared/ipc.ts";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] as const;
@@ -9,11 +10,6 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 /** Whole megabytes, as macOS counts them (a million bytes each): 672,807,563 bytes are 673 MB. */
 export function megabytes(bytes: number): number {
   return Math.round(bytes / 1e6);
-}
-
-/** The day as a card's corner says it: "Wednesday 21 October". */
-export function cardDate(day: Date): string {
-  return `${WEEKDAYS[day.getDay()]} ${day.getDate()} ${MONTHS[day.getMonth()]}`;
 }
 
 /** The day as a stamp prints it (in its own capitals): "21 Oct 2026". */
@@ -88,10 +84,33 @@ export function earsLine(model: ModelStatus): string | null {
 /** From how many seconds a wait gives its size: DESIGN.md's "past 10 seconds". */
 export const SLOW_SECONDS = 10;
 
-/** The line while the first spoken thought's words are made: from SLOW_SECONDS on, with its whole seconds so far. */
-export function transcribingLine(seconds: number): string {
-  const line = "Turning your voice into text on this Mac…";
-  return seconds >= SLOW_SECONDS ? `${line} ${Math.floor(seconds)} s` : line;
+/** What the first-thought step says while the spoken thought's words are made. */
+export const TRANSCRIBING = "Turning your voice into text on this Mac…";
+
+/** The whole seconds the words have taken so far, from SLOW_SECONDS on, beside TRANSCRIBING: "12 s". Null before. */
+export function slowSeconds(seconds: number): string | null {
+  return seconds >= SLOW_SECONDS ? `${Math.floor(seconds)} s` : null;
+}
+
+/**
+ * A problem with the first spoken thought, in setup's own words: what happened, then what is safe and the way on, Try
+ * again or type it instead. Each says only what is true of that problem: nothing is kept but a recording that is
+ * (`kept`), which only words that couldn't be made or saved leave.
+ */
+export function recordingProblem(problem: RecordingProblem, kept: boolean): { title: string; body: string } {
+  const safe = kept ? "Your recording is kept in the library, under raw/audio." : "Nothing was saved.";
+  switch (problem) {
+    case "lost":
+      return { title: "Your recording didn't reach me.", body: "Nothing was saved. Try again, or type it instead." };
+    case "microphone":
+      return { title: "The microphone didn't start.", body: "Nothing was recorded. Try again, or type it instead." };
+    case "silence":
+      return { title: "I didn't hear any words.", body: "Nothing was saved. Try again a little closer to the microphone, or type it instead." };
+    case "unheard":
+      return { title: "I couldn't turn your voice into words.", body: `${safe} Try again, or type it instead.` };
+    case "unsaved":
+      return { title: "I couldn't save your words.", body: `${safe} Try again, or type it instead.` };
+  }
 }
 
 /** About how long a first filing takes, in seconds: the working line counts towards it. */

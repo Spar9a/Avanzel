@@ -1,9 +1,9 @@
 // Step 1, Hello: Zel wakes up and stamps hello on an empty card, then says what Avanzel does. The wake and the stamp
 // are the step's one orchestrated moment; under Reduce Motion they are there from the start.
-import { Button, Card, Kbd, Row, Stack, Stamp, Text, Zel } from "@avanzel/ui";
+import { Button, Card, Kbd, Row, Stack, Text, Zel } from "@avanzel/ui";
 import { useEffect, useState } from "react";
 import { prettyAccelerator } from "../../../main/shortcuts.ts";
-import { cardDate, stampDate } from "../copy.ts";
+import { stampDate } from "../copy.ts";
 import { Frame, type StepProps } from "../frame.tsx";
 
 /** When Zel wakes, and when the stamp lands. */
@@ -25,18 +25,12 @@ export function Hello({ snap, go }: StepProps) {
       model={snap.model}
       stage={
         <div className="hello">
-          {/* The stamp lands on the card's lines, not in its corner: a stamped card's header keeps too little room
-              beside the stamp for the date, and the empty card has no words for the stamp to cover. */}
-          <div className="hello-card">
-            <Card label="Thought" meta={cardDate(today)} placeholder="Nothing here yet." />
-            {stamped && (
-              <div className="hello-stamp">
-                <Stamp word="hello" date={stampDate(today)} size="small" animate={!still} />
-              </div>
-            )}
-          </div>
+          {/* The stamp lands in the card's own corner, as Filing's does, and carries the day, so the card's header
+              has no date of its own. */}
+          <Card label="Thought" placeholder="Nothing here yet." stamp={stamped ? { word: "hello", date: stampDate(today), animate: !still } : undefined} />
+          {/* Zel looks up at the card it stamps. */}
           <Row justify="end">
-            <Zel mood={awake ? "idle" : "asleep"} size="medium" />
+            <Zel mood={awake ? "idle" : "asleep"} size="medium" look="up" />
           </Row>
         </div>
       }

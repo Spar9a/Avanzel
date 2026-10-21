@@ -79,7 +79,9 @@ const bridge: AvanzelBridge = {
     finish: () => ipcRenderer.send("setup:finish"),
   },
   upHere: {
+    get: () => ipcRenderer.invoke("up-here:get"),
     tryIt: () => ipcRenderer.send("up-here:try-it"),
+    typeIt: () => ipcRenderer.send("up-here:type-it"),
     close: () => ipcRenderer.send("up-here:close"),
   },
 };

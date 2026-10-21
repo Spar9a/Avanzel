@@ -95,7 +95,7 @@ describe("the question setup suggests (Review Focus 5)", () => {
   });
 
   it("suggestQuestion falls back to the first page", () => {
-    expect(suggestQuestion([page("projects", "Launch plan")])).toBe("What did I say about Launch plan?"); // off the shelves too
+    expect(suggestQuestion([page("projects", "Launch plan")])).toBe("What did I say about “Launch plan”?"); // off the shelves too
     expect(suggestQuestion([])).toBeNull();
   });
 });

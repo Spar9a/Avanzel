@@ -75,6 +75,8 @@ export function registerIpc(controller: Controller): void {
   on("setup:finish", () => void controller.finishSetup());
 
   // the bubble under the menu bar icon, once setup has ended
+  handle("up-here:get", () => controller.upHereSnapshot());
   on("up-here:try-it", () => controller.tryItNow());
+  on("up-here:type-it", () => controller.typeFromUpHere());
   on("up-here:close", () => controller.closeUpHere());
 }
