@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { git, loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
+import type { FirstRun } from "../src/main/store.ts";
 import type { SettingsSnapshot, SetupSnapshot } from "../src/shared/ipc.ts";
 import {
   agentCalls,
@@ -1891,5 +1892,64 @@ test("Start using Avanzel closes the window, and the menu bar is where Avanzel l
   await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
   expect(await windowsTitled(app, "Avanzel Settings")).toBe(1);
   expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
+  await app.close();
+});
+
+// The milestones of a first run, which setup keeps in first-run.json in Avanzel's own data folder (§5.4's measures).
+// They stay on this Mac: nothing reports them.
+
+/** What setup has noted in first-run.json, in the data folder `userData` an app was launched with. */
+function firstRunNotes(userData: string): FirstRun {
+  return JSON.parse(readFileSync(path.join(userData, "first-run.json"), "utf8")) as FirstRun;
+}
+
+test("a finished setup leaves its milestones in first-run.json", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({ ...firstRun({ claude: filingClaude() }).env, AVANZEL_USER_DATA: userData });
+  const setup = await toDone(app);
+  await setup.getByRole("button", { name: "Start using Avanzel" }).click();
+  // Closed, not just hidden: the session has ended, and ending it did not note a close.
+  await expect.poll(() => windowsTitled(app, "Set up Avanzel"), { timeout: 10_000 }).toBe(0);
+  await expect.poll(() => call(app, "setupStepForTests"), { timeout: 10_000 }).toBeNull();
+  const noted = firstRunNotes(userData);
+  expect(Object.keys(noted.steps)).toEqual(["hello", "found", "think", "filing", "ask", "done"]);
+  expect(noted).toMatchObject({ version: 1, undone: false, closedOn: null });
+  // Each time is when it happened, in ISO form, and they come in the order of the walk.
+  const times = [
+    noted.firstLaunchAt, noted.steps.hello, noted.steps.found, noted.steps.think, noted.steps.filing,
+    noted.firstFiledAt, noted.steps.ask, noted.steps.done, noted.finishedAt,
+  ];
+  for (const time of times) expect(time).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  expect(times).toEqual([...times].sort());
+  await app.close();
+});
+
+test("Undo, and closing the window before the end, are noted in first-run.json", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const { env } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await filedFirstThought({ ...env, AVANZEL_USER_DATA: userData });
+  await setup.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(setup.getByRole("heading", { name: "Undone." })).toBeVisible({ timeout: 30_000 });
+  await closeSetup(app);
+  const noted = firstRunNotes(userData);
+  expect(Object.keys(noted.steps)).toEqual(["hello", "found", "think", "filing"]);
+  expect(noted.firstFiledAt).not.toBeNull(); // it was filed, and then undone
+  expect(noted).toMatchObject({ undone: true, finishedAt: null, closedOn: "filing" });
+  await app.close();
+});
+
+test("a thought filed after the window was closed is the first filed thought all the same", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const { env } = firstRun({ claude: filingClaude() });
+  const slow = { FAKE_AGENT_DELAY_MS: "3000", FAKE_AGENT_DELAY_TASK: "file" }; // the agent takes 3 s to file
+  const app = await launch({ ...env, AVANZEL_USER_DATA: userData, ...slow });
+  const setup = await throughFound(app);
+  await typeFirstThought(setup, "Plant tulips in October");
+  await expect(setup.getByRole("heading", { name: "Watch me file it." })).toBeVisible();
+  await closeSetup(app);
+  await call(app, "idleForTests");
+  const noted = firstRunNotes(userData);
+  expect(noted.firstFiledAt).not.toBeNull();
+  expect(noted).toMatchObject({ finishedAt: null, closedOn: "filing" });
   await app.close();
 });

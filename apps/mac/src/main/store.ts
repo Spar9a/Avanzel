@@ -1,8 +1,8 @@
 // App-level preferences (not per library): where the library is, shortcuts, how notes are filed. And, apart from
-// them, the taken shortcuts the capsule has named.
+// them, the taken shortcuts the capsule has named, and the times a first run reached setup's milestones.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { AppSettings, Shortcuts } from "../shared/ipc.ts";
+import { isSetupStep, SETUP_STEPS, type AppSettings, type SetupStep, type Shortcuts } from "../shared/ipc.ts";
 
 export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
   version: 1,
@@ -20,6 +20,17 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Writes `value` to `file` as JSON, whole or not at all: the file's folder is made if need be, the text goes to
+ * `<file>.tmp`, and that is renamed over `file`. It throws when any of that fails.
+ */
+export function writeJsonAtomic(file: string, value: unknown): void {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const partial = `${file}.tmp`;
+  writeFileSync(partial, `${JSON.stringify(value, null, 2)}\n`);
+  renameSync(partial, file);
+}
 
 export function normalizeSettings(raw: unknown): AppSettings {
   const r = isRecord(raw) ? raw : {};
@@ -53,10 +64,7 @@ export class SettingsStore {
   update(patch: Partial<AppSettings>): AppSettings {
     const merged = { ...this.current, ...patch, shortcuts: { ...this.current.shortcuts, ...patch.shortcuts } };
     this.current = normalizeSettings(merged);
-    mkdirSync(path.dirname(this.file), { recursive: true });
-    const partial = `${this.file}.tmp`;
-    writeFileSync(partial, `${JSON.stringify(this.current, null, 2)}\n`);
-    renameSync(partial, this.file);
+    writeJsonAtomic(this.file, this.current);
     return this.get();
   }
 
@@ -102,9 +110,118 @@ export class NoticedShortcuts {
   }
 
   private save(noticed: readonly string[]): void {
-    mkdirSync(path.dirname(this.file), { recursive: true });
-    const partial = `${this.file}.tmp`;
-    writeFileSync(partial, `${JSON.stringify(noticed, null, 2)}\n`);
-    renameSync(partial, this.file);
+    writeJsonAtomic(this.file, noticed);
+  }
+}
+
+/** When a first run reached each milestone, kept with the app (userData/first-run.json) and never sent anywhere. */
+export interface FirstRun {
+  version: 1;
+  /** When Avanzel first started. */
+  firstLaunchAt: string | null;
+  /** When each setup step was first on screen. */
+  steps: Partial<Record<SetupStep, string>>;
+  /** When the thought setup filed was first filed. */
+  firstFiledAt: string | null;
+  /** Undo was used in setup. */
+  undone: boolean;
+  /** When Start using Avanzel was first used. */
+  finishedAt: string | null;
+  /** The step on screen the last time the window was closed without Start using Avanzel. */
+  closedOn: SetupStep | null;
+}
+
+const timeOf = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
+
+/** What `raw` says of a first run, as far as it makes sense: anything else is a milestone not reached yet. */
+function normalizeFirstRun(raw: unknown): FirstRun {
+  const r = isRecord(raw) ? raw : {};
+  const given = isRecord(r.steps) ? r.steps : {};
+  const steps: FirstRun["steps"] = {};
+  for (const step of SETUP_STEPS) {
+    const time = timeOf(given[step]);
+    if (time) steps[step] = time;
+  }
+  return {
+    version: 1,
+    firstLaunchAt: timeOf(r.firstLaunchAt),
+    steps,
+    firstFiledAt: timeOf(r.firstFiledAt),
+    undone: r.undone === true,
+    finishedAt: timeOf(r.finishedAt),
+    closedOn: isSetupStep(r.closedOn) ? r.closedOn : null,
+  };
+}
+
+/**
+ * The times a first run reached setup's milestones (§5.4's measures), in a file of the app's own on this Mac. Nothing
+ * reports them. A milestone keeps the first time it was reached, so noting it again leaves the file be (the step the
+ * window was closed on is the one exception: the last counts). A missing or broken file reads as a first run that has
+ * reached nothing. Noting is best effort: a file that can't be written costs a measure, never the setup noting it.
+ */
+export class FirstRunLog {
+  constructor(private readonly file: string) {}
+
+  get(): FirstRun {
+    try {
+      return normalizeFirstRun(JSON.parse(readFileSync(this.file, "utf8")));
+    } catch {
+      return normalizeFirstRun({});
+    }
+  }
+
+  /** Avanzel started. */
+  launched(now: Date): void {
+    this.note((run) => {
+      run.firstLaunchAt ??= now.toISOString();
+    });
+  }
+
+  /** The setup window shows `step`. */
+  entered(step: SetupStep, now: Date): void {
+    this.note((run) => {
+      run.steps[step] ??= now.toISOString();
+    });
+  }
+
+  /** Setup's thought was filed. */
+  filed(now: Date): void {
+    this.note((run) => {
+      run.firstFiledAt ??= now.toISOString();
+    });
+  }
+
+  /** Undo was used on the filing in setup. */
+  undid(): void {
+    this.note((run) => {
+      run.undone = true;
+    });
+  }
+
+  /** Start using Avanzel was used. */
+  finished(now: Date): void {
+    this.note((run) => {
+      run.finishedAt ??= now.toISOString();
+    });
+  }
+
+  /** The setup window was closed on `step` without Start using Avanzel. */
+  closed(step: SetupStep): void {
+    this.note((run) => {
+      run.closedOn = step;
+    });
+  }
+
+  /** Applies `change` to what the file holds and writes the result, unless that changed nothing. */
+  private note(change: (run: FirstRun) => void): void {
+    const run = this.get();
+    const before = JSON.stringify(run);
+    change(run);
+    if (JSON.stringify(run) === before) return;
+    try {
+      writeJsonAtomic(this.file, run);
+    } catch (error) {
+      console.error("first-run log", error);
+    }
   }
 }

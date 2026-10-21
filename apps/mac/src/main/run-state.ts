@@ -1,8 +1,9 @@
 // When each shadow task was last checked for being due, and last ran: per library, in the app's own
 // data folder. It is about this Mac, not the library, so it never shows up in the library's history.
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { normalizeRunState, type RunState } from "./schedule.ts";
+import { writeJsonAtomic } from "./store.ts";
 
 export class RunStateStore {
   constructor(private readonly file: string) {}
@@ -27,11 +28,7 @@ export class RunStateStore {
   }
 
   set(library: string, state: RunState): void {
-    const all = { ...this.load(), [path.resolve(library)]: state };
-    mkdirSync(path.dirname(this.file), { recursive: true });
-    const partial = `${this.file}.tmp`;
-    writeFileSync(partial, `${JSON.stringify(all, null, 2)}\n`);
-    renameSync(partial, this.file);
+    writeJsonAtomic(this.file, { ...this.load(), [path.resolve(library)]: state });
   }
 
   private load(): Record<string, unknown> {

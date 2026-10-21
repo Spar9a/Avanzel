@@ -88,7 +88,7 @@ import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { answerSources, bestAgent, libraryAgent, libraryFolder, looksLikeATest, suggestQuestion, tildePath } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
-import { NoticedShortcuts, SettingsStore } from "./store.ts";
+import { FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
 import {
   createAskWindow,
@@ -221,6 +221,11 @@ interface SetupSession {
   askAbort: AbortController | null;
   /** The last step has shown: it turned opening at login on, which happens once a session. */
   doneEntered: boolean;
+  /**
+   * Start using Avanzel was used. The window's closing is then the end of setup, not a close in the middle of it
+   * (`endSetup`).
+   */
+  finished: boolean;
 }
 
 /** Words filed after Edit, on their way to the inbox: only in memory until the refile's `recapture` writes them. */
@@ -324,6 +329,8 @@ export class Controller {
   private takenShortcuts: TakenShortcut[] = [];
   /** The taken shortcuts whose notice the capsule has shown, in this app run or an earlier one. */
   private readonly noticed: NoticedShortcuts;
+  /** When a first run reached each of setup's milestones (§5.4): kept on this Mac, never sent anywhere. */
+  private readonly firstRun: FirstRunLog;
   /** What each agent's check found in this app run, by harness name, for Settings → Agents. */
   private readonly agentChecks = new Map<string, AgentStatus>();
   /** The agent checks going on, each by the controller that stops it when Avanzel quits. */
@@ -353,11 +360,13 @@ export class Controller {
     this.modelsDir = path.join(userData, "models");
     this.runState = new RunStateStore(path.join(userData, "run-state.json"));
     this.noticed = new NoticedShortcuts(path.join(userData, "noticed-shortcuts.json"));
+    this.firstRun = new FirstRunLog(path.join(userData, "first-run.json"));
   }
 
   // ---------------------------------------------------------------- lifecycle
 
   async start(): Promise<void> {
+    this.firstRun.launched(new Date());
     // The capsule and the menu bar first: whatever goes wrong next, Avanzel stays reachable there.
     this.capsule = createCapsuleWindow();
     this.capsule.webContents.on("did-start-loading", () => {
@@ -1040,6 +1049,8 @@ export class Controller {
     const vault = this.requireVault();
     job.pages = filedPages(vault.root, outcome.changes);
     this.recent = [...job.pages, ...this.recent.filter((p) => !job.pages?.some((q) => q.path === p.path))].slice(0, 3);
+    // Setup's thought is filed, which counts whether its window is still there to show it or has closed (§5.4).
+    if (job.setup) this.firstRun.filed(new Date());
     if (this.setup?.job === job) {
       this.setupFiled(this.setup, job, outcome, job.pages);
     } else if (this.job === job && this.capsuleState.kind === "filing") {
@@ -1711,14 +1722,16 @@ export class Controller {
       answer: null,
       askAbort: null,
       doneEntered: false,
+      finished: false,
     };
+    this.firstRun.entered("hello", new Date()); // the renderer starts there, and doesn't enter it
   }
 
   /**
    * The setup window closed: its session ends with it, stops looking for agents, and stops waiting for a press, so the
    * wait can't end against a closed window. A question it was answering is given up: its agent stops, and the library
    * is free. A filing it started goes on, and says how it went by notification (`runFiling`). A newer window's session
-   * is its own.
+   * is its own. Unless Start using Avanzel ended it, the step it was closed on is noted (`firstRun`).
    */
   private endSetup(win: BrowserWindow): void {
     const session = this.setup;
@@ -1726,6 +1739,7 @@ export class Controller {
     this.stopPolling(session);
     this.stopPressTest(session);
     session.askAbort?.abort();
+    if (!session.finished) this.firstRun.closed(session.step);
     this.setup = null;
   }
 
@@ -1817,11 +1831,13 @@ export class Controller {
    * which any other step stops, and its spoken thought afresh, so coming back never shows the last visit's Notice. A
    * mic check stays, since its note waits in the inbox for File it anyway or Try again. The first time the last step is
    * entered, opening at login turns on, so its switch shows the spec's default; what the person sets there then stays.
+   * The first time each step is entered is noted (`firstRun`).
    */
   enterSetupStep(step: SetupStep): SetupSnapshot {
     const session = this.setup;
     if (session && isSetupStep(step)) {
       session.step = step;
+      this.firstRun.entered(step, new Date());
       if (step === "found" && !session.begun) this.beginSetup(session);
       if (step === "think") {
         if (session.thought.kind !== "test") session.thought = { kind: "waiting" };
@@ -2245,6 +2261,7 @@ export class Controller {
     const filing = session?.filing;
     const commit = job?.outcome?.commit;
     if (!session || !job || !commit || filing?.kind !== "filed" || !filing.canUndo || filing.undoing || filing.undoRefused) return;
+    this.firstRun.undid(); // Undo was used, whether git takes the filing back or refuses
     session.filing = { ...filing, undoing: true };
     this.broadcast();
     const undone = await this.revertFiling(commit).catch(() => false);
@@ -2355,11 +2372,14 @@ export class Controller {
 
   /**
    * Start using Avanzel, on the last step: setup ends, and its window closes, which ends the session (`endSetup`).
-   * Avanzel waits in the menu bar, where Record a thought is now. Only the last step finishes setup.
+   * Avanzel waits in the menu bar, where Record a thought is now. Only the last step finishes setup, which is noted
+   * (`firstRun`) before the window closes, so that its closing isn't noted as one in the middle of setup.
    */
   async finishSetup(): Promise<void> {
     const session = this.setup;
     if (session?.step !== "done" || session.window.isDestroyed()) return;
+    session.finished = true;
+    this.firstRun.finished(new Date());
     session.window.close();
   }
 
