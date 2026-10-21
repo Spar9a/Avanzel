@@ -2,7 +2,7 @@
 // run there. Every test launches as a first run (firstRun): a new HOME, an empty Hugging Face cache, and only
 // stand-in agents on PATH: Claude Code and Codex, and the others a test adds, or none at all (noAgents).
 import { expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { git, loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
@@ -685,6 +685,34 @@ test("Change… picks another folder", async () => {
   await app.close();
 });
 
+test("a folder too broad for a library, such as ~/Documents, says so, and nothing is made there", async () => {
+  const { env, home } = firstRun();
+  const documents = path.join(home, "Documents");
+  mkdirSync(documents);
+  writeFileSync(path.join(documents, "taxes.pdf"), "%PDF-1.7\n");
+  const app = await launch(env);
+  await stubPicker(app, documents);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect.poll(async () => (await setupSnap(app)).agent, { timeout: 20_000 }).toBe("claude");
+  await setup.getByRole("button", { name: "Change…" }).click();
+  await expect(setup.getByText("~/Documents is too broad for a library. Choose or make a folder inside it.", { exact: true })).toBeVisible();
+  await expect(setup.getByText(HAS_FILES)).toHaveCount(0);
+  await expect(setup.getByRole("button", { name: "Use this folder" })).toBeDisabled();
+  // Nor does the controller make one there when asked.
+  expect(((await call(app, "createSetupLibrary")) as SetupSnapshot).libraryReady).toBe(false);
+  expect(readdirSync(documents)).toEqual(["taxes.pdf"]);
+  // A folder inside it is a library's place like any other.
+  const inside = path.join(documents, "Avanzel");
+  await stubPicker(app, inside);
+  await setup.getByRole("button", { name: "Change…" }).click();
+  await expect(setup.getByText("A new library: Markdown files with git history.", { exact: true })).toBeVisible();
+  await setup.getByRole("button", { name: "Looks good" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  expect((await settingsSnap(app)).library?.path).toBe(inside);
+  await app.close();
+});
+
 test("a library that can't be made says why, and Change… is the way out", async () => {
   const { env, home } = firstRun();
   writeFileSync(path.join(home, "Avanzel"), "Not a folder.\n"); // a file where the library would go
@@ -1007,6 +1035,39 @@ test("an empty thought isn't filed, and the box says why", async () => {
   await app.close();
 });
 
+test("setup's channels act only on what its window offers, and take anything without throwing", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch({ ...env, AVANZEL_PRESS_WAIT_MS: "300" });
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  // Copy names an install by its agent, and main copies the command it holds: never text of the page's own.
+  await setup.evaluate(async () => {
+    window.avanzel.setup.copy("codex");
+    window.avanzel.setup.copy("rm -rf ~" as never);
+    window.avanzel.setup.copy({ command: "rm -rf ~" } as never);
+    await window.avanzel.setup.get(); // main answers in order: the copies before it have been handled
+  });
+  expect(await call(app, "copiedForTests")).toEqual([CODEX_INSTALL]);
+  // Only a shortcut the first-thought step offers is set from it: none is offered until the nudge shows its two.
+  const shortcut = async () => (await settingsSnap(app)).app.shortcuts.dictate;
+  await setup.evaluate(() => window.avanzel.setup.useShortcut("Command+Q"));
+  await setup.evaluate(() => window.avanzel.setup.useShortcut("Control+Shift+Space"));
+  expect(await shortcut()).toBe("Alt+Space");
+  await reachFor(setup, "Alt");
+  await expect(setup.getByText(NUDGE)).toBeVisible();
+  await setup.evaluate(() => window.avanzel.setup.useShortcut("Command+Q"));
+  expect(await shortcut()).toBe("Alt+Space");
+  await setup.evaluate(() => window.avanzel.setup.useShortcut("Control+Shift+Space"));
+  expect(await shortcut()).toBe("Control+Shift+Space");
+  // What isn't words is no thought, and no question: nothing throws, and nothing is made.
+  await setup.evaluate(() => window.avanzel.setup.typeThought(42 as never));
+  await setup.evaluate(() => window.avanzel.setup.typeThought({ words: "Plant tulips" } as never));
+  await setup.evaluate(() => window.avanzel.setup.ask(null as never));
+  expect(inbox(library)).toEqual([]);
+  expect(await call(app, "setupStepForTests")).toBe("think");
+  await app.close();
+});
+
 test("Cancel stops the agent, takes back what it did, and File it again files it", async () => {
   const { env, home } = firstRun({ claude: filingClaude() });
   const app = await launch({ ...env, FAKE_AGENT_MODE: "slow-once", FAKE_AGENT_ONCE: onceMarker() });
@@ -1083,6 +1144,28 @@ test("another failure shows its own line", async () => {
   await expect.poll(filings, { timeout: 30_000 }).toBe(2);
   await expect(notice.getByText("Claude Code couldn't file it.", { exact: true })).toBeVisible({ timeout: 30_000 });
   expect(inbox(path.join(home, "Avanzel"))).toHaveLength(1);
+  await app.close();
+});
+
+test("a recording started on Filing keeps the capsule through Try again", async () => {
+  const words = "Plant tulips in October";
+  const { env } = firstRun({ claude: failingClaude("Error: usage limit reached") });
+  const app = await launch({ ...env, AVANZEL_FAKE_AUDIO: speechWav(words), AVANZEL_FAKE_TRANSCRIPT: words });
+  const setup = await throughFound(app);
+  await typeFirstThought(setup, words);
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code couldn't file it.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  // On Filing the shortcut records as it does anywhere: the capsule listens.
+  await pressShortcut(app);
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  const filings = async () => (await callsTo(app, "claude")).filter((line) => line.startsWith("claude -p ")).length;
+  // Try again files the thought in a new run (File it again does the same, fileSetupAgain), and leaves the capsule be:
+  // the recording goes on, in view.
+  await notice.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect.poll(filings, { timeout: 30_000 }).toBe(2);
+  await expect(notice.getByText("Claude Code couldn't file it.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  expect(await capsuleKind(app)).toBe("listening");
+  await call(app, "cancelRecording");
   await app.close();
 });
 
@@ -1322,6 +1405,21 @@ test("a press on a mic check's answer removes only its note and recording, and r
   expect(inbox(library)).toEqual([kept.note]);
   expect(filesUnder(library, "raw/audio")).toEqual([kept.recording]);
   await call(app, "cancelRecording");
+  await app.close();
+});
+
+test("closing setup on a mic check's answer takes its note and recording away, and only those", async () => {
+  const { env, home } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Testing, testing." });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  const kept = bystanders(library);
+  await sayMicCheck(app, setup);
+  expect(inbox(library)).toHaveLength(2);
+  // Left in the inbox, the evening review would file "Testing, testing" with an agent run.
+  await closeSetup(app);
+  expect(inbox(library)).toEqual([kept.note]);
+  expect(filesUnder(library, "raw/audio")).toEqual([kept.recording]);
   await app.close();
 });
 

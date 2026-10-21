@@ -58,8 +58,9 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { agentWorks, isSettingsPane, isSetupStep, NOTE_GONE } from "../shared/ipc.ts";
+import { AGENT_INSTALLS, agentWorks, isSettingsPane, isSetupStep, NOTE_GONE } from "../shared/ipc.ts";
 import type {
+  AgentInstall,
   AgentStatus,
   AppSettings,
   AskResult,
@@ -97,6 +98,7 @@ import {
   looksLikeATest,
   suggestQuestion,
   tildePath,
+  tooBroad,
   upHerePlace,
   type Box,
 } from "./setup-model.ts";
@@ -225,10 +227,15 @@ interface SetupSession {
   /** Why the last typed thought wasn't taken; each try clears it. */
   typeProblem: string | null;
   /**
-   * The first spoken thought on the first-thought step. The recording's own hooks move it on while the window shows that
-   * step (`moveThought`, `setupHeard`); once its words are handed over (`takeThought`), it waits again.
+   * The first spoken thought on the first-thought step. Its recording's own hooks move it on while the window shows that
+   * step (`moveThought`, `setupHeard`, `setupLost`); once its words are handed over (`takeThought`), it waits again.
    */
   thought: SetupThought;
+  /**
+   * The capsule's recording of that thought, from the press that starts it until its words or its problem arrive: what
+   * tells setup's own recording from another one, which the capsule shows as ever. Null otherwise.
+   */
+  recording: Recording | null;
   /** While the thought is a mic check: its capture in the inbox, which File it anyway files and Try again removes. */
   testCapture: string | null;
   /** macOS is being asked about the microphone (`allowMicrophone`), which happens once at a time. */
@@ -279,6 +286,9 @@ function statusOf(check: AgentCheck): AgentStatus | null {
 
 /** The capsule's notice of a shortcut another app holds. */
 type TakenShortcut = Extract<CapsuleState, { kind: "shortcut-taken" }>;
+
+/** Where an error card's Open Settings button goes. */
+type ErrorAction = Extract<CapsuleState, { kind: "error" }>["action"];
 
 /** The callback the shortcut stand-in holds for each accelerator it registered: what pressShortcutForTests presses. */
 const fakeShortcuts = new Map<string, () => void>();
@@ -695,16 +705,17 @@ export class Controller {
     }, ms);
   }
 
-  /**
-   * The capsule's card of what went wrong. Setup's first spoken thought, while it is recorded or transcribed, says it in
-   * the setup window instead (`moveThought`): the capsule hides and shows no card.
-   */
-  private fail(message: string, detail?: string, action?: CapsuleState extends infer S ? S extends { kind: "error"; action?: infer A } ? A : never : never): void {
-    if (this.moveThought(["listening", "transcribing"], { kind: "failed", message, detail: detail ?? null })) {
-      if (this.capsuleState.kind !== "hidden") this.setCapsule({ kind: "hidden" });
-      return;
-    }
+  /** The capsule's card of what went wrong. */
+  private fail(message: string, detail?: string, action?: ErrorAction): void {
     this.setCapsule({ kind: "error", message, detail, action });
+  }
+
+  /**
+   * `recording` went wrong: the capsule's card says so, unless it is setup's first spoken thought, which the setup window
+   * says instead (`setupLost`).
+   */
+  private recordingFailed(recording: Recording, message: string, detail?: string, action?: ErrorAction): void {
+    if (!this.setupLost(recording, { kind: "failed", message, detail: detail ?? null })) this.fail(message, detail, action);
   }
 
   // ---------------------------------------------------------------- recording
@@ -839,33 +850,35 @@ export class Controller {
     clearTimeout(recording.maxTimer);
     globalShortcut.unregister("Escape");
     this.setCapsule({ kind: "transcribing", mode: recording.mode });
-    this.moveThought(["listening"], { kind: "transcribing", startedAt: Date.now() });
+    this.moveThought(recording, { kind: "transcribing", startedAt: Date.now() });
     this.capsuleCommand("stop");
     this.clearAudioTimeout();
     this.audioTimeout = setTimeout(() => {
       this.audioTimeout = null;
       if (this.recording !== recording) return; // only ever this recording, never a newer one
       this.abandonRecording(recording);
-      this.fail("The recording didn't arrive", "Try again; if it keeps happening, check the microphone in Settings → Voice.", "open-settings:voice");
+      this.recordingFailed(recording, "The recording didn't arrive", "Try again; if it keeps happening, check the microphone in Settings → Voice.", "open-settings:voice");
     }, AUDIO_TIMEOUT_MS);
   }
 
   /**
-   * Esc, or the capsule's ×, while it records: the recording is given up, and nothing is saved. Setup's first spoken
-   * thought then waits for a press again; one given up after its stop (no Esc then) would otherwise wait for words that
-   * never come.
+   * Esc, or the capsule's ×, while it records: the recording is given up, and nothing is saved. When it is setup's first
+   * spoken thought, that waits for a press again; one given up after its stop (no Esc then) would otherwise wait for
+   * words that never come.
    */
   cancelRecording(): void {
-    if (!this.recording) return;
-    this.abandonRecording(this.recording);
+    const recording = this.recording;
+    if (!recording) return;
+    this.abandonRecording(recording);
     this.setCapsule({ kind: "hidden" });
-    this.moveThought(["listening", "transcribing"], { kind: "waiting" });
+    this.moveThought(recording, { kind: "waiting" });
   }
 
   micError(message: string): void {
-    if (!this.recording) return;
-    this.abandonRecording(this.recording);
-    this.fail("The microphone didn't start", `${message}\nCheck Settings → Voice and System Settings → Privacy & Security → Microphone.`, "open-microphone-settings");
+    const recording = this.recording;
+    if (!recording) return;
+    this.abandonRecording(recording);
+    this.recordingFailed(recording, "The microphone didn't start", `${message}\nCheck Settings → Voice and System Settings → Privacy & Security → Microphone.`, "open-microphone-settings");
   }
 
   /** Give a recording up without its audio: the capsule lets go of the microphone, and a screenshot taken for it goes. */
@@ -927,12 +940,13 @@ export class Controller {
         return;
       }
       if (!text) {
-        return this.fail("No speech recognized", "If you did speak, check the microphone in Settings → Voice.", "open-settings:voice");
+        return this.recordingFailed(recording, "No speech recognized", "If you did speak, check the microphone in Settings → Voice.", "open-settings:voice");
       }
       const capture = vault.newCapture(text, { source: "voice", audio: audioPath, transcriber: engine, now });
-      this.afterCapture(capture.path, text, seconds, unkept);
+      this.afterCapture(capture.path, text, seconds, unkept, recording);
     } catch (error) {
-      this.fail(
+      this.recordingFailed(
+        recording,
         error instanceof AvanzelError ? error.message : "Couldn't transcribe that",
         error instanceof AvanzelError ? undefined : errorMessage(error),
         "open-settings:voice",
@@ -973,11 +987,12 @@ export class Controller {
   // ---------------------------------------------------------------- filing
 
   /**
-   * `detail`: a line the capsule shows under the words, e.g. why the recording itself wasn't kept. Setup's first spoken
-   * thought takes its words first (`setupHeard`), and files them now, whatever the file mode.
+   * `detail`: a line the capsule shows under the words, e.g. why the recording itself wasn't kept. Words spoken in
+   * `recording` that is setup's first spoken thought are setup's first (`setupHeard`), which files them now, whatever
+   * the file mode.
    */
-  private afterCapture(capturePath: string, text: string, transcribedIn: number | null, detail?: string): void {
-    if (this.setupHeard(capturePath, text, transcribedIn)) return;
+  private afterCapture(capturePath: string, text: string, transcribedIn: number | null, detail?: string, recording?: Recording): void {
+    if (recording && this.setupHeard(recording, capturePath, text, transcribedIn)) return;
     if (this.store.get().fileMode === "evening") {
       this.setCapsule({ kind: "saved", text, note: "Saved to your inbox for tonight's review", ...(detail ? { detail } : {}) }, 4000);
       return;
@@ -1741,6 +1756,7 @@ export class Controller {
       filing: null,
       typeProblem: null,
       thought: { kind: "waiting" },
+      recording: null,
       testCapture: null,
       askingMicrophone: false,
       answer: null,
@@ -1754,14 +1770,17 @@ export class Controller {
   /**
    * The setup window closed: its session ends with it, stops looking for agents, and stops waiting for a press, so the
    * wait can't end against a closed window. A question it was answering is given up: its agent stops, and the library
-   * is free. A filing it started goes on, and says how it went by notification (`runFiling`). A newer window's session
-   * is its own. Unless Start using Avanzel ended it, the step it was closed on is noted (`firstRun`).
+   * is free. A mic check waiting for File it anyway or Try again goes, its note and its recording (`discardTest`), as
+   * Try again would: left in the inbox, the evening review would file "Testing, testing" with an agent run. A filing it
+   * started goes on, and says how it went by notification (`runFiling`). A newer window's session is its own. Unless
+   * Start using Avanzel ended it, the step it was closed on is noted (`firstRun`).
    */
   private endSetup(win: BrowserWindow): void {
     const session = this.setup;
     if (session?.window !== win) return;
     this.stopPolling(session);
     this.stopPressTest(session);
+    this.discardTest(session);
     session.askAbort?.abort();
     if (!session.finished) this.firstRun.closed(session.step);
     this.setup = null;
@@ -1787,6 +1806,7 @@ export class Controller {
       libraryPath,
       libraryLabel: tildePath(libraryPath, homedir()),
       folder,
+      tooBroad: tooBroad(libraryPath, homedir()),
       libraryReady: !!this.vault,
       model: this.model,
       shortcut: this.store.get().shortcuts.dictate,
@@ -1943,6 +1963,7 @@ export class Controller {
    * them, unless it is a git repository already); an Avanzel library is used as it is; the library already open only
    * has the agent saved. Whatever goes wrong, or a library that still isn't open afterwards, is the session's
    * `makeProblem`, which Found shows. Without a chosen agent that works, nothing is made: Found's button waits for one.
+   * Nor is anything made at a place too broad for a library (tooBroad), such as ~/Documents: Found says why.
    */
   async createSetupLibrary(): Promise<SetupSnapshot> {
     const session = this.setup;
@@ -1950,7 +1971,7 @@ export class Controller {
     const target = session.libraryPath;
     const before = this.setupSnapshot(); // before the library's own agents replace the built-in ones
     const chosen = before.agents.find((agent) => agent.name === before.agent);
-    if (!chosen || !agentWorks(chosen.status)) return before;
+    if (!chosen || !agentWorks(chosen.status) || before.tooBroad) return before;
     let problem: string | null = null;
     try {
       if (this.vault?.root !== target) {
@@ -1992,10 +2013,16 @@ export class Controller {
     else void shell.openPath(TERMINAL);
   }
 
-  /** Copy, beside an install command on Found. With AVANZEL_TEST=1 the clipboard is left be, and copiedForTests says what. */
-  copyText(text: string): void {
-    if (process.env.AVANZEL_TEST === "1") this.copied.push(text);
-    else clipboard.writeText(text);
+  /**
+   * Copy, beside an install command on Found: the command that installs `agent` ("claude"), from AGENT_INSTALLS, so only
+   * a command Found shows ever reaches the clipboard; anything else is ignored. With AVANZEL_TEST=1 the clipboard is left
+   * be, and copiedForTests says what.
+   */
+  copyInstall(agent: unknown): void {
+    if (typeof agent !== "string" || !Object.hasOwn(AGENT_INSTALLS, agent)) return;
+    const { command } = AGENT_INSTALLS[agent as AgentInstall];
+    if (process.env.AVANZEL_TEST === "1") this.copied.push(command);
+    else clipboard.writeText(command);
   }
 
   /**
@@ -2048,10 +2075,14 @@ export class Controller {
     this.broadcast();
   }
 
-  /** The capsule records the first spoken thought, as it records any; once the recording exists, the step is listening. */
+  /**
+   * The capsule records the first spoken thought, as it records any; once the recording exists, it is setup's own
+   * (`recording`), and the step is listening.
+   */
   private async recordThought(session: SetupSession): Promise<void> {
     await this.startRecording("dictate");
     if (this.setup === session && session.step === "think" && this.recording) {
+      session.recording = this.recording;
       session.thought = { kind: "listening", startedAt: this.recording.startedAt };
     }
     this.broadcast();
@@ -2074,31 +2105,53 @@ export class Controller {
   }
 
   /**
-   * What became of the recording, said to setup's first spoken thought: it moves on to `next` when the window shows
-   * the first-thought step and the thought is at one of `from`. Whether it did.
+   * What became of `recording`, said to setup's first spoken thought when it is that thought's own recording and the
+   * window shows the first-thought step: the thought moves on to `next`. One that no longer listens or waits for its
+   * words lets go of the recording. Whether it did. Any other recording is none of setup's business.
    */
-  private moveThought(from: readonly SetupThought["kind"][], next: SetupThought): boolean {
+  private moveThought(recording: Recording, next: SetupThought): boolean {
     const session = this.setup;
-    if (session?.step !== "think" || !from.includes(session.thought.kind)) return false;
+    if (session?.recording !== recording || session.step !== "think") return false;
     session.thought = next;
+    if (next.kind !== "listening" && next.kind !== "transcribing") session.recording = null;
     this.broadcast();
     return true;
   }
 
   /**
-   * The words of the capture at `capturePath` exist. While setup's first spoken thought is recorded or transcribed they
-   * are that thought, and the capsule hides: a mic check stays on the step with its warm answer, its capture kept in
-   * the inbox for File it anyway or Try again; anything else is filed in the window (`takeThought`). Whether setup took
-   * them.
+   * `recording` went wrong. When it is setup's first spoken thought, the setup window says so, and the capsule's card of
+   * it goes (`hideThoughtCard`). Whether it was.
    */
-  private setupHeard(capturePath: string, words: string, transcribedIn: number | null): boolean {
+  private setupLost(recording: Recording, failed: Extract<SetupThought, { kind: "failed" }>): boolean {
+    if (!this.moveThought(recording, failed)) return false;
+    this.hideThoughtCard();
+    return true;
+  }
+
+  /**
+   * The setup window has taken setup's first spoken thought over from the capsule: the capsule's card of its recording
+   * (listening, or transcribing) goes. Not while another recording runs, whose card the capsule shows now, and which
+   * must stay in view.
+   */
+  private hideThoughtCard(): void {
+    const { kind } = this.capsuleState;
+    if (!this.recording && (kind === "listening" || kind === "transcribing")) this.setCapsule({ kind: "hidden" });
+  }
+
+  /**
+   * The words of the capture at `capturePath` exist, spoken in `recording`. When that is setup's first spoken thought,
+   * they are that thought, and the capsule's card of it goes: a mic check stays on the step with its warm answer, its
+   * capture kept in the inbox for File it anyway or Try again; anything else is filed in the window (`takeThought`).
+   * Whether setup took them.
+   */
+  private setupHeard(recording: Recording, capturePath: string, words: string, transcribedIn: number | null): boolean {
     const session = this.setup;
-    const kind = session?.thought.kind;
-    if (!session || session.step !== "think" || (kind !== "listening" && kind !== "transcribing")) return false;
-    if (captureMeta(capturePath).source === "voice" && looksLikeATest(words)) {
+    if (session?.recording !== recording || session.step !== "think") return false;
+    session.recording = null;
+    this.hideThoughtCard();
+    if (looksLikeATest(words)) {
       session.testCapture = capturePath;
       session.thought = { kind: "test", words };
-      if (this.capsuleState.kind !== "hidden") this.setCapsule({ kind: "hidden" });
       this.broadcast();
     } else {
       this.takeThought(capturePath, words, transcribedIn);
@@ -2207,21 +2260,24 @@ export class Controller {
   /**
    * Use {shortcut}, on the first-thought step's Notice of a taken or silent shortcut: `accelerator` becomes Record a
    * thought's shortcut, the way the capsule's Use sets one. Changing it starts the step's press test over (changeApp),
-   * so the window never shows the new shortcut beside what the old one's test found.
+   * so the window never shows the new shortcut beside what the old one's test found. Only on that step, and only for a
+   * shortcut its Notice offers: anything else is ignored.
    */
-  async useSetupShortcut(accelerator: string): Promise<SetupSnapshot> {
-    await this.useShortcut("dictate", accelerator);
+  async useSetupShortcut(accelerator: unknown): Promise<SetupSnapshot> {
+    const offered = this.setup?.step === "think" ? this.setupPressState().alternatives : [];
+    if (typeof accelerator === "string" && offered.includes(accelerator)) await this.useShortcut("dictate", accelerator);
     return this.setupSnapshot();
   }
 
   /**
    * File it, on the first-thought step's typing rows: the words become a capture in the inbox, which setup files
    * (`takeThought`). It never throws: empty words, or a capture that can't be written, are the session's `typeProblem`,
-   * which the step shows under the box, and each try clears the last one. Only the first-thought step takes a thought.
+   * which the step shows under the box, and each try clears the last one. Only the first-thought step takes a thought,
+   * and only words: anything else is ignored.
    */
-  typeSetupThought(words: string): SetupSnapshot {
+  typeSetupThought(words: unknown): SetupSnapshot {
     const session = this.setup;
-    if (session?.step !== "think") return this.setupSnapshot();
+    if (session?.step !== "think" || typeof words !== "string") return this.setupSnapshot();
     session.typeProblem = null;
     const trimmed = words.trim();
     let capture: Capture | null = null;
@@ -2240,9 +2296,10 @@ export class Controller {
 
   /**
    * The first thought's words exist, as the capture at `capturePath`: the window shows its filing from now on (entered as
-   * any step is, so what hangs on entering one runs), and the capsule hides. It files as any filing does, in queue order
-   * and in `withRun`, but no Edit reaches it: it is never the capsule's `job`. While the window shows it, `runFiling`
-   * reports to it; once the window has closed, by notification. The spoken thought has been handed over: it waits again.
+   * any step is, so what hangs on entering one runs). It files as any filing does, in queue order and in `withRun`, but
+   * no Edit reaches it: it is never the capsule's `job`. While the window shows it, `runFiling` reports to it; once the
+   * window has closed, by notification. The spoken thought has been handed over: it waits again. The capsule is left as
+   * it is: a recording started meanwhile, on Filing say, keeps its card.
    */
   private takeThought(capturePath: string, words: string, transcribedIn: number | null): void {
     const session = this.setup;
@@ -2250,7 +2307,6 @@ export class Controller {
     session.thought = { kind: "waiting" };
     session.testCapture = null;
     this.enterSetupStep("filing");
-    if (this.capsuleState.kind !== "hidden") this.setCapsule({ kind: "hidden" });
     const job: FilingJob = { capturePath, text: words, transcribedIn, agent: this.agentName(), abort: new AbortController(), edited: false, setup: true };
     session.job = job;
     session.filing = { kind: "running", words, agent: job.agent, startedAt: Date.now(), waiting: false, cancelling: false };
@@ -2353,11 +2409,11 @@ export class Controller {
    * window's does (`answerQuestion`), one question at a time. While it waits for the library, the step says so; its
    * seconds count from when the agent starts to look. Then the answer and the pages its [[links]] name, or the line that
    * says why it failed. A result that comes after Skip, or after the window has closed, is dropped. Only the Ask step
-   * asks.
+   * asks, and only a question in words: anything else is ignored.
    */
-  async askInSetup(question: string): Promise<SetupSnapshot> {
+  async askInSetup(question: unknown): Promise<SetupSnapshot> {
     const session = this.setup;
-    const asked = question.trim();
+    const asked = typeof question === "string" ? question.trim() : "";
     if (session?.step !== "ask" || !asked || session.askAbort) return this.setupSnapshot();
     const abort = new AbortController();
     session.askAbort = abort;

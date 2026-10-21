@@ -8,8 +8,8 @@
 // chosen agent. Zel waits on the stage.
 import { Actions, Button, Group, GroupRow, Icon, Notice, Row, Stack, Text, Zel } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { agentWorks, type LibraryFolder, type SetupAgent, type SetupSnapshot } from "../../../shared/ipc.ts";
-import { agentLine, agentProblemTitle, isAgentProblem, ownLine, type AgentProblem } from "../copy.ts";
+import { AGENT_INSTALLS, agentWorks, type AgentInstall, type LibraryFolder, type SetupAgent, type SetupSnapshot } from "../../../shared/ipc.ts";
+import { agentLine, agentProblemTitle, isAgentProblem, ownLine, tooBroadLine, type AgentProblem } from "../copy.ts";
 import { Frame, reveal, type StepProps } from "../frame.tsx";
 
 const api = window.avanzel.setup;
@@ -25,14 +25,8 @@ const LIBRARY_LINE: Record<LibraryFolder, string> = {
 /** The agents whose harness keeps them inside the library folder (harness.ts: Claude Code's file tools, OpenCode's opencode.json). */
 const CONFINED = new Set(["claude", "opencode"]);
 
-/**
- * How to install an agent, when this Mac has none: each vendor's own command for macOS, as its install docs give it
- * (Claude Code's setup page, and OpenAI's Codex CLI page and README; checked on 21 October 2026).
- */
-const INSTALLS = [
-  { label: "Claude Code", command: "curl -fsSL https://claude.ai/install.sh | bash" },
-  { label: "Codex", command: "curl -fsSL https://chatgpt.com/codex/install.sh | sh" },
-] as const;
+/** How to install an agent, when this Mac has none (AGENT_INSTALLS), in the order Found lists them. */
+const INSTALLS = (Object.keys(AGENT_INSTALLS) as AgentInstall[]).map((agent) => ({ agent, ...AGENT_INSTALLS[agent] }));
 
 /** How long Copy says "Copied". */
 const COPIED_MS = 2_000;
@@ -88,10 +82,11 @@ export function Found({ snap, go }: StepProps) {
         <>
           <Button variant="quiet" onClick={idle(() => go("hello"))}>Back</Button>
           {/* One primary per moment: while a Notice with actions shows, its last action is the primary. Only an agent
-              known to work can file, so the button waits until there is one. */}
+              known to work can file, so the button waits until there is one, and a place too broad for a library
+              makes none. */}
           <Button
             variant={problem || trouble ? "secondary" : "primary"}
-            disabled={!agentWorks(chosen?.status)}
+            disabled={!agentWorks(chosen?.status) || place.tooBroad}
             busy={making !== null}
             onClick={make}
           >
@@ -104,7 +99,7 @@ export function Found({ snap, go }: StepProps) {
       <Stack gap={12}>
         <Text variant="heading">Here's what I found.</Text>
         <Group label="Your library">
-          <GroupRow label={place.libraryLabel} description={LIBRARY_LINE[place.folder]}>
+          <GroupRow label={place.libraryLabel} description={place.tooBroad ? tooBroadLine(place.libraryLabel) : LIBRARY_LINE[place.folder]}>
             {/* While the problem shows, its own Change… is the way out: no screen has two buttons of one name. */}
             {!problem && <Button size="small" onClick={chooseFolder}>Change…</Button>}
           </GroupRow>
@@ -211,12 +206,13 @@ function troubleBody({ agent, problem }: Trouble): ReactNode {
  * Copy. Meanwhile setup looks for an agent, and Found lists it once one is installed.
  */
 function NoAgent() {
-  const [copied, setCopied] = useState<string | null>(null);
+  const [copied, setCopied] = useState<AgentInstall | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
-  const copy = (command: string) => {
-    api.copy(command);
-    setCopied(command);
+  // Main copies the command it holds for the agent named: the page never says what goes on the clipboard.
+  const copy = (agent: AgentInstall) => {
+    api.copy(agent);
+    setCopied(agent);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(null), COPIED_MS);
   };
@@ -225,13 +221,13 @@ function NoAgent() {
       <Notice title="Avanzel needs an AI agent to do the filing.">
         Claude Code works best. Install one in Terminal, and I'll notice when it's ready.
       </Notice>
-      {INSTALLS.map(({ label, command }) => (
+      {INSTALLS.map(({ agent, label, command }) => (
         // Named for its agent, so each of the two Copy buttons says whose command it copies.
-        <div key={label} role="group" aria-label={label}>
+        <div key={agent} role="group" aria-label={label}>
           <Stack gap={4}>
             <Row justify="between">
               <Text>{label}</Text>
-              <Button size="small" onClick={() => copy(command)}>{copied === command ? "Copied" : "Copy"}</Button>
+              <Button size="small" onClick={() => copy(agent)}>{copied === agent ? "Copied" : "Copy"}</Button>
             </Row>
             <Text variant="code">{command}</Text>
           </Stack>

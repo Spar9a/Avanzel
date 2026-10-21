@@ -21,6 +21,11 @@ export function stampDate(day: Date): string {
   return `${day.getDate()} ${MONTHS[day.getMonth()]?.slice(0, 3)} ${day.getFullYear()}`;
 }
 
+/** Found's line under a place too broad for a library (tooBroad), named as the row names it: "~/Documents". */
+export function tooBroadLine(label: string): string {
+  return `${label} is too broad for a library. Choose or make a folder inside it.`;
+}
+
 /** An agent's row on Found, under its name: "Installed" until a check says more, then what it found. */
 export function agentLine(status: AgentStatus | null): string {
   if (!status) return "Installed";

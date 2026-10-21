@@ -58,12 +58,13 @@ export function registerIpc(controller: Controller): void {
   handle("setup:choose-agent", (_e, name: string) => controller.chooseSetupAgent(name));
   handle("setup:create-library", () => controller.createSetupLibrary());
   handle("setup:choose-folder", () => controller.chooseSetupFolder());
-  handle("setup:use-shortcut", (_e, accelerator: string) => controller.useSetupShortcut(accelerator));
-  handle("setup:type-thought", (_e, words: string) => controller.typeSetupThought(words));
-  handle("setup:ask", (_e, question: string) => controller.askInSetup(question));
+  // What the page sends is checked where it is used: these take anything, and act only on what setup offers.
+  handle("setup:use-shortcut", (_e, accelerator: unknown) => controller.useSetupShortcut(accelerator));
+  handle("setup:type-thought", (_e, words: unknown) => controller.typeSetupThought(words));
+  handle("setup:ask", (_e, question: unknown) => controller.askInSetup(question));
   on("setup:open-terminal", () => controller.openTerminal());
   on("setup:reach-for-shortcut", () => controller.reachForShortcut());
-  on("setup:copy", (_e, text: string) => controller.copyText(text));
+  on("setup:copy", (_e, agent: unknown) => controller.copyInstall(agent));
   on("setup:cancel-filing", () => controller.cancelSetupFiling());
   on("setup:file-again", () => controller.fileSetupAgain());
   on("setup:undo", () => void controller.undoSetupFiling());

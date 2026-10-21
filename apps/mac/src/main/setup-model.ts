@@ -1,7 +1,9 @@
-// What the setup window decides from plain data: names for places, what is at the library's place, the agent that
-// files, a mic check told from a thought, the question to suggest, the pages an answer used, and at the end where the
-// window flies and where Zel's bubble goes. No Electron, so the tests run them as they are.
+// What the setup window decides from plain data: names for places, a place too broad for a library, what is at the
+// library's place, the agent that files, a mic check told from a thought, the question to suggest, the pages an answer
+// used, and at the end where the window flies and where Zel's bubble goes. No Electron, so the tests run them as they
+// are.
 import { existsSync, opendirSync, statSync } from "node:fs";
+import path from "node:path";
 import { loadSettings, Vault } from "@avanzel/engine";
 import { agentWorks, isAgentProblem, type FiledPage, type LibraryFolder, type SetupAgent } from "../shared/ipc.ts";
 import { WIKILINK } from "../shared/wikilinks.ts";
@@ -10,6 +12,25 @@ import { WIKILINK } from "../shared/wikilinks.ts";
 export function tildePath(target: string, home: string): string {
   if (target === home) return "~";
   return target.startsWith(`${home}/`) ? `~${target.slice(home.length)}` : target;
+}
+
+/** The folders macOS makes in a home folder, each holding far more than notes. */
+const HOME_FOLDERS: ReadonlySet<string> = new Set(
+  ["Desktop", "Documents", "Downloads", "Library", "Movies", "Music", "Pictures", "Public", "Applications"].map((name) => name.toLowerCase()),
+);
+
+/**
+ * Whether `target` is too broad to be a library: the home folder `home`, one of the folders macOS makes in it
+ * (Documents, Desktop…), the disk's root, or another disk's (/Volumes/Backup). Making a library there would put the
+ * shelves, an AGENTS.md and git history over everything in it, so setup refuses. Names are compared as macOS's disks
+ * do, whatever their case.
+ */
+export function tooBroad(target: string, home: string): boolean {
+  const place = path.resolve(target);
+  const parent = path.dirname(place);
+  const own = path.resolve(home);
+  if (place === parent || place === own || parent === "/Volumes" || place === "/Volumes") return true;
+  return parent === own && HOME_FOLDERS.has(path.basename(place).toLowerCase());
 }
 
 /**

@@ -195,6 +195,19 @@ export interface SettingsSnapshot {
   obsidian: boolean;
 }
 
+/**
+ * How to install an agent, when this Mac has none: each vendor's own command for macOS, as its install docs give it
+ * (Claude Code's setup page, and OpenAI's Codex CLI page and README; checked on 21 October 2026). Found shows them, and
+ * its Copy names one by its key, so the text that reaches the clipboard is always one of these.
+ */
+export const AGENT_INSTALLS = {
+  claude: { label: "Claude Code", command: "curl -fsSL https://claude.ai/install.sh | bash" },
+  codex: { label: "Codex", command: "curl -fsSL https://chatgpt.com/codex/install.sh | sh" },
+} as const;
+
+/** An agent Found says how to install: a key of AGENT_INSTALLS. */
+export type AgentInstall = keyof typeof AGENT_INSTALLS;
+
 /** An installed agent, as setup lists it under "Who should do the filing?". */
 export interface SetupAgent {
   /** The harness name: "claude". */
@@ -322,6 +335,11 @@ export interface SetupSnapshot {
   /** libraryPath with the home folder as "~". */
   libraryLabel: string;
   folder: LibraryFolder;
+  /**
+   * libraryPath is too broad to be a library (setup-model's tooBroad): the home folder, a folder macOS makes in it such
+   * as Documents, a disk's root. Found says so, and nothing is made there.
+   */
+  tooBroad: boolean;
   /** A library is open. */
   libraryReady: boolean;
   model: ModelStatus;
@@ -459,11 +477,11 @@ export interface AvanzelBridge {
     chooseFolder(): Promise<SetupSnapshot>;
     /** Open Terminal, on a signed-out agent's Notice: Terminal opens, for the person to sign the agent in. */
     openTerminal(): void;
-    /** Copy, beside an install command on Found: `text` goes to the clipboard. */
-    copy(text: string): void;
+    /** Copy, beside an install command on Found: the command that installs `agent` goes to the clipboard. */
+    copy(agent: AgentInstall): void;
     /**
-     * Use {shortcut}, on the first-thought step's Notice of a taken or silent shortcut: `accelerator` becomes Record a
-     * thought's shortcut, and the step listens for a press of it afresh; setup:changed follows.
+     * Use {shortcut}, on the first-thought step's Notice of a taken or silent shortcut: `accelerator`, one of those it
+     * offers, becomes Record a thought's shortcut, and the step listens for a press of it afresh; setup:changed follows.
      */
     useShortcut(accelerator: string): Promise<SetupSnapshot>;
     /**

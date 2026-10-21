@@ -12,6 +12,7 @@ import {
   looksLikeATest,
   suggestQuestion,
   tildePath,
+  tooBroad,
   upHerePlace,
 } from "../src/main/setup-model.ts";
 import { agentWorks, type AgentStatus, type FiledPage, type SetupAgent } from "../src/shared/ipc.ts";
@@ -34,6 +35,17 @@ describe("setup model", () => {
     expect(tildePath("/Users/ab/x", "/Users/a")).toBe("/Users/ab/x");
     expect(tildePath("/Volumes/x", "/Users/a")).toBe("/Volumes/x");
     expect(tildePath("/Users/a", "/Users/a")).toBe("~");
+  });
+
+  it("tooBroad refuses the home folder, the folders macOS makes in it, and the roots of disks", () => {
+    const home = "/Users/a";
+    const broad = ["/Users/a", "/Users/a/", "/Users/a/Documents", "/Users/a/Desktop", "/Users/a/Downloads", "/Users/a/Library",
+      "/Users/a/Movies", "/Users/a/Music", "/Users/a/Pictures", "/Users/a/Public", "/Users/a/Applications", "/Users/a/documents",
+      "/", "/Volumes", "/Volumes/Backup", "/Volumes/Backup/"];
+    expect(broad.filter((place) => !tooBroad(place, home))).toEqual([]);
+    const fine = ["/Users/a/Avanzel", "/Users/a/Documents/Avanzel", "/Users/a/Notes", "/Users/a/Documents/../Avanzel",
+      "/Volumes/Backup/Avanzel", "/Users/ab", "/Users/ab/Documents", "/Users/a/Library/Mobile Documents/Avanzel"];
+    expect(fine.filter((place) => tooBroad(place, home))).toEqual([]);
   });
 
   it("libraryFolder tells missing, empty, has-files and library apart", async () => {
