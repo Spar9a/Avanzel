@@ -1873,7 +1873,9 @@ test("the last step turns on opening at login, and both switches apply at once",
 });
 
 test("Start using Avanzel closes the window, and the menu bar is where Avanzel lives", async () => {
-  const app = await launch(firstRun({ claude: filingClaude() }).env);
+  // With the menu bar icon hidden (empty bounds) the window just closes, with no flight and no bubble, so this test
+  // doesn't depend on where this Mac's own menu bar icon is.
+  const app = await launch({ ...firstRun({ claude: filingClaude() }).env, AVANZEL_FAKE_TRAY_BOUNDS: "0,0,0,0" });
   const setup = await toDone(app);
   // The step says how to talk to Avanzel and where it waits, beside Zel at rest. Start using Avanzel is its one
   // primary, and there is no Back.
@@ -1905,7 +1907,8 @@ function firstRunNotes(userData: string): FirstRun {
 
 test("a finished setup leaves its milestones in first-run.json", async () => {
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
-  const app = await launch({ ...firstRun({ claude: filingClaude() }).env, AVANZEL_USER_DATA: userData });
+  // With the menu bar icon hidden (empty bounds) the window just closes: no flight, no bubble on this Mac's menu bar.
+  const app = await launch({ ...firstRun({ claude: filingClaude() }).env, AVANZEL_USER_DATA: userData, AVANZEL_FAKE_TRAY_BOUNDS: "0,0,0,0" });
   const setup = await toDone(app);
   await setup.getByRole("button", { name: "Start using Avanzel" }).click();
   // Closed, not just hidden: the session has ended, and ending it did not note a close.

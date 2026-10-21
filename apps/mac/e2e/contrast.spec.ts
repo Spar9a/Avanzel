@@ -5,7 +5,7 @@ import { expect, test, type ElectronApplication, type Page } from "@playwright/t
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { CapsuleState } from "../src/shared/ipc.ts";
-import { call, launch, makeLibrary, screenshotFixture, windowFor } from "./helpers.ts";
+import { call, filesUnder, filingClaude, firstRun, launch, makeLibrary, screenshotFixture, windowFor } from "./helpers.ts";
 
 type Appearance = "light" | "dark";
 type RGB = [number, number, number];
@@ -240,6 +240,69 @@ test("the welcome screen is readable in light and dark", async () => {
   const welcome = await windowFor(app, "settings");
   await expect(welcome.getByRole("heading", { name: "Welcome to Avanzel" })).toBeVisible();
   const found = await readable(app, welcome, "Settings › Welcome", sidebar);
+  await app.close();
+  expect(found).toEqual([]);
+});
+
+test("every setup step and the bubble are readable in light and dark", async () => {
+  test.setTimeout(240_000);
+  const { env, home } = firstRun({ claude: filingClaude() });
+  // Another app holds ⌥Space, so Think shows its Notice. The menu bar icon has a place, so the bubble opens under it.
+  const app = await launch({ ...env, AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space", AVANZEL_FAKE_TRAY_BOUNDS: "1000,0,24,24" });
+  const found: string[] = [];
+
+  // Hello, once Zel is awake and the stamp has landed.
+  const setup = await windowFor(app, "setup");
+  await expect(setup.getByRole("img", { name: /^Hello, / })).toBeVisible({ timeout: 15_000 });
+  found.push(...(await readable(app, setup, "Setup › Hello", desktops)));
+
+  // Found, once both agents' sign-in is read and Claude Code is chosen. The speech model can't download here, so the
+  // footer says so.
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
+  await expect(setup.getByRole("img", { name: "Chosen" })).toBeVisible();
+  await expect(setup.getByText("The speech model didn't finish downloading.")).toBeVisible();
+  found.push(...(await readable(app, setup, "Setup › Found", desktops)));
+
+  // Think, with the Notice for the shortcut another app holds; then its box for typing, empty and with words in it.
+  await setup.getByRole("button", { name: "Looks good" }).click();
+  await expect(setup.getByRole("heading", { name: "What's on your mind this week?" })).toBeVisible({ timeout: 20_000 });
+  await expect(setup.getByRole("alert").getByText(/^⌥Space is used by another app/)).toBeVisible();
+  found.push(...(await readable(app, setup, "Setup › Think, shortcut taken", desktops)));
+  await setup.getByRole("button", { name: "Type it instead" }).click();
+  const box = setup.getByRole("textbox", { name: "Your thought" });
+  await expect(box).toBeFocused();
+  found.push(...(await readable(app, setup, "Setup › Think, typing", desktops)));
+  await box.fill("Plant tulips in October");
+  found.push(...(await readable(app, setup, "Setup › Think, typed", desktops)));
+
+  // Filing, once filed: the card stamped, the page the filing wrote, and Undo.
+  await setup.getByRole("button", { name: "File it", exact: true }).click();
+  await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
+  await expect(setup.getByRole("img", { name: /^Filed, / })).toBeVisible();
+  found.push(...(await readable(app, setup, "Setup › Filing, filed", desktops)));
+
+  // Ask, answered: the question names the new page, so the answer shows the page it used.
+  await setup.getByRole("button", { name: "Continue" }).click();
+  await expect(setup.getByRole("heading", { name: "Ask me about it." })).toBeVisible();
+  const [idea = ""] = filesUnder(path.join(home, "Avanzel"), "ideas");
+  const question = setup.getByRole("textbox", { name: "Ask your library" });
+  await question.fill(`What is in [[${idea.replace(/\.md$/, "")}]]?`);
+  await question.press("Enter");
+  await expect(setup.getByText("Pages I used:", { exact: true })).toBeVisible({ timeout: 30_000 });
+  found.push(...(await readable(app, setup, "Setup › Ask, answered", desktops)));
+
+  // Done, with its two switches.
+  await setup.getByRole("button", { name: "Continue" }).click();
+  await expect(setup.getByRole("heading", { name: "You're all set." })).toBeVisible();
+  await expect(setup.getByRole("switch")).toHaveCount(2);
+  found.push(...(await readable(app, setup, "Setup › Done", desktops)));
+
+  // Start using Avanzel flies the window to the icon, and Zel's bubble opens under it.
+  await setup.getByRole("button", { name: "Start using Avanzel" }).click();
+  const bubble = await windowFor(app, "up-here");
+  await expect(bubble.getByText("I'm up here.", { exact: true })).toBeVisible();
+  found.push(...(await readable(app, bubble, "Setup › the bubble", desktops)));
   await app.close();
   expect(found).toEqual([]);
 });

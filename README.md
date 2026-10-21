@@ -60,6 +60,8 @@ Good to know:
   shortcuts to pick; Settings → Voice offers the same, and the menu bar menu stops showing the
   taken one. macOS can't always tell, so if ⌥ Space opens another app, pick another shortcut in
   Settings → Voice.
+- **Setup** checks that ⌥Space really reaches Avanzel. When another app holds it, or no press
+  arrives within 3 s, it names the likely app and offers two free shortcuts.
 - **Edit** works for as long as your agent is filing: it stops the agent at once. When you file
   the corrected words (or cancel), whatever that run already changed is undone first, then the note
   is filed again. An edit survives quitting and a new dictation (your words wait in the inbox), and
@@ -74,6 +76,7 @@ Good to know:
   run when the pane opens and when a library is set up; they read only the sign-in and never ask
   the model. Check asks other agents one short question, and Claude Code or Codex too when their
   sign-in can't be read.
+- **Agents without a sign-in command** are asked one short question only when you pick them.
 - **No symlinks inside the library** for `inbox/`, `raw/` or `reviews/`: Avanzel never writes
   through a link, so filings into a linked `raw/` fail, a linked `reviews/` gets no summary, a
   capture an agent changes in a linked `inbox/` can't be put back (your words are kept in
@@ -81,6 +84,8 @@ Good to know:
   is kept without its recording). Links an agent plants under `inbox/`, `raw/` or `reviews/` are
   removed after its run. To keep the library elsewhere (another disk, a synced folder), move the
   whole library folder and choose it in Settings.
+- **Setup** keeps the times of its milestones in `first-run.json` in Avanzel's own folder, on this
+  Mac only.
 
 Run it from this repository (Node 22+):
 
@@ -90,13 +95,16 @@ npm run dev -w @avanzel/mac          # build and start it (menu bar icon: four b
 npm run dist -w @avanzel/mac         # or build apps/mac/release/mac-arm64/Avanzel.app
 ```
 
-On first launch, Avanzel asks where your library lives (`~/Avanzel` by default; an existing v0.1
-library works as is) and finds your agent CLIs. As soon as there is a library, it downloads both
-speech models once: Parakeet and the Silero VAD, which splits long recordings (673 MB together;
-an existing Hugging Face cache copy is reused). macOS asks for the microphone the first time you
-dictate. The first screen capture shows where to allow Screen Recording (Open Settings); allow
-Avanzel there, then quit and reopen it. The local builds are unsigned, so macOS forgets those
-permissions whenever the app is rebuilt.
+On first launch, a setup window walks you through six short steps with no visit to Settings.
+**Set me up** starts downloading both speech models (Parakeet and the Silero VAD, 673 MB together;
+an existing Hugging Face cache copy is reused) and reads your agents' sign-in. **Looks good** makes
+the library (`~/Avanzel` by default; an existing folder or v0.1 library works as is) with the agent
+you chose. Then you press ⌥Space and say your first thought, or type it while the model downloads.
+Then you watch your agent file it, ask a question about it, and finish in the menu bar. macOS asks
+for the microphone at your first press in setup, after one screen that says why. The first screen
+capture shows where to allow Screen Recording (Open Settings); allow Avanzel there, then quit and
+reopen it. The local builds are unsigned, so macOS forgets those permissions whenever the app is
+rebuilt.
 
 ## Command line (Python, v0.1)
 
