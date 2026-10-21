@@ -369,7 +369,8 @@ describe("checkAgent", () => {
   it("reads Claude Code's sign-in from `claude auth status`, without a prompt", async () => {
     onPath({ claude: `if [ "$*" = "auth status" ]; then echo '{"loggedIn": true, "email": "a@b"}'; else : > PROMPTED; fi` });
     const check = await checkAgent(builtin("claude"), tmp());
-    expect(check).toMatchObject({ ok: true, how: "signed-in" });
+    // The whole result: nothing else from the JSON, such as the email, may come along.
+    expect(check).toEqual({ ok: true, how: "signed-in", seconds: expect.any(Number) });
     expect(check.seconds).toBeGreaterThan(0);
     expect(wrote("PROMPTED")).toBe(false);
   });
@@ -383,6 +384,33 @@ describe("checkAgent", () => {
   it("falls back to a prompt when the status command says nothing it understands", async () => {
     onPath({ claude: `if [ "$1" = auth ]; then echo "unknown command"; exit 1; fi; echo ready` });
     expect(await checkAgent(builtin("claude"), tmp())).toMatchObject({ ok: true, how: "replied" });
+  });
+
+  it("without `prompt`, a status command that says nothing it understands asks nothing, and is unknown", async () => {
+    onPath({ claude: `if [ "$1" = auth ]; then echo "unknown command"; exit 1; else : > PROMPTED; fi` });
+    const check = await checkAgent(builtin("claude"), tmp(), { prompt: false });
+    expect(check).toEqual({ ok: false, why: "unknown", detail: "", seconds: expect.any(Number) });
+    expect(wrote("PROMPTED")).toBe(false);
+  });
+
+  it("without `prompt`, a status command that hangs or can't start asks nothing either", async () => {
+    onPath({ claude: `if [ "$1" = auth ]; then /bin/sleep 5; else : > PROMPTED; fi` });
+    const hung = await checkAgent(builtin("claude"), tmp(), { prompt: false, timeoutSeconds: 1 });
+    expect(hung).toMatchObject({ ok: false, why: "unknown", detail: "" });
+    expect(hung.seconds).toBeLessThan(5);
+    expect(wrote("PROMPTED")).toBe(false);
+    onPath({});
+    expect(await checkAgent(builtin("codex"), tmp(), { prompt: false })).toMatchObject({ ok: false, why: "unknown", detail: "" });
+  });
+
+  it("without `prompt`, a status command is still read, and an agent without one is asked nothing", async () => {
+    onPath({
+      claude: `if [ "$*" = "auth status" ]; then echo '{"loggedIn": false}'; exit 1; else : > PROMPTED; fi`,
+      "cursor-agent": ": > PROMPTED",
+    });
+    expect(await checkAgent(builtin("claude"), tmp(), { prompt: false })).toMatchObject({ ok: false, why: "signed-out", detail: "" });
+    expect(await checkAgent(builtin("cursor-agent"), tmp(), { prompt: false })).toMatchObject({ ok: false, why: "unknown", detail: "" });
+    expect(wrote("PROMPTED")).toBe(false);
   });
 
   it("falls back to a prompt when the status command hangs", async () => {

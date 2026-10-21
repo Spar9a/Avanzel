@@ -284,20 +284,38 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
   }
 }
 
-/** What a check of an agent found: that it works (signed in, or it replied), or why it doesn't. */
+/**
+ * What a check of an agent found: that it works (signed in, or it replied), or why it doesn't. `unknown` comes only
+ * from a check that may not ask the model (`prompt: false`): the agent's status command didn't say (it printed nothing
+ * the check understands, ran out of time, couldn't start or was stopped), or the agent has none, and nothing was asked.
+ */
 export type AgentCheck =
   | { ok: true; how: "signed-in" | "replied"; seconds: number }
-  | { ok: false; why: "signed-out" | "timeout" | "failed"; detail: string; seconds: number };
+  | { ok: false; why: "signed-out" | "timeout" | "failed" | "unknown"; detail: string; seconds: number };
+
+export interface CheckOptions {
+  /** For the status command, and again for the prompt; 15 s unless given. */
+  timeoutSeconds?: number;
+  signal?: AbortSignal;
+  /**
+   * Whether the check may ask the agent one short question, which costs its owner's quota, when it has no status
+   * command or its status doesn't say. Without (`false`) the check is `unknown` then. Defaults to true.
+   */
+  prompt?: boolean;
+}
 
 const CHECK_PROMPT = "Reply with the single word: ready.";
 // A failed reply whose telling line matches is the agent asking its owner to sign in.
 const SIGN_IN_LINE = /sign in|log in|login|not logged|unauthori[sz]ed|authenticat/i;
 
-/** Check that an agent works: read its sign-in from its status command when it has one, else ask it one short question. */
+/**
+ * Check that an agent works: read its sign-in from its status command when it has one. When it has none, or the
+ * status doesn't say, ask it one short question, unless `prompt` is false.
+ */
 export async function checkAgent(
   harness: Harness,
   vault: string,
-  { timeoutSeconds = 15, signal }: { timeoutSeconds?: number; signal?: AbortSignal } = {},
+  { timeoutSeconds = 15, signal, prompt = true }: CheckOptions = {},
 ): Promise<AgentCheck> {
   const started = performance.now();
   const elapsed = () => (performance.now() - started) / 1000;
@@ -306,6 +324,7 @@ export async function checkAgent(
     if (signedIn === true) return { ok: true, how: "signed-in", seconds: elapsed() };
     if (signedIn === false) return { ok: false, why: "signed-out", detail: "", seconds: elapsed() };
   }
+  if (!prompt) return { ok: false, why: "unknown", detail: "", seconds: elapsed() };
   try {
     const run = await runHeadless(harness, CHECK_PROMPT, vault, { write: false, timeoutSeconds, signal });
     if (run.ok) return { ok: true, how: "replied", seconds: run.seconds };
@@ -320,7 +339,7 @@ export async function checkAgent(
 }
 
 // What the agent's status command says: signed in (true), signed out (false), or null when it says
-// neither, can't start or is stopped; the prompt that follows finds out more.
+// neither, can't start or is stopped; then only a check that may ask (`prompt`) finds out more.
 async function readSignIn(signIn: SignInCheck, vault: string, timeoutSeconds: number, signal?: AbortSignal): Promise<boolean | null> {
   const status = await collect(signIn.argv, vault, timeoutSeconds * 1000, signal).catch((error: unknown) => {
     if (error instanceof AvanzelError) return null;

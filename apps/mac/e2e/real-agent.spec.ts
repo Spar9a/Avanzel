@@ -25,6 +25,7 @@ test("a spoken thought is filed by the real agent, and Undo takes it back", asyn
   const app = await launch({
     AVANZEL_LIBRARY: root,
     AVANZEL_FAKE_AUDIO: speechWav("I want to launch my podcast about indie game development before the end of the year. My co-host Mark is busy until December."),
+    PATH: process.env.PATH ?? "", // this Mac's own agent CLI, not launch()'s stand-ins: this test is the one that spends
   });
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");

@@ -1,7 +1,7 @@
 import { _electron as electron, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { MODELS, Vault, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -52,6 +52,41 @@ export function screenshotFixture({ blank = false }: { blank?: boolean } = {}): 
   return file;
 }
 
+/** How the stand-ins for Claude Code and Codex answer, by binary: signed in, and a short reply to anything else. */
+const SIGNED_IN: Readonly<Record<string, string>> = {
+  claude: `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else echo ready; fi`,
+  codex: `if [ "$1 $2" = "login status" ]; then echo "Logged in using ChatGPT" >&2; else echo ready; fi`, // Codex answers on stderr
+};
+
+/**
+ * A new folder of stand-ins for Claude Code and Codex: shell scripts answering as SIGNED_IN does, except for the
+ * `answers` given (script bodies, by binary). Each one notes how it was called, "claude auth status", in calls.log
+ * beside it (see agentCalls).
+ */
+export function agentStubs(answers: Record<string, string> = {}): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "avz-e2e-agents-"));
+  const log = path.join(dir, "calls.log");
+  for (const [name, body] of Object.entries({ ...SIGNED_IN, ...answers })) {
+    const file = path.join(dir, name);
+    writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' "${name} $*" >> '${log}'\n${body}\n`);
+    chmodSync(file, 0o755);
+  }
+  return dir;
+}
+
+/** This process's PATH with new agentStubs(answers) first: what launch() gives the app unless the test passes a PATH. */
+export const agentPath = (answers: Record<string, string> = {}) => `${agentStubs(answers)}:${process.env.PATH ?? ""}`;
+
+/**
+ * How the app has called the stand-ins so far, oldest first. They are the first folder on its PATH: with AVANZEL_TEST
+ * set, the app keeps the PATH it was given ahead of what widenedPath adds, so no test reaches this Mac's own CLIs.
+ */
+export async function agentCalls(app: ElectronApplication): Promise<string[]> {
+  const [first = ""] = (await app.evaluate(() => process.env.PATH ?? "")).split(":");
+  const log = path.join(first, "calls.log");
+  return existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : [];
+}
+
 export async function launch(env: Record<string, string>, switches: string[] = []): Promise<ElectronApplication> {
   const clean = Object.fromEntries(Object.entries(process.env).filter(([k, v]) => k !== "ELECTRON_RUN_AS_NODE" && v !== undefined)) as Record<string, string>;
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
@@ -62,13 +97,15 @@ export async function launch(env: Record<string, string>, switches: string[] = [
     cwd: appDir,
     // Nothing listens on port 9, so a speech model download fails at once unless the test passes a fakeModelHub's url.
     // The shortcuts register with a stand-in that holds none for real and finds none taken unless the test lists them,
-    // so no test depends on which shortcuts this Mac's other apps hold.
+    // so no test depends on which shortcuts this Mac's other apps hold. Stand-ins for Claude Code and Codex come first
+    // on PATH, so no test runs this Mac's own (whose prompts cost the owner's quota); a test may pass its own PATH.
     env: {
       ...clean,
       AVANZEL_TEST: "1",
       AVANZEL_USER_DATA: userData,
       AVANZEL_MODELS_URL: "http://127.0.0.1:9",
       AVANZEL_FAKE_TAKEN_SHORTCUTS: "",
+      PATH: agentPath(),
       ...env,
     },
   });

@@ -68,9 +68,10 @@ Good to know:
   commit (in a git library) and the note stays in the inbox for the evening review.
 - **Ask** waits for a filing in progress, and says so. A note you dictate while your agent answers
   waits for the answer, and says so too; closing the Ask window cancels the question.
-- **Settings → Agents** checks that each agent is signed in. For Claude Code and Codex it reads
-  their own sign-in status when the pane opens, which asks the model nothing; any other agent is
-  asked one short question when you press Check.
+- **Settings → Agents** checks that each agent is signed in. For Claude Code and Codex the checks
+  run when the pane opens and when a library is set up; they read only the sign-in and never ask
+  the model. Check asks other agents one short question, and Claude Code or Codex too when their
+  sign-in can't be read.
 - **No symlinks inside the library** for `inbox/`, `raw/` or `reviews/`: Avanzel never writes
   through a link, so filings into a linked `raw/` fail, a linked `reviews/` gets no summary, a
   capture an agent changes in a linked `inbox/` can't be put back (your words are kept in

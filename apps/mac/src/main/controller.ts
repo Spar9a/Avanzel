@@ -150,11 +150,12 @@ function notFiled(failed: readonly FileOutcome[], filed: number): string {
   return why ? `${why}\n${still}` : still;
 }
 
-/** What Settings → Agents shows for what the engine's check found. */
-function statusOf(check: AgentCheck): AgentStatus {
+/** What Settings → Agents shows for what the engine's check found; null when it couldn't tell, so the agent shows as unchecked. */
+function statusOf(check: AgentCheck): AgentStatus | null {
   if (check.ok) return { kind: check.how, seconds: check.seconds };
-  if (check.why === "failed") return { kind: "failed", detail: check.detail };
-  return { kind: check.why };
+  if (check.why === "unknown") return null;
+  if (check.why === "timeout") return { kind: "timeout" };
+  return { kind: check.why, detail: check.detail };
 }
 
 /** The capsule's notice of a shortcut another app holds. */
@@ -213,6 +214,8 @@ export class Controller {
   private readonly agentChecks = new Map<string, AgentStatus>();
   /** The agent checks going on, each by the controller that stops it when Avanzel quits. */
   private readonly runningChecks = new Set<AbortController>();
+  /** Avanzel is quitting, busy or not (`stopAgentChecks`): no agent check starts any more. */
+  private checksStopped = false;
   private recent: FiledPage[] = [];
   private running = new Set<string>();
   private lastEveningCommits: string[] = [];
@@ -1398,25 +1401,29 @@ export class Controller {
   // ---------------------------------------------------------------- agent checks
 
   /**
-   * Starts the free checks (an agent's own sign-in command, which asks the model nothing) of the installed agents not
-   * checked yet in this app run. It returns at once; Settings gets each result through settings:changed.
+   * Starts the free checks of the installed agents not checked yet in this app run: each reads the agent's own sign-in
+   * command and never asks the model (`prompt: false`). A sign-in it can't read leaves the agent unchecked, for Check.
+   * It returns at once; Settings gets each result through settings:changed.
    */
   checkAgents(): SettingsSnapshot {
     const vault = this.vault;
     if (vault) {
       for (const [name, harness] of Object.entries(this.harnessesOf(vault))) {
-        if (harness.signIn && !this.agentChecks.has(name) && harness.available()) void this.runAgentCheck(name, harness, vault);
+        if (harness.signIn && !this.agentChecks.has(name) && harness.available()) void this.runAgentCheck(name, harness, vault, false);
       }
     }
     return this.snapshot();
   }
 
-  /** Checks agent `name` again, its prompt included (Check, in Settings → Agents); a check under way is left to finish. */
+  /**
+   * Checks agent `name` again (Check, in Settings → Agents): its sign-in command, then its one short question when it
+   * has none or that doesn't say. A check under way is left to finish.
+   */
   checkAgent(name: string): SettingsSnapshot {
     const vault = this.vault;
     const table = vault ? this.harnessesOf(vault) : {};
     const harness = Object.hasOwn(table, name) ? table[name] : undefined;
-    if (vault && harness && this.agentChecks.get(name)?.kind !== "checking") void this.runAgentCheck(name, harness, vault);
+    if (vault && harness && this.agentChecks.get(name)?.kind !== "checking") void this.runAgentCheck(name, harness, vault, true);
     return this.snapshot();
   }
 
@@ -1430,30 +1437,35 @@ export class Controller {
   }
 
   /**
-   * When Avanzel quits: stops every agent check still going on, its agent too (it runs detached, and its timeout
-   * lives here). Quitting doesn't wait for them, and what they find is dropped.
+   * When Avanzel quits, busy or not: stops every agent check still going on, its agent too (it runs detached, and its
+   * timeout lives here), and no check starts after it. Quitting doesn't wait for them, and what they find is dropped.
    */
   stopAgentChecks(): void {
+    this.checksStopped = true;
     for (const abort of this.runningChecks) abort.abort();
   }
 
-  /** One check, in the library: Settings shows it running, then what it found. Once Avanzel is quitting, none starts. */
-  private async runAgentCheck(name: string, harness: Harness, vault: Vault): Promise<void> {
-    if (this.quitting) return;
+  /**
+   * One check, in the library: Settings shows it running, then what it found. Only with `prompt` may it ask the model.
+   * Once Avanzel is quitting, none starts.
+   */
+  private async runAgentCheck(name: string, harness: Harness, vault: Vault, prompt: boolean): Promise<void> {
+    if (this.quitting || this.checksStopped) return;
     const abort = new AbortController();
     this.runningChecks.add(abort);
     this.agentChecks.set(name, { kind: "checking" });
     this.broadcast();
-    let status: AgentStatus;
+    let status: AgentStatus | null;
     try {
-      status = statusOf(await checkHarness(harness, vault.root, { signal: abort.signal }));
+      status = statusOf(await checkHarness(harness, vault.root, { signal: abort.signal, prompt }));
     } catch (error) {
       status = { kind: "failed", detail: errorMessage(error) }; // a check that throws still ends
     } finally {
       this.runningChecks.delete(abort);
     }
     if (abort.signal.aborted) return; // stopped for quitting: its "… was cancelled" is no news
-    this.agentChecks.set(name, status);
+    if (status) this.agentChecks.set(name, status);
+    else this.agentChecks.delete(name); // a sign-in it couldn't read: back to "Installed", with Check
     this.broadcast();
   }
 

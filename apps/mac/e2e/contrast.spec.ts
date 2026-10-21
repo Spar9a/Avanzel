@@ -195,9 +195,13 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
     await settings.getByRole("button", { name: pane, exact: true }).click();
     await expect(settings.getByRole("heading", { name: pane })).toBeVisible();
     if (pane === "Shadow tasks") await expect(settings.getByText(/Unknown schedule "sometimes"/)).toBeVisible();
-    // This Mac's Claude Code and Codex read their sign-in as the pane opens: read the pane once they are done, not
-    // while a Check button fades back in from disabled.
-    if (pane === "Agents") await expect(settings.getByText("Checking…")).toHaveCount(0, { timeout: 40_000 });
+    // launch()'s stand-ins for Claude Code and Codex read their sign-in as the pane opens: read the pane once both
+    // are done, not while a Check button spins.
+    if (pane === "Agents") {
+      for (const name of ["Claude Code", "Codex"]) {
+        await expect(settings.getByRole("group", { name }).getByRole("status")).toHaveText("Signed in", { timeout: 40_000 });
+      }
+    }
     found.push(...(await readable(app, settings, `Settings › ${pane}`, sidebar)));
   }
 

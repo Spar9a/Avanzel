@@ -85,7 +85,11 @@ export type AgentStatus =
   | { kind: "checking" }
   | { kind: "signed-in"; seconds: number }
   | { kind: "replied"; seconds: number }
-  | { kind: "signed-out" }
+  | {
+      kind: "signed-out";
+      /** The line of the agent's reply that asked to sign in; empty when its own sign-in command said so. */
+      detail: string;
+    }
   | { kind: "timeout" }
   | {
       kind: "failed";
@@ -214,7 +218,10 @@ export interface AvanzelBridge {
     downloadModel(): Promise<SettingsSnapshot>;
     saveTask(task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">): Promise<SettingsSnapshot>;
     runTask(id: string): Promise<SettingsSnapshot>;
-    /** Starts the free checks of installed agents not checked yet in this app run; their results arrive through onChanged. */
+    /**
+     * Starts the free checks of installed agents not checked yet in this app run, which never ask the model; their
+     * results arrive through onChanged.
+     */
     checkAgents(): Promise<SettingsSnapshot>;
     /** Checks agent `name` again, its prompt included; the result arrives through onChanged. */
     checkAgent(name: string): Promise<SettingsSnapshot>;
