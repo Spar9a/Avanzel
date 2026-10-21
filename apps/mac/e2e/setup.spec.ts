@@ -1,15 +1,16 @@
 // The setup window: a Mac with no library opens it instead of Settings, and Zel walks the person through the first
 // run there. Every test launches as a first run (firstRun): a new HOME, an empty Hugging Face cache, and only
-// stand-in agents on PATH: Claude Code and Codex, and the others a test adds.
+// stand-in agents on PATH: Claude Code and Codex, and the others a test adds, or none at all (noAgents).
 import { expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadSettings, Vault } from "../../../packages/engine/src/index.ts";
+import { loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { SettingsSnapshot, SetupSnapshot } from "../src/shared/ipc.ts";
 import {
   agentCalls,
+  agentStubs,
   call,
   capsuleKind,
   closeModelHubs,
@@ -17,6 +18,7 @@ import {
   firstRun,
   gitOut,
   launch,
+  noAgents,
   SIGNED_OUT_CLAUDE,
   snap,
   throughFound,
@@ -54,6 +56,20 @@ const HAS_FILES = "This folder has files already. I'll add the shelves, an AGENT
 
 /** The heading of the step after Found. */
 const THINK = "What's on your mind this week?";
+
+/** The install commands Found shows when no agent is installed: each vendor's own, as its install docs give it. */
+const CLAUDE_INSTALL = "curl -fsSL https://claude.ai/install.sh | bash";
+const CODEX_INSTALL = "curl -fsSL https://chatgpt.com/codex/install.sh | sh";
+
+/** A line Found shows for an agent that answered its one short question. */
+const REPLIED = /^Replied in \d+\.\d s$/;
+
+/** What the check of agent `name` found, as the setup window is sent it. */
+const statusKind = async (app: ElectronApplication, name: string) =>
+  (await setupSnap(app)).agents.find((agent) => agent.name === name)?.status?.kind ?? null;
+
+/** How the app has called the stand-in for `binary` so far, oldest first. */
+const callsTo = async (app: ElectronApplication, binary: string) => (await agentCalls(app)).filter((line) => line.startsWith(`${binary} `));
 
 /**
  * Stands in for the folder picker: it answers that `dir` was chosen, and keeps how it was asked (the title of the window
@@ -202,6 +218,14 @@ test("Set me up starts both speech models downloading, shown in the footer", asy
 test("Here's what I found reads Claude Code's and Codex's sign-in, asks no agent anything, and chooses Claude Code", async () => {
   const app = await launch(firstRun().env);
   const setup = await windowFor(app, "setup");
+  // Whether the no-agent Notice ever shows, even for a frame while Found waits for Set me up's first look.
+  await setup.evaluate(() => {
+    const page = window as { sawNoAgent?: boolean };
+    page.sawNoAgent = false;
+    new MutationObserver(() => {
+      if (document.body.textContent?.includes("Avanzel needs an AI agent")) page.sawNoAgent = true;
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
   await setup.getByRole("button", { name: "Set me up" }).click();
   await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
   await expect(setup.getByText("~/Avanzel", { exact: true })).toBeVisible();
@@ -214,6 +238,9 @@ test("Here's what I found reads Claude Code's and Codex's sign-in, asks no agent
   expect((await setupSnap(app)).agent).toBe("claude");
   // Only the sign-in commands ran: the stand-ins note every call, and no prompt was sent.
   expect((await agentCalls(app)).sort()).toEqual(["claude auth status", "codex login status"]);
+  // Two agents and a new library fit without scrolling, the room kept under the step's end included.
+  expect(await setup.getByRole("main").evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+  expect(await setup.evaluate(() => (window as { sawNoAgent?: boolean }).sawNoAgent)).toBe(false);
   await snap(setup, "setup-found");
   await app.close();
 });
@@ -242,6 +269,32 @@ test("Codex is chosen while Claude Code isn't signed in", async () => {
   await app.close();
 });
 
+test("with no agent, setup shows how to install one, copies the command, and notices when one arrives", async () => {
+  const { env, bin } = noAgents();
+  const app = await launch(env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  const none = setup.getByText("Avanzel needs an AI agent to do the filing.", { exact: true });
+  await expect(none).toBeVisible();
+  await expect(setup.getByText("Claude Code works best. Install one in Terminal, and I'll notice when it's ready.", { exact: true })).toBeVisible();
+  await expect(setup.getByText(CLAUDE_INSTALL, { exact: true })).toBeVisible();
+  await expect(setup.getByText(CODEX_INSTALL, { exact: true })).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Looks good" })).toBeDisabled();
+  const copies = setup.getByRole("button", { name: /^(Copy|Copied)$/ });
+  await expect(copies).toHaveText(["Copy", "Copy"]);
+  await copies.first().click();
+  await expect(copies).toHaveText(["Copied", "Copy"]);
+  expect(await call(app, "copiedForTests")).toEqual([CLAUDE_INSTALL]);
+  await expect(copies).toHaveText(["Copy", "Copy"], { timeout: 10_000 }); // "Copied" for 2 s
+  // Claude Code is installed now, and its stand-in reads as signed in: setup notices, reads it and chooses it.
+  copyFileSync(path.join(agentStubs(), "claude"), path.join(bin, "claude"));
+  chmodSync(path.join(bin, "claude"), 0o755);
+  await expect(setup.getByText("Signed in", { exact: true })).toBeVisible({ timeout: 15_000 });
+  expect((await setupSnap(app)).agent).toBe("claude");
+  await expect(none).toHaveCount(0);
+  await app.close();
+});
+
 test("an agent whose sign-in can't be read stays Installed, and setup asks it nothing", async () => {
   const app = await launch(firstRun({ claude: UNREADABLE_CLAUDE }).env);
   const setup = await windowFor(app, "setup");
@@ -251,6 +304,148 @@ test("an agent whose sign-in can't be read stays Installed, and setup asks it no
   expect((await setupSnap(app)).agent).toBe("codex");
   // Reading the sign-in said nothing, and the check stopped there: no prompt, which would cost the person's quota.
   expect((await agentCalls(app)).sort()).toEqual(["claude auth status", "codex login status"]);
+  await app.close();
+});
+
+test("a signed-out Claude Code, once picked, says how to sign in, and Check again only reads the sign-in again", async () => {
+  const { env, home } = firstRun({ claude: SIGNED_OUT_CLAUDE });
+  const app = await launch(env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect.poll(async () => (await setupSnap(app)).agent, { timeout: 20_000 }).toBe("codex");
+  await setup.getByRole("button", { name: "Use Claude Code" }).click();
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code isn't signed in on this Mac.", { exact: true })).toBeVisible();
+  await expect(notice).toContainText("Run claude once in Terminal and sign in, then check again.");
+  await expect(notice.getByText("claude", { exact: true })).toBeVisible(); // the command, set as code
+  // Check again is the moment's primary, brought into view below the agents. The footer's button steps back and waits
+  // for an agent that works, and so does the controller: it makes no library with this one.
+  const checkAgain = notice.getByRole("button", { name: "Check again" });
+  await expect(checkAgain).toHaveAttribute("data-variant", "primary");
+  await expect(checkAgain).toBeInViewport({ ratio: 1 });
+  const looksGood = setup.getByRole("button", { name: "Looks good" });
+  await expect(looksGood).toHaveAttribute("data-variant", "secondary");
+  await expect(looksGood).toBeDisabled();
+  expect(((await call(app, "createSetupLibrary")) as SetupSnapshot).libraryReady).toBe(false);
+  expect(existsSync(path.join(home, "Avanzel"))).toBe(false);
+  await notice.getByRole("button", { name: "Open Terminal" }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["Terminal"]);
+  await checkAgain.click();
+  await expect.poll(async () => (await callsTo(app, "claude")).length, { timeout: 20_000 }).toBe(2);
+  await expect.poll(() => statusKind(app, "claude"), { timeout: 20_000 }).toBe("signed-out");
+  // The sign-in said no again, and the check stopped there: asking the model would cost the person's quota.
+  expect(await callsTo(app, "claude")).toEqual(["claude auth status", "claude auth status"]);
+  await expect(notice.getByText("Claude Code isn't signed in on this Mac.", { exact: true })).toBeVisible();
+  await app.close();
+});
+
+test("an agent without a sign-in command is asked one question only when picked", async () => {
+  const app = await launch(firstRun({ opencode: "echo ready" }).env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
+  // OpenCode has no sign-in to read, so nothing is asked of it until the person picks it.
+  await expect(setup.getByText("Installed", { exact: true })).toHaveCount(1);
+  expect(await callsTo(app, "opencode")).toEqual([]);
+  await setup.getByRole("button", { name: "Use OpenCode" }).click();
+  await expect(setup.getByText(REPLIED)).toBeVisible({ timeout: 20_000 });
+  const asked = await callsTo(app, "opencode");
+  expect(asked).toHaveLength(1);
+  expect(asked[0]?.startsWith("opencode run ")).toBe(true);
+  expect(asked[0]?.endsWith("Reply with the single word: ready.")).toBe(true);
+  expect((await setupSnap(app)).agent).toBe("opencode");
+  await expect(setup.getByRole("button", { name: "Looks good" })).toBeEnabled();
+  await app.close();
+});
+
+test("an agent picked while its sign-in is still being read is asked its question once the sign-in says nothing", async () => {
+  // Claude Code's first sign-in read takes 5 s to say nothing a check understands, as an older one may; later ones
+  // answer at once. Codex reads as signed in at once.
+  const read = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-read-")), "read");
+  const slow = `if [ "$1 $2" = "auth status" ]; then [ -e '${read}' ] || { touch '${read}'; sleep 5; }; echo "unknown command: auth"; exit 1; else echo ready; fi`;
+  const app = await launch(firstRun({ claude: slow }).env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect.poll(async () => (await setupSnap(app)).agent, { timeout: 20_000 }).toBe("codex");
+  expect(await statusKind(app, "claude")).toBe("checking");
+  await setup.getByRole("button", { name: "Use Claude Code" }).click();
+  await expect(setup.getByText(REPLIED)).toBeVisible({ timeout: 20_000 });
+  expect((await callsTo(app, "claude")).filter((line) => line.startsWith("claude -p "))).toHaveLength(1);
+  await expect(setup.getByRole("button", { name: "Looks good" })).toBeEnabled();
+  await app.close();
+});
+
+test("a picked agent that fails says what it said, and Check again asks it again", async () => {
+  // OpenCode fails the first time it is asked, as at a usage limit, and replies after that, taking 2 s.
+  const asked = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-asked-")), "asked");
+  const opencode = `if [ -e '${asked}' ]; then sleep 2; echo ready; else touch '${asked}'; echo 'Error: usage limit reached' >&2; exit 1; fi`;
+  const app = await launch(firstRun({ opencode }).env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
+  await setup.getByRole("button", { name: "Use OpenCode" }).click();
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("OpenCode didn't work.", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(notice.getByText("Usage limit reached.", { exact: true })).toBeVisible();
+  await expect(notice.getByRole("button", { name: "Open Terminal" })).toHaveCount(0); // signing in isn't the fix
+  const looksGood = setup.getByRole("button", { name: "Looks good" });
+  await expect(looksGood).toHaveAttribute("data-variant", "secondary");
+  const checkAgain = notice.getByRole("button", { name: "Check again" });
+  await checkAgain.click();
+  // While OpenCode is asked again, the Notice stays and its button is busy, so the focus stays where it was.
+  await expect(checkAgain).toHaveAttribute("aria-busy", "true");
+  await expect(setup.getByText(REPLIED)).toBeVisible({ timeout: 20_000 });
+  await expect(notice).toHaveCount(0);
+  await expect(looksGood).toHaveAttribute("data-variant", "primary");
+  await expect(looksGood).toBeEnabled();
+  expect(await callsTo(app, "opencode")).toHaveLength(2);
+  await app.close();
+});
+
+test("before there is a library, a picked agent is asked in a scratch folder, which goes when Avanzel quits", async () => {
+  const cwdLog = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-cwd-")), "cwd.log");
+  const app = await launch(firstRun({ opencode: `pwd -P >> '${cwdLog}'; echo ready` }).env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
+  await setup.getByRole("button", { name: "Use OpenCode" }).click();
+  await expect(setup.getByText(REPLIED)).toBeVisible({ timeout: 20_000 });
+  const [scratch = ""] = readFileSync(cwdLog, "utf8").split("\n").filter(Boolean);
+  expect(path.dirname(scratch)).toBe(realpathSync(tmpdir()));
+  expect(path.basename(scratch)).toMatch(/^avanzel-check-/);
+  expect(existsSync(scratch)).toBe(true);
+  await app.close();
+  expect(existsSync(scratch)).toBe(false);
+});
+
+test("a scratch folder that can't be made is each check's failure, and Check again tries again", async () => {
+  const app = await launch(firstRun().env);
+  // The system's temporary folder refuses new folders for now, as a full disk would.
+  await app.evaluate(() => {
+    const fs = process.getBuiltinModule("node:fs");
+    const make = fs.mkdtempSync;
+    const state = globalThis as { refuseScratch?: boolean };
+    state.refuseScratch = true;
+    fs.mkdtempSync = ((prefix: string, options?: never) => {
+      if (state.refuseScratch && prefix.includes("avanzel-check-")) throw new Error("ENOSPC: no space left on device, mkdtemp");
+      return make(prefix, options);
+    }) as typeof fs.mkdtempSync;
+    process.getBuiltinModule("node:module").syncBuiltinESMExports();
+  });
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("ENOSPC: no space left on device, mkdtemp.", { exact: true })).toHaveCount(2, { timeout: 20_000 });
+  expect((await setupSnap(app)).agent).toBeNull();
+  await app.evaluate(() => {
+    (globalThis as { refuseScratch?: boolean }).refuseScratch = false;
+  });
+  await setup.getByRole("button", { name: "Use Claude Code" }).click();
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code didn't work.", { exact: true })).toBeVisible();
+  await notice.getByRole("button", { name: "Check again" }).click();
+  await expect.poll(() => statusKind(app, "claude"), { timeout: 20_000 }).toBe("signed-in");
+  await expect(notice).toHaveCount(0);
+  expect((await setupSnap(app)).agent).toBe("claude");
   await app.close();
 });
 
@@ -327,6 +522,40 @@ test("an existing library is used as it is", async () => {
   expect(readFileSync(path.join(library, "ideas", "plant.md"), "utf8")).toBe(plant);
   expect((await settingsSnap(app)).library?.path).toBe(library);
   expect(loadSettings(library).harness).toBe("claude");
+  await app.close();
+});
+
+test("an existing library whose settings don't load says so, and Found doesn't claim this Mac has no agent", async () => {
+  const { env, home } = firstRun();
+  const library = path.join(home, "Avanzel");
+  await Vault.init(library, { git: false });
+  writeFileSync(path.join(library, ".avanzel", "config.toml"), "harness = [\n");
+  const app = await launch(env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
+  await setup.getByRole("button", { name: "Use this folder" }).click();
+  await expect(setup.getByRole("alert").getByText("I couldn't make the library at ~/Avanzel.", { exact: true })).toBeVisible({ timeout: 20_000 });
+  // Its agents can't be read from its settings now, but they are installed: nothing says to install one.
+  await expect(setup.getByText("Avanzel needs an AI agent to do the filing.", { exact: true })).toHaveCount(0);
+  await app.close();
+});
+
+test("an existing library keeps its own agent while that agent works here, rather than the best one", async () => {
+  const { env, home } = firstRun();
+  const library = path.join(home, "Avanzel");
+  await Vault.init(library, { git: true });
+  saveSettings(library, { ...loadSettings(library), harness: "codex" }); // say, a library brought from another Mac
+  const app = await launch(env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
+  expect((await setupSnap(app)).agent).toBe("codex");
+  await expect(setup.getByRole("button", { name: "Use Claude Code" })).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Use Codex" })).toHaveCount(0);
+  await setup.getByRole("button", { name: "Use this folder" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  expect(loadSettings(library).harness).toBe("codex");
   await app.close();
 });
 
@@ -428,6 +657,9 @@ test("Found holds four agents, a folder with files and its problem: the step scr
   await step.evaluate((el) => el.scrollTo(0, el.scrollHeight));
   expect(await use.boundingBox()).toEqual(footer);
   await expect(use).toBeInViewport({ ratio: 1 });
+  // It keeps a little room under its last line, so a focus ring drawn there isn't cut off at the step's edge.
+  const room = await step.evaluate((el) => el.getBoundingClientRect().bottom - (el.lastElementChild?.getBoundingClientRect().bottom ?? 0));
+  expect(room).toBeGreaterThanOrEqual(4);
   // The problem shows in view, its way out whole, though the step was scrolled to its end (five agents: below).
   await use.click();
   const change = setup.getByRole("alert").getByRole("button", { name: "Change…" });
@@ -439,8 +671,10 @@ test("Found holds four agents, a folder with files and its problem: the step scr
   await expect(setup.getByRole("button", { name: "Use Cursor Agent" })).not.toBeInViewport({ ratio: 1 });
   await call(app, "chooseSetupAgent", "cursor-agent");
   await expect(setup.getByRole("img", { name: "Chosen" })).toBeInViewport({ ratio: 1 });
-  // An agent not known to work yet (it hasn't been asked) can't be the library's: the button waits.
-  await expect(use).toBeDisabled();
+  // Nothing had asked Cursor Agent yet, so picking it asks its one question; once it has replied, it can file.
+  await expect(setup.getByText(REPLIED)).toBeVisible({ timeout: 20_000 });
+  await expect(use).toBeEnabled();
+  expect(await callsTo(app, "cursor-agent")).toHaveLength(1);
   await app.close();
 });
 

@@ -185,6 +185,15 @@ export function firstRun(answers: Record<string, string> = {}): { env: Record<st
 }
 
 /**
+ * A first run on a Mac with no agent: firstRun()'s env with PATH set to `bin`, a new empty folder, plus the system
+ * folders. A test installs an agent by putting a stand-in into `bin`.
+ */
+export function noAgents(): { env: Record<string, string>; bin: string } {
+  const bin = mkdtempSync(path.join(tmpdir(), "avz-e2e-bin-"));
+  return { bin, env: { ...firstRun().env, PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin` } };
+}
+
+/**
  * A complete snapshot of model `id` in the Hugging Face cache `hub`, laid out as huggingface_hub does, with refs/main
  * naming its pinned revision: each int8 file is as long as MODELS pins it but holds nothing (a hole, so no disk space).
  */

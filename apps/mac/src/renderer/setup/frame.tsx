@@ -11,6 +11,17 @@ export interface StepProps {
   go(step: SetupStep): void;
 }
 
+/**
+ * Brings `el` into the middle of the step when any of it is out of view: the step (Frame's <main>) scrolls when it
+ * holds more than fits, say four agents, a folder with files and a problem, and what needs the person mustn't be cut
+ * off at its edge.
+ */
+export function reveal(el: Element | null): void {
+  const view = el?.closest("main")?.getBoundingClientRect();
+  const box = el?.getBoundingClientRect();
+  if (el && view && box && (box.top < view.top || box.bottom > view.bottom)) el.scrollIntoView({ block: "center" });
+}
+
 export function Frame({ stage, children, actions, model }: { stage: ReactNode; children: ReactNode; actions?: ReactNode; model: ModelStatus }) {
   return (
     <div className="frame">

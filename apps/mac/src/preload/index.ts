@@ -63,6 +63,8 @@ const bridge: AvanzelBridge = {
     chooseAgent: (name) => ipcRenderer.invoke("setup:choose-agent", name),
     createLibrary: () => ipcRenderer.invoke("setup:create-library"),
     chooseFolder: () => ipcRenderer.invoke("setup:choose-folder"),
+    openTerminal: () => ipcRenderer.send("setup:open-terminal"),
+    copy: (text) => ipcRenderer.send("setup:copy", text),
   },
 };
 

@@ -110,6 +110,9 @@ export type AgentStatus =
       detail: string;
     };
 
+/** Whether a check found that its agent works: it is signed in, or it replied. Setup files only with one that does. */
+export const agentWorks = (status: AgentStatus | null | undefined): boolean => status?.kind === "signed-in" || status?.kind === "replied";
+
 export interface HarnessInfo {
   name: string;
   available: boolean;
@@ -209,9 +212,20 @@ export interface SetupSnapshot {
   model: ModelStatus;
   /** Record a thought's shortcut, "Alt+Space". */
   shortcut: string;
-  /** The agents installed when Set me up was pressed, in the harness table's order; none before. */
+  /**
+   * Set me up found no agent installed on this Mac, and setup looks for one until it comes: Found says how to install
+   * one. False before Set me up, and once one is installed.
+   */
+  noAgent: boolean;
+  /**
+   * The agents installed when Set me up was pressed, in the harness table's order; none before. With none installed
+   * then, the ones installed since, once setup notices the first.
+   */
   agents: SetupAgent[];
-  /** The agent that will file: the person's pick, else the best one known to work (bestAgent); null while there is none. */
+  /**
+   * The agent that will file: the person's pick, else the library's own when the folder is one and its agent works,
+   * else the best one known to work (bestAgent); null while there is none.
+   */
   agent: string | null;
   /** Why Looks good couldn't make or use the library at libraryPath; null until a try fails, and again once one works or Change… picks a folder. */
   makeProblem: string | null;
@@ -290,7 +304,10 @@ export interface AvanzelBridge {
     onChanged(callback: (snapshot: SetupSnapshot) => void): () => void;
     /** The window shows `step` now; the controller hangs what each step starts on it. */
     enter(step: SetupStep): Promise<SetupSnapshot>;
-    /** Use {agent}, on Found: installed agent `name` files from now on; setup:changed follows. */
+    /**
+     * Use {agent}, on Found: installed agent `name` files from now on; setup:changed follows. One that nothing has said
+     * yet works (no sign-in command, or one that couldn't be read) is asked its one short question; its result follows too.
+     */
     chooseAgent(name: string): Promise<SetupSnapshot>;
     /**
      * Looks good, or Use this folder, on Found: the library at libraryPath is made, or the folder there used, with the
@@ -299,5 +316,9 @@ export interface AvanzelBridge {
     createLibrary(): Promise<SetupSnapshot>;
     /** Change…, on Found: the folder picker, whose choice becomes libraryPath. Nothing is made yet. */
     chooseFolder(): Promise<SetupSnapshot>;
+    /** Open Terminal, on a signed-out agent's Notice: Terminal opens, for the person to sign the agent in. */
+    openTerminal(): void;
+    /** Copy, beside an install command on Found: `text` goes to the clipboard. */
+    copy(text: string): void;
   };
 }

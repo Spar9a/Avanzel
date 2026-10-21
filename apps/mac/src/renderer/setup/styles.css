@@ -25,13 +25,13 @@
   padding-left: var(--av-space-16);
 }
 /* The step scrolls when it holds more than fits, under the footer, which stays put. A word too long for its line, such
-   as a path or an agent's message, breaks rather than pushing the step sideways. Nothing pads its end: the footer's
-   own space sits below it. */
+   as a path or an agent's message, breaks rather than pushing the step sideways. Its end keeps 4 px, so a scrolled
+   step doesn't cut off the focus ring of its last control; the footer's own space sits below that. */
 .step {
   grid-area: step;
   overflow-y: auto;
   overflow-wrap: break-word;
-  padding: var(--av-space-12) var(--av-space-24) 0;
+  padding: var(--av-space-12) var(--av-space-24) var(--av-space-4);
 }
 .footer {
   grid-area: footer;

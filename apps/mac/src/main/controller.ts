@@ -3,6 +3,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   globalShortcut,
   nativeImage,
@@ -54,7 +55,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { isSettingsPane, isSetupStep } from "../shared/ipc.ts";
+import { agentWorks, isSettingsPane, isSetupStep } from "../shared/ipc.ts";
 import type {
   AgentStatus,
   AppSettings,
@@ -80,7 +81,7 @@ import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
-import { bestAgent, libraryFolder, tildePath } from "./setup-model.ts";
+import { bestAgent, libraryAgent, libraryFolder, tildePath } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { NoticedShortcuts, SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
@@ -104,6 +105,10 @@ const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.en
 const PICKED_SHOW_MS = 3_000;
 /** The folder picker for the library, in Settings (Choose existing…) and in setup (Change…). */
 const LIBRARY_PICKER: OpenDialogOptions = { title: "Choose your library folder", properties: ["openDirectory", "createDirectory"] };
+/** How often setup looks for an installed agent while this Mac has none: Found says it notices one. */
+const AGENT_POLL_MS = 2_000;
+/** Where Open Terminal goes: the person signs an agent in there. */
+const TERMINAL = "/System/Applications/Utilities/Terminal.app";
 const HARNESS_NAMES: Record<string, string> = {
   claude: "Claude Code", codex: "Codex", opencode: "OpenCode", "cursor-agent": "Cursor Agent", gemini: "Gemini CLI",
 };
@@ -146,10 +151,18 @@ interface SetupSession {
   step: SetupStep;
   /** Where Looks good makes or uses the library. */
   libraryPath: string;
-  /** Found has been entered: Set me up started the download and the agents' checks, which happens once a session. */
+  /**
+   * Found has been entered: Set me up started the download and the agents' checks, which happens once a session. Set
+   * once that work has run, so work that threw is tried again when Found is entered again.
+   */
   begun: boolean;
-  /** The agents installed when Found was first entered, by harness name, in the table's order. */
+  /**
+   * The agents installed when Found was first entered, by harness name, in the table's order. With none then, the ones
+   * installed since, once `pollTimer` finds the first.
+   */
   installed: string[];
+  /** While no agent is installed, it looks for one every AGENT_POLL_MS (`pollForAgents`); null otherwise. */
+  pollTimer: NodeJS.Timeout | null;
   /** The agent the person picked on Found (Use {agent}); null while setup chooses (bestAgent). */
   picked: string | null;
   /**
@@ -263,6 +276,9 @@ export class Controller {
   private heldCommands: ("start" | "stop" | "cancel")[] = [];
   /** Notifications posted, kept for the e2e tests only. */
   private readonly notified: { title: string; body: string }[] = [];
+  /** Apps Open Terminal would have opened, and text Copy would have copied: with AVANZEL_TEST=1, for the e2e tests only. */
+  private readonly opened: string[] = [];
+  private readonly copied: string[] = [];
 
   constructor(userData: string) {
     this.store = new SettingsStore(path.join(userData, "settings.json"));
@@ -1505,12 +1521,24 @@ export class Controller {
       win.focus();
     });
     win.on("closed", () => this.endSetup(win));
-    this.setup = { window: win, step: "hello", libraryPath: this.setupLibraryPath(), begun: false, installed: [], picked: null, makeProblem: null };
+    this.setup = {
+      window: win,
+      step: "hello",
+      libraryPath: this.setupLibraryPath(),
+      begun: false,
+      installed: [],
+      pollTimer: null,
+      picked: null,
+      makeProblem: null,
+    };
   }
 
-  /** The setup window closed: its session ends with it. A newer window's session is its own. */
+  /** The setup window closed: its session ends with it, and stops looking for agents. A newer window's session is its own. */
   private endSetup(win: BrowserWindow): void {
-    if (this.setup?.window === win) this.setup = null;
+    const session = this.setup;
+    if (session?.window !== win) return;
+    this.stopPolling(session);
+    this.setup = null;
   }
 
   /** Where a new session makes or uses the library: the stored libraryPath, else ~/Avanzel. */
@@ -1518,24 +1546,32 @@ export class Controller {
     return this.store.get().libraryPath ?? path.join(homedir(), "Avanzel");
   }
 
-  /** What the setup window shows; without a session, what a fresh one would show. */
+  /**
+   * What the setup window shows; without a session, what a fresh one would show. A folder that is a library already
+   * offers its own agent first (bestAgent), so a library brought from another Mac keeps the agent it files with.
+   */
   setupSnapshot(): SetupSnapshot {
     const libraryPath = this.setup?.libraryPath ?? this.setupLibraryPath();
+    const folder = libraryFolder(libraryPath);
     const agents = this.setupAgents();
     return {
       libraryPath,
       libraryLabel: tildePath(libraryPath, homedir()),
-      folder: libraryFolder(libraryPath),
+      folder,
       libraryReady: !!this.vault,
       model: this.model,
       shortcut: this.store.get().shortcuts.dictate,
+      noAgent: this.setup?.begun === true && this.setup.installed.length === 0,
       agents,
-      agent: this.setup?.picked ?? bestAgent(agents),
+      agent: this.setup?.picked ?? bestAgent(agents, folder === "library" ? libraryAgent(libraryPath) : null),
       makeProblem: this.setup?.makeProblem ?? null,
     };
   }
 
-  /** The agents Found lists: those installed when it was first entered, with what their checks found in this app run. */
+  /**
+   * The agents Found lists: those installed when it was first entered (or, with none then, since), with what their
+   * checks found in this app run.
+   */
   private setupAgents(): SetupAgent[] {
     const installed = this.setup?.installed ?? [];
     if (!installed.length) return []; // before Set me up, or with nothing installed: the table needn't be read
@@ -1559,23 +1595,63 @@ export class Controller {
 
   /**
    * Set me up, the first time Found is entered in a session: the speech models start downloading if this Mac doesn't
-   * have them, and the installed agents are noted and their sign-in read. Nothing asks an agent anything.
+   * have them, and the installed agents are noted and their sign-in read. Nothing asks an agent anything. With none
+   * installed, setup looks for one until it comes (`pollForAgents`). The session has begun only once all of that has
+   * run: if any of it throws, entering Found again tries again.
    */
   private beginSetup(session: SetupSession): void {
-    session.begun = true;
     if (this.model.kind === "missing") void this.downloadModel();
-    session.installed = Object.entries(this.harnessTable()).filter(([, harness]) => harness.available()).map(([name]) => name);
+    session.installed = this.installedAgents();
     this.checkAgents();
+    if (!session.installed.length) this.pollForAgents(session);
+    session.begun = true;
   }
 
-  /** Use {agent}, on Found: the person's pick files from now on. Only an installed agent can be picked. */
+  /** The agents installed on this Mac now, by harness name, in the harness table's order. */
+  private installedAgents(): string[] {
+    return Object.entries(this.harnessTable()).filter(([, harness]) => harness.available()).map(([name]) => name);
+  }
+
+  /**
+   * With no agent installed, Found says to install one and that setup notices it: every AGENT_POLL_MS this looks again.
+   * Once one is there, the looking stops, the agents are noted, their sign-in read (checkAgents), and Found shows them.
+   */
+  private pollForAgents(session: SetupSession): void {
+    this.stopPolling(session);
+    session.pollTimer = setInterval(() => {
+      const installed = this.installedAgents();
+      if (!installed.length) return;
+      this.stopPolling(session);
+      session.installed = installed;
+      this.checkAgents();
+      this.broadcast();
+    }, AGENT_POLL_MS);
+  }
+
+  private stopPolling(session: SetupSession): void {
+    if (session.pollTimer) clearInterval(session.pollTimer);
+    session.pollTimer = null;
+  }
+
+  /** Use {agent}, on Found: the person's pick files from now on. Only an installed agent can be picked (`askPicked`). */
   chooseSetupAgent(name: string): SetupSnapshot {
     const session = this.setup;
     if (session?.installed.includes(name)) {
       session.picked = name;
+      this.askPicked(name);
       this.broadcast();
     }
     return this.setupSnapshot();
+  }
+
+  /**
+   * Setup's picked agent `name`, when nothing has said yet whether it works (it has no sign-in command, or its sign-in
+   * couldn't be read), is asked its one short question: the person picked it, so the question's cost is theirs to
+   * choose. Picked while its sign-in is still being read, it is asked once that read has said nothing (`checkAgents`).
+   */
+  private askPicked(name: string): void {
+    const harness = this.harnessNamed(name);
+    if (harness && this.setup?.picked === name && !this.agentChecks.has(name)) void this.runAgentCheck(name, harness, true);
   }
 
   /**
@@ -1583,13 +1659,15 @@ export class Controller {
    * own. A missing or empty folder becomes a new library; a folder with files keeps every one (its history starts with
    * them, unless it is a git repository already); an Avanzel library is used as it is; the library already open only
    * has the agent saved. Whatever goes wrong, or a library that still isn't open afterwards, is the session's
-   * `makeProblem`, which Found shows.
+   * `makeProblem`, which Found shows. Without a chosen agent that works, nothing is made: Found's button waits for one.
    */
   async createSetupLibrary(): Promise<SetupSnapshot> {
     const session = this.setup;
     if (!session) return this.setupSnapshot();
     const target = session.libraryPath;
-    const agent = this.setupSnapshot().agent; // before the library's own agents replace the built-in ones
+    const before = this.setupSnapshot(); // before the library's own agents replace the built-in ones
+    const chosen = before.agents.find((agent) => agent.name === before.agent);
+    if (!chosen || !agentWorks(chosen.status)) return before;
     let problem: string | null = null;
     try {
       if (this.vault?.root !== target) {
@@ -1599,7 +1677,7 @@ export class Controller {
         await this.useLibrary(target, true);
         if (!this.vault) throw new Error(this.libraryProblem ?? `There is no Avanzel library at ${target}.`);
       }
-      if (agent) await this.setLibrarySettings({ harness: agent });
+      await this.setLibrarySettings({ harness: chosen.name });
     } catch (error) {
       problem = errorMessage(error);
     }
@@ -1625,29 +1703,43 @@ export class Controller {
     return this.setupSnapshot();
   }
 
+  /** Open Terminal, on a signed-out agent's Notice. With AVANZEL_TEST=1 Terminal stays shut, and openedForTests says so. */
+  openTerminal(): void {
+    if (process.env.AVANZEL_TEST === "1") this.opened.push("Terminal");
+    else void shell.openPath(TERMINAL);
+  }
+
+  /** Copy, beside an install command on Found. With AVANZEL_TEST=1 the clipboard is left be, and copiedForTests says what. */
+  copyText(text: string): void {
+    if (process.env.AVANZEL_TEST === "1") this.copied.push(text);
+    else clipboard.writeText(text);
+  }
+
   // ---------------------------------------------------------------- agent checks
 
   /**
    * Starts the free checks of the installed agents not checked yet in this app run: each reads the agent's own sign-in
    * command and never asks the model (`prompt: false`). A sign-in it can't read leaves the agent unchecked, for Check.
    * Without a library, the built-in agents are checked in a scratch folder (`harnessTable`, `checkDir`). It returns at
-   * once; Settings and setup get each result through settings:changed and setup:changed.
+   * once; Settings and setup get each result through settings:changed and setup:changed. An agent setup's person
+   * picked meanwhile is asked its question when its sign-in said nothing (`askPicked`).
    */
   checkAgents(): SettingsSnapshot {
     for (const [name, harness] of Object.entries(this.harnessTable())) {
-      if (harness.signIn && !this.agentChecks.has(name) && harness.available()) void this.runAgentCheck(name, harness, this.checkDir(), false);
+      if (harness.signIn && !this.agentChecks.has(name) && harness.available()) {
+        void this.runAgentCheck(name, harness, false).then(() => this.askPicked(name));
+      }
     }
     return this.snapshot();
   }
 
   /**
-   * Checks agent `name` again (Check, in Settings → Agents): its sign-in command, then its one short question when it
-   * has none or that doesn't say. A check under way is left to finish.
+   * Checks agent `name` again (Check in Settings → Agents, Check again in setup): its sign-in command, then its one
+   * short question when it has none or that doesn't say. A check under way is left to finish.
    */
   checkAgent(name: string): SettingsSnapshot {
-    const table = this.harnessTable();
-    const harness = Object.hasOwn(table, name) ? table[name] : undefined;
-    if (harness && this.agentChecks.get(name)?.kind !== "checking") void this.runAgentCheck(name, harness, this.checkDir(), true);
+    const harness = this.harnessNamed(name);
+    if (harness && this.agentChecks.get(name)?.kind !== "checking") void this.runAgentCheck(name, harness, true);
     return this.snapshot();
   }
 
@@ -1661,9 +1753,15 @@ export class Controller {
     }
   }
 
+  /** Agent `name` from the harness table, if there is one by that name. */
+  private harnessNamed(name: string): Harness | undefined {
+    const table = this.harnessTable();
+    return Object.hasOwn(table, name) ? table[name] : undefined;
+  }
+
   /**
    * Where an agent check runs: the library, or before there is one, a scratch folder in the system's temporary folder,
-   * made at the first such check and used for the rest of the app run.
+   * made at the first such check and used for the rest of the app run. Making it may throw (a full disk, say).
    */
   private checkDir(): string {
     if (this.vault) return this.vault.root;
@@ -1674,17 +1772,26 @@ export class Controller {
   /**
    * When Avanzel quits, busy or not: stops every agent check still going on, its agent too (it runs detached, and its
    * timeout lives here), and no check starts after it. Quitting doesn't wait for them, and what they find is dropped.
+   * The scratch folder the checks ran in goes too.
    */
   stopAgentChecks(): void {
     this.checksStopped = true;
     for (const abort of this.runningChecks) abort.abort();
+    if (!this.checkScratch) return;
+    try {
+      rmSync(this.checkScratch, { recursive: true, force: true });
+    } catch (error) {
+      console.error("remove the agent checks' scratch folder", error); // the system clears its temporary folder in time
+    }
+    this.checkScratch = null;
   }
 
   /**
-   * One check, run in folder `dir` (`checkDir`): Settings and setup show it running, then what it found. Only with
-   * `prompt` may it ask the model. Once Avanzel is quitting, none starts.
+   * One check, run in the library or its scratch folder (`checkDir`): Settings and setup show it running, then what it
+   * found. A scratch folder that can't be made is the check's failure, and the next check tries to make it again. Only
+   * with `prompt` may it ask the model. Once Avanzel is quitting, none starts.
    */
-  private async runAgentCheck(name: string, harness: Harness, dir: string, prompt: boolean): Promise<void> {
+  private async runAgentCheck(name: string, harness: Harness, prompt: boolean): Promise<void> {
     if (this.quitting || this.checksStopped) return;
     const abort = new AbortController();
     this.runningChecks.add(abort);
@@ -1692,7 +1799,7 @@ export class Controller {
     this.broadcast();
     let status: AgentStatus | null;
     try {
-      status = statusOf(await checkHarness(harness, dir, { signal: abort.signal, prompt }));
+      status = statusOf(await checkHarness(harness, this.checkDir(), { signal: abort.signal, prompt }));
     } catch (error) {
       status = { kind: "failed", detail: errorMessage(error) }; // a check that throws still ends
     } finally {
@@ -1968,5 +2075,15 @@ export class Controller {
   /** The step the setup session is on, or null without one: for tests of steps whose body a later change builds. */
   setupStepForTests(): SetupStep | null {
     return this.setup?.step ?? null;
+  }
+
+  /** The apps Open Terminal opened, oldest first ("Terminal"); recorded only with AVANZEL_TEST=1. */
+  openedForTests(): string[] {
+    return this.opened;
+  }
+
+  /** The text Copy put on the clipboard, oldest first; recorded only with AVANZEL_TEST=1. */
+  copiedForTests(): string[] {
+    return this.copied;
   }
 }

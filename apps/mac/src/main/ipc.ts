@@ -58,4 +58,6 @@ export function registerIpc(controller: Controller): void {
   handle("setup:choose-agent", (_e, name: string) => controller.chooseSetupAgent(name));
   handle("setup:create-library", () => controller.createSetupLibrary());
   handle("setup:choose-folder", () => controller.chooseSetupFolder());
+  on("setup:open-terminal", () => controller.openTerminal());
+  on("setup:copy", (_e, text: string) => controller.copyText(text));
 }
