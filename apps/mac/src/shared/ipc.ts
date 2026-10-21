@@ -227,8 +227,8 @@ export type SetupThought =
   | { kind: "denied" }
   /** The capsule records it; `startedAt` is the recording's Date.now(). */
   | { kind: "listening"; startedAt: number }
-  /** The recording has stopped, and its words are being made. */
-  | { kind: "transcribing" }
+  /** The recording has stopped, and its words are being made; `startedAt` is the stop's Date.now(). */
+  | { kind: "transcribing"; startedAt: number }
   /** Its words are a mic check ("Testing, testing"), kept in the inbox until File it anyway or Try again. */
   | { kind: "test"; words: string }
   /** The recording or its transcription went wrong, as the capsule's card would have said. */

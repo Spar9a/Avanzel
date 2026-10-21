@@ -84,6 +84,15 @@ export function earsLine(model: ModelStatus): string | null {
   return null;
 }
 
+/** From how many seconds a wait gives its size: DESIGN.md's "past 10 seconds". */
+export const SLOW_SECONDS = 10;
+
+/** The line while the first spoken thought's words are made: from SLOW_SECONDS on, with its whole seconds so far. */
+export function transcribingLine(seconds: number): string {
+  const line = "Turning your voice into text on this Mac…";
+  return seconds >= SLOW_SECONDS ? `${line} ${Math.floor(seconds)} s` : line;
+}
+
 /** About how long a first filing takes, in seconds: the working line counts towards it. */
 export const ESTIMATE_SECONDS = 15;
 

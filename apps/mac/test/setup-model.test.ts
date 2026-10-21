@@ -55,6 +55,13 @@ describe("setup model", () => {
     const thoughts = ["Testing the podcast idea with Mark", "Hello, I want to run a marathon in spring", ""];
     expect(thoughts.map(looksLikeATest)).toEqual([false, false, false]);
   });
+
+  it("looksLikeATest knows a mic check said with numbers, and stops at eight words", () => {
+    const checks = ["Testing 1 2 3", "Testing, testing, 123.", "Is this thing on?", "Can you hear me now?"];
+    expect(checks.map(looksLikeATest)).toEqual([true, true, true, true]);
+    expect(looksLikeATest("One two three, one two three, one two.")).toBe(true); // eight words
+    expect(looksLikeATest("One two three, one two three, one two three.")).toBe(false); // nine
+  });
 });
 
 describe("agentWorks", () => {

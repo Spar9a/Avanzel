@@ -5,10 +5,10 @@
 // VoiceOver hears the start and the end, not each second. There is no Back: the filing goes on by itself, even once
 // the window closes.
 import { Actions, Button, Card, Notice, Receipt, Row, SHELVES, ShelfTag, Stack, Text, Zel, type ZelMood } from "@avanzel/ui";
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { NOTE_GONE, type SetupFiling } from "../../../shared/ipc.ts";
 import { cancelledLine, failedLine, filedHeading, receiptPages, workingLine } from "../copy.ts";
-import { Frame, type StepProps } from "../frame.tsx";
+import { Frame, useNow, type StepProps } from "../frame.tsx";
 
 const api = window.avanzel.setup;
 
@@ -103,16 +103,6 @@ function Working({ filing }: { filing: Running }) {
       </Row>
     </Stack>
   );
-}
-
-/** The time now, read again every `ms`. */
-function useNow(ms: number): number {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), ms);
-    return () => clearInterval(timer);
-  }, [ms]);
-  return now;
 }
 
 /**

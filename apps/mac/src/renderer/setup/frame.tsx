@@ -1,7 +1,7 @@
 // What every setup step stands in: a strip to drag the window by, the stage on the left beside the step on the right,
 // and a footer with the speech model's download on the left and the step's buttons on the right.
 import { Actions, Button, Progress, Row, Stage, Text } from "@avanzel/ui";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { ModelStatus, SetupSnapshot, SetupStep } from "../../shared/ipc.ts";
 import { megabytes } from "./copy.ts";
 
@@ -20,6 +20,16 @@ export function reveal(el: Element | null): void {
   const view = el?.closest("main")?.getBoundingClientRect();
   const box = el?.getBoundingClientRect();
   if (el && view && box && (box.top < view.top || box.bottom > view.bottom)) el.scrollIntoView({ block: "center" });
+}
+
+/** The time now, read again every `ms`: for a step's line that counts seconds. */
+export function useNow(ms: number): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(timer);
+  }, [ms]);
+  return now;
 }
 
 export function Frame({ stage, children, actions, model }: { stage: ReactNode; children: ReactNode; actions?: ReactNode; model: ModelStatus }) {

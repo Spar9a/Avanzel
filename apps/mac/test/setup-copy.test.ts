@@ -13,6 +13,7 @@ import {
   ownLine,
   receiptPages,
   stampDate,
+  transcribingLine,
   workingLine,
 } from "../src/renderer/setup/copy.ts";
 import { NOTE_GONE, type AgentStatus, type FiledPage } from "../src/shared/ipc.ts";
@@ -103,6 +104,13 @@ describe("setup copy", () => {
     // Ready: it hears. [voice] settings it can't use: the copy has no line for them.
     expect(earsLine({ kind: "ready", dir: "/models" })).toBeNull();
     expect(earsLine({ kind: "error", cause: "settings", message: "bad" })).toBeNull();
+  });
+
+  it("the transcribing line gives its whole seconds once the words have taken 10 s", () => {
+    expect(transcribingLine(0)).toBe("Turning your voice into text on this Mac…");
+    expect(transcribingLine(9.9)).toBe("Turning your voice into text on this Mac…");
+    expect(transcribingLine(10)).toBe("Turning your voice into text on this Mac… 10 s");
+    expect(transcribingLine(12.7)).toBe("Turning your voice into text on this Mac… 12 s");
   });
 
   it("a failed filing says what the agent said and that the words are safe, except of a note gone from the inbox", () => {

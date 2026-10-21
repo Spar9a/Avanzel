@@ -744,10 +744,11 @@ test("a press of the shortcut is heard, and setup says it is free", async () => 
   await expect(keycaps(setup)).toHaveText(["⌥", "Space"]);
   await expect.poll(() => call(app, "setupStepForTests")).toBe("think");
   await pressShortcut(app);
-  await expect(setup.getByText("⌥Space is free on this Mac, so it works in every app. Esc cancels.", { exact: true })).toBeVisible();
+  await expect(setup.getByText("⌥Space is free on this Mac, so it works in every app.", { exact: true })).toBeVisible();
   // The speech model can't download here (its server is a dead port), so the press only says that the shortcut works:
-  // nothing records, and the capsule shows nothing.
+  // nothing records, the capsule shows nothing, and nothing promises that Esc cancels.
   expect(await capsuleKind(app)).toBe("hidden");
+  await expect(setup.getByText(/Esc cancels/)).toHaveCount(0);
   await expect(setup.getByText(NUDGE)).toHaveCount(0);
   await app.close();
 });
@@ -780,7 +781,7 @@ test("no press within the wait offers two free shortcuts, and the one picked is 
   expect(await setup.evaluate(() => (window as { cleared?: boolean }).cleared)).toBe(true);
   await pressShortcut(app);
   await expect(setup.getByText(NUDGE)).toHaveCount(0);
-  await expect(setup.getByText("⌃⇧Space is free on this Mac, so it works in every app. Esc cancels.", { exact: true })).toBeVisible();
+  await expect(setup.getByText("⌃⇧Space is free on this Mac, so it works in every app.", { exact: true })).toBeVisible();
   await app.close();
 });
 
@@ -1068,8 +1069,14 @@ const LISTENING = "I'm listening.";
 /** Zel's answer to a mic check. */
 const HEARD_YOU = "Heard you. Want to try a real thought?";
 
-/** The footnote a press of the shortcut brings. */
-const FREE = /is free on this Mac, so it works in every app\. Esc cancels\.$/;
+/** The footnote a press of the shortcut brings, while nothing records. */
+const FREE = /is free on this Mac, so it works in every app\.$/;
+
+/** The same footnote while the capsule records, which Esc cancels. */
+const FREE_RECORDING = /is free on this Mac, so it works in every app\. Esc cancels\.$/;
+
+/** Esc's promise, which holds only while a recording runs. */
+const ESC = /Esc cancels/;
 
 /** A first run whose microphone hears "Plant tulips in October", filed by the stand-in Claude Code; `env` adds to it. */
 function spokenRun(env: Record<string, string> = {}): { env: Record<string, string>; home: string } {
@@ -1105,7 +1112,7 @@ test("the first press asks about the microphone behind one Continue, then record
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await expect(setup.getByText(LISTENING)).toBeVisible();
   await expect(zel(setup)).toHaveAttribute("data-mood", "listening");
-  await expect(setup.getByText(FREE)).toBeVisible(); // the first press was heard
+  await expect(setup.getByText(FREE_RECORDING)).toBeVisible(); // the first press was heard, and Esc cancels now
   await snap(setup, "setup-think-listening");
   await pressShortcut(app);
   await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
@@ -1132,6 +1139,9 @@ test("a denied microphone says where to allow it, and offers typing", async () =
   await expect(notice.getByRole("button", { name: "Type it instead" })).toHaveAttribute("data-variant", "secondary");
   expect(await capsuleKind(app)).toBe("hidden");
   await expect(zel(setup)).toHaveAttribute("data-mood", "needs-you");
+  // The press was heard, but nothing records, so nothing says Esc cancels.
+  await expect(setup.getByText(FREE)).toBeVisible();
+  await expect(setup.getByText(ESC)).toHaveCount(0);
   await snap(setup, "setup-think-denied");
   // With AVANZEL_TEST=1 System Settings stays shut, and openedForTests says which pane it would have opened.
   await open.click();
@@ -1177,6 +1187,77 @@ test("File it anyway files a mic check", async () => {
   await app.close();
 });
 
+/**
+ * What isn't the mic check's, put in `library` before it is said: a note of the person's own in the inbox, and an older
+ * recording under raw/audio/ that no note there names. Their names, as `inbox` and filesUnder(…, "raw/audio") list them.
+ */
+function bystanders(library: string): { note: string; recording: string } {
+  const note = new Vault(library).newCapture("Plant tulips in October", { source: "text", now: new Date(2026, 8, 30, 8, 0) });
+  const recording = path.join(library, "raw", "audio", "2026", "09", "2026-09-30-0800.wav");
+  mkdirSync(path.dirname(recording), { recursive: true });
+  writeFileSync(recording, "RIFF");
+  return { note: path.basename(note.path), recording: path.relative(path.join(library, "raw", "audio"), recording) };
+}
+
+/** The person says "Testing, testing." (the run's fake transcript), and Zel answers. */
+async function sayMicCheck(app: ElectronApplication, setup: Page): Promise<void> {
+  await sayThought(app, setup);
+  await expect(setup.getByText(HEARD_YOU, { exact: true })).toBeVisible({ timeout: 30_000 });
+}
+
+test("Try again removes only the mic check's own note and recording", async () => {
+  const { env, home } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Testing, testing." });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  const kept = bystanders(library);
+  await sayMicCheck(app, setup);
+  expect(inbox(library)).toHaveLength(2);
+  expect(filesUnder(library, "raw/audio")).toHaveLength(2);
+  await setup.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(setup.getByText(INSTRUCTION)).toBeVisible();
+  await expect.poll(() => inbox(library)).toEqual([kept.note]);
+  expect(filesUnder(library, "raw/audio")).toEqual([kept.recording]);
+  await app.close();
+});
+
+test("a press on a mic check's answer removes only its note and recording, and records again", async () => {
+  const { env, home } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Testing, testing." });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  const kept = bystanders(library);
+  await sayMicCheck(app, setup);
+  await pressShortcut(app);
+  await expect(setup.getByText(LISTENING)).toBeVisible();
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  expect(inbox(library)).toEqual([kept.note]);
+  expect(filesUnder(library, "raw/audio")).toEqual([kept.recording]);
+  await call(app, "cancelRecording");
+  await app.close();
+});
+
+test("Try again keeps a file outside raw/audio/ that the mic check's note names as its recording", async () => {
+  const { env, home } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Testing, testing." });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  await sayMicCheck(app, setup);
+  // A page of the person's, which the note's audio line now names by a path that starts in raw/audio/ and leaves it.
+  const page = path.join(library, "ideas", "plant-tulips.md");
+  const words = "# Plant tulips\n\nIn October, before the frost.\n";
+  writeFileSync(page, words);
+  const [name = ""] = inbox(library);
+  const note = path.join(library, "inbox", name);
+  writeFileSync(note, readFileSync(note, "utf8").replace(/^audio: .*$/m, "audio: raw/audio/../../ideas/plant-tulips.md"));
+  expect(readFileSync(note, "utf8")).toContain("\naudio: raw/audio/../../ideas/plant-tulips.md\n");
+  await setup.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(setup.getByText(INSTRUCTION)).toBeVisible();
+  await expect.poll(() => inbox(library)).toEqual([]);
+  expect(existsSync(page) ? readFileSync(page, "utf8") : null).toBe(words);
+  await app.close();
+});
+
 test("while the ears are still arriving, a press says so and typing is the way", async () => {
   const hub = await fakeModelHub("stall");
   const { env } = spokenRun({ AVANZEL_MODELS_URL: hub.url });
@@ -1184,6 +1265,7 @@ test("while the ears are still arriving, a press says so and typing is the way",
   const setup = await throughFound(app);
   await pressShortcut(app);
   await expect(setup.getByText(FREE)).toBeVisible();
+  await expect(setup.getByText(ESC)).toHaveCount(0);
   await expect(setup.getByText("My ears are still arriving. Type it instead, or talk to me once they land.", { exact: true })).toBeVisible();
   // The press records nothing: no capsule, and typing is the moment's one primary.
   expect(await capsuleKind(app)).toBe("hidden");
@@ -1208,6 +1290,7 @@ test("Esc while listening cancels, and setup asks again", async () => {
   await pressShortcut(app);
   await expect(setup.getByText(LISTENING)).toBeVisible();
   await expect(setup.getByText(INSTRUCTION)).toHaveCount(0);
+  await expect(setup.getByText(FREE_RECORDING)).toBeVisible();
   expect(await app.evaluate(() => {
     const pressEsc = (globalThis as { pressEsc?: () => void }).pressEsc;
     pressEsc?.();
@@ -1215,6 +1298,9 @@ test("Esc while listening cancels, and setup asks again", async () => {
   })).toBe(true);
   await expect(setup.getByText(INSTRUCTION)).toBeVisible();
   await expect(setup.getByText(LISTENING)).toHaveCount(0);
+  // Nothing records now, so Esc's promise goes with the recording.
+  await expect(setup.getByText(FREE)).toBeVisible();
+  await expect(setup.getByText(ESC)).toHaveCount(0);
   expect(await capsuleKind(app)).toBe("hidden");
   expect(inbox(path.join(home, "Avanzel"))).toEqual([]);
   // And again: a press records, and cancelling it (what Esc calls) asks again.
@@ -1240,15 +1326,37 @@ test("a recording that goes wrong says so in the window, not in the capsule, and
   const notice = setup.getByRole("alert");
   await expect(notice.getByText("The recording didn't arrive", { exact: true })).toBeVisible({ timeout: 20_000 });
   await expect(notice.getByText("Try again; if it keeps happening, check the microphone in Settings → Voice.", { exact: true })).toBeVisible();
-  // The capsule hid and showed no card: the window says it.
+  // The capsule hid and showed no card: the window says it. Nothing records now, so nothing says Esc cancels.
   expect(await capsuleKind(app)).toBe("hidden");
   expect(await sentToCapsule(app)).not.toContain("error");
+  await expect(setup.getByText(FREE)).toBeVisible();
+  await expect(setup.getByText(ESC)).toHaveCount(0);
   const tryAgain = notice.getByRole("button", { name: "Try again", exact: true });
   await expect(tryAgain).toHaveAttribute("data-variant", "primary");
   await expect(setup.getByRole("button", { name: "Type it instead" })).toHaveAttribute("data-variant", "secondary");
   await tryAgain.click();
   await expect(notice).toHaveCount(0);
   await expect(setup.getByText(INSTRUCTION)).toBeVisible();
+  await app.close();
+});
+
+test("words slow to come say how long they have taken, from 10 s on", async () => {
+  const { env } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October", AVANZEL_AUDIO_TIMEOUT_MS: "60000" });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  // The audio is held on its way from the capsule, so the words take as long as the test likes. The window's clock is
+  // the test's to move.
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler("capsule:audio");
+    ipcMain.handle("capsule:audio", () => undefined);
+  });
+  await setup.clock.install();
+  await sayThought(app, setup);
+  const line = setup.getByText(/^Turning your voice into text on this Mac…/);
+  await expect(line).toHaveText("Turning your voice into text on this Mac…");
+  await expect(zel(setup)).toHaveAttribute("data-mood", "thinking");
+  await setup.clock.fastForward(11_000);
+  await expect(line).toHaveText(/^Turning your voice into text on this Mac… \d+ s$/);
   await app.close();
 });
 
@@ -1260,7 +1368,7 @@ test("Record a thought in the menu records on the first-thought step, but isn't 
   await expect(setup.getByText(LISTENING)).toBeVisible();
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   // Nothing pressed the shortcut, so nothing says it is free.
-  await expect(setup.getByText(FREE)).toHaveCount(0);
+  await expect(setup.getByText(/is free on this Mac/)).toHaveCount(0);
   await call(app, "menuAction", "dictate"); // Stop recording
   await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
   await app.close();

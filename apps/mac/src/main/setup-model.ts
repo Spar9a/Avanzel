@@ -44,10 +44,13 @@ export function libraryAgent(root: string): string | null {
   }
 }
 
-/** The words of a mic check: "Testing, testing", "One, two, three", "Can you hear me?", "Is this on?". */
+/**
+ * The words of a mic check: "Testing, testing", "One, two, three" (or "1 2 3", "123", as a transcriber may write it),
+ * "Can you hear me now?", "Is this thing on?".
+ */
 const MIC_CHECK: ReadonlySet<string> = new Set([
-  "test", "testing", "tested", "hello", "hi", "hey", "one", "two", "three", "check", "checking", "mic", "microphone",
-  "can", "you", "hear", "me", "is", "this", "on", "ok", "okay",
+  "test", "testing", "tested", "hello", "hi", "hey", "one", "two", "three", "1", "2", "3", "123", "check", "checking",
+  "mic", "microphone", "can", "you", "hear", "me", "now", "is", "this", "thing", "on", "ok", "okay",
 ]);
 
 /**

@@ -801,7 +801,7 @@ export class Controller {
     clearTimeout(recording.maxTimer);
     globalShortcut.unregister("Escape");
     this.setCapsule({ kind: "transcribing", mode: recording.mode });
-    this.moveThought(["listening"], { kind: "transcribing" });
+    this.moveThought(["listening"], { kind: "transcribing", startedAt: Date.now() });
     this.capsuleCommand("stop");
     this.clearAudioTimeout();
     this.audioTimeout = setTimeout(() => {

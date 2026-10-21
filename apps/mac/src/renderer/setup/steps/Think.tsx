@@ -12,10 +12,13 @@ import { Actions, Button, Card, Kbd, Notice, PermissionPrimer, Row, Spinner, Sta
 import { useEffect, useState, type ReactNode } from "react";
 import { keyCaps, prettyAccelerator, takenMessage } from "../../../main/shortcuts.ts";
 import type { SetupPress, SetupThought } from "../../../shared/ipc.ts";
-import { earsLine } from "../copy.ts";
-import { Frame, type StepProps } from "../frame.tsx";
+import { earsLine, transcribingLine } from "../copy.ts";
+import { Frame, useNow, type StepProps } from "../frame.tsx";
 
 const api = window.avanzel.setup;
+
+/** How often the transcribing line counts. */
+const TICK_MS = 250;
 
 /**
  * The keycaps' self-press, beat by beat: down at 700 ms for 200 ms, and again at 1600 ms. Each beat starts once the
@@ -104,7 +107,12 @@ export function Think({ snap, go }: StepProps) {
           <Stack gap={12}>
             <Lead thought={thought} shortcut={shortcut} />
             {talking && <Text variant="footnote" tone="secondary">If you're stuck, try a goal, someone you work with, or an idea you keep coming back to.</Text>}
-            {talking && press.heard && <Text variant="footnote" tone="secondary">{`${shortcut} is free on this Mac, so it works in every app. Esc cancels.`}</Text>}
+            {/* Esc cancels only a recording: it is promised only while one runs. */}
+            {talking && press.heard && (
+              <Text variant="footnote" tone="secondary">
+                {`${shortcut} is free on this Mac, so it works in every app.${thought.kind === "listening" ? " Esc cancels." : ""}`}
+              </Text>
+            )}
           </Stack>
         </div>
         {thought.kind === "test" && (
@@ -154,12 +162,7 @@ function Lead({ thought, shortcut }: { thought: SetupThought; shortcut: string }
     case "listening":
       return <Text variant="callout">I'm listening. Press <Kbd>{shortcut}</Kbd> again when you're done.</Text>;
     case "transcribing":
-      return (
-        <Row gap={8}>
-          <Spinner size="small" />
-          <Text variant="callout">Turning your voice into text on this Mac…</Text>
-        </Row>
-      );
+      return <Transcribing startedAt={thought.startedAt} />;
     case "test":
       return <Text variant="voice">Heard you. Want to try a real thought?</Text>;
     default:
@@ -169,6 +172,17 @@ function Lead({ thought, shortcut }: { thought: SetupThought; shortcut: string }
         </Text>
       );
   }
+}
+
+/** While the words are made: a spinner and its line, which gives the seconds once they pass 10. Only this redraws as they count. */
+function Transcribing({ startedAt }: { startedAt: number }) {
+  const now = useNow(TICK_MS);
+  return (
+    <Row gap={8}>
+      <Spinner size="small" />
+      <Text variant="callout" numeric>{transcribingLine((now - startedAt) / 1000)}</Text>
+    </Row>
+  );
 }
 
 /**
