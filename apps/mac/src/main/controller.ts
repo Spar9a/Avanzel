@@ -9,6 +9,7 @@ import {
   Notification,
   powerMonitor,
   shell,
+  type OpenDialogOptions,
 } from "electron";
 import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -101,6 +102,8 @@ const AUDIO_TIMEOUT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env
 const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PREPARING_SHOW_MS)) || 8_000;
 // How long the capsule says that a shortcut picked on its notice works.
 const PICKED_SHOW_MS = 3_000;
+/** The folder picker for the library, in Settings (Choose existing…) and in setup (Change…). */
+const LIBRARY_PICKER: OpenDialogOptions = { title: "Choose your library folder", properties: ["openDirectory", "createDirectory"] };
 const HARNESS_NAMES: Record<string, string> = {
   claude: "Claude Code", codex: "Codex", opencode: "OpenCode", "cursor-agent": "Cursor Agent", gemini: "Gemini CLI",
 };
@@ -149,6 +152,11 @@ interface SetupSession {
   installed: string[];
   /** The agent the person picked on Found (Use {agent}); null while setup chooses (bestAgent). */
   picked: string | null;
+  /**
+   * Why Looks good couldn't make or use the library at `libraryPath`, for Found to show. Not the controller's own
+   * `libraryProblem`, which says why a stored library didn't open (showHome() and the menu read that one).
+   */
+  makeProblem: string | null;
 }
 
 /** Words filed after Edit, on their way to the inbox: only in memory until the refile's `recapture` writes them. */
@@ -1416,8 +1424,7 @@ export class Controller {
 
   async chooseLibrary(): Promise<SettingsSnapshot> {
     const parent = this.settingsWindow && !this.settingsWindow.isDestroyed() ? this.settingsWindow : undefined;
-    const options = { title: "Choose your library folder", properties: ["openDirectory", "createDirectory"] as ("openDirectory" | "createDirectory")[] };
-    const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    const result = parent ? await dialog.showOpenDialog(parent, LIBRARY_PICKER) : await dialog.showOpenDialog(LIBRARY_PICKER);
     const chosen = result.filePaths[0];
     if (result.canceled || !chosen) return this.snapshot();
     if (!new Vault(chosen).exists()) {
@@ -1448,7 +1455,11 @@ export class Controller {
     return this.useLibrary(target);
   }
 
-  private async useLibrary(target: string): Promise<SettingsSnapshot> {
+  /**
+   * Opens the library at `target` and keeps it for the next launch. Then the capsule names a shortcut another app holds,
+   * now that the menu has Record a thought, unless the library comes `fromSetup`, whose own step names it.
+   */
+  private async useLibrary(target: string, fromSetup = false): Promise<SettingsSnapshot> {
     this.store.update({ libraryPath: target });
     this.openLibrary(target);
     try {
@@ -1459,7 +1470,7 @@ export class Controller {
     await this.refreshModelStatus(); // its [voice] settings say which speech models it needs
     if (this.vault && this.model.kind === "missing") void this.downloadModel();
     this.checkAgents();
-    this.noticeTakenShortcut(); // the menu has Record a thought now
+    if (!fromSetup) this.noticeTakenShortcut();
     this.broadcast();
     return this.snapshot();
   }
@@ -1494,7 +1505,7 @@ export class Controller {
       win.focus();
     });
     win.on("closed", () => this.endSetup(win));
-    this.setup = { window: win, step: "hello", libraryPath: this.setupLibraryPath(), begun: false, installed: [], picked: null };
+    this.setup = { window: win, step: "hello", libraryPath: this.setupLibraryPath(), begun: false, installed: [], picked: null, makeProblem: null };
   }
 
   /** The setup window closed: its session ends with it. A newer window's session is its own. */
@@ -1520,6 +1531,7 @@ export class Controller {
       shortcut: this.store.get().shortcuts.dictate,
       agents,
       agent: this.setup?.picked ?? bestAgent(agents),
+      makeProblem: this.setup?.makeProblem ?? null,
     };
   }
 
@@ -1561,6 +1573,53 @@ export class Controller {
     const session = this.setup;
     if (session?.installed.includes(name)) {
       session.picked = name;
+      this.broadcast();
+    }
+    return this.setupSnapshot();
+  }
+
+  /**
+   * Looks good, or Use this folder, on Found: the library at the session's place, with the chosen agent saved as its
+   * own. A missing or empty folder becomes a new library; a folder with files keeps every one (its history starts with
+   * them, unless it is a git repository already); an Avanzel library is used as it is; the library already open only
+   * has the agent saved. Whatever goes wrong, or a library that still isn't open afterwards, is the session's
+   * `makeProblem`, which Found shows.
+   */
+  async createSetupLibrary(): Promise<SetupSnapshot> {
+    const session = this.setup;
+    if (!session) return this.setupSnapshot();
+    const target = session.libraryPath;
+    const agent = this.setupSnapshot().agent; // before the library's own agents replace the built-in ones
+    let problem: string | null = null;
+    try {
+      if (this.vault?.root !== target) {
+        const folder = libraryFolder(target);
+        if (folder === "missing" || folder === "empty") mkdirSync(target, { recursive: true });
+        if (folder !== "library") await Vault.init(target, { git: true });
+        await this.useLibrary(target, true);
+        if (!this.vault) throw new Error(this.libraryProblem ?? `There is no Avanzel library at ${target}.`);
+      }
+      if (agent) await this.setLibrarySettings({ harness: agent });
+    } catch (error) {
+      problem = errorMessage(error);
+    }
+    session.makeProblem = problem;
+    this.broadcast();
+    return this.setupSnapshot();
+  }
+
+  /**
+   * Change…, on Found: the folder picker, as a sheet on the setup window. The folder chosen is where Looks good makes or
+   * uses the library, and a problem making the last one goes with it. Nothing is made yet.
+   */
+  async chooseSetupFolder(): Promise<SetupSnapshot> {
+    const session = this.setup;
+    if (!session || session.window.isDestroyed()) return this.setupSnapshot();
+    const result = await dialog.showOpenDialog(session.window, LIBRARY_PICKER);
+    const chosen = result.filePaths[0];
+    if (!result.canceled && chosen && this.setup === session) {
+      session.libraryPath = chosen;
+      session.makeProblem = null;
       this.broadcast();
     }
     return this.setupSnapshot();

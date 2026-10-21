@@ -213,6 +213,8 @@ export interface SetupSnapshot {
   agents: SetupAgent[];
   /** The agent that will file: the person's pick, else the best one known to work (bestAgent); null while there is none. */
   agent: string | null;
+  /** Why Looks good couldn't make or use the library at libraryPath; null until a try fails, and again once one works or Change… picks a folder. */
+  makeProblem: string | null;
 }
 
 export interface AskResult {
@@ -290,5 +292,12 @@ export interface AvanzelBridge {
     enter(step: SetupStep): Promise<SetupSnapshot>;
     /** Use {agent}, on Found: installed agent `name` files from now on; setup:changed follows. */
     chooseAgent(name: string): Promise<SetupSnapshot>;
+    /**
+     * Looks good, or Use this folder, on Found: the library at libraryPath is made, or the folder there used, with the
+     * chosen agent. It resolves once that is done; a problem comes back as makeProblem.
+     */
+    createLibrary(): Promise<SetupSnapshot>;
+    /** Change…, on Found: the folder picker, whose choice becomes libraryPath. Nothing is made yet. */
+    chooseFolder(): Promise<SetupSnapshot>;
   };
 }

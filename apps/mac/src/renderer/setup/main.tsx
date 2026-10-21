@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import type { AvanzelBridge, SetupSnapshot, SetupStep } from "../../shared/ipc.ts";
 import { Found } from "./steps/Found.tsx";
 import { Hello } from "./steps/Hello.tsx";
+import { Think } from "./steps/Think.tsx";
 import "./styles.css";
 
 declare global {
@@ -33,6 +34,8 @@ function Setup() {
       return <Hello snap={snap} go={go} />;
     case "found":
       return <Found snap={snap} go={go} />;
+    case "think":
+      return <Think snap={snap} go={go} />;
     default:
       return null; // a step whose change hasn't come yet
   }

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { encodePng } from "../src/main/png.ts";
+import type { SetupSnapshot } from "../src/shared/ipc.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const appDir = path.resolve(here, "..");
@@ -57,6 +58,12 @@ const SIGNED_IN: Readonly<Record<string, string>> = {
   claude: `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else echo ready; fi`,
   codex: `if [ "$1 $2" = "login status" ]; then echo "Logged in using ChatGPT" >&2; else echo ready; fi`, // Codex answers on stderr
 };
+
+/** A `claude` that is installed but not signed in: its sign-in command says so and exits 1, as Claude Code's does. */
+export const SIGNED_OUT_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": false}'; exit 1; else echo ready; fi`;
+
+/** A `claude` whose sign-in command prints nothing a check understands, as an older Claude Code may. */
+export const UNREADABLE_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo "unknown command: auth"; exit 1; else echo ready; fi`;
 
 /**
  * A new folder of stand-ins for Claude Code and Codex: shell scripts answering as SIGNED_IN does, except for the
@@ -220,6 +227,19 @@ export async function capsuleKind(app: ElectronApplication): Promise<string> {
 export async function windowFor(app: ElectronApplication, name: string): Promise<Page> {
   await expect.poll(() => app.windows().some((w) => w.url().includes(`/renderer/${name}/`)), { timeout: 15_000 }).toBe(true);
   return app.windows().find((w) => w.url().includes(`/renderer/${name}/`))!;
+}
+
+/**
+ * A first run from Hello to the first-thought step, as a person goes: Set me up, then Looks good once setup has chosen
+ * Claude Code (its stand-in reads as signed in), which makes the library at ~/Avanzel. Returns the setup window.
+ */
+export async function throughFound(app: ElectronApplication): Promise<Page> {
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect.poll(async () => ((await call(app, "setupSnapshot")) as SetupSnapshot).agent, { timeout: 20_000 }).toBe("claude");
+  await setup.getByRole("button", { name: "Looks good" }).click();
+  await expect(setup.getByRole("heading", { name: "What's on your mind this week?" })).toBeVisible({ timeout: 20_000 });
+  return setup;
 }
 
 export async function snap(page: Page, name: string): Promise<void> {

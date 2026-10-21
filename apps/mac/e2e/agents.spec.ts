@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, writeWav } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { agentCalls, agentPath, alive, call, launch, makeLibrary, windowFor } from "./helpers.ts";
+import { agentCalls, agentPath, alive, call, launch, makeLibrary, SIGNED_OUT_CLAUDE, UNREADABLE_CLAUDE, windowFor } from "./helpers.ts";
 
 /** Opens Settings → Agents and returns it. */
 async function agentsPane(app: ElectronApplication): Promise<Page> {
@@ -23,9 +23,6 @@ const fakeAgentRow = async (app: ElectronApplication) => (await agentsPane(app))
 /** What the agent's last check found, as the controller keeps it (null: not checked, or the check couldn't tell). */
 const statusOf = async (app: ElectronApplication, name: string) =>
   ((await call(app, "snapshot")) as SettingsSnapshot).harnesses.find((h) => h.name === name)?.status ?? null;
-
-/** The answer of a `claude` whose `auth status` prints nothing a check understands, as an older Claude Code may. */
-const UNREADABLE_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo "unknown command: auth"; exit 1; else echo ready; fi`;
 
 const recordFile = () => path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-record-")), "runs.jsonl");
 
@@ -64,9 +61,8 @@ test("an agent whose reply asks to sign in says how, then what it said", async (
 });
 
 test("a problem is red only for the agent in use; a failure loses its Error label, and a sign-in command's no is the hint alone", async () => {
-  const signedOut = `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": false}'; exit 1; else echo ready; fi`;
   // The fake agent, the library's, fails as Codex does: "ERROR: the model is not supported with this account".
-  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), FAKE_AGENT_MODE: "fail-noisy", PATH: agentPath({ claude: signedOut }) });
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), FAKE_AGENT_MODE: "fail-noisy", PATH: agentPath({ claude: SIGNED_OUT_CLAUDE }) });
   const settings = await agentsPane(app);
   const claude = settings.getByRole("group", { name: "Claude Code" }).getByText("Not signed in.", { exact: false });
   await expect(claude).toHaveText("Not signed in. Run claude once in Terminal and sign in.", { timeout: 20_000 });

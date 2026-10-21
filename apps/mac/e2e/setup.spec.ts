@@ -1,11 +1,28 @@
 // The setup window: a Mac with no library opens it instead of Settings, and Zel walks the person through the first
-// run there. Every test launches as a first run (firstRun): a new HOME, an empty Hugging Face cache, and only the
-// stand-ins for Claude Code and Codex on PATH.
-import { expect, test, type ElectronApplication } from "@playwright/test";
+// run there. Every test launches as a first run (firstRun): a new HOME, an empty Hugging Face cache, and only
+// stand-in agents on PATH: Claude Code and Codex, and the others a test adds.
+import { expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { loadSettings, Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
-import type { SetupSnapshot } from "../src/shared/ipc.ts";
-import { agentCalls, call, capsuleKind, closeModelHubs, fakeModelHub, firstRun, launch, snap, windowFor } from "./helpers.ts";
+import type { SettingsSnapshot, SetupSnapshot } from "../src/shared/ipc.ts";
+import {
+  agentCalls,
+  call,
+  capsuleKind,
+  closeModelHubs,
+  fakeModelHub,
+  firstRun,
+  gitOut,
+  launch,
+  SIGNED_OUT_CLAUDE,
+  snap,
+  throughFound,
+  UNREADABLE_CLAUDE,
+  windowFor,
+} from "./helpers.ts";
 
 test.afterEach(closeModelHubs);
 
@@ -26,11 +43,42 @@ const windowsTitled = (app: ElectronApplication, title: string) =>
 /** What the setup window is sent now. */
 const setupSnap = async (app: ElectronApplication) => (await call(app, "setupSnapshot")) as SetupSnapshot;
 
-/** A `claude` that is installed but not signed in: its sign-in command says so, as Claude Code's does. */
-const SIGNED_OUT_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": false}'; exit 1; else echo ready; fi`;
+/** What Settings is sent now: which library is open. */
+const settingsSnap = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
 
-/** A `claude` whose sign-in command prints nothing a check understands, as an older Claude Code may. */
-const UNREADABLE_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo "unknown command: auth"; exit 1; else echo ready; fi`;
+/** Found's footnote while the chosen agent's harness keeps it in the library folder (Claude Code, OpenCode). */
+const LIMITS = "Your agent works only inside the library folder: no shell, no web.";
+
+/** Found's line under a library place that holds files of its own. */
+const HAS_FILES = "This folder has files already. I'll add the shelves, an AGENTS.md for your agent, and git history that keeps them.";
+
+/** The heading of the step after Found. */
+const THINK = "What's on your mind this week?";
+
+/**
+ * Stands in for the folder picker: it answers that `dir` was chosen, and keeps how it was asked (the title of the window
+ * it is a sheet on, and its options) for `pickerAsked`.
+ */
+async function stubPicker(app: ElectronApplication, dir: string): Promise<void> {
+  await app.evaluate(({ dialog }, chosen) => {
+    dialog.showOpenDialog = async (...args: unknown[]) => {
+      const [parent, options] = args.length > 1 ? args : [null, args[0]];
+      (globalThis as { pickerAsked?: unknown }).pickerAsked = { sheetOn: (parent as { getTitle(): string } | null)?.getTitle() ?? null, options };
+      return { canceled: false, filePaths: [chosen] };
+    };
+  }, dir);
+}
+
+const pickerAsked = (app: ElectronApplication) => app.evaluate(() => (globalThis as { pickerAsked?: unknown }).pickerAsked ?? null);
+
+/** Whether `control` lies within the step's width, so none of it is cut off at the step's edge. */
+async function withinStep(control: Locator, step: Locator): Promise<boolean> {
+  const [box, area] = [await control.boundingBox(), await step.boundingBox()];
+  return !!box && !!area && box.x >= area.x && box.x + box.width <= area.x + area.width;
+}
+
+/** How far the setup step scrolls sideways: 0 while every line fits its width, a long path's included. */
+const sideways = (setup: Page) => setup.getByRole("main").evaluate((el) => el.scrollWidth - el.clientWidth);
 
 /** Closes the setup window, as its red button does, and waits until it has gone. */
 async function closeSetup(app: ElectronApplication): Promise<void> {
@@ -159,7 +207,7 @@ test("Here's what I found reads Claude Code's and Codex's sign-in, asks no agent
   await expect(setup.getByText("~/Avanzel", { exact: true })).toBeVisible();
   await expect(setup.getByText("A new library: Markdown files with git history.")).toBeVisible();
   await expect(setup.getByText("Best results")).toBeVisible();
-  await expect(setup.getByText("Your agent works only inside the library folder: no shell, no web.")).toBeVisible();
+  await expect(setup.getByText(LIMITS)).toBeVisible();
   await expect(setup.getByRole("button", { name: "Use Codex" })).toBeVisible();
   await expect(setup.getByRole("button", { name: "Use Claude Code" })).toHaveCount(0);
   await expect(setup.getByRole("img", { name: "Chosen" })).toHaveCount(1);
@@ -177,12 +225,17 @@ test("Codex is chosen while Claude Code isn't signed in", async () => {
   await expect(setup.getByText("Not signed in", { exact: true })).toBeVisible({ timeout: 20_000 });
   await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(1, { timeout: 20_000 });
   expect((await setupSnap(app)).agent).toBe("codex");
+  // Codex's harness doesn't keep it in the library folder, so the footnote doesn't say it does.
+  await expect(setup.getByRole("img", { name: "Chosen" })).toHaveCount(1);
+  await expect(setup.getByRole("button", { name: "Use Codex" })).toHaveCount(0);
+  await expect(setup.getByText(LIMITS)).toHaveCount(0);
   const useClaude = setup.getByRole("button", { name: "Use Claude Code" });
   await expect(useClaude).toBeVisible();
   // The person's pick wins over the best agent, and only an installed agent can be picked.
   await useClaude.click();
   await expect(setup.getByRole("button", { name: "Use Codex" })).toBeVisible();
   expect((await setupSnap(app)).agent).toBe("claude");
+  await expect(setup.getByText(LIMITS)).toBeVisible();
   await call(app, "chooseSetupAgent", "gemini");
   expect((await setupSnap(app)).agent).toBe("claude");
   expect((await agentCalls(app)).sort()).toEqual(["claude auth status", "codex login status"]);
@@ -213,5 +266,195 @@ test("a failed download says so in the footer, with Try the download again", asy
   await retry.click();
   await expect.poll(() => hub.requests.length).toBeGreaterThan(asked);
   await expect(setup.getByRole("heading", { name: "Here's what I found." })).toBeVisible();
+  await app.close();
+});
+
+test("Looks good makes the library at ~/Avanzel with Claude Code, and moves on", async () => {
+  const { env, home } = firstRun();
+  const app = await launch(env);
+  await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  expect(existsSync(path.join(library, ".avanzel", "config.toml"))).toBe(true);
+  expect(loadSettings(library).harness).toBe("claude");
+  expect(gitOut(library, "log", "--format=%s")).toContain("avanzel: new library");
+  expect((await settingsSnap(app)).library?.path).toBe(library);
+  const menu = (await call(app, "menuForTests")) as MenuItemModel[];
+  expect(menu.some((item) => item.type === "item" && item.label === "Record a thought")).toBe(true);
+  await app.close();
+});
+
+test("a taken shortcut isn't named in the capsule when Looks good makes the library", async () => {
+  const app = await launch({ ...firstRun().env, AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
+  await throughFound(app);
+  expect((await settingsSnap(app)).library).not.toBeNull();
+  // Settings' way of making a library names it at once (shortcuts.spec); setup leaves it to its own next step, where
+  // the person presses the shortcut.
+  expect(await capsuleKind(app)).toBe("hidden");
+  await app.close();
+});
+
+test("an existing folder with files becomes the library through Use this folder, keeping them", async () => {
+  const { env, home } = firstRun();
+  const library = path.join(home, "Avanzel");
+  const notes = "# Notes\n\nPlant tulips in October.\n";
+  mkdirSync(library);
+  writeFileSync(path.join(library, "notes.md"), notes);
+  const app = await launch(env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText(HAS_FILES)).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Looks good" })).toHaveCount(0);
+  await setup.getByRole("button", { name: "Use this folder" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  expect(readFileSync(path.join(library, "notes.md"), "utf8")).toBe(notes);
+  expect(gitOut(library, "ls-files").split("\n")).toContain("notes.md");
+  expect(loadSettings(library).harness).toBe("claude");
+  await app.close();
+});
+
+test("an existing library is used as it is", async () => {
+  const { env, home } = firstRun();
+  const library = path.join(home, "Avanzel");
+  const plant = "# Plant tulips\n\nIn October, before the frost.\n";
+  await Vault.init(library, { git: true });
+  writeFileSync(path.join(library, "ideas", "plant.md"), plant);
+  const app = await launch(env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("This folder is already an Avanzel library.")).toBeVisible();
+  await setup.getByRole("button", { name: "Use this folder" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  expect(readFileSync(path.join(library, "ideas", "plant.md"), "utf8")).toBe(plant);
+  expect((await settingsSnap(app)).library?.path).toBe(library);
+  expect(loadSettings(library).harness).toBe("claude");
+  await app.close();
+});
+
+test("Found again once the library is made: Use this folder saves the agent picked, and makes nothing", async () => {
+  const { env, home } = firstRun();
+  const library = path.join(home, "Avanzel");
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  const commits = gitOut(library, "log", "--format=%H");
+  await setup.getByRole("button", { name: "Back" }).click();
+  await expect(setup.getByText("This folder is already an Avanzel library.")).toBeVisible();
+  await setup.getByRole("button", { name: "Use Codex" }).click();
+  await setup.getByRole("button", { name: "Use this folder" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  expect(loadSettings(library).harness).toBe("codex");
+  expect(gitOut(library, "log", "--format=%H")).toBe(commits);
+  expect((await settingsSnap(app)).library?.path).toBe(library);
+  await app.close();
+});
+
+test("Change… picks another folder", async () => {
+  const other = mkdtempSync(path.join(tmpdir(), "avz-e2e-other-"));
+  const app = await launch(firstRun().env);
+  await stubPicker(app, other);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await setup.getByRole("button", { name: "Change…" }).click();
+  // Outside the home folder, so the row shows it whole, and its lines break within the row.
+  await expect(setup.getByText(other, { exact: true })).toBeVisible();
+  expect(await sideways(setup)).toBe(0);
+  // The picker is a sheet on the setup window.
+  expect(await pickerAsked(app)).toEqual({
+    sheetOn: "Set up Avanzel",
+    options: { title: "Choose your library folder", properties: ["openDirectory", "createDirectory"] },
+  });
+  // Nothing is made until Looks good.
+  expect(existsSync(path.join(other, ".avanzel"))).toBe(false);
+  await setup.getByRole("button", { name: "Looks good" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  expect((await settingsSnap(app)).library?.path).toBe(other);
+  expect(existsSync(path.join(other, ".avanzel", "config.toml"))).toBe(true);
+  await app.close();
+});
+
+test("a library that can't be made says why, and Change… is the way out", async () => {
+  const { env, home } = firstRun();
+  writeFileSync(path.join(home, "Avanzel"), "Not a folder.\n"); // a file where the library would go
+  const other = mkdtempSync(path.join(tmpdir(), "avz-e2e-other-"));
+  const app = await launch(env);
+  await stubPicker(app, other);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  const use = setup.getByRole("button", { name: "Use this folder" });
+  await use.click();
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("I couldn't make the library at ~/Avanzel.", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(setup.getByRole("heading", { name: "Here's what I found." })).toBeVisible();
+  expect((await setupSnap(app)).libraryReady).toBe(false);
+  expect(await sideways(setup)).toBe(0); // the message names a long path
+  // The Notice's Change… is the one way out, and the moment's primary; the footer's button steps back.
+  const change = notice.getByRole("button", { name: "Change…" });
+  await expect(change).toHaveAttribute("data-variant", "primary");
+  await expect(setup.getByRole("button", { name: "Change…" })).toHaveCount(1);
+  await expect(use).toHaveAttribute("data-variant", "secondary");
+  await snap(setup, "setup-found-problem");
+  await change.click();
+  await expect(notice).toHaveCount(0);
+  await expect(setup.getByText(other, { exact: true })).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Looks good" })).toHaveAttribute("data-variant", "primary");
+  await setup.getByRole("button", { name: "Looks good" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  expect((await settingsSnap(app)).library?.path).toBe(other);
+  await app.close();
+});
+
+test("Found holds four agents, a folder with files and its problem: the step scrolls under a fixed footer, and nothing is cut off", async () => {
+  const hub = await fakeModelHub("stall");
+  const { env, home } = firstRun({ opencode: "echo ready", "cursor-agent": "echo ready" });
+  writeFileSync(path.join(home, "Avanzel"), "Not a folder.\n"); // Found takes it for a folder with files; no library can be made there
+  const app = await launch({ ...env, AVANZEL_MODELS_URL: hub.url });
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
+  await expect(setup.getByText("Installed", { exact: true })).toHaveCount(2);
+  await expect(setup.getByText(HAS_FILES)).toBeVisible();
+  const use = setup.getByRole("button", { name: "Use this folder" });
+  await expect(use).toBeEnabled();
+  await snap(setup, "setup-found-four-agents");
+  const step = setup.getByRole("main");
+  // Every row's control fits beside its agent, none past the step's edge.
+  const controls = [setup.getByRole("img", { name: "Chosen" }), ...["Use Codex", "Use OpenCode", "Use Cursor Agent"].map((name) => setup.getByRole("button", { name }))];
+  for (const control of controls) expect(await withinStep(control, step)).toBe(true);
+  // The note under the agents and the footnote under it start at one edge.
+  const note = await setup.getByText(/^Checking Claude Code or Codex reads their sign-in\./).boundingBox();
+  const footnote = await setup.getByText(LIMITS).boundingBox();
+  expect(footnote?.x).toBeCloseTo(note?.x ?? Number.NaN, 0);
+  // Scrolled to its end, the step moves under the footer, which stays put.
+  const footer = await use.boundingBox();
+  await step.evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  expect(await use.boundingBox()).toEqual(footer);
+  await expect(use).toBeInViewport({ ratio: 1 });
+  // The problem shows in view, its way out whole, though the step was scrolled to its end (five agents: below).
+  await use.click();
+  const change = setup.getByRole("alert").getByRole("button", { name: "Change…" });
+  await expect(change).toBeInViewport({ ratio: 1, timeout: 20_000 });
+  expect(await sideways(setup)).toBe(0);
+  await snap(setup, "setup-found-four-agents-problem");
+  // When the choice changes, the chosen agent's row comes into view, so its controls are never cut off.
+  await step.evaluate((el) => el.scrollTo(0, 0));
+  await expect(setup.getByRole("button", { name: "Use Cursor Agent" })).not.toBeInViewport({ ratio: 1 });
+  await call(app, "chooseSetupAgent", "cursor-agent");
+  await expect(setup.getByRole("img", { name: "Chosen" })).toBeInViewport({ ratio: 1 });
+  // An agent not known to work yet (it hasn't been asked) can't be the library's: the button waits.
+  await expect(use).toBeDisabled();
+  await app.close();
+});
+
+test("with five agents, a problem that shows above the part of the list in view comes into view", async () => {
+  const { env, home } = firstRun({ opencode: "echo ready", "cursor-agent": "echo ready", gemini: "echo ready" });
+  writeFileSync(path.join(home, "Avanzel"), "Not a folder.\n");
+  const app = await launch(env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
+  await expect(setup.getByText("Installed", { exact: true })).toHaveCount(3);
+  // Scrolled to the end of a list this long, the place where the problem shows is above the part in view.
+  await setup.getByRole("main").evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  await setup.getByRole("button", { name: "Use this folder" }).click();
+  await expect(setup.getByRole("alert").getByRole("button", { name: "Change…" })).toBeInViewport({ ratio: 1, timeout: 20_000 });
   await app.close();
 });

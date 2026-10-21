@@ -56,4 +56,6 @@ export function registerIpc(controller: Controller): void {
   handle("setup:get", () => controller.setupSnapshot());
   handle("setup:enter", (_e, step: SetupStep) => controller.enterSetupStep(step));
   handle("setup:choose-agent", (_e, name: string) => controller.chooseSetupAgent(name));
+  handle("setup:create-library", () => controller.createSetupLibrary());
+  handle("setup:choose-folder", () => controller.chooseSetupFolder());
 }

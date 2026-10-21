@@ -61,6 +61,8 @@ const bridge: AvanzelBridge = {
     onChanged: (callback) => listen<SetupSnapshot>("setup:changed", callback),
     enter: (step) => ipcRenderer.invoke("setup:enter", step),
     chooseAgent: (name) => ipcRenderer.invoke("setup:choose-agent", name),
+    createLibrary: () => ipcRenderer.invoke("setup:create-library"),
+    chooseFolder: () => ipcRenderer.invoke("setup:choose-folder"),
   },
 };
 
