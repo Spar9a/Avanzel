@@ -1,6 +1,6 @@
 // The only door between the renderers and the main process: a typed, minimal `window.avanzel`.
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { AvanzelBridge, CapsuleState, SettingsPane, SettingsSnapshot } from "../shared/ipc.ts";
+import type { AvanzelBridge, CapsuleState, SettingsPane, SettingsSnapshot, SetupSnapshot } from "../shared/ipc.ts";
 
 function listen<T>(channel: string, callback: (value: T) => void): () => void {
   const handler = (_event: IpcRendererEvent, value: T) => callback(value);
@@ -55,6 +55,11 @@ const bridge: AvanzelBridge = {
     onProgress: (callback) => listen<string>("ask:progress", callback),
     openPage: (name) => ipcRenderer.send("ask:open-page", name),
     close: () => ipcRenderer.send("ask:close"),
+  },
+  setup: {
+    get: () => ipcRenderer.invoke("setup:get"),
+    onChanged: (callback) => listen<SetupSnapshot>("setup:changed", callback),
+    enter: (step) => ipcRenderer.invoke("setup:enter", step),
   },
 };
 

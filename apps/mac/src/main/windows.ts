@@ -72,6 +72,25 @@ export function createSettingsWindow(pane?: SettingsPane): BrowserWindow {
   return win;
 }
 
+/** The first run's window: one fixed size, the traffic lights inset over the page's drag strip. */
+export function createSetupWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 700,
+    height: 480,
+    useContentSize: true,
+    resizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    show: false,
+    title: "Set up Avanzel",
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 18, y: 18 },
+    webPreferences,
+  });
+  void win.loadFile(pagePath("setup"));
+  return win;
+}
+
 export function createQuickWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 660,

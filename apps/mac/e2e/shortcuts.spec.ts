@@ -171,8 +171,9 @@ test("a picked shortcut another app took meanwhile gets the notice, with fresh f
 test("without a library a taken shortcut shows no notice, and Settings → Voice offers the free ones", async () => {
   const app = await launch({ AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
   await call(app, "snapshot"); // the app has started
-  // Its body would point at a Record a thought the menu doesn't have yet; Settings opens on its own instead.
+  // Its body would point at a Record a thought the menu doesn't have yet.
   expect(await capsuleKind(app)).toBe("hidden");
+  await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
   await settings.getByRole("button", { name: "Voice", exact: true }).click();
   await expect(settings.getByRole("button", { name: "Use ⌃⇧Space" })).toBeVisible();

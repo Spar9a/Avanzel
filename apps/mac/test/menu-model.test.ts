@@ -88,10 +88,10 @@ describe("tray menu", () => {
   it("only offers setup when there is no library yet", () => {
     const items = buildMenuModel(input({ libraryReady: false }), now);
     expect(labels(items)).toEqual(["Set up Avanzel…", "--", "Quit Avanzel"]);
-    expect(items[0]).toEqual({ type: "item", label: "Set up Avanzel…", action: "settings", sublabel: "Choose a folder for your library to start." });
+    expect(items[0]).toEqual({ type: "item", label: "Set up Avanzel…", action: "setup", sublabel: "Choose a folder for your library to start." });
   });
 
-  it("says why the library couldn't be opened", () => {
+  it("says why the library couldn't be opened, and opens Settings, where it is fixed", () => {
     const problem = "Avanzel couldn't open the library at /Users/me/Brain: EACCES: permission denied, mkdir '/Users/me/Brain/tasks'";
     const [head, ...rest] = buildMenuModel(input({ libraryReady: false, problem }), now);
     expect(head).toEqual({ type: "item", label: "Set up Avanzel…", action: "settings", sublabel: problem });

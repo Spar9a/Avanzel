@@ -196,18 +196,6 @@ test("Open Settings moves a Settings window that is open to the pane, and a pane
   await app.close();
 });
 
-test("Open Settings with no library opens Settings → General", async () => {
-  const app = await launch({}); // the first launch opens Settings by itself
-  const settings = await windowFor(app, "settings");
-  await paneButton(settings, "Voice").click();
-  await call(app, "toggleDictate");
-  const capsule = await windowFor(app, "capsule");
-  await expect(capsule.getByText("Set up your library first")).toBeVisible();
-  await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
-  await expect(paneButton(settings, "General")).toHaveAttribute("aria-current", "page");
-  await app.close();
-});
-
 /** Dictates once with `audio` standing in for the microphone, then clicks Open Settings on the error card it ends in. */
 async function openSettingsAfterDictating(audio: string, error: string | RegExp): Promise<{ app: ElectronApplication; settings: Page }> {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_AUDIO: audio, AVANZEL_FAKE_TRANSCRIPT: "unused" });

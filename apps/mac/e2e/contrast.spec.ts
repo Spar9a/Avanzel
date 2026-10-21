@@ -236,6 +236,7 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
 
 test("the welcome screen is readable in light and dark", async () => {
   const app = await launch({});
+  await call(app, "showSettings"); // without a library, setup opens by itself; Settings keeps its Welcome
   const welcome = await windowFor(app, "settings");
   await expect(welcome.getByRole("heading", { name: "Welcome to Avanzel" })).toBeVisible();
   const found = await readable(app, welcome, "Settings › Welcome", sidebar);

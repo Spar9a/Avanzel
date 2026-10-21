@@ -347,14 +347,6 @@ test("settings show every pane", async () => {
   await app.close();
 });
 
-test("first launch without a library opens the welcome screen", async () => {
-  const app = await launch({});
-  const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("heading", { name: "Welcome to Avanzel" })).toBeVisible();
-  await snap(settings, "settings-welcome");
-  await app.close();
-});
-
 test("the speech engine that other [voice] settings or another library replace is released", async () => {
   const library = await makeLibrary();
   const other = await makeLibrary();

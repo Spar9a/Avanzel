@@ -158,6 +158,26 @@ export function emptyHfCache(): string {
 }
 
 /**
+ * A first run: a new HOME (setup's ~/Avanzel and the remembered library stay in it), an empty Hugging Face cache,
+ * and exactly agentStubs(answers) plus the system folders on PATH, so no agent of this Mac's own is found.
+ */
+export function firstRun(answers: Record<string, string> = {}): { env: Record<string, string>; home: string } {
+  const home = mkdtempSync(path.join(tmpdir(), "avz-e2e-home-"));
+  return {
+    home,
+    env: {
+      HOME: home,
+      XDG_CONFIG_HOME: path.join(home, ".config"),
+      HF_HUB_CACHE: emptyHfCache(),
+      AVANZEL_EXACT_PATH: "1",
+      // The first-thought step waits this long for a press of the shortcut: no test sees its nudge unless it asks.
+      AVANZEL_PRESS_WAIT_MS: "60000",
+      PATH: `${agentStubs(answers)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    },
+  };
+}
+
+/**
  * A complete snapshot of model `id` in the Hugging Face cache `hub`, laid out as huggingface_hub does, with refs/main
  * naming its pinned revision: each int8 file is as long as MODELS pins it but holds nothing (a hole, so no disk space).
  */

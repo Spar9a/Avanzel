@@ -53,7 +53,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { isSettingsPane } from "../shared/ipc.ts";
+import { isSettingsPane, isSetupStep } from "../shared/ipc.ts";
 import type {
   AgentStatus,
   AppSettings,
@@ -65,6 +65,8 @@ import type {
   ScreenContext,
   SettingsPane,
   SettingsSnapshot,
+  SetupSnapshot,
+  SetupStep,
   Shortcuts,
   TaskInfo,
 } from "../shared/ipc.ts";
@@ -76,6 +78,7 @@ import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
+import { libraryFolder, tildePath } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { NoticedShortcuts, SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
@@ -84,6 +87,7 @@ import {
   createCapsuleWindow,
   createQuickWindow,
   createSettingsWindow,
+  createSetupWindow,
   placeCapsule,
   placeQuick,
 } from "./windows.ts";
@@ -129,6 +133,15 @@ interface FilingJob {
   waiting?: boolean;
   outcome?: FileOutcome;
   pages?: FiledPage[];
+}
+
+/** The setup window and what it is doing, from the moment it opens until it closes. */
+interface SetupSession {
+  window: BrowserWindow;
+  /** The step the window shows. */
+  step: SetupStep;
+  /** Where Looks good makes or uses the library. */
+  libraryPath: string;
 }
 
 /** Words filed after Edit, on their way to the inbox: only in memory until the refile's `recapture` writes them. */
@@ -184,6 +197,8 @@ export class Controller {
   private settingsWindow: BrowserWindow | null = null;
   private quickWindow: BrowserWindow | null = null;
   private askWindow: BrowserWindow | null = null;
+  /** The setup window's session while it is open. */
+  private setup: SetupSession | null = null;
   private menuBar!: MenuBar;
   private capsuleState: CapsuleState = { kind: "hidden" };
   private recording: Recording | null = null;
@@ -263,7 +278,7 @@ export class Controller {
     powerMonitor.on("resume", () => this.tick());
     powerMonitor.on("unlock-screen", () => this.tick());
     this.tick();
-    if (!this.vault) this.showSettings();
+    if (!this.vault) this.showHome();
   }
 
   /**
@@ -453,6 +468,7 @@ export class Controller {
     if (action === "type") return this.openQuick();
     if (action === "ask") return this.openAsk();
     if (action === "settings") return this.showSettings();
+    if (action === "setup") return this.showSetup();
     if (action === "open-library") return this.openLibraryFolder();
     if (action === "open-inbox" && this.vault) return void shell.openPath(this.vault.inbox);
     if (action === "undo-review") return void this.undoEveningReview();
@@ -598,11 +614,13 @@ export class Controller {
     return context;
   }
 
-  /** Library, speech model and microphone must all be ready; explains what's missing otherwise. */
+  /**
+   * Library, speech model and microphone must all be ready; explains what's missing otherwise. Without a library the
+   * window that makes one comes forward (`showHome`), and the capsule shows nothing.
+   */
   private async readyToListen(): Promise<boolean> {
     if (!this.vault) {
-      this.showSettings();
-      this.fail("Set up your library first", "Choose or create a library folder in Avanzel Settings → General.", "open-settings:general");
+      this.showHome();
       return false;
     }
     if (this.model.kind === "error" && this.model.cause === "settings") {
@@ -1149,7 +1167,7 @@ export class Controller {
   // ---------------------------------------------------------------- quick type & ask
 
   openQuick(): void {
-    if (!this.vault) return this.showSettings();
+    if (!this.vault) return this.showHome();
     if (!this.quickWindow || this.quickWindow.isDestroyed()) {
       const created = createQuickWindow();
       created.on("blur", () => created.hide());
@@ -1188,7 +1206,7 @@ export class Controller {
   }
 
   openAsk(): void {
-    if (!this.vault) return this.showSettings();
+    if (!this.vault) return this.showHome();
     if (!this.askWindow || this.askWindow.isDestroyed()) {
       this.askWindow = createAskWindow();
       this.askWindow.once("ready-to-show", () => this.askWindow?.show());
@@ -1251,7 +1269,7 @@ export class Controller {
 
   openLibraryFolder(): void {
     const vault = this.vault;
-    if (!vault) return this.showSettings();
+    if (!vault) return this.showHome();
     const url = this.obsidianInstalled() ? obsidianUrl(vault.root, "") : null;
     if (url) void shell.openExternal(url);
     else void shell.openPath(vault.root);
@@ -1284,6 +1302,8 @@ export class Controller {
   private broadcast(): void {
     const win = this.settingsWindow;
     if (win && !win.isDestroyed()) win.webContents.send("settings:changed", this.snapshot());
+    const setup = this.setup?.window;
+    if (setup && !setup.isDestroyed()) setup.webContents.send("setup:changed", this.setupSnapshot());
     this.refreshMenu();
   }
 
@@ -1433,6 +1453,67 @@ export class Controller {
     this.noticeTakenShortcut(); // the menu has Record a thought now
     this.broadcast();
     return this.snapshot();
+  }
+
+  // ---------------------------------------------------------------- setup
+
+  /**
+   * Avanzel's own window, for whatever asks for one: the shortcut, Quick or Ask before there is a library, or opening
+   * Avanzel again. Setup while there is no library, unless one failed to open (`libraryProblem`): Settings says why,
+   * and fixes it. With a library, Settings.
+   */
+  showHome(): void {
+    if (!this.vault && this.libraryProblem === null) return this.showSetup();
+    this.showSettings();
+  }
+
+  /** Brings the setup window forward, or opens a new one, which starts a new session on Hello once it has drawn. */
+  showSetup(): void {
+    if (this.setup && !this.setup.window.isDestroyed()) {
+      app.focus({ steal: true });
+      this.setup.window.show();
+      this.setup.window.focus();
+      return;
+    }
+    const win = createSetupWindow();
+    // Shown once its page has drawn, so it never flashes blank first.
+    win.once("ready-to-show", () => {
+      if (win.isDestroyed()) return;
+      app.focus({ steal: true });
+      win.show();
+      win.focus();
+    });
+    win.on("closed", () => this.endSetup(win));
+    this.setup = { window: win, step: "hello", libraryPath: this.setupLibraryPath() };
+  }
+
+  /** The setup window closed: its session ends with it. A newer window's session is its own. */
+  private endSetup(win: BrowserWindow): void {
+    if (this.setup?.window === win) this.setup = null;
+  }
+
+  /** Where a new session makes or uses the library: the stored libraryPath, else ~/Avanzel. */
+  private setupLibraryPath(): string {
+    return this.store.get().libraryPath ?? path.join(homedir(), "Avanzel");
+  }
+
+  /** What the setup window shows; without a session, what a fresh one would show. */
+  setupSnapshot(): SetupSnapshot {
+    const libraryPath = this.setup?.libraryPath ?? this.setupLibraryPath();
+    return {
+      libraryPath,
+      libraryLabel: tildePath(libraryPath, homedir()),
+      folder: libraryFolder(libraryPath),
+      libraryReady: !!this.vault,
+      model: this.model,
+      shortcut: this.store.get().shortcuts.dictate,
+    };
+  }
+
+  /** The setup window shows `step` now; anything that isn't a step is ignored. Each step's work hangs on this. */
+  enterSetupStep(step: SetupStep): SetupSnapshot {
+    if (this.setup && isSetupStep(step)) this.setup.step = step;
+    return this.setupSnapshot();
   }
 
   // ---------------------------------------------------------------- agent checks
@@ -1765,5 +1846,10 @@ export class Controller {
 
   menuForTests(): MenuItemModel[] {
     return buildMenuModel(this.menuInput(), new Date());
+  }
+
+  /** The step the setup session is on, or null without one: for tests of steps whose body a later change builds. */
+  setupStepForTests(): SetupStep | null {
+    return this.setup?.step ?? null;
   }
 }

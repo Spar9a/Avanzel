@@ -39,6 +39,7 @@ test("without a library nothing downloads, and Settings offers the download with
   const hub = await fakeModelHub("stall");
   const app = await launch({ AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
   expect(await modelStatus(app)).toEqual({ kind: "missing", bytes: total });
+  await call(app, "showSettings"); // without a library, setup opens by itself, not Settings
   const settings = await windowFor(app, "settings");
   await settings.getByRole("button", { name: "Voice", exact: true }).click();
   await expect(settings.getByRole("button", { name: "Download (673 MB)" })).toBeVisible();
@@ -142,6 +143,7 @@ test("the download's card says only that typing works while the size isn't known
 
 test("the welcome screen says that a library also downloads the speech models, and how big they are", async () => {
   const app = await launch({ HF_HUB_CACHE: emptyHfCache() });
+  await call(app, "showSettings"); // without a library, setup opens by itself; Settings keeps its Welcome
   const welcome = await windowFor(app, "settings");
   await expect(welcome.getByText(/any time\. Creating or choosing a library also downloads the speech models once \(673 MB\)\.$/)).toBeVisible();
   await snap(welcome, "settings-welcome-download");
@@ -151,6 +153,7 @@ test("the welcome screen says that a library also downloads the speech models, a
   hfSnapshot(cache, PARAKEET);
   hfSnapshot(cache, SILERO);
   const ready = await launch({ HF_HUB_CACHE: cache });
+  await call(ready, "showSettings");
   const settings = await windowFor(ready, "settings");
   await expect(settings.getByRole("heading", { name: "Welcome to Avanzel" })).toBeVisible();
   expect((await modelStatus(ready)).kind).toBe("ready");

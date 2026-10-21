@@ -1,6 +1,6 @@
 // Wires the preload bridge's channels to the controller.
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
-import type { AppSettings, Shortcuts, TaskInfo } from "../shared/ipc.ts";
+import type { AppSettings, SetupStep, Shortcuts, TaskInfo } from "../shared/ipc.ts";
 import type { Controller } from "./controller.ts";
 
 type Handler = (event: IpcMainInvokeEvent, ...args: never[]) => unknown;
@@ -51,4 +51,8 @@ export function registerIpc(controller: Controller): void {
   handle("ask:ask", (_e, question: string) => controller.ask(question));
   on("ask:open-page", (_e, name: string) => controller.openPageByName(name));
   on("ask:close", () => controller.closeAsk());
+
+  // setup
+  handle("setup:get", () => controller.setupSnapshot());
+  handle("setup:enter", (_e, step: SetupStep) => controller.enterSetupStep(step));
 }

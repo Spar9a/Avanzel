@@ -10,7 +10,10 @@ const DIST = path.dirname(fileURLToPath(import.meta.url));
 process.env.AVANZEL_TEMPLATES ??= path.join(DIST, "templates");
 process.env.AVANZEL_ASSETS ??= path.join(DIST, "engine-assets");
 delete process.env.ELECTRON_RUN_AS_NODE;
-process.env.PATH = widenedPath(process.env.PATH ?? "", process.env.AVANZEL_TEST === "1" ? null : loginShellPath());
+// The tests' first runs keep PATH exactly as given (AVANZEL_EXACT_PATH), so no agent CLI of this Mac's own is found.
+if (!(process.env.AVANZEL_TEST === "1" && process.env.AVANZEL_EXACT_PATH === "1")) {
+  process.env.PATH = widenedPath(process.env.PATH ?? "", process.env.AVANZEL_TEST === "1" ? null : loginShellPath());
+}
 if (process.env.AVANZEL_USER_DATA) app.setPath("userData", process.env.AVANZEL_USER_DATA);
 
 if (!app.requestSingleInstanceLock()) {
@@ -18,9 +21,10 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   let controller: Controller | null = null;
   let stopping = false;
-  app.on("second-instance", () => controller?.showSettings());
+  // Opening Avanzel again (Spotlight, Finder) brings its own window forward: setup without a library, else Settings.
+  app.on("second-instance", () => controller?.showHome());
   app.on("window-all-closed", () => {
-    // Stay in the menu bar when Settings or Ask close.
+    // Stay in the menu bar when setup, Settings or Ask close.
   });
   // An agent still running when Avanzel quits is stopped first, and its run's bookkeeping finished:
   // otherwise it would go on editing the library unguarded, and its edits would never be undoable.
@@ -45,6 +49,8 @@ if (!app.requestSingleInstanceLock()) {
     controller = new Controller(app.getPath("userData"));
     registerIpc(controller);
     await controller.start();
+    // Only once it has started, so the launch itself never counts as opening Avanzel again.
+    app.on("activate", () => controller?.showHome());
     if (process.env.AVANZEL_TEST === "1") (globalThis as { __avanzel?: Controller }).__avanzel = controller;
   });
 }

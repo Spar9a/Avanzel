@@ -1,4 +1,4 @@
-// The contract between the main process and the renderers (capsule, settings, quick-type, ask).
+// The contract between the main process and the renderers (capsule, settings, quick-type, ask, setup).
 
 export interface FiledPage {
   title: string;
@@ -20,6 +20,14 @@ export type CapsuleMode = "dictate" | "comment";
 export const SETTINGS_PANES = ["general", "voice", "agents", "tasks", "tools", "privacy"] as const;
 export type SettingsPane = (typeof SETTINGS_PANES)[number];
 export const isSettingsPane = (value: unknown): value is SettingsPane => SETTINGS_PANES.some((pane) => pane === value);
+
+/** The steps of the setup window, in order. */
+export const SETUP_STEPS = ["hello", "found", "think", "filing", "ask", "done"] as const;
+export type SetupStep = (typeof SETUP_STEPS)[number];
+export const isSetupStep = (value: unknown): value is SetupStep => SETUP_STEPS.some((step) => step === value);
+
+/** What is at the library's place now. */
+export type LibraryFolder = "missing" | "empty" | "has-files" | "library";
 
 export type CapsuleState =
   | { kind: "hidden" }
@@ -177,6 +185,20 @@ export interface SettingsSnapshot {
   obsidian: boolean;
 }
 
+/** Everything the setup window shows, in one snapshot (setup:changed). Later tasks add fields. */
+export interface SetupSnapshot {
+  /** Where Looks good makes or uses the library: the stored libraryPath, else ~/Avanzel, until Change… picks another. */
+  libraryPath: string;
+  /** libraryPath with the home folder as "~". */
+  libraryLabel: string;
+  folder: LibraryFolder;
+  /** A library is open. */
+  libraryReady: boolean;
+  model: ModelStatus;
+  /** Record a thought's shortcut, "Alt+Space". */
+  shortcut: string;
+}
+
 export interface AskResult {
   ok: boolean;
   answer: string;
@@ -244,5 +266,11 @@ export interface AvanzelBridge {
     onProgress(callback: (message: string) => void): () => void;
     openPage(name: string): void;
     close(): void;
+  };
+  setup: {
+    get(): Promise<SetupSnapshot>;
+    onChanged(callback: (snapshot: SetupSnapshot) => void): () => void;
+    /** The window shows `step` now; the controller hangs what each step starts on it. */
+    enter(step: SetupStep): Promise<SetupSnapshot>;
   };
 }

@@ -1,0 +1,64 @@
+/* The setup window's layout. It only arranges: everything you see comes from @avanzel/ui. */
+#root {
+  height: 100%;
+}
+
+/* A strip to drag the window by, where the traffic lights sit; the stage beside the step; the footer. */
+.frame {
+  display: grid;
+  grid-template-columns: minmax(0, 45fr) minmax(0, 55fr);
+  grid-template-rows: 40px minmax(0, 1fr) 56px;
+  grid-template-areas:
+    "drag drag"
+    "stage step"
+    "footer footer";
+  height: 100%;
+}
+.drag {
+  grid-area: drag;
+  -webkit-app-region: drag;
+}
+/* A grid stretches its one child both ways, so the stage fills its column. */
+.stage {
+  grid-area: stage;
+  display: grid;
+  padding-left: var(--av-space-16);
+}
+.step {
+  grid-area: step;
+  overflow-y: auto;
+  padding: var(--av-space-12) var(--av-space-24);
+}
+.footer {
+  grid-area: footer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--av-space-16);
+  padding: 0 var(--av-space-24) 0 var(--av-space-16);
+}
+.download {
+  flex: 1;
+  min-width: 0;
+}
+.meter {
+  flex: 1;
+  max-width: 160px;
+}
+
+/* Hello's stage: the card, with Zel under the stamp it has just put on the card's lines. */
+.hello {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--av-space-24);
+  height: 100%;
+}
+.hello-card {
+  position: relative;
+}
+.hello-stamp {
+  position: absolute;
+  right: var(--av-space-16);
+  bottom: var(--av-space-4);
+}
