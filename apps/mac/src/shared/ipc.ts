@@ -113,6 +113,13 @@ export type AgentStatus =
 /** Whether a check found that its agent works: it is signed in, or it replied. Setup files only with one that does. */
 export const agentWorks = (status: AgentStatus | null | undefined): boolean => status?.kind === "signed-in" || status?.kind === "replied";
 
+/** What a check found that keeps an agent from filing until the person acts: it isn't signed in, didn't reply in time, or failed. */
+export type AgentProblem = Extract<AgentStatus, { kind: "signed-out" | "timeout" | "failed" }>;
+
+/** Whether `status` is such a problem, rather than an agent that works, one being checked, or one not checked yet. */
+export const isAgentProblem = (status: AgentStatus | null | undefined): status is AgentProblem =>
+  status?.kind === "signed-out" || status?.kind === "timeout" || status?.kind === "failed";
+
 export interface HarnessInfo {
   name: string;
   available: boolean;
@@ -206,7 +213,7 @@ export interface SetupPress {
   taken: boolean;
   /** A press arrived since the step asked for one: the shortcut works. */
   heard: boolean;
-  /** No press arrived within the wait (3 s), and none since. */
+  /** The person reached for it (its first modifier went down in the window), and no press followed within the wait (3 s). */
   silent: boolean;
   /** The running app whose default shortcut it is, if one is running. */
   holder: string | null;
@@ -459,6 +466,11 @@ export interface AvanzelBridge {
      * thought's shortcut, and the step listens for a press of it afresh; setup:changed follows.
      */
     useShortcut(accelerator: string): Promise<SetupSnapshot>;
+    /**
+     * Record a thought's first modifier (⌥ for ⌥Space) went down on the first-thought step, outside the box for a typed
+     * thought: the person reaches for the shortcut, and the step waits for its press (3 s); setup:changed follows.
+     */
+    reachForShortcut(): void;
     /**
      * File it, on the first-thought step's typing rows: `words` become a note in the inbox, which setup files while the
      * window shows it; setup:changed follows. Words it can't take come back as typeProblem: nothing is thrown.

@@ -129,8 +129,9 @@ const LIBRARY_PICKER: OpenDialogOptions = { title: "Choose your library folder",
 /** How often setup looks for an installed agent while this Mac has none: Found says it notices one. */
 const AGENT_POLL_MS = 2_000;
 /**
- * How long the first-thought step waits for a press of Record a thought's shortcut before it offers free ones (§5.2).
- * macOS lets an app register a shortcut another app holds, so only a press that arrives says it works (tests change it).
+ * How long the first-thought step waits for a press of Record a thought's shortcut, once the person reaches for it (its
+ * first modifier goes down in the setup window), before it offers free ones (§5.2). macOS lets an app register a
+ * shortcut another app holds, so only a press that arrives says it works (tests change it).
  */
 const PRESS_WAIT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PRESS_WAIT_MS)) || 3_000;
 /** Where Open Terminal goes: the person signs an agent in there. */
@@ -204,13 +205,14 @@ interface SetupSession {
    */
   makeProblem: string | null;
   /**
-   * While the first-thought step waits for a press of the shortcut: the wait's timer (PRESS_WAIT_MS), which stays set
-   * until the wait has ended, the running apps' read included (`noPressArrived`). Null otherwise.
+   * While the first-thought step waits for a press of the shortcut, which it does once the person reaches for it
+   * (`reachForShortcut`): the wait's timer (PRESS_WAIT_MS), which stays set until the wait has ended, the running apps'
+   * read included (`noPressArrived`). Null otherwise.
    */
   pressTimer: NodeJS.Timeout | null;
   /** A press of the shortcut arrived since the step asked for one. */
   heard: boolean;
-  /** No press arrived within the wait, and none since. */
+  /** The person reached for the shortcut, no press arrived within the wait, and none since. */
   silent: boolean;
   /** While silent: the running app whose default shortcut it is, if one is running. */
   holder: string | null;
@@ -353,6 +355,8 @@ export class Controller {
   private readonly agentChecks = new Map<string, AgentStatus>();
   /** The agent checks going on, each by the controller that stops it when Avanzel quits. */
   private readonly runningChecks = new Set<AbortController>();
+  /** The agents whose sign-in is being read again because the setup window has the focus again (`rereadSignIns`). */
+  private readonly rereading = new Set<string>();
   /** Avanzel is quitting, busy or not (`stopAgentChecks`): no agent check starts any more. */
   private checksStopped = false;
   /** Where agent checks run while there is no library (`checkDir`): made at the first such check, kept for the app run. */
@@ -1717,6 +1721,8 @@ export class Controller {
       win.focus();
     });
     win.on("closed", () => this.endSetup(win));
+    // Back from Terminal, say, where the person may have signed an agent in: Found notices.
+    win.on("focus", () => this.rereadSignIns());
     this.setup = {
       window: win,
       step: "hello",
@@ -1845,11 +1851,11 @@ export class Controller {
 
   /**
    * The setup window shows `step` now; anything that isn't a step is ignored. Each step's work hangs on this: the first
-   * time Found is entered, Set me up's work; each time the first-thought step is, its press test (`listenForPress`),
-   * which any other step stops, and its spoken thought afresh, so coming back never shows the last visit's Notice. A
-   * mic check stays, since its note waits in the inbox for File it anyway or Try again. The first time the last step is
-   * entered, opening at login turns on, so its switch shows the spec's default; what the person sets there then stays.
-   * The first time each step is entered is noted (`firstRun`).
+   * time Found is entered, Set me up's work; each time the first-thought step is, its press test afresh
+   * (`listenForPress`), which any other step stops, and its spoken thought afresh, so coming back never shows the last
+   * visit's Notice. A mic check stays, since its note waits in the inbox for File it anyway or Try again. The first time
+   * the last step is entered, opening at login turns on, so its switch shows the spec's default; what the person sets
+   * there then stays. The first time each step is entered is noted (`firstRun`).
    */
   enterSetupStep(step: SetupStep): SetupSnapshot {
     const session = this.setup;
@@ -2102,7 +2108,8 @@ export class Controller {
 
   /**
    * Try again, on a mic check's answer or a recording problem's Notice: the mic check's capture and its recording leave
-   * the library, and the step asks for the thought afresh, its press test's wait included.
+   * the library, and the step asks for the thought afresh, and for a press: its press test starts over, though its wait
+   * starts only once the person reaches for the shortcut.
    */
   retrySetupThought(): void {
     const session = this.setup;
@@ -2143,21 +2150,38 @@ export class Controller {
 
   /**
    * The first-thought step asks for a press of Record a thought's shortcut, afresh: nothing heard or missed yet. One
-   * another app holds is named by the step at once, so it is noticed (the capsule won't name it at the next launch), and
-   * no press is waited for, since none can arrive. Otherwise the step waits PRESS_WAIT_MS for one (`noPressArrived`).
+   * another app holds is named by the step at once, so it is noticed (the capsule won't name it at the next launch).
+   * Nothing is waited for yet: the wait starts when the person reaches for the shortcut (`reachForShortcut`), so
+   * entering the step, reading it, thinking and typing never bring the nudge.
    */
   private listenForPress(session: SetupSession): void {
     this.stopPressTest(session);
     const taken = this.takenShortcuts.find((notice) => notice.key === "dictate");
-    if (taken) return this.noticed.add(taken.accelerator);
+    if (taken) this.noticed.add(taken.accelerator);
+  }
+
+  /**
+   * Record a thought's first modifier (reachKey: ⌥ for ⌥Space) went down in the setup window, outside the box for a
+   * typed thought, where it types a character: the person reaches for the shortcut. On the first-thought step, while a
+   * press would be setup's and none has been heard or missed, the press test waits PRESS_WAIT_MS for one from now, a
+   * wait under way included (`noPressArrived`). Not while macOS is about to ask about the microphone or the words are
+   * being made, when no press is asked for, nor for a shortcut another app holds, which the step names already.
+   */
+  reachForShortcut(): void {
+    const session = this.setup;
+    if (!session || !this.setupTakesPress() || session.heard || session.silent) return;
+    const { kind } = session.thought;
+    if (kind === "primer" || kind === "transcribing" || this.takenShortcuts.some((notice) => notice.key === "dictate")) return;
+    if (session.pressTimer) clearTimeout(session.pressTimer);
     const timer: NodeJS.Timeout = setTimeout(() => void this.noPressArrived(session, timer), PRESS_WAIT_MS);
     session.pressTimer = timer;
   }
 
   /**
-   * No press arrived within the wait: the shortcut may be another app's, though it registered. The step says so, naming
-   * the running app whose default it is, with free ones to use instead. A press, another shortcut or step, or the window
-   * closing while the running apps are read ends this wait first (`stopPressTest`), and it says nothing.
+   * The person reached for the shortcut, and no press arrived within the wait: the shortcut may be another app's, though
+   * it registered. The step says so, naming the running app whose default it is, with free ones to use instead. A
+   * press, another shortcut or step, or the window closing while the running apps are read ends this wait first
+   * (`stopPressTest`), and it says nothing; so does another reach, which waits afresh.
    */
   private async noPressArrived(session: SetupSession, timer: NodeJS.Timeout): Promise<void> {
     const running = await runningAppNames();
@@ -2469,6 +2493,24 @@ export class Controller {
   }
 
   /**
+   * The setup window has the focus again, say back from Terminal, where the person may have signed an agent in: each
+   * installed agent whose sign-in last said it isn't signed in has it read again. That only reads the sign-in, and never
+   * asks the agent its question, unlike Check again (`checkAgent`). The row keeps saying "Not signed in" while it is
+   * read, so Found changes only once the answer has; an answer that comes after a newer one (Check again's) is dropped.
+   */
+  rereadSignIns(): void {
+    const session = this.setup;
+    if (!session?.begun) return;
+    for (const name of session.installed) {
+      const harness = this.harnessNamed(name);
+      const status = this.agentChecks.get(name);
+      if (!harness?.signIn || status?.kind !== "signed-out" || this.rereading.has(name)) continue;
+      this.rereading.add(name);
+      void this.runAgentCheck(name, harness, false, status).finally(() => this.rereading.delete(name));
+    }
+  }
+
+  /**
    * Checks agent `name` again (Check in Settings → Agents, Check again in setup): its sign-in command, then its one
    * short question when it has none or that doesn't say. A check under way is left to finish.
    */
@@ -2524,14 +2566,17 @@ export class Controller {
   /**
    * One check, run in the library or its scratch folder (`checkDir`): Settings and setup show it running, then what it
    * found. A scratch folder that can't be made is the check's failure, and the next check tries to make it again. Only
-   * with `prompt` may it ask the model. Once Avanzel is quitting, none starts.
+   * with `prompt` may it ask the model. Once Avanzel is quitting, none starts. A read `again` of a sign-in whose last
+   * finding was `again` shows nothing while it runs, and what it finds replaces only that finding, not a newer one.
    */
-  private async runAgentCheck(name: string, harness: Harness, prompt: boolean): Promise<void> {
+  private async runAgentCheck(name: string, harness: Harness, prompt: boolean, again?: AgentStatus): Promise<void> {
     if (this.quitting || this.checksStopped) return;
     const abort = new AbortController();
     this.runningChecks.add(abort);
-    this.agentChecks.set(name, { kind: "checking" });
-    this.broadcast();
+    if (!again) {
+      this.agentChecks.set(name, { kind: "checking" });
+      this.broadcast();
+    }
     let status: AgentStatus | null;
     try {
       status = statusOf(await checkHarness(harness, this.checkDir(), { signal: abort.signal, prompt }));
@@ -2541,6 +2586,7 @@ export class Controller {
       this.runningChecks.delete(abort);
     }
     if (abort.signal.aborted) return; // stopped for quitting: its "… was cancelled" is no news
+    if (again && this.agentChecks.get(name) !== again) return; // a newer check has said more meanwhile
     if (status) this.agentChecks.set(name, status);
     else this.agentChecks.delete(name); // a sign-in it couldn't read: back to "Installed", with Check
     this.broadcast();

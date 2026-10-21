@@ -55,13 +55,16 @@ export function screenshotFixture({ blank = false }: { blank?: boolean } = {}): 
 }
 
 /** How the stand-ins for Claude Code and Codex answer, by binary: signed in, and a short reply to anything else. */
-const SIGNED_IN: Readonly<Record<string, string>> = {
+export const SIGNED_IN: Readonly<Record<string, string>> = {
   claude: `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else echo ready; fi`,
   codex: `if [ "$1 $2" = "login status" ]; then echo "Logged in using ChatGPT" >&2; else echo ready; fi`, // Codex answers on stderr
 };
 
 /** A `claude` that is installed but not signed in: its sign-in command says so and exits 1, as Claude Code's does. */
 export const SIGNED_OUT_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": false}'; exit 1; else echo ready; fi`;
+
+/** A `codex` that is installed but not signed in: its sign-in command says so on stderr and exits 1, as Codex's does. */
+export const SIGNED_OUT_CODEX = `if [ "$1 $2" = "login status" ]; then echo "Not logged in" >&2; exit 1; else echo ready; fi`;
 
 /** A `claude` whose sign-in command prints nothing a check understands, as an older Claude Code may. */
 export const UNREADABLE_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo "unknown command: auth"; exit 1; else echo ready; fi`;
@@ -81,13 +84,18 @@ export function filingClaude(): string {
  */
 export function agentStubs(answers: Record<string, string> = {}): string {
   const dir = mkdtempSync(path.join(tmpdir(), "avz-e2e-agents-"));
-  const log = path.join(dir, "calls.log");
-  for (const [name, body] of Object.entries({ ...SIGNED_IN, ...answers })) {
-    const file = path.join(dir, name);
-    writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' "${name} $*" >> '${log}'\n${body}\n`);
-    chmodSync(file, 0o755);
-  }
+  for (const [name, body] of Object.entries({ ...SIGNED_IN, ...answers })) answerAs(dir, name, body);
   return dir;
+}
+
+/**
+ * Makes stand-in `name` in the agentStubs folder `dir` answer with `body` (a script body) from its next call on, still
+ * noting each call in calls.log: as when the person signs the agent in, in Terminal, while Avanzel runs.
+ */
+export function answerAs(dir: string, name: string, body: string): void {
+  const file = path.join(dir, name);
+  writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' "${name} $*" >> '${path.join(dir, "calls.log")}'\n${body}\n`);
+  chmodSync(file, 0o755);
 }
 
 /** This process's PATH with new agentStubs(answers) first: what launch() gives the app unless the test passes a PATH. */

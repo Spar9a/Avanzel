@@ -62,6 +62,7 @@ export function registerIpc(controller: Controller): void {
   handle("setup:type-thought", (_e, words: string) => controller.typeSetupThought(words));
   handle("setup:ask", (_e, question: string) => controller.askInSetup(question));
   on("setup:open-terminal", () => controller.openTerminal());
+  on("setup:reach-for-shortcut", () => controller.reachForShortcut());
   on("setup:copy", (_e, text: string) => controller.copyText(text));
   on("setup:cancel-filing", () => controller.cancelSetupFiling());
   on("setup:file-again", () => controller.fileSetupAgain());

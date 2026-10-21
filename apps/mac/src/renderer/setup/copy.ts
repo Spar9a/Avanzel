@@ -1,7 +1,7 @@
 // The setup window's words that are made from values: sizes, dates, what an agent's check found and how a filing went,
 // as its copy table writes them, and which of those findings is a problem for the person to fix.
 import { SHELVES, type ReceiptPage, type Shelf } from "@avanzel/ui";
-import { NOTE_GONE, type AgentStatus, type FiledPage, type ModelStatus } from "../../shared/ipc.ts";
+import { NOTE_GONE, type AgentProblem, type AgentStatus, type FiledPage, type ModelStatus } from "../../shared/ipc.ts";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] as const;
@@ -41,12 +41,8 @@ export function agentLine(status: AgentStatus | null): string {
   }
 }
 
-/** What a check found that keeps an agent from filing until the person acts: Found's Notice for the chosen agent. */
-export type AgentProblem = Extract<AgentStatus, { kind: "signed-out" | "timeout" | "failed" }>;
-
-/** Whether `status` is such a problem, rather than an agent that works, one being checked, or one not checked yet. */
-export const isAgentProblem = (status: AgentStatus | null | undefined): status is AgentProblem =>
-  status?.kind === "signed-out" || status?.kind === "timeout" || status?.kind === "failed";
+// What keeps an agent from filing until the person acts: Found's Notice for the chosen agent.
+export { isAgentProblem, type AgentProblem } from "../../shared/ipc.ts";
 
 /** The title of that Notice, for the agent `label` ("Claude Code"). */
 export function agentProblemTitle(label: string, problem: AgentProblem): string {

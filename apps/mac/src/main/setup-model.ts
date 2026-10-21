@@ -3,7 +3,7 @@
 // window flies and where Zel's bubble goes. No Electron, so the tests run them as they are.
 import { existsSync, opendirSync, statSync } from "node:fs";
 import { loadSettings, Vault } from "@avanzel/engine";
-import { agentWorks, type FiledPage, type LibraryFolder, type SetupAgent } from "../shared/ipc.ts";
+import { agentWorks, isAgentProblem, type FiledPage, type LibraryFolder, type SetupAgent } from "../shared/ipc.ts";
 import { WIKILINK } from "../shared/wikilinks.ts";
 
 /** `target` with the home folder as "~": only the folder itself, so /Users/ab stays as it is when home is /Users/a. */
@@ -27,14 +27,20 @@ export function libraryFolder(target: string): LibraryFolder {
 }
 
 /**
- * The agent setup chooses until the person picks one. First the library's `own`, when the folder is a library already
- * and that agent works here: a library brought from another Mac keeps its agent rather than silently switching. Else
- * Claude Code when it works, since it files best; else the first agent that works; else none (null), while every
- * check is under way or found a problem.
+ * The agent setup chooses until the person picks one. Of the agents that work: first the library's `own`, when the
+ * folder is a library already, so a library brought from another Mac keeps its agent rather than silently switching;
+ * else Claude Code, since it files best; else the first. When none works and every check has ended, the one whose check
+ * found a problem the person can fix (not signed in, no reply in time, a failure), in the same order, so Found says
+ * how to fix it at once. Never one whose check hasn't said yet: none (null) while a check is under way, and none when
+ * no agent has a problem to show.
  */
 export function bestAgent(agents: readonly SetupAgent[], own: string | null = null): string | null {
+  const first = (list: readonly SetupAgent[]) =>
+    (list.find((agent) => agent.name === own) ?? list.find((agent) => agent.name === "claude") ?? list[0])?.name ?? null;
   const working = agents.filter((agent) => agentWorks(agent.status));
-  return (working.find((agent) => agent.name === own) ?? working.find((agent) => agent.name === "claude") ?? working[0])?.name ?? null;
+  if (working.length) return first(working);
+  if (agents.some((agent) => agent.status?.kind === "checking")) return null;
+  return first(agents.filter((agent) => isAgentProblem(agent.status)));
 }
 
 /** The agent the library at `root` files with, as its .avanzel/config.toml says ("codex", or "auto"); null when that doesn't load. */

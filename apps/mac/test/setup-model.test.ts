@@ -123,11 +123,21 @@ describe("bestAgent", () => {
     expect(bestAgent([agent("claude", { kind: "timeout" }), agent("opencode", replied), agent("codex", signedIn)])).toBe("opencode");
   });
 
-  it("nothing that is known to work", () => {
+  it("when none works, the agent whose problem the person can fix, Claude Code first, so Found says how at once", () => {
+    const failed: AgentStatus = { kind: "failed", detail: "Error: boom" };
+    expect(bestAgent([agent("claude", signedOut), agent("codex", failed)])).toBe("claude");
+    expect(bestAgent([agent("codex", signedOut), agent("claude", { kind: "timeout" })])).toBe("claude"); // wherever it is listed
+    expect(bestAgent([agent("claude", failed)])).toBe("claude");
+    expect(bestAgent([agent("opencode", failed), agent("codex", signedOut)])).toBe("opencode"); // else the first
+    expect(bestAgent([agent("claude", signedOut), agent("codex", signedOut)], "codex")).toBe("codex"); // a library's own first
+  });
+
+  it("never an agent whose check hasn't said: none while a check is under way, and none without a problem to show", () => {
+    expect(bestAgent([agent("claude", null), agent("codex", signedOut)])).toBe("codex"); // Claude Code's sign-in couldn't be read
+    expect(bestAgent([agent("claude", checking), agent("codex", signedOut)])).toBeNull(); // until Claude Code's check ends
     expect(bestAgent([agent("claude", null), agent("codex", checking), agent("opencode", signedOut)])).toBeNull();
-    expect(bestAgent([agent("claude", { kind: "failed", detail: "Error: boom" })])).toBeNull();
+    expect(bestAgent([agent("claude", null), agent("opencode", null)])).toBeNull();
     expect(bestAgent([])).toBeNull();
-    expect(bestAgent([agent("codex", signedOut)], "codex")).toBeNull(); // a library's own agent too
   });
 
   it("a library's own agent first when it works, so a library brought from another Mac keeps it", () => {

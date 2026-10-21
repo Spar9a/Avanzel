@@ -12,6 +12,7 @@ import type { SettingsSnapshot, SetupSnapshot } from "../src/shared/ipc.ts";
 import {
   agentCalls,
   agentStubs,
+  answerAs,
   call,
   capsuleKind,
   closeModelHubs,
@@ -26,7 +27,9 @@ import {
   onceMarker,
   read,
   recentlyFiled,
+  SIGNED_IN,
   SIGNED_OUT_CLAUDE,
+  SIGNED_OUT_CODEX,
   snap,
   speechWav,
   throughFound,
@@ -137,6 +140,15 @@ const keycaps = (setup: Page) => setup.locator('kbd[data-size="key"]');
  * a thought in the menu (menuAction "dictate") and toggleDictate aren't presses of it.
  */
 const pressShortcut = (app: ElectronApplication) => call(app, "pressShortcutForTests", "dictate");
+
+/**
+ * The person reaches for the shortcut and doesn't press it: modifier `key`, as a keydown names it, goes down in the
+ * setup window and comes back up. Only the shortcut's first modifier (⌥ for ⌥Space) starts the press test's wait.
+ */
+async function reachFor(setup: Page, key: "Alt" | "Control" | "Shift" | "Meta"): Promise<void> {
+  await setup.keyboard.down(key);
+  await setup.keyboard.up(key);
+}
 
 /** Closes the setup window, as its red button does, and waits until it has gone. */
 async function closeSetup(app: ElectronApplication): Promise<void> {
@@ -381,6 +393,35 @@ test("a signed-out Claude Code, once picked, says how to sign in, and Check agai
   await app.close();
 });
 
+test("with no agent signed in, Found says at once how to sign Claude Code in, and notices the sign-in on return", async () => {
+  const { env } = firstRun({ claude: SIGNED_OUT_CLAUDE, codex: SIGNED_OUT_CODEX });
+  const app = await launch(env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  // Nothing clicked: of the agents that need the person, Claude Code is chosen, and its Notice says how to sign it in.
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code isn't signed in on this Mac.", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(notice.getByRole("button", { name: "Open Terminal" })).toBeVisible();
+  await expect(notice.getByRole("button", { name: "Check again" })).toHaveAttribute("data-variant", "primary");
+  await expect(setup.getByText("Not signed in", { exact: true })).toHaveCount(2);
+  expect((await setupSnap(app)).agent).toBe("claude");
+  const looksGood = setup.getByRole("button", { name: "Looks good" });
+  await expect(looksGood).toBeDisabled();
+  // The person signs Claude Code in, in Terminal, and comes back: the window has the focus again.
+  const [stubs = ""] = env.PATH!.split(":");
+  answerAs(stubs, "claude", SIGNED_IN.claude!);
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"))?.emit("focus");
+  });
+  await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(1, { timeout: 20_000 });
+  await expect(notice).toHaveCount(0);
+  await expect(looksGood).toBeEnabled();
+  await expect(looksGood).toHaveAttribute("data-variant", "primary");
+  // Only the sign-ins were read, Codex's again too since it was signed out: no agent was asked anything.
+  expect((await agentCalls(app)).sort()).toEqual(["claude auth status", "claude auth status", "codex login status", "codex login status"]);
+  await app.close();
+});
+
 test("an agent without a sign-in command is asked one question only when picked", async () => {
   const app = await launch(firstRun({ opencode: "echo ready" }).env);
   const setup = await windowFor(app, "setup");
@@ -476,12 +517,14 @@ test("a scratch folder that can't be made is each check's failure, and Check aga
   });
   const setup = await windowFor(app, "setup");
   await setup.getByRole("button", { name: "Set me up" }).click();
-  await expect(setup.getByText("ENOSPC: no space left on device, mkdtemp.", { exact: true })).toHaveCount(2, { timeout: 20_000 });
-  expect((await setupSnap(app)).agent).toBeNull();
+  await expect.poll(async () => [await statusKind(app, "claude"), await statusKind(app, "codex")], { timeout: 20_000 }).toEqual(["failed", "failed"]);
+  // Neither works, so Claude Code is chosen for its problem, and its Notice shows with nothing clicked: the line is
+  // each row's, and the Notice's too.
+  expect((await setupSnap(app)).agent).toBe("claude");
+  await expect(setup.getByText("ENOSPC: no space left on device, mkdtemp.", { exact: true })).toHaveCount(3);
   await app.evaluate(() => {
     (globalThis as { refuseScratch?: boolean }).refuseScratch = false;
   });
-  await setup.getByRole("button", { name: "Use Claude Code" }).click();
   const notice = setup.getByRole("alert");
   await expect(notice.getByText("Claude Code didn't work.", { exact: true })).toBeVisible();
   await notice.getByRole("button", { name: "Check again" }).click();
@@ -760,6 +803,11 @@ test("a press of the shortcut is heard, and setup says it is free", async () => 
 test("no press within the wait offers two free shortcuts, and the one picked is the one to press", async () => {
   const app = await launch({ ...firstRun().env, AVANZEL_PRESS_WAIT_MS: "300" });
   const setup = await throughFound(app);
+  // Entering the step starts no wait: nobody has reached for the shortcut.
+  await setup.waitForTimeout(1_000);
+  await expect(setup.getByText(NUDGE)).toHaveCount(0);
+  // ⌥ goes down, and no press follows.
+  await reachFor(setup, "Alt");
   await expect(setup.getByText("Did ⌥Space do nothing?", { exact: true })).toBeVisible();
   // Whatever this Mac runs: a running Alfred, Raycast, ChatGPT or Superwhisper is named as the likely holder.
   await expect(setup.getByText(/^Another app may be using it(, probably \w+)?\. Try another shortcut\.$/)).toBeVisible();
@@ -779,13 +827,44 @@ test("no press within the wait offers two free shortcuts, and the one picked is 
   await expect.poll(async () => (await settingsSnap(app)).app.shortcuts.dictate).toBe("Control+Shift+Space");
   await expect(setup.getByText(INSTRUCTION)).toContainText("⌃⇧Space");
   await expect(keycaps(setup)).toHaveText(["⌃", "⇧", "Space"]);
-  // The wait starts over for the new shortcut: the nudge goes with the pick, comes back once the new one goes unpressed
-  // as long, and a press ends it.
-  await expect(setup.getByText("Did ⌃⇧Space do nothing?", { exact: true })).toBeVisible();
+  // The test starts over for the new shortcut: the nudge goes with the pick, and stays gone until the person reaches
+  // for the new one (⌃ goes down) and doesn't press it; a press ends it.
+  await setup.waitForTimeout(1_000);
+  await expect(setup.getByText(NUDGE)).toHaveCount(0);
   expect(await setup.evaluate(() => (window as { cleared?: boolean }).cleared)).toBe(true);
+  await reachFor(setup, "Alt"); // ⌥ isn't the new shortcut's first modifier: it starts nothing
+  await setup.waitForTimeout(1_000);
+  await expect(setup.getByText(NUDGE)).toHaveCount(0);
+  await reachFor(setup, "Control");
+  await expect(setup.getByText("Did ⌃⇧Space do nothing?", { exact: true })).toBeVisible();
   await pressShortcut(app);
   await expect(setup.getByText(NUDGE)).toHaveCount(0);
   await expect(setup.getByText("⌃⇧Space is free on this Mac, so it works in every app.", { exact: true })).toBeVisible();
+  await app.close();
+});
+
+test("the nudge waits for the person to reach for the shortcut, and then for the real 3 s", async () => {
+  // The real wait: none of the tests' own.
+  const app = await launch({ ...firstRun().env, AVANZEL_PRESS_WAIT_MS: "" });
+  const setup = await throughFound(app);
+  // The person reads, thinks and types, with ⌥ in the box for a typed thought, where it types a character: for longer
+  // than the wait, and nothing asks whether ⌥Space did nothing.
+  await setup.getByRole("button", { name: "Type it instead" }).click();
+  const box = setup.getByRole("textbox", { name: "Your thought" });
+  await expect(box).toBeFocused();
+  await reachFor(setup, "Alt");
+  await setup.waitForTimeout(4_000);
+  await expect(setup.getByText(NUDGE)).toHaveCount(0);
+  expect((await setupSnap(app)).press.silent).toBe(false);
+  // Out of the box, ⌥ goes down and no press follows: 3 s later, and not before, the step asks.
+  await setup.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(box).toHaveCount(0);
+  const reached = Date.now();
+  await reachFor(setup, "Alt");
+  await setup.waitForTimeout(2_000);
+  await expect(setup.getByText(NUDGE)).toHaveCount(0);
+  await expect(setup.getByText("Did ⌥Space do nothing?", { exact: true })).toBeVisible({ timeout: 10_000 });
+  expect(Date.now() - reached).toBeGreaterThanOrEqual(3_000);
   await app.close();
 });
 
@@ -830,6 +909,7 @@ test("with no free shortcut, setup offers Settings, and the shortcut set there i
   await call(app, "setApp", { shortcuts: { ...(await settingsSnap(app)).app.shortcuts, dictate: "Control+Alt+K" } });
   await expect(taken).toHaveCount(0);
   await expect(setup.getByText(INSTRUCTION)).toContainText("⌃⌥K");
+  await reachFor(setup, "Control");
   await expect(setup.getByText("Did ⌃⌥K do nothing?", { exact: true })).toBeVisible();
   await expect(setup.getByText("Another app may be using it. Pick another one in Settings → Voice.", { exact: true })).toBeVisible();
   await expect(setup.getByRole("button", { name: "Open Settings" })).toHaveAttribute("data-variant", "primary");
@@ -1156,7 +1236,8 @@ test("a denied microphone says where to allow it, and offers typing", async () =
 });
 
 test("testing, testing gets a warm answer, and Try again starts over", async () => {
-  const { env, home } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Testing, testing." });
+  // A short wait, which Try again doesn't start: the nudge would show within it.
+  const { env, home } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Testing, testing.", AVANZEL_PRESS_WAIT_MS: "300" });
   const app = await launch(env);
   const setup = await throughFound(app);
   const library = path.join(home, "Avanzel");
@@ -1177,6 +1258,9 @@ test("testing, testing gets a warm answer, and Try again starts over", async () 
   await expect.poll(() => inbox(library)).toEqual([]);
   expect(filesUnder(library, "raw/audio")).toEqual([]);
   await expect(setup.getByText(HEARD_YOU, { exact: true })).toHaveCount(0);
+  // The step asks afresh, but nobody has reached for the shortcut since: nothing asks whether it did nothing.
+  await setup.waitForTimeout(1_000);
+  await expect(setup.getByText(NUDGE)).toHaveCount(0);
   await app.close();
 });
 

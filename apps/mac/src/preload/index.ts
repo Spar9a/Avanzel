@@ -66,6 +66,7 @@ const bridge: AvanzelBridge = {
     openTerminal: () => ipcRenderer.send("setup:open-terminal"),
     copy: (text) => ipcRenderer.send("setup:copy", text),
     useShortcut: (accelerator) => ipcRenderer.invoke("setup:use-shortcut", accelerator),
+    reachForShortcut: () => ipcRenderer.send("setup:reach-for-shortcut"),
     typeThought: (words) => ipcRenderer.invoke("setup:type-thought", words),
     cancelFiling: () => ipcRenderer.send("setup:cancel-filing"),
     fileAgain: () => ipcRenderer.send("setup:file-again"),

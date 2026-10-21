@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ALTERNATIVES, freeAlternatives, keyCaps, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "../src/main/shortcuts.ts";
+import { ALTERNATIVES, freeAlternatives, keyCaps, likelyHolder, prettyAccelerator, reachKey, registerShortcuts, type ShortcutApi } from "../src/main/shortcuts.ts";
 import { DEFAULT_SETTINGS } from "../src/main/store.ts";
 
 const handlers = () => ({ dictate: vi.fn(), capture: vi.fn(), type: vi.fn(), ask: vi.fn() });
@@ -86,6 +86,16 @@ describe("global shortcuts", () => {
     expect(keyCaps("Alt+Space")).toEqual(["⌥", "Space"]);
     expect(keyCaps("Control+Shift+Space")).toEqual(["⌃", "⇧", "Space"]);
     expect(keyCaps("Command+Alt+K")).toEqual(["⌥", "⌘", "K"]); // written in another order, drawn in macOS's
+  });
+
+  it("reachKey is the shortcut's first modifier, as a keydown names it", () => {
+    expect(reachKey("Alt+Space")).toBe("Alt");
+    expect(reachKey("Option+Space")).toBe("Alt");
+    expect(reachKey("Control+Shift+Space")).toBe("Control");
+    expect(reachKey("Shift+Control+Space")).toBe("Control"); // written in another order, reached for in macOS's
+    expect(reachKey("CommandOrControl+Shift+K")).toBe("Shift");
+    expect(reachKey("Command+K")).toBe("Meta");
+    expect(reachKey("F13")).toBeNull();
   });
 });
 

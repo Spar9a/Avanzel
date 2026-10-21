@@ -1,7 +1,9 @@
 // Step 2, Here's what I found: the library's place, and the installed agents with what reading their sign-in found.
-// Setup chooses the best one, or a library's own while it works. Use {agent} picks another, and asks it its one short
-// question when nothing has said yet whether it works. A chosen agent that doesn't work says how to fix it, and with
-// no agent at all, Found says how to install one and setup notices when it arrives. Change… picks another place.
+// Setup chooses the best one, or a library's own while it works; with none that works, the one whose problem the person
+// can fix, so its Notice says how at once. Use {agent} picks another, and asks it its one short question when nothing
+// has said yet whether it works. A chosen agent that doesn't work says how to fix it, and a sign-in done in Terminal
+// shows once the window has the focus again. With no agent at all, Found says how to install one and setup notices
+// when it arrives. Change… picks another place.
 // Looks good (Use this folder, when the folder holds files or a library already) makes the library there with the
 // chosen agent. Zel waits on the stage.
 import { Actions, Button, Group, GroupRow, Icon, Notice, Row, Stack, Text, Zel } from "@avanzel/ui";
@@ -167,6 +169,9 @@ export function Found({ snap, go }: StepProps) {
                     busy={checkingAgain}
                     onClick={idle(() => {
                       setRechecking(trouble);
+                      // An agent setup chose for its problem becomes the person's pick, so it stays chosen while its
+                      // check runs again, rather than giving way to the next agent with a problem.
+                      void api.chooseAgent(trouble.agent.name);
                       void window.avanzel.settings.checkAgent(trouble.agent.name);
                     })}
                   >

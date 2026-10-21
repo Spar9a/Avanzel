@@ -60,8 +60,9 @@ Good to know:
   shortcuts to pick; Settings → Voice offers the same, and the menu bar menu stops showing the
   taken one. macOS can't always tell, so if ⌥Space opens another app, pick another shortcut in
   Settings → Voice.
-- **Setup** checks that ⌥Space really reaches Avanzel. When another app holds it, or no press
-  arrives within 3 s, it names the likely app and offers two free shortcuts.
+- **Setup** checks that ⌥Space really reaches Avanzel. When another app holds it, or you reach
+  for it in the setup window (⌥ goes down) and no press follows within 3 s, it names the likely
+  app and offers two free shortcuts. Reading, thinking or typing there never brings that up.
 - **Edit** works for as long as your agent is filing: it stops the agent at once. When you file
   the corrected words (or cancel), whatever that run already changed is undone first, then the note
   is filed again. An edit survives quitting and a new dictation (your words wait in the inbox), and

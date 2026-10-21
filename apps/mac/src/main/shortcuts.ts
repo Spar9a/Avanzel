@@ -37,6 +37,19 @@ export function prettyAccelerator(accelerator: string): string {
   return keyCaps(accelerator).join("");
 }
 
+/** Each modifier as a keydown names it (KeyboardEvent.key). */
+const MODIFIER_KEY: Record<(typeof ORDER)[number], string> = { Control: "Control", Alt: "Alt", Shift: "Shift", Command: "Meta" };
+
+/**
+ * The key that goes down as a person reaches for `accelerator`, as a keydown names it (KeyboardEvent.key): its first
+ * modifier in the order macOS menus use, "Alt" for Alt+Space. Null for a shortcut without a modifier.
+ */
+export function reachKey(accelerator: string): string | null {
+  const mods = new Set(accelerator.split("+").slice(0, -1).map((p) => ALIASES[p.toLowerCase()]).filter(Boolean));
+  const first = ORDER.find((m) => mods.has(m));
+  return first ? MODIFIER_KEY[first] : null;
+}
+
 /**
  * The shortcuts offered in place of one another app holds, best first. None is one of macOS's own: they keep clear of
  * ⌃Space and ⌃⌥Space (input sources), ⌘Space and ⌥⌘Space (Spotlight), ⌃⌘Space (emoji and symbols) and ⌥⌘D (the Dock).

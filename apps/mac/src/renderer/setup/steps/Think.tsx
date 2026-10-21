@@ -1,8 +1,9 @@
 // Step 3, What's on your mind this week?: the first thought. Here setup tests the shortcut with a real press. The stage
 // draws it as keycaps, which press themselves twice as a hint each time the step opens: the step's one orchestrated
 // moment, which Reduce Motion leaves out, the keycaps up from the start. A press says the shortcut is free. One another
-// app holds is named at once, and with no press within the wait the step asks whether it did nothing; both offer free
-// ones to use instead, or Settings → Voice when none is free.
+// app holds is named at once. When the person reaches for the shortcut (its first modifier goes down) and no press
+// follows within the wait, the step asks whether it did nothing; both offer free ones to use instead, or Settings →
+// Voice when none is free.
 // A press also records the thought with the real capsule. When macOS hasn't asked about the microphone yet, the
 // microphone's primer comes first, and a microphone turned down says where to allow it. Zel listens on the stage while
 // the capsule records; once the words exist, a mic check ("Testing, testing") gets a warm answer, and anything else moves
@@ -10,7 +11,7 @@
 // box for the thought, and File it hands the words to setup, which moves on to filing them.
 import { Actions, Button, Card, Kbd, Notice, PermissionPrimer, Row, Spinner, Stack, Text, TextArea, Zel, type ZelMood } from "@avanzel/ui";
 import { useEffect, useState, type ReactNode } from "react";
-import { keyCaps, prettyAccelerator, takenMessage } from "../../../main/shortcuts.ts";
+import { keyCaps, prettyAccelerator, reachKey, takenMessage } from "../../../main/shortcuts.ts";
 import type { SetupPress, SetupThought } from "../../../shared/ipc.ts";
 import { earsLine, transcribingLine } from "../copy.ts";
 import { Frame, useNow, type StepProps } from "../frame.tsx";
@@ -50,6 +51,19 @@ export function Think({ snap, go }: StepProps) {
   const [words, setWords] = useState("");
   const [sending, setSending] = useState(false);
   const { press, thought } = snap;
+  // The press test waits for a press only once the person reaches for the shortcut: its first modifier goes down in the
+  // window. Not in the box for a typed thought, where ⌥ types a character.
+  const reach = reachKey(snap.shortcut);
+  useEffect(() => {
+    if (!reach) return;
+    const onKey = (event: KeyboardEvent) => {
+      const { target } = event;
+      if (event.key !== reach || event.repeat || target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) return;
+      api.reachForShortcut();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [reach]);
   // The odd beats are down. Once a press is heard the hint has done its work, and the keycaps stay up.
   const pressed = !still && !press.heard && beat % 2 === 1;
   const shortcut = prettyAccelerator(snap.shortcut);
