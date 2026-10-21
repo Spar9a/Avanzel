@@ -55,9 +55,9 @@ Good to know:
 - **Esc** cancels a dictation from any app while Avanzel is listening (it is a global shortcut
   for that moment only), and the recording is dropped.
 - **A shortcut another app holds** does nothing when pressed (⌥ Space is also the default of
-  Alfred, Raycast, ChatGPT and Superwhisper). The capsule names it at launch, with the app that
-  probably holds it and two free shortcuts to pick; Settings → Voice offers the same, and the menu
-  bar menu stops showing the taken one.
+  Alfred, Raycast, ChatGPT and Superwhisper). Once there is a library, the capsule names it at
+  launch, with the app that probably holds it and two free shortcuts to pick; Settings → Voice
+  offers the same, and the menu bar menu stops showing the taken one.
 - **Edit** works for as long as your agent is filing: it stops the agent at once. When you file
   the corrected words (or cancel), whatever that run already changed is undone first, then the note
   is filed again. An edit survives quitting and a new dictation (your words wait in the inbox), and

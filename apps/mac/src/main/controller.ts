@@ -243,9 +243,11 @@ export class Controller {
     if (envLibrary) this.store.update({ libraryPath: envLibrary });
     this.openLibrary(this.store.get().libraryPath);
     await this.applyShortcuts();
-    // A shortcut another app holds does nothing when pressed: the capsule says so at once, with free ones to pick.
+    // A shortcut another app holds does nothing when pressed: the capsule says so at once, with free ones to pick. Not
+    // without a library, whose menu has no Record a thought yet (Settings opens below, and its Voice pane offers the
+    // free ones), and never over what the capsule already shows, such as a shortcut pressed while ps ran.
     const [taken] = this.takenShortcuts;
-    if (taken) this.setCapsule(taken);
+    if (taken && this.vault && this.capsuleState.kind === "hidden") this.setCapsule(taken);
     await this.refreshModelStatus();
     // With a library the speech models download unasked; without one, Settings → Voice offers them.
     if (this.vault && this.model.kind === "missing") void this.downloadModel();
