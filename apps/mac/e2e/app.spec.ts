@@ -235,6 +235,16 @@ test("asking shows the agent's answer", async () => {
   await app.close();
 });
 
+test("a failed answer names the agent that couldn't answer, and a question that can't be asked says only why", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_MODE: "fail" });
+  // The agent ran and failed: its last lines, under the name of the agent whose run it was.
+  expect(await call(app, "ask", "What are my goals?")).toMatchObject({ ok: false, answer: "fake couldn't answer:\nagent crashed: not logged in", agent: "fake" });
+  // Nothing ran: the engine refused the question, and its message comes back as it is.
+  expect(await call(app, "ask", "   ")).toMatchObject({ ok: false, answer: 'Ask a question, e.g. "what are my goals this year?"', agent: "fake" });
+  await app.close();
+});
+
 test("asking while a note is being filed says it is waiting, then answers", async () => {
   const library = await makeLibrary();
   writeFileSync(path.join(library, "goals", "run.md"), "# Run a marathon\n");

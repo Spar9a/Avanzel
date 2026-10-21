@@ -293,6 +293,21 @@ export type SetupFiling =
       signedOut: boolean;
     };
 
+/** A question on the Ask step, from the moment it is asked. */
+export type SetupAnswer =
+  /** The library's agent is answering it; `startedAt` is Date.now() when it began, or when its wait for the library ended. */
+  | {
+      kind: "asking";
+      question: string;
+      startedAt: number;
+      /** Another run (the filing in progress, say) has the library. */
+      waiting: boolean;
+    }
+  /** The answer's lines (answerSources), and the pages its [[links]] name that are in the library. */
+  | { kind: "answered"; question: string; paragraphs: string[]; sources: FiledPage[] }
+  /** The agent couldn't answer: `line` says why (errorLine). */
+  | { kind: "failed"; question: string; agent: string; line: string };
+
 /** Everything the setup window shows, in one snapshot (setup:changed). Later tasks add fields. */
 export interface SetupSnapshot {
   /** Where Looks good makes or uses the library: the stored libraryPath, else ~/Avanzel, until Change… picks another. */
@@ -337,6 +352,13 @@ export interface SetupSnapshot {
   hears: boolean;
   /** A page opens in Obsidian: it is installed, and the library is a vault of its (obsidianUrl). */
   opensInObsidian: boolean;
+  /**
+   * The question the Ask step suggests about the first filing's pages (suggestQuestion), while they stand: null before
+   * the filing is filed, once an undo of it has begun, and when it wrote no page.
+   */
+  suggestion: string | null;
+  /** The question on the Ask step and how it went; null until one is asked, and again after Skip. */
+  answer: SetupAnswer | null;
 }
 
 export interface AskResult {
@@ -453,5 +475,12 @@ export interface AvanzelBridge {
     tryAgain(): void;
     /** File it anyway, on a mic check's answer: its note is filed as the first thought; setup:changed follows. */
     fileAnyway(): void;
+    /**
+     * The suggestion, or Return in Ask your library, on the Ask step: the library's agent answers `question`, read-only,
+     * one question at a time. setup:changed follows as it goes; it resolves once the answer, or the failure, is in.
+     */
+    ask(question: string): Promise<SetupSnapshot>;
+    /** Skip, on the Ask step: the question being answered is given up, and the answer cleared. */
+    skipAsk(): void;
   };
 }

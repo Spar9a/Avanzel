@@ -1586,3 +1586,173 @@ test("in a library Obsidian has opened as a vault, the new page opens in Obsidia
   expect(realpathSync(decodeURIComponent(url.slice("obsidian://open?path=".length)))).toBe(realpathSync(path.join(library, "ideas", page)));
   await app.close();
 });
+
+// Ask me about it: a question about the new pages, answered from the library only, with the pages the answer used. The
+// stand-in Claude Code runs the engine's fake agent, which answers "Q: <the question>" and then lists the library's
+// pages; a [[link]] in the question comes back in its answer, as an agent cites a page.
+
+/** The question setup suggests once "Plant tulips in October" is filed as an idea. */
+const SUGGESTED = "What did I say about Plant tulips in October?";
+
+/** A first run launched with `env`, where "Plant tulips in October" is typed and filed, then Continue pressed: on Ask. */
+async function onAsk(env: Record<string, string>): Promise<{ app: ElectronApplication; setup: Page }> {
+  const { app, setup } = await filedFirstThought(env);
+  await setup.getByRole("button", { name: "Continue" }).click();
+  await expect(setup.getByRole("heading", { name: "Ask me about it." })).toBeVisible();
+  return { app, setup };
+}
+
+/** A `claude` that files as filingClaude's does, but fails every question: it prints `line` on stderr and exits 1. */
+const failingAnswers = (line: string) => `case "$2" in "Avanzel task: ask"*) echo '${line}' >&2; exit 1;; esac\n${filingClaude()}`;
+
+/** How many questions the stand-in Claude Code has been asked. */
+const questionsAsked = async (app: ElectronApplication) => (await callsTo(app, "claude")).filter((line) => line.startsWith("claude -p Avanzel task: ask")).length;
+
+test("Ask suggests a question about the new page and answers it", async () => {
+  const { app, setup } = await filedFirstThought(firstRun({ claude: filingClaude() }).env);
+  // Only the Ask step asks: a question sent while Filing shows asks nothing.
+  await call(app, "askInSetup", SUGGESTED);
+  expect((await setupSnap(app)).answer).toBeNull();
+  await setup.getByRole("button", { name: "Continue" }).click();
+  await expect(setup.getByRole("heading", { name: "Ask me about it." })).toBeVisible();
+  await expect(setup.getByText("I answer from your library only, and show you the pages I used.", { exact: true })).toBeVisible();
+  // The suggestion is on the stage's card, and a secondary button asks it. Before an answer, Skip is the quiet way on,
+  // nothing is primary, and there is no Back.
+  await expect(setup.getByRole("article")).toContainText(SUGGESTED);
+  const suggestion = setup.getByRole("button", { name: SUGGESTED });
+  await expect(suggestion).toHaveAttribute("data-variant", "secondary");
+  await expect(setup.getByRole("button", { name: "Skip" })).toHaveAttribute("data-variant", "quiet");
+  await expect(setup.locator('button[data-variant="primary"]')).toHaveCount(0);
+  await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
+  const field = setup.getByRole("textbox", { name: "Ask your library" });
+  await field.fill("And the bulbs");
+  await suggestion.click();
+  // The suggestion goes while it is answered, and the focus it had goes to Ask your library, not to nowhere. What the
+  // person was typing there stays.
+  await expect(field).toBeFocused();
+  await expect(field).toHaveValue("And the bulbs");
+  await expect(setup.getByText(`Q: ${SUGGESTED}`, { exact: true })).toBeVisible({ timeout: 30_000 });
+  // Answered: the question over its answer, Zel at rest, and Continue the one primary, where Skip was.
+  await expect(setup.getByRole("main").getByText(SUGGESTED, { exact: true })).toBeVisible();
+  await expect(zel(setup)).toHaveAttribute("data-mood", "idle");
+  await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Continue"]);
+  await expect(setup.getByRole("button", { name: "Skip" })).toHaveCount(0);
+  await setup.getByRole("button", { name: "Continue" }).click();
+  await expect.poll(() => call(app, "setupStepForTests")).toBe("done");
+  await app.close();
+});
+
+test("an answer's links become the pages it used", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await onAsk(env);
+  const library = path.join(home, "Avanzel");
+  const name = (filesUnder(library, "ideas")[0] ?? "").replace(/\.md$/, "");
+  const field = setup.getByRole("textbox", { name: "Ask your library" });
+  await expect(field).toHaveAttribute("placeholder", "Ask your library…");
+  await field.fill(`What is in [[${name}]]?`);
+  await field.press("Enter");
+  await expect(field).toHaveValue(""); // asked: the box is ready for the next one
+  await expect(setup.getByText("Pages I used:", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(setup.getByText("Ideas", { exact: true })).toBeVisible(); // the page's shelf
+  const source = setup.getByRole("button", { name: "Plant tulips in October", exact: true });
+  await expect(source).toHaveAttribute("data-variant", "link");
+  // In the answer the link reads as the words it gives; its page's title opens it.
+  await expect(setup.getByText(`Q: What is in ${name}?`, { exact: true })).toBeVisible();
+  await stubOpening(app);
+  await source.click();
+  await expect.poll(() => openedWith(app)).toHaveLength(1);
+  expect(realpathSync((await openedWith(app))[0] ?? "")).toBe(realpathSync(path.join(library, "ideas", `${name}.md`)));
+  await app.close();
+});
+
+test("a slow answer shows the time and can be skipped", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await onAsk({ ...env, FAKE_AGENT_DELAY_MS: "20000", FAKE_AGENT_DELAY_TASK: "ask" });
+  // Another run has the library at first (this test holds its lock): the question says it waits, then looks.
+  let letGo = () => {};
+  let released = 0;
+  const held = new Vault(path.join(home, "Avanzel")).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
+  try {
+    await setup.getByRole("button", { name: SUGGESTED }).click();
+    await expect(setup.getByText("Waiting for the filing in progress to finish…", { exact: true })).toBeVisible({ timeout: 30_000 });
+  } finally {
+    released = Date.now();
+    letGo();
+    await held;
+  }
+  await expect(setup.getByText(/^Looking through your library: \d+ s$/)).toBeVisible({ timeout: 30_000 });
+  // Its seconds count from when the agent starts to look, not from the wait.
+  const asking = (await setupSnap(app)).answer;
+  expect(asking?.kind === "asking" && !asking.waiting && asking.startedAt >= released).toBe(true);
+  await expect(setup.getByText(/^Looking through your library: [1-9]\d* s$/)).toBeVisible({ timeout: 10_000 }); // it counts
+  await expect(setup.getByRole("article")).toContainText(SUGGESTED); // the question asked, on the card
+  await expect(zel(setup)).toHaveAttribute("data-mood", "thinking");
+  await setup.getByRole("button", { name: "Skip" }).click();
+  await expect.poll(() => call(app, "setupStepForTests")).toBe("done");
+  // Its agent stops, so nothing is left running, and what the stopped run said is dropped.
+  await expect.poll(() => call(app, "busy"), { timeout: 10_000 }).toBe(false);
+  expect((await setupSnap(app)).answer).toBeNull();
+  await app.close();
+});
+
+test("an answer that fails says why, and the suggestion asks again", async () => {
+  const { app, setup } = await onAsk(firstRun({ claude: failingAnswers("Error: usage limit reached") }).env);
+  await setup.getByRole("button", { name: SUGGESTED }).click();
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code couldn't answer.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(notice.getByText("Usage limit reached.", { exact: true })).toBeVisible();
+  // There is no answer: Skip stays the way on, and Continue doesn't show.
+  await expect(setup.getByRole("button", { name: "Skip" })).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Continue" })).toHaveCount(0);
+  await expect(zel(setup)).toHaveAttribute("data-mood", "idle");
+  expect(await questionsAsked(app)).toBe(1);
+  await setup.getByRole("button", { name: SUGGESTED }).click();
+  await expect.poll(() => questionsAsked(app), { timeout: 30_000 }).toBe(2);
+  await expect(notice.getByText("Claude Code couldn't answer.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await app.close();
+});
+
+test("an Undo that lands once Ask shows takes the suggestion with it, and says so", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await filedFirstThought(env);
+  const library = path.join(home, "Avanzel");
+  // The undo waits for the library at first (this test holds its lock), so Ask shows while it runs.
+  let letGo = () => {};
+  const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
+  try {
+    // Undo, then Continue before the window hears the undo has begun: both clicks in one turn of the page's event loop.
+    await setup.evaluate(() => {
+      const button = (name: string) => [...document.querySelectorAll("button")].find((b) => b.textContent === name);
+      button("Undo")?.click();
+      button("Continue")?.click();
+    });
+    await expect(setup.getByRole("heading", { name: "Ask me about it." })).toBeVisible();
+    await expect.poll(() => call(app, "setupStepForTests")).toBe("ask");
+    // While the undo runs, the page is on its way out: nothing suggests a question about it.
+    await expect.poll(async () => (await setupSnap(app)).filing).toMatchObject({ kind: "filed", undoing: true });
+    await expect(setup.getByRole("button", { name: SUGGESTED })).toHaveCount(0);
+  } finally {
+    letGo();
+    await held;
+  }
+  await expect.poll(async () => (await setupSnap(app)).filing?.kind, { timeout: 30_000 }).toBe("undone");
+  // The page has gone, so nothing asks about it, on the card or as a button; the step says what happened instead.
+  await expect(setup.getByText("Everything is back as it was, and your words are in the inbox.", { exact: true })).toBeVisible();
+  await expect(setup.getByRole("button", { name: SUGGESTED })).toHaveCount(0);
+  await expect(setup.getByRole("article")).not.toContainText(SUGGESTED);
+  expect((await setupSnap(app)).suggestion).toBeNull();
+  expect(inbox(library)).toHaveLength(1);
+  await setup.getByRole("button", { name: "Skip" }).click();
+  await expect.poll(() => call(app, "setupStepForTests")).toBe("done");
+  await app.close();
+});
+
+test("closing setup while a question is answered stops its agent", async () => {
+  const { env } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await onAsk({ ...env, FAKE_AGENT_DELAY_MS: "20000", FAKE_AGENT_DELAY_TASK: "ask" });
+  await setup.getByRole("button", { name: SUGGESTED }).click();
+  await expect(setup.getByText(/^Looking through your library: \d+ s$/)).toBeVisible({ timeout: 30_000 });
+  await closeSetup(app);
+  await expect.poll(() => call(app, "busy"), { timeout: 10_000 }).toBe(false);
+  await app.close();
+});

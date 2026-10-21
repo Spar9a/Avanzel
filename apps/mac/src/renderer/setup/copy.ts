@@ -102,6 +102,11 @@ export function workingLine(agent: string, seconds: number): string {
   return whole < ESTIMATE_SECONDS ? `${agent} is working: ${whole} s of about ${ESTIMATE_SECONDS}` : `${agent} is working: ${whole} s`;
 }
 
+/** The line while the Ask step's question is answered: the agent's whole seconds so far. */
+export function askingLine(seconds: number): string {
+  return `Looking through your library: ${Math.max(0, Math.floor(seconds))} s`;
+}
+
 /** The heading once the thought is filed, in whole seconds, and never "0 s". */
 export function filedHeading(agent: string, seconds: number): string {
   return `All filed. ${agent} took ${Math.max(1, Math.round(seconds))} s.`;
@@ -144,7 +149,8 @@ export function othersLine(count: number): string | null {
   return count ? `${counted(count, "more")} in other folders.` : null;
 }
 
-const isShelf = (shelf: string): shelf is Shelf => (SHELVES as readonly string[]).includes(shelf);
+/** Whether a page's folder is one of the six shelves, which a ShelfTag can show. */
+export const isShelf = (shelf: string): shelf is Shelf => (SHELVES as readonly string[]).includes(shelf);
 
 /** A filing's pages as its receipt lists them: those on the six shelves, in order, and how many others it wrote. */
 export function receiptPages(pages: readonly FiledPage[]): { pages: ReceiptPage[]; others: number } {

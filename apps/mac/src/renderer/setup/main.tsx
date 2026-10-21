@@ -4,6 +4,7 @@ import "@avanzel/ui/base.css";
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AvanzelBridge, SetupSnapshot, SetupStep } from "../../shared/ipc.ts";
+import { Ask } from "./steps/Ask.tsx";
 import { Filing } from "./steps/Filing.tsx";
 import { Found } from "./steps/Found.tsx";
 import { Hello } from "./steps/Hello.tsx";
@@ -42,6 +43,8 @@ function Setup() {
       return <Think snap={snap} go={go} />;
     case "filing":
       return <Filing snap={snap} go={go} />;
+    case "ask":
+      return <Ask snap={snap} go={go} />;
     default:
       return null; // a step whose change hasn't come yet
   }

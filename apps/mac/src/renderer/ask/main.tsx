@@ -3,6 +3,7 @@ import { marked } from "marked";
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AskResult, AvanzelBridge } from "../../shared/ipc.ts";
+import { WIKILINK } from "../../shared/wikilinks.ts";
 import "../common/mac.css";
 import "./styles.css";
 
@@ -17,7 +18,7 @@ interface Turn {
 
 /** Markdown answer → safe HTML, with [[page]] wikilinks turned into clickable links. */
 function render(answer: string): string {
-  const linked = answer.replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (_m, name: string, label?: string) =>
+  const linked = answer.replace(WIKILINK, (_m, name: string, label?: string) =>
     `<a href="#" data-page="${name.trim().replace(/"/g, "&quot;")}">${(label ?? name).trim()}</a>`);
   return DOMPurify.sanitize(marked.parse(linked, { async: false }) as string, { ADD_ATTR: ["data-page"] });
 }

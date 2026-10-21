@@ -60,6 +60,7 @@ export function registerIpc(controller: Controller): void {
   handle("setup:choose-folder", () => controller.chooseSetupFolder());
   handle("setup:use-shortcut", (_e, accelerator: string) => controller.useSetupShortcut(accelerator));
   handle("setup:type-thought", (_e, words: string) => controller.typeSetupThought(words));
+  handle("setup:ask", (_e, question: string) => controller.askInSetup(question));
   on("setup:open-terminal", () => controller.openTerminal());
   on("setup:copy", (_e, text: string) => controller.copyText(text));
   on("setup:cancel-filing", () => controller.cancelSetupFiling());
@@ -68,4 +69,5 @@ export function registerIpc(controller: Controller): void {
   on("setup:allow-microphone", () => void controller.allowMicrophone());
   on("setup:try-again", () => controller.retrySetupThought());
   on("setup:file-anyway", () => controller.fileSetupAnyway());
+  on("setup:skip-ask", () => controller.skipSetupAsk());
 }

@@ -1,8 +1,10 @@
 // What the setup window decides from plain data: names for places, what is at the library's place, the agent that
-// files, and a mic check told from a thought. No Electron, so the tests run them as they are.
+// files, a mic check told from a thought, the question to suggest and the pages an answer used. No Electron, so the
+// tests run them as they are.
 import { existsSync, opendirSync, statSync } from "node:fs";
 import { loadSettings, Vault } from "@avanzel/engine";
-import { agentWorks, type LibraryFolder, type SetupAgent } from "../shared/ipc.ts";
+import { agentWorks, type FiledPage, type LibraryFolder, type SetupAgent } from "../shared/ipc.ts";
+import { WIKILINK } from "../shared/wikilinks.ts";
 
 /** `target` with the home folder as "~": only the folder itself, so /Users/ab stays as it is when home is /Users/a. */
 export function tildePath(target: string, home: string): string {
@@ -60,6 +62,36 @@ const MIC_CHECK: ReadonlySet<string> = new Set([
 export function looksLikeATest(words: string): boolean {
   const list = words.toLowerCase().split(/\s+/).map((word) => word.replace(/[^\p{L}\p{N}]/gu, "")).filter(Boolean);
   return list.length >= 1 && list.length <= 8 && list.every((word) => MIC_CHECK.has(word));
+}
+
+/**
+ * The question the Ask step suggests about the pages the first filing wrote: about the first person among them, else
+ * about the first page, wherever it is; none without a page.
+ */
+export function suggestQuestion(pages: readonly FiledPage[]): string | null {
+  const person = pages.find((page) => page.shelf === "people");
+  if (person) return `What am I doing with ${person.title}?`;
+  const first = pages[0];
+  return first ? `What did I say about ${first.title}?` : null;
+}
+
+/**
+ * An agent's answer as the Ask step shows it: its lines with something in them, trimmed, each [[link]] read as its
+ * label or else its page's name, and without Markdown's heading marks and bold; and the names of the pages it links,
+ * in order and each once.
+ */
+export function answerSources(answer: string): { paragraphs: string[]; names: string[] } {
+  const names: string[] = [];
+  const words = answer.replace(WIKILINK, (_link, name: string, label?: string) => {
+    const page = name.trim();
+    if (!names.includes(page)) names.push(page);
+    return (label ?? name).trim();
+  });
+  const paragraphs = words
+    .split("\n")
+    .map((line) => line.trim().replace(/^#+/, "").replaceAll("**", "").trim())
+    .filter(Boolean);
+  return { paragraphs, names };
 }
 
 /** Whether `folder` holds nothing but .DS_Store. It reads no further than the first other entry: setup asks often. */

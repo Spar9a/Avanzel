@@ -73,6 +73,8 @@ const bridge: AvanzelBridge = {
     allowMicrophone: () => ipcRenderer.send("setup:allow-microphone"),
     tryAgain: () => ipcRenderer.send("setup:try-again"),
     fileAnyway: () => ipcRenderer.send("setup:file-anyway"),
+    ask: (question) => ipcRenderer.invoke("setup:ask", question),
+    skipAsk: () => ipcRenderer.send("setup:skip-ask"),
   },
 };
 

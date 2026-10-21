@@ -69,6 +69,7 @@ import type {
   SettingsPane,
   SettingsSnapshot,
   SetupAgent,
+  SetupAnswer,
   SetupFiling,
   SetupPress,
   SetupSnapshot,
@@ -85,7 +86,7 @@ import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
-import { bestAgent, libraryAgent, libraryFolder, looksLikeATest, tildePath } from "./setup-model.ts";
+import { answerSources, bestAgent, libraryAgent, libraryFolder, looksLikeATest, suggestQuestion, tildePath } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { NoticedShortcuts, SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
@@ -214,6 +215,10 @@ interface SetupSession {
   testCapture: string | null;
   /** macOS is being asked about the microphone (`allowMicrophone`), which happens once at a time. */
   askingMicrophone: boolean;
+  /** The question on the Ask step and how it went; null until one is asked, and again after Skip. */
+  answer: SetupAnswer | null;
+  /** Stops the question being answered (Skip, or the window closing); null while none is. */
+  askAbort: AbortController | null;
 }
 
 /** Words filed after Edit, on their way to the inbox: only in memory until the refile's `recapture` writes them. */
@@ -1381,8 +1386,6 @@ export class Controller {
   }
 
   async ask(question: string): Promise<AskResult> {
-    const agent = this.agentName();
-    const started = performance.now();
     const win = this.askWindow; // the window that asked, even once another one opens
     // The engine's messages go to the Ask window as they are, except its waiting one: that names no run, and here it is usually a filing.
     const progress = (message: string) => {
@@ -1395,15 +1398,36 @@ export class Controller {
     if (win?.isDestroyed()) giveUp();
     else win?.once("closed", giveUp);
     try {
-      const outcome = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal, progress }), abort);
-      const seconds = (performance.now() - started) / 1000;
-      return outcome.result.ok
-        ? { ok: true, answer: outcome.result.output, agent, seconds }
-        : { ok: false, answer: `${agent} couldn't answer:\n${lastLines(outcome.result.stderr || outcome.result.output)}`, agent, seconds };
-    } catch (error) {
-      return { ok: false, answer: errorMessage(error), agent, seconds: (performance.now() - started) / 1000 };
+      const { ok, ran, text, agent, seconds } = await this.answerQuestion(question, abort, progress);
+      // A run that failed says whose it was; a message thrown before any run comes back as it is.
+      return { ok, answer: ran && !ok ? `${agent} couldn't answer:\n${text}` : text, agent, seconds };
     } finally {
       if (win && !win.isDestroyed()) win.removeListener("closed", giveUp);
+    }
+  }
+
+  /**
+   * One question, answered from the library by its agent, read-only, for the Ask window and for setup's Ask step:
+   * `abort` stops the run, and `progress` hears the engine's messages. `ran` says whether the agent's run came to its
+   * end: true for an answer, whose `text` is the agent's reply, and for a run that failed, whose `text` is the agent's
+   * last lines; false when something threw instead (no library, a question the engine refuses), whose `text` is the
+   * error's message.
+   */
+  private async answerQuestion(
+    question: string,
+    abort: AbortController,
+    progress: (message: string) => void,
+  ): Promise<{ ok: boolean; ran: boolean; text: string; agent: string; seconds: number }> {
+    const agent = this.agentName();
+    const started = performance.now();
+    const seconds = () => (performance.now() - started) / 1000;
+    try {
+      const { result } = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal, progress }), abort);
+      return result.ok
+        ? { ok: true, ran: true, text: result.output, agent, seconds: seconds() }
+        : { ok: false, ran: true, text: lastLines(result.stderr || result.output), agent, seconds: seconds() };
+    } catch (error) {
+      return { ok: false, ran: false, text: errorMessage(error), agent, seconds: seconds() };
     }
   }
 
@@ -1673,19 +1697,23 @@ export class Controller {
       thought: { kind: "waiting" },
       testCapture: null,
       askingMicrophone: false,
+      answer: null,
+      askAbort: null,
     };
   }
 
   /**
    * The setup window closed: its session ends with it, stops looking for agents, and stops waiting for a press, so the
-   * wait can't end against a closed window. A filing it started goes on, and says how it went by notification
-   * (`runFiling`). A newer window's session is its own.
+   * wait can't end against a closed window. A question it was answering is given up: its agent stops, and the library
+   * is free. A filing it started goes on, and says how it went by notification (`runFiling`). A newer window's session
+   * is its own.
    */
   private endSetup(win: BrowserWindow): void {
     const session = this.setup;
     if (session?.window !== win) return;
     this.stopPolling(session);
     this.stopPressTest(session);
+    session.askAbort?.abort();
     this.setup = null;
   }
 
@@ -1702,6 +1730,9 @@ export class Controller {
     const libraryPath = this.setup?.libraryPath ?? this.setupLibraryPath();
     const folder = libraryFolder(libraryPath);
     const agents = this.setupAgents();
+    // Ask suggests a question only about pages that stand: not once an undo of the filing has begun, nor after it.
+    const filing = this.setup?.filing;
+    const standing = filing?.kind === "filed" && !filing.undoing ? filing.pages : [];
     return {
       libraryPath,
       libraryLabel: tildePath(libraryPath, homedir()),
@@ -1714,11 +1745,13 @@ export class Controller {
       agent: this.setup?.picked ?? bestAgent(agents, folder === "library" ? libraryAgent(libraryPath) : null),
       makeProblem: this.setup?.makeProblem ?? null,
       press: this.setupPressState(),
-      filing: this.setup?.filing ?? null,
+      filing: filing ?? null,
       typeProblem: this.setup?.typeProblem ?? null,
       thought: this.setup?.thought ?? { kind: "waiting" },
       hears: this.hears(),
       opensInObsidian: !!this.vault && obsidianUrl(this.vault.root, "") !== null && this.obsidianInstalled(),
+      suggestion: suggestQuestion(standing),
+      answer: this.setup?.answer ?? null,
     };
   }
 
@@ -2224,6 +2257,70 @@ export class Controller {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The suggestion, or Return in Ask your library, on the Ask step: the library's agent answers `question` as the Ask
+   * window's does (`answerQuestion`), one question at a time. While it waits for the library, the step says so; its
+   * seconds count from when the agent starts to look. Then the answer and the pages its [[links]] name, or the line that
+   * says why it failed. A result that comes after Skip, or after the window has closed, is dropped. Only the Ask step
+   * asks.
+   */
+  async askInSetup(question: string): Promise<SetupSnapshot> {
+    const session = this.setup;
+    const asked = question.trim();
+    if (session?.step !== "ask" || !asked || session.askAbort) return this.setupSnapshot();
+    const abort = new AbortController();
+    session.askAbort = abort;
+    session.answer = { kind: "asking", question: asked, startedAt: Date.now(), waiting: false };
+    this.broadcast();
+    // Still this window's question: not skipped, and its window still open.
+    const ours = () => this.setup === session && session.askAbort === abort;
+    const progress = (message: string) => {
+      const answer = session.answer;
+      const waiting = message === WAITING;
+      if (!ours() || answer?.kind !== "asking" || answer.waiting === waiting) return;
+      session.answer = { ...answer, waiting, ...(waiting ? {} : { startedAt: Date.now() }) };
+      this.broadcast();
+    };
+    const result = await this.answerQuestion(asked, abort, progress);
+    if (!ours()) return this.setupSnapshot();
+    session.askAbort = null;
+    session.answer = result.ok
+      ? { kind: "answered", question: asked, ...this.answeredFrom(result.text) }
+      : { kind: "failed", question: asked, agent: result.agent, line: errorLine(result.text) };
+    this.broadcast();
+    return this.setupSnapshot();
+  }
+
+  /** Skip, on the Ask step: the question being answered is given up, its agent stopped, and the answer cleared. */
+  skipSetupAsk(): void {
+    const session = this.setup;
+    if (!session) return;
+    session.askAbort?.abort();
+    session.askAbort = null;
+    session.answer = null;
+    this.broadcast();
+  }
+
+  /**
+   * An answer as the Ask step shows it: its lines, and the pages its [[links]] name, each found in the library as the Ask
+   * window finds one to open. A name that finds no page is left out, and so is one whose search hits a folder it can't
+   * read, so the answer still shows.
+   */
+  private answeredFrom(text: string): { paragraphs: string[]; sources: FiledPage[] } {
+    const { paragraphs, names } = answerSources(text);
+    const root = this.vault?.root;
+    if (!root) return { paragraphs, sources: [] };
+    const sources = names.flatMap((name) => {
+      try {
+        const rel = findPage(root, name);
+        return rel ? [pageInfo(root, rel)] : [];
+      } catch {
+        return [];
+      }
+    });
+    return { paragraphs, sources };
   }
 
   // ---------------------------------------------------------------- agent checks

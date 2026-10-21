@@ -9,6 +9,7 @@
 import { Actions, Button, Card, Kbd, Notice, Receipt, Row, SHELVES, ShelfTag, Stack, Text, Zel, type ZelMood } from "@avanzel/ui";
 import { useEffect, useState, type ReactNode } from "react";
 import { NOTE_GONE, type SetupFiling } from "../../../shared/ipc.ts";
+import { pageName } from "../../../shared/wikilinks.ts";
 import { cancelledLine, failedLine, filedHeading, othersLine, pagesLine, receiptPages, stampDate, workingLine } from "../copy.ts";
 import { Frame, useNow, type StepProps } from "../frame.tsx";
 
@@ -158,9 +159,6 @@ function Outcome({ filing, where, inObsidian }: { filing: Filed; where: string; 
     </>
   );
 }
-
-/** A page's name, as a [[link]] gives it: its file name without ".md". */
-const pageName = (rel: string) => rel.slice(rel.lastIndexOf("/") + 1).replace(/\.md$/, "");
 
 /**
  * ⌘Z as macOS reads it on any keyboard: Z, or on a layout without Latin letters, the key in Z's place. Another modifier

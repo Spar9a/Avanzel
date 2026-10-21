@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentLine,
   agentProblemTitle,
+  askingLine,
   cancelledLine,
   cardDate,
   earsLine,
@@ -98,6 +99,13 @@ describe("setup copy", () => {
     expect(othersLine(1)).toBe("1 more page in other folders.");
     expect(othersLine(2)).toBe("2 more pages in other folders.");
     expect(othersLine(0)).toBeNull();
+  });
+
+  it("the asking line counts the agent's whole seconds, from 0", () => {
+    expect(askingLine(4.7)).toBe("Looking through your library: 4 s");
+    expect(askingLine(0)).toBe("Looking through your library: 0 s");
+    // The window's clock can read a moment before the start main stamped: never "-1 s".
+    expect(askingLine(-0.2)).toBe("Looking through your library: 0 s");
   });
 
   it("the filed heading says how long the agent took, in whole seconds", () => {
