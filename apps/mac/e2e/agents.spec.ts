@@ -1,11 +1,11 @@
 // Settings → Agents says whether each installed agent can work. The library's agent is the fake one: a custom
 // harness with no sign-in command, so its check is one short prompt, which runs only when Check is clicked. This
 // Mac's own Claude Code and Codex read their sign-in when the pane opens; nothing here depends on what they say.
-import { expect, test, type ElectronApplication } from "@playwright/test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
+import { loadSettings, saveSettings, writeWav } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import { alive, call, launch, makeLibrary, windowFor } from "./helpers.ts";
 
@@ -83,5 +83,81 @@ test("a check stopped for quitting leaves no result, and no check starts while A
   expect(harnesses.find((h) => h.name === "fake")?.status?.kind).not.toBe("failed");
   await call(app, "checkAgent", "other");
   expect(await checksRunning(app)).toBe(0);
+  await app.close();
+});
+
+// An error card's "Open Settings" opens the pane where the problem is fixed, not always General.
+const paneButton = (settings: Page, name: string) => settings.getByRole("button", { name, exact: true });
+
+test("Open Settings on a failed filing opens Settings → Agents", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), FAKE_AGENT_MODE: "fail" });
+  await call(app, "openQuick");
+  const quick = await windowFor(app, "quick");
+  const thought = quick.getByRole("textbox", { name: "Type a thought" });
+  await thought.fill("Plant tulips in October");
+  await thought.press("Enter");
+  const capsule = await windowFor(app, "capsule");
+  await expect(capsule.getByText("couldn't file this note")).toBeVisible({ timeout: 60_000 });
+  await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
+  const settings = await windowFor(app, "settings"); // a new window: it opens on the pane its address names
+  await expect(paneButton(settings, "Agents")).toHaveAttribute("aria-current", "page");
+  await app.close();
+});
+
+test("Open Settings moves a Settings window that is open to the pane, and a pane that doesn't exist means General", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  await call(app, "showSettings", "no-such-pane"); // an address that names a pane the page doesn't have
+  const settings = await windowFor(app, "settings");
+  await expect(paneButton(settings, "General")).toHaveAttribute("aria-current", "page");
+  await call(app, "openSettingsFor", "open-settings:voice");
+  await expect(paneButton(settings, "Voice")).toHaveAttribute("aria-current", "page");
+  await expect(paneButton(settings, "General")).not.toHaveAttribute("aria-current", "page");
+  await call(app, "openSettingsFor", "open-settings:no-such-pane");
+  await expect(paneButton(settings, "General")).toHaveAttribute("aria-current", "page");
+  await call(app, "openSettingsFor", "open-settings:privacy");
+  await expect(paneButton(settings, "Privacy")).toHaveAttribute("aria-current", "page");
+  await call(app, "openSettingsFor", "open-settings"); // an action that names no pane
+  await expect(paneButton(settings, "General")).toHaveAttribute("aria-current", "page");
+  await app.close();
+});
+
+test("Open Settings with no library opens Settings → General", async () => {
+  const app = await launch({}); // the first launch opens Settings by itself
+  const settings = await windowFor(app, "settings");
+  await paneButton(settings, "Voice").click();
+  await call(app, "toggleDictate");
+  const capsule = await windowFor(app, "capsule");
+  await expect(capsule.getByText("Set up your library first")).toBeVisible();
+  await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
+  await expect(paneButton(settings, "General")).toHaveAttribute("aria-current", "page");
+  await app.close();
+});
+
+/** Dictates once with `audio` standing in for the microphone, then clicks Open Settings on the error card it ends in. */
+async function openSettingsAfterDictating(audio: string, error: string | RegExp): Promise<{ app: ElectronApplication; settings: Page }> {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_AUDIO: audio, AVANZEL_FAKE_TRANSCRIPT: "unused" });
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+  const capsule = await windowFor(app, "capsule");
+  await expect(capsule.getByText(error)).toBeVisible({ timeout: 30_000 });
+  await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
+  return { app, settings: await windowFor(app, "settings") };
+}
+
+const scratchDir = () => mkdtempSync(path.join(tmpdir(), "avz-e2e-audio-"));
+
+test("Open Settings on a recording too short to hold speech opens Settings → Voice", async () => {
+  const blip = path.join(scratchDir(), "blip.wav");
+  writeWav(blip, new Float32Array(1600)); // 0.1 s: under 0.3 s Avanzel doesn't try to transcribe
+  const { app, settings } = await openSettingsAfterDictating(blip, "No speech recognized");
+  await expect(paneButton(settings, "Voice")).toHaveAttribute("aria-current", "page");
+  await app.close();
+});
+
+test("Open Settings on a recording that can't be read opens Settings → Voice", async () => {
+  const notAudio = path.join(scratchDir(), "speech.wav");
+  writeFileSync(notAudio, "this is not a recording");
+  const { app, settings } = await openSettingsAfterDictating(notAudio, /is not a PCM WAV file/);
+  await expect(paneButton(settings, "Voice")).toHaveAttribute("aria-current", "page");
   await app.close();
 });

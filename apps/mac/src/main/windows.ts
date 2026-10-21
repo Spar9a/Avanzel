@@ -2,6 +2,7 @@
 import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { SettingsPane } from "../shared/ipc.ts";
 
 const DIST = path.dirname(fileURLToPath(import.meta.url));
 const PRELOAD = path.join(DIST, "preload.js");
@@ -51,7 +52,8 @@ export function placeCapsule(win: BrowserWindow): void {
   win.setPosition(Math.round(workArea.x + (workArea.width - width) / 2), Math.round(workArea.y + workArea.height - height));
 }
 
-export function createSettingsWindow(): BrowserWindow {
+/** `pane`: the pane the page opens on, passed in its address (?pane=voice); without one it opens on General. */
+export function createSettingsWindow(pane?: SettingsPane): BrowserWindow {
   const win = new BrowserWindow({
     width: 780,
     height: 600,
@@ -66,7 +68,7 @@ export function createSettingsWindow(): BrowserWindow {
     backgroundColor: "#00000000",
     webPreferences,
   });
-  void win.loadFile(pagePath("settings"));
+  void win.loadFile(pagePath("settings"), pane ? { query: { pane } } : undefined);
   return win;
 }
 

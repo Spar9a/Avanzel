@@ -1,7 +1,7 @@
 import { Button, Row, Spinner, Text } from "@avanzel/ui";
 import { useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import type { AgentStatus, AvanzelBridge, SettingsSnapshot, Shortcuts, TaskInfo } from "../../shared/ipc.ts";
+import { SETTINGS_PANES, isSettingsPane, type AgentStatus, type AvanzelBridge, type SettingsPane, type SettingsSnapshot, type Shortcuts, type TaskInfo } from "../../shared/ipc.ts";
 import { prettyAccelerator } from "../../main/shortcuts.ts";
 import "../common/mac.css";
 import "./styles.css";
@@ -12,9 +12,13 @@ declare global {
 
 const api = window.avanzel.settings;
 
-type Pane = "general" | "voice" | "agents" | "tasks" | "tools" | "privacy";
+/** The pane the window was opened on: the one its address names (?pane=voice), if Settings has it. */
+function startingPane(): SettingsPane {
+  const pane = new URLSearchParams(location.search).get("pane");
+  return isSettingsPane(pane) ? pane : "general";
+}
 
-const ICONS: Record<Pane, { bg: string; path: ReactNode; label: string }> = {
+const ICONS: Record<SettingsPane, { bg: string; path: ReactNode; label: string }> = {
   general: { bg: "#8e8e93", label: "General", path: <><circle cx="7" cy="7" r="2.2" /><path d="M7 1.5v2M7 10.5v2M1.5 7h2M10.5 7h2M3.1 3.1l1.4 1.4M9.5 9.5l1.4 1.4M3.1 10.9l1.4-1.4M9.5 4.5l1.4-1.4" /></> },
   voice: { bg: "#ff375f", label: "Voice", path: <><rect x="5" y="1.5" width="4" height="7" rx="2" /><path d="M3 7a4 4 0 0 0 8 0M7 11v1.8" /></> },
   agents: { bg: "#5856d6", label: "Agents", path: <path d="M7 1.8 8.2 5.8 12.2 7 8.2 8.2 7 12.2 5.8 8.2 1.8 7 5.8 5.8Z" /> },
@@ -28,7 +32,7 @@ const HARNESS_NAMES: Record<string, string> = {
 };
 const harnessName = (name: string) => HARNESS_NAMES[name] ?? name;
 
-function Icon({ pane }: { pane: Pane }) {
+function Icon({ pane }: { pane: SettingsPane }) {
   return <span className="ico" style={{ ["--bg" as string]: ICONS[pane].bg }}><svg viewBox="0 0 14 14">{ICONS[pane].path}</svg></span>;
 }
 
@@ -437,19 +441,19 @@ function Privacy({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Set
 
 function App() {
   const [snap, setSnap] = useState<SettingsSnapshot | null>(null);
-  const [pane, setPane] = useState<Pane>("general");
+  const [pane, setPane] = useState<SettingsPane>(startingPane);
   useEffect(() => {
     api.get().then(setSnap);
     return api.onChanged(setSnap);
   }, []);
+  useEffect(() => api.onShowPane(setPane), []); // an error card's Open Settings, while this window is open
   if (!snap) return null;
-  const panes = Object.keys(ICONS) as Pane[];
   const props = { snap, onChange: setSnap };
   return (
     <div className="window">
       <aside className="sidebar">
         <nav aria-label="Settings sections">
-          {panes.map((p) => (
+          {SETTINGS_PANES.map((p) => (
             <button key={p} className={`ni${p === pane ? " on" : ""}`} aria-current={p === pane ? "page" : undefined} onClick={() => setPane(p)}>
               <Icon pane={p} />{ICONS[p].label}
             </button>

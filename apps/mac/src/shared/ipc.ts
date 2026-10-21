@@ -16,6 +16,11 @@ export interface ScreenContext {
 
 export type CapsuleMode = "dictate" | "comment";
 
+/** The panes of the Settings window, in the order of its sidebar. */
+export const SETTINGS_PANES = ["general", "voice", "agents", "tasks", "tools", "privacy"] as const;
+export type SettingsPane = (typeof SETTINGS_PANES)[number];
+export const isSettingsPane = (value: unknown): value is SettingsPane => SETTINGS_PANES.some((pane) => pane === value);
+
 export type CapsuleState =
   | { kind: "hidden" }
   | { kind: "listening"; mode: CapsuleMode; startedAt: number; fakeMic: boolean; microphoneId: string | null; thumbnail?: string }
@@ -33,7 +38,8 @@ export type CapsuleState =
   | { kind: "editing"; text: string }
   | { kind: "filed"; agent: string; seconds: number; pages: FiledPage[]; canUndo: boolean; message: string }
   | { kind: "saved"; text: string; thumbnail?: string; context?: ScreenContext; note: string; detail?: string }
-  | { kind: "error"; message: string; detail?: string; action?: "open-microphone-settings" | "open-screen-settings" | "open-settings" }
+  /** `action`: where the card's Open Settings button goes: a pane of System Settings, or Avanzel's Settings on the pane that fixes it. */
+  | { kind: "error"; message: string; detail?: string; action?: "open-microphone-settings" | "open-screen-settings" | `open-settings:${SettingsPane}` }
   /** The shortcut, while the speech models download: how far along they are, and typing instead. */
   | {
       kind: "preparing";
@@ -185,6 +191,8 @@ export interface AvanzelBridge {
   settings: {
     get(): Promise<SettingsSnapshot>;
     onChanged(callback: (snapshot: SettingsSnapshot) => void): () => void;
+    /** Settings is open and something else (an error card's Open Settings) asks for another pane. */
+    onShowPane(callback: (pane: SettingsPane) => void): () => void;
     setApp(patch: Partial<AppSettings>): Promise<SettingsSnapshot>;
     setLibrary(patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }): Promise<SettingsSnapshot>;
     chooseLibrary(): Promise<SettingsSnapshot>;

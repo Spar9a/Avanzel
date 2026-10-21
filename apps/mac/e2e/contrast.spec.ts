@@ -166,7 +166,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
     ["editing", { kind: "editing", text: said }, "Edit before filing"],
     ["filed", { kind: "filed", agent: "Claude Code", seconds: 23, pages, canUndo: true, message: "Filed." }, "Filed by Claude Code"],
     ["saved", { kind: "saved", text: "This mic looks right for the podcast", thumbnail, context, note: "Saved to your inbox for tonight's review" }, "Saved to your inbox"],
-    ["error", { kind: "error", message: "Claude Code couldn't file this note", detail: "Error: rate limited\nThe note is still in your inbox; the evening review will try again.", action: "open-settings" }, "Claude Code couldn't file this note"],
+    ["error", { kind: "error", message: "Claude Code couldn't file this note", detail: "Error: rate limited\nThe note is still in your inbox; the evening review will try again.", action: "open-settings:agents" }, "Claude Code couldn't file this note"],
     ["preparing", { kind: "preparing", receivedBytes: 412_000_000, totalBytes: 672_807_563 }, "The speech model is still downloading"],
     ["model-failed", { kind: "model-failed" }, "The speech model didn't finish downloading."],
   ];

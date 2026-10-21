@@ -81,6 +81,7 @@ test("a recording whose audio never arrives is given up, and the capsule is told
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: WAIT_FOR_AUDIO_MS + 10_000 }).toBe("error");
   await expect(capsule.getByText("The recording didn't arrive")).toBeVisible();
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ action: "open-settings:voice" }); // its Open Settings opens Voice
   expect(await app.evaluate(() => (globalThis as unknown as { __commands: unknown[] }).__commands)).toEqual(["start", "stop", "cancel"]);
   await app.close();
 });

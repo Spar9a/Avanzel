@@ -53,6 +53,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
+import { isSettingsPane } from "../shared/ipc.ts";
 import type {
   AgentStatus,
   AppSettings,
@@ -62,6 +63,7 @@ import type {
   FiledPage,
   ModelStatus,
   ScreenContext,
+  SettingsPane,
   SettingsSnapshot,
   Shortcuts,
   TaskInfo,
@@ -506,7 +508,7 @@ export class Controller {
   private async readyToListen(): Promise<boolean> {
     if (!this.vault) {
       this.showSettings();
-      this.fail("Set up your library first", "Choose or create a library folder in Avanzel Settings → General.", "open-settings");
+      this.fail("Set up your library first", "Choose or create a library folder in Avanzel Settings → General.", "open-settings:general");
       return false;
     }
     if (this.model.kind === "error" && this.model.cause === "settings") {
@@ -575,7 +577,7 @@ export class Controller {
       this.audioTimeout = null;
       if (this.recording !== recording) return; // only ever this recording, never a newer one
       this.abandonRecording(recording);
-      this.fail("The recording didn't arrive", "Try again; if it keeps happening, check the microphone in Settings → Voice.");
+      this.fail("The recording didn't arrive", "Try again; if it keeps happening, check the microphone in Settings → Voice.", "open-settings:voice");
     }, AUDIO_TIMEOUT_MS);
   }
 
@@ -650,12 +652,16 @@ export class Controller {
         return;
       }
       if (!text) {
-        return this.fail("No speech recognized", "If you did speak, check the microphone in Settings → Voice.");
+        return this.fail("No speech recognized", "If you did speak, check the microphone in Settings → Voice.", "open-settings:voice");
       }
       const capture = vault.newCapture(text, { source: "voice", audio: audioPath, transcriber: engine, now });
       this.afterCapture(capture.path, text, seconds, unkept);
     } catch (error) {
-      this.fail(error instanceof AvanzelError ? error.message : "Couldn't transcribe that", error instanceof AvanzelError ? undefined : errorMessage(error));
+      this.fail(
+        error instanceof AvanzelError ? error.message : "Couldn't transcribe that",
+        error instanceof AvanzelError ? undefined : errorMessage(error),
+        "open-settings:voice",
+      );
     }
   }
 
@@ -793,7 +799,7 @@ export class Controller {
       : "The note is still in your inbox; the evening review will try again.";
     const partial = outcome?.commit ? ` ${job.agent}'s partial edits are kept as their own commit in the library's history.` : "";
     const detail = `${lastLines(error)}\n${where}${partial}`;
-    if (this.job === job && this.capsuleState.kind === "filing") this.fail(`${job.agent} couldn't file this note`, detail);
+    if (this.job === job && this.capsuleState.kind === "filing") this.fail(`${job.agent} couldn't file this note`, detail, "open-settings:agents");
     else this.notify("A note couldn't be filed", lastLines(error, 1));
     this.refreshMenu();
   }
@@ -1029,7 +1035,11 @@ export class Controller {
   openSettingsFor(action: string): void {
     if (action === "open-microphone-settings") void this.openPrivacy("microphone");
     else if (action === "open-screen-settings") void this.openPrivacy("screen");
-    else this.showSettings();
+    else {
+      // The capsule's page sends `action`: a pane Settings doesn't have means General.
+      const pane = /^open-settings:(.*)$/.exec(action)?.[1];
+      this.showSettings(isSettingsPane(pane) ? pane : "general");
+    }
     this.setCapsule({ kind: "hidden" });
   }
 
@@ -1164,10 +1174,13 @@ export class Controller {
 
   // ---------------------------------------------------------------- settings
 
-  showSettings(): void {
+  /** With a `pane`, a new window opens on it and an open one moves to it; without, a new one opens on General and an open one stays put. */
+  showSettings(pane?: SettingsPane): void {
     if (!this.settingsWindow || this.settingsWindow.isDestroyed()) {
-      this.settingsWindow = createSettingsWindow();
+      this.settingsWindow = createSettingsWindow(pane);
       this.settingsWindow.once("ready-to-show", () => this.settingsWindow?.show());
+    } else if (pane) {
+      this.settingsWindow.webContents.send("settings:show-pane", pane);
     }
     app.focus({ steal: true });
     this.settingsWindow.show();
