@@ -62,3 +62,10 @@
   right: var(--av-space-16);
   bottom: var(--av-space-4);
 }
+
+/* Found's stage: Zel in the middle, waiting while the step is read. */
+.found {
+  display: grid;
+  place-items: center;
+  height: 100%;
+}

@@ -185,6 +185,18 @@ export interface SettingsSnapshot {
   obsidian: boolean;
 }
 
+/** An installed agent, as setup lists it under "Who should do the filing?". */
+export interface SetupAgent {
+  /** The harness name: "claude". */
+  name: string;
+  /** "Claude Code" (harnessName). */
+  label: string;
+  /** Its check reads its own sign-in; the others are asked one short question when picked. */
+  freeCheck: boolean;
+  /** What its check found in this app run; null while it hasn't been checked. */
+  status: AgentStatus | null;
+}
+
 /** Everything the setup window shows, in one snapshot (setup:changed). Later tasks add fields. */
 export interface SetupSnapshot {
   /** Where Looks good makes or uses the library: the stored libraryPath, else ~/Avanzel, until Change… picks another. */
@@ -197,6 +209,10 @@ export interface SetupSnapshot {
   model: ModelStatus;
   /** Record a thought's shortcut, "Alt+Space". */
   shortcut: string;
+  /** The agents installed when Set me up was pressed, in the harness table's order; none before. */
+  agents: SetupAgent[];
+  /** The agent that will file: the person's pick, else the best one known to work (bestAgent); null while there is none. */
+  agent: string | null;
 }
 
 export interface AskResult {
@@ -272,5 +288,7 @@ export interface AvanzelBridge {
     onChanged(callback: (snapshot: SetupSnapshot) => void): () => void;
     /** The window shows `step` now; the controller hangs what each step starts on it. */
     enter(step: SetupStep): Promise<SetupSnapshot>;
+    /** Use {agent}, on Found: installed agent `name` files from now on; setup:changed follows. */
+    chooseAgent(name: string): Promise<SetupSnapshot>;
   };
 }

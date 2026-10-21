@@ -55,4 +55,5 @@ export function registerIpc(controller: Controller): void {
   // setup
   handle("setup:get", () => controller.setupSnapshot());
   handle("setup:enter", (_e, step: SetupStep) => controller.enterSetupStep(step));
+  handle("setup:choose-agent", (_e, name: string) => controller.chooseSetupAgent(name));
 }

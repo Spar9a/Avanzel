@@ -21,7 +21,8 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   let controller: Controller | null = null;
   let stopping = false;
-  // Opening Avanzel again (Spotlight, Finder) brings its own window forward: setup without a library, else Settings.
+  // Opening Avanzel again (Spotlight, Finder) brings its own window forward: setup while it is open or there is no
+  // library, else Settings.
   app.on("second-instance", () => controller?.showHome());
   app.on("window-all-closed", () => {
     // Stay in the menu bar when setup, Settings or Ask close.

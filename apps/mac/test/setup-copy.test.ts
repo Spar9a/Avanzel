@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardDate, megabytes, stampDate } from "../src/renderer/setup/copy.ts";
+import { agentLine, cardDate, megabytes, ownLine, stampDate } from "../src/renderer/setup/copy.ts";
 
 describe("setup copy", () => {
   it("dates read as the card and the stamp print them", () => {
@@ -7,5 +7,26 @@ describe("setup copy", () => {
     expect(cardDate(day)).toBe("Wednesday 21 October");
     expect(stampDate(day)).toBe("21 Oct 2026");
     expect(megabytes(672_807_563)).toBe(673);
+  });
+
+  it("each status reads as Found says it", () => {
+    expect(agentLine(null)).toBe("Installed");
+    expect(agentLine({ kind: "checking" })).toBe("Checking…");
+    expect(agentLine({ kind: "signed-in", seconds: 0.4 })).toBe("Signed in");
+    expect(agentLine({ kind: "replied", seconds: 1.63 })).toBe("Replied in 1.6 s");
+    expect(agentLine({ kind: "signed-out", detail: "" })).toBe("Not signed in");
+    expect(agentLine({ kind: "timeout" })).toBe("Didn't reply within 15 s.");
+    expect(agentLine({ kind: "failed", detail: "Error: boom" })).toBe("Boom.");
+    expect(agentLine({ kind: "failed", detail: "" })).toBe("Didn't reply.");
+    expect(agentLine({ kind: "failed", detail: "Error:" })).toBe("Didn't reply."); // a label with nothing after it says nothing
+  });
+
+  it("ownLine", () => {
+    expect(ownLine("Error: usage limit reached")).toBe("Usage limit reached.");
+    expect(ownLine("agent crashed: not logged in")).toBe("Agent crashed: not logged in.");
+    expect(ownLine("Is it on?")).toBe("Is it on?");
+    expect(ownLine("ERROR: the model is not supported with this account")).toBe("The model is not supported with this account.");
+    expect(ownLine("Still starting…")).toBe("Still starting…");
+    expect(ownLine("")).toBe("");
   });
 });

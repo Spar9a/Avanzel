@@ -10,8 +10,8 @@ import {
   powerMonitor,
   shell,
 } from "electron";
-import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import {
   AvanzelError,
@@ -65,6 +65,7 @@ import type {
   ScreenContext,
   SettingsPane,
   SettingsSnapshot,
+  SetupAgent,
   SetupSnapshot,
   SetupStep,
   Shortcuts,
@@ -78,7 +79,7 @@ import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
-import { libraryFolder, tildePath } from "./setup-model.ts";
+import { bestAgent, libraryFolder, tildePath } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { NoticedShortcuts, SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
@@ -142,6 +143,12 @@ interface SetupSession {
   step: SetupStep;
   /** Where Looks good makes or uses the library. */
   libraryPath: string;
+  /** Found has been entered: Set me up started the download and the agents' checks, which happens once a session. */
+  begun: boolean;
+  /** The agents installed when Found was first entered, by harness name, in the table's order. */
+  installed: string[];
+  /** The agent the person picked on Found (Use {agent}); null while setup chooses (bestAgent). */
+  picked: string | null;
 }
 
 /** Words filed after Edit, on their way to the inbox: only in memory until the refile's `recapture` writes them. */
@@ -237,6 +244,8 @@ export class Controller {
   private readonly runningChecks = new Set<AbortController>();
   /** Avanzel is quitting, busy or not (`stopAgentChecks`): no agent check starts any more. */
   private checksStopped = false;
+  /** Where agent checks run while there is no library (`checkDir`): made at the first such check, kept for the app run. */
+  private checkScratch: string | null = null;
   private recent: FiledPage[] = [];
   private running = new Set<string>();
   private lastEveningCommits: string[] = [];
@@ -1459,11 +1468,12 @@ export class Controller {
 
   /**
    * Avanzel's own window, for whatever asks for one: the shortcut, Quick or Ask before there is a library, or opening
-   * Avanzel again. Setup while there is no library, unless one failed to open (`libraryProblem`): Settings says why,
-   * and fixes it. With a library, Settings.
+   * Avanzel again. Setup while it is open, even once a step has made the library, so Settings never opens beside it.
+   * Otherwise setup while there is no library, unless one failed to open (`libraryProblem`): Settings says why, and
+   * fixes it. With a library, Settings.
    */
   showHome(): void {
-    if (!this.vault && this.libraryProblem === null) return this.showSetup();
+    if (this.setup || (!this.vault && this.libraryProblem === null)) return this.showSetup();
     this.showSettings();
   }
 
@@ -1484,7 +1494,7 @@ export class Controller {
       win.focus();
     });
     win.on("closed", () => this.endSetup(win));
-    this.setup = { window: win, step: "hello", libraryPath: this.setupLibraryPath() };
+    this.setup = { window: win, step: "hello", libraryPath: this.setupLibraryPath(), begun: false, installed: [], picked: null };
   }
 
   /** The setup window closed: its session ends with it. A newer window's session is its own. */
@@ -1500,6 +1510,7 @@ export class Controller {
   /** What the setup window shows; without a session, what a fresh one would show. */
   setupSnapshot(): SetupSnapshot {
     const libraryPath = this.setup?.libraryPath ?? this.setupLibraryPath();
+    const agents = this.setupAgents();
     return {
       libraryPath,
       libraryLabel: tildePath(libraryPath, homedir()),
@@ -1507,12 +1518,51 @@ export class Controller {
       libraryReady: !!this.vault,
       model: this.model,
       shortcut: this.store.get().shortcuts.dictate,
+      agents,
+      agent: this.setup?.picked ?? bestAgent(agents),
     };
+  }
+
+  /** The agents Found lists: those installed when it was first entered, with what their checks found in this app run. */
+  private setupAgents(): SetupAgent[] {
+    const installed = this.setup?.installed ?? [];
+    if (!installed.length) return []; // before Set me up, or with nothing installed: the table needn't be read
+    const table = this.harnessTable();
+    return installed.flatMap((name) => {
+      const harness = Object.hasOwn(table, name) ? table[name] : undefined;
+      if (!harness) return []; // a library made since has no such agent
+      return [{ name, label: harnessName(name), freeCheck: harness.signIn !== undefined, status: this.agentChecks.get(name) ?? null }];
+    });
   }
 
   /** The setup window shows `step` now; anything that isn't a step is ignored. Each step's work hangs on this. */
   enterSetupStep(step: SetupStep): SetupSnapshot {
-    if (this.setup && isSetupStep(step)) this.setup.step = step;
+    const session = this.setup;
+    if (session && isSetupStep(step)) {
+      session.step = step;
+      if (step === "found" && !session.begun) this.beginSetup(session);
+    }
+    return this.setupSnapshot();
+  }
+
+  /**
+   * Set me up, the first time Found is entered in a session: the speech models start downloading if this Mac doesn't
+   * have them, and the installed agents are noted and their sign-in read. Nothing asks an agent anything.
+   */
+  private beginSetup(session: SetupSession): void {
+    session.begun = true;
+    if (this.model.kind === "missing") void this.downloadModel();
+    session.installed = Object.entries(this.harnessTable()).filter(([, harness]) => harness.available()).map(([name]) => name);
+    this.checkAgents();
+  }
+
+  /** Use {agent}, on Found: the person's pick files from now on. Only an installed agent can be picked. */
+  chooseSetupAgent(name: string): SetupSnapshot {
+    const session = this.setup;
+    if (session?.installed.includes(name)) {
+      session.picked = name;
+      this.broadcast();
+    }
     return this.setupSnapshot();
   }
 
@@ -1521,14 +1571,12 @@ export class Controller {
   /**
    * Starts the free checks of the installed agents not checked yet in this app run: each reads the agent's own sign-in
    * command and never asks the model (`prompt: false`). A sign-in it can't read leaves the agent unchecked, for Check.
-   * It returns at once; Settings gets each result through settings:changed.
+   * Without a library, the built-in agents are checked in a scratch folder (`harnessTable`, `checkDir`). It returns at
+   * once; Settings and setup get each result through settings:changed and setup:changed.
    */
   checkAgents(): SettingsSnapshot {
-    const vault = this.vault;
-    if (vault) {
-      for (const [name, harness] of Object.entries(this.harnessesOf(vault))) {
-        if (harness.signIn && !this.agentChecks.has(name) && harness.available()) void this.runAgentCheck(name, harness, vault, false);
-      }
+    for (const [name, harness] of Object.entries(this.harnessTable())) {
+      if (harness.signIn && !this.agentChecks.has(name) && harness.available()) void this.runAgentCheck(name, harness, this.checkDir(), false);
     }
     return this.snapshot();
   }
@@ -1538,20 +1586,30 @@ export class Controller {
    * has none or that doesn't say. A check under way is left to finish.
    */
   checkAgent(name: string): SettingsSnapshot {
-    const vault = this.vault;
-    const table = vault ? this.harnessesOf(vault) : {};
+    const table = this.harnessTable();
     const harness = Object.hasOwn(table, name) ? table[name] : undefined;
-    if (vault && harness && this.agentChecks.get(name)?.kind !== "checking") void this.runAgentCheck(name, harness, vault, true);
+    if (harness && this.agentChecks.get(name)?.kind !== "checking") void this.runAgentCheck(name, harness, this.checkDir(), true);
     return this.snapshot();
   }
 
-  /** The library's agents by name: none when its settings don't load. */
-  private harnessesOf(vault: Vault): Record<string, Harness> {
+  /** The agents by name: the library's (none when its settings don't load), or the built-in ones while there is none. */
+  private harnessTable(): Record<string, Harness> {
+    if (!this.vault) return listHarnesses(defaultSettings());
     try {
-      return listHarnesses(loadSettings(vault.root));
+      return listHarnesses(loadSettings(this.vault.root));
     } catch {
       return {};
     }
+  }
+
+  /**
+   * Where an agent check runs: the library, or before there is one, a scratch folder in the system's temporary folder,
+   * made at the first such check and used for the rest of the app run.
+   */
+  private checkDir(): string {
+    if (this.vault) return this.vault.root;
+    this.checkScratch ??= mkdtempSync(path.join(tmpdir(), "avanzel-check-"));
+    return this.checkScratch;
   }
 
   /**
@@ -1564,10 +1622,10 @@ export class Controller {
   }
 
   /**
-   * One check, in the library: Settings shows it running, then what it found. Only with `prompt` may it ask the model.
-   * Once Avanzel is quitting, none starts.
+   * One check, run in folder `dir` (`checkDir`): Settings and setup show it running, then what it found. Only with
+   * `prompt` may it ask the model. Once Avanzel is quitting, none starts.
    */
-  private async runAgentCheck(name: string, harness: Harness, vault: Vault, prompt: boolean): Promise<void> {
+  private async runAgentCheck(name: string, harness: Harness, dir: string, prompt: boolean): Promise<void> {
     if (this.quitting || this.checksStopped) return;
     const abort = new AbortController();
     this.runningChecks.add(abort);
@@ -1575,7 +1633,7 @@ export class Controller {
     this.broadcast();
     let status: AgentStatus | null;
     try {
-      status = statusOf(await checkHarness(harness, vault.root, { signal: abort.signal, prompt }));
+      status = statusOf(await checkHarness(harness, dir, { signal: abort.signal, prompt }));
     } catch (error) {
       status = { kind: "failed", detail: errorMessage(error) }; // a check that throws still ends
     } finally {
