@@ -1,14 +1,15 @@
 // Step 5, Ask me about it: a question about the first thought's pages, answered from the library only, with the pages
-// the answer used. The stage holds the question on a card (the suggestion, until one is asked) and Zel, who thinks while
-// the agent looks. The suggestion is one click away; any other question is typed in Ask your library, and Return asks
-// it. While the agent looks, a line counts its seconds and Skip gives the question up. Then the answer, over the pages
-// its [[links]] name, each of which opens. Skip is the quiet way on until there is an answer, then Continue; there is
-// no Back. An Undo that lands here (Continue pressed as it began) takes the suggestion with it, and the step says so.
+// the answer used. The stage holds the question on a card (the suggestion in full, until one is asked) and Zel, who
+// thinks while the agent looks. Ask this asks the suggestion; any other question is typed in Ask your library, and
+// Return asks it. While the agent looks, a line counts its seconds and Skip gives the question up. Then the answer, over
+// the pages its [[links]] name, each of which opens. Skip is the quiet way on until there is an answer, then Continue;
+// there is no Back. An Undo that lands here (Continue pressed as it began) takes the suggestion with it, and the step
+// says so.
 import { Actions, Button, Card, Notice, Row, ShelfTag, Stack, Text, TextField, Zel } from "@avanzel/ui";
 import { useRef, useState } from "react";
 import type { SetupAnswer } from "../../../shared/ipc.ts";
 import { pageName } from "../../../shared/wikilinks.ts";
-import { askingLine, isShelf, ownLine } from "../copy.ts";
+import { askingLine, isShelf, ownLine, sourceTitle } from "../copy.ts";
 import { Frame, useNow, type StepProps } from "../frame.tsx";
 
 const api = window.avanzel.setup;
@@ -54,17 +55,21 @@ export function Ask({ snap, go }: StepProps) {
         <Text variant="callout">I answer from your library only, and show you the pages I used.</Text>
         {snap.filing?.kind === "undone" && <Notice title="Undone.">Everything is back as it was, and your words are in the inbox.</Notice>}
         {offer && (
-          <Actions align="start">
-            {/* It goes while its question is answered: the focus goes to the box, ready for the next question. */}
-            <Button
-              onClick={() => {
-                ask(offer);
-                field.current?.focus();
-              }}
-            >
-              {offer}
-            </Button>
-          </Actions>
+          // Named for its question, which the card shows in full, so Ask this says what it asks. A title of any length
+          // fits the card; the button stays short.
+          <div role="group" aria-label={offer}>
+            <Actions align="start">
+              {/* It goes while its question is answered: the focus goes to the box, ready for the next question. */}
+              <Button
+                onClick={() => {
+                  ask(offer);
+                  field.current?.focus();
+                }}
+              >
+                Ask this
+              </Button>
+            </Actions>
+          </div>
         )}
         <TextField
           ref={field}
@@ -115,7 +120,8 @@ function AskingLine({ answer }: { answer: Asking }) {
 
 /**
  * The answer: the question over its lines, then the pages its links name, each a title that opens it, beside its shelf
- * when it is on one.
+ * when it is on one. A long title is shortened (sourceTitle), so its link fits the step; a row too wide for the step
+ * puts the link under its shelf, which keeps its whole name rather than being squeezed.
  */
 function Answer({ answer }: { answer: Answered }) {
   return (
@@ -130,9 +136,9 @@ function Answer({ answer }: { answer: Answered }) {
         <Stack gap={4}>
           <Text variant="footnote" tone="secondary">Pages I used:</Text>
           {answer.sources.map((page) => (
-            <Row key={page.path} gap={6}>
+            <Row key={page.path} gap={6} wrap>
               {isShelf(page.shelf) && <ShelfTag shelf={page.shelf} />}
-              <Button variant="link" onClick={() => window.avanzel.ask.openPage(pageName(page.path))}>{page.title}</Button>
+              <Button variant="link" onClick={() => window.avanzel.ask.openPage(pageName(page.path))}>{sourceTitle(page.title)}</Button>
             </Row>
           ))}
         </Stack>

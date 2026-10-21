@@ -15,6 +15,7 @@ import {
   ownLine,
   pagesLine,
   receiptPages,
+  sourceTitle,
   stampDate,
   transcribingLine,
   workingLine,
@@ -106,6 +107,16 @@ describe("setup copy", () => {
     expect(askingLine(0)).toBe("Looking through your library: 0 s");
     // The window's clock can read a moment before the start main stamped: never "-1 s".
     expect(askingLine(-0.2)).toBe("Looking through your library: 0 s");
+  });
+
+  it("a source's title fits its link: past 40 characters, its first 39 and an ellipsis", () => {
+    expect(sourceTitle("Plant tulips in October")).toBe("Plant tulips in October");
+    const forty = "Launch plan for the spring campaign, v2.";
+    expect(Array.from(forty)).toHaveLength(40);
+    expect(sourceTitle(forty)).toBe(forty); // 40 fit as they are
+    expect(sourceTitle("Launch plan for the spring campaign with Mark and the whole team")).toBe("Launch plan for the spring campaign wit…");
+    // Characters, not UTF-16 units: a flower past the 38th letter is kept whole, never cut in half.
+    expect(sourceTitle(`${"a".repeat(38)}🌷🌷🌷`)).toBe(`${"a".repeat(38)}🌷…`);
   });
 
   it("the filed heading says how long the agent took, in whole seconds", () => {

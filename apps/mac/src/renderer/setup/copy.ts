@@ -107,6 +107,19 @@ export function askingLine(seconds: number): string {
   return `Looking through your library: ${Math.max(0, Math.floor(seconds))} s`;
 }
 
+/** The most characters of a page's title its link under "Pages I used:" shows: the step is about 340 px wide. */
+const SOURCE_CHARS = 40;
+
+/**
+ * A page's title as its link under "Pages I used:" shows it: one longer than 40 characters is its first 39 and "…", so
+ * the link fits the step, as the engine shortens a question for its log. Characters are code points, so none is cut in
+ * half.
+ */
+export function sourceTitle(title: string): string {
+  const chars = Array.from(title);
+  return chars.length > SOURCE_CHARS ? `${chars.slice(0, SOURCE_CHARS - 1).join("")}…` : title;
+}
+
 /** The heading once the thought is filed, in whole seconds, and never "0 s". */
 export function filedHeading(agent: string, seconds: number): string {
   return `All filed. ${agent} took ${Math.max(1, Math.round(seconds))} s.`;
