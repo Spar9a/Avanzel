@@ -42,7 +42,8 @@
   - commands: `Text variant="code"`;
   - the shortcut inside a sentence: `<Kbd>`.
 - **Zel** looks at the work, never at the person (each mood's default `look`), appears only in Avanzel's own windows, and never covers the person's words.
-- **One orchestrated moment per surface:** Zel waking and stamping HELLO (step 1), the FILED stamp (step 4), and the flight into the menu bar (the ending). Under Reduce Motion (`matchMedia("(prefers-reduced-motion: reduce)")` in a renderer, `systemPreferences.getAnimationSettings().prefersReducedMotion` in main), each shows its final frame at once.
+- **One primary button per moment** (DESIGN.md). While a `Notice` with actions shows, its actions hold the primary (its last action, as the table marks it), and the footer's or standalone button beside it is secondary: Found's "Looks good" or "Use this folder", Think's "Type it instead" and Filing's "Continue".
+- **One orchestrated moment per surface:** Zel waking and stamping HELLO (step 1), the keycaps pressing themselves (step 3: §5.2 asks for it; once each time the step is entered), the FILED stamp (step 4), and the flight into the menu bar (the ending). Under Reduce Motion (`matchMedia("(prefers-reduced-motion: reduce)")` in a renderer, `systemPreferences.getAnimationSettings().prefersReducedMotion` in main), each shows its final frame at once.
 
 ### Behaviour every task keeps
 
@@ -57,6 +58,7 @@
   - `AVANZEL_EXACT_PATH=1`: keep PATH as given.
   - `AVANZEL_PRESS_WAIT_MS`: the press test's wait. `firstRun()` sets 60000, so no test sees the nudge unless it asks for it.
   - `AVANZEL_FAKE_MIC_ANSWER=granted|denied`: what the system's microphone prompt answers.
+  - `AVANZEL_FAKE_TRAY_BOUNDS=x,y,width,height`: the menu bar icon's bounds, which `MenuBar.bounds()` returns instead of the real ones, so the flight and the bubble don't depend on this Mac's own menu bar (Tasks 12 and 13).
 - **The capsule still records.** Setup's first spoken thought goes through `toggleDictate`, the real capsule and the real queue. Only once the words exist does the capsule hide and the setup window take over.
 - A setup filing runs like any other: queue order, `withRun`, Edit-free. When the window is closed, it reports by notification, as a filing whose card isn't showing does today.
 
@@ -72,8 +74,8 @@ Sentence case, verbs on buttons, no "!", the one-character "…", units as "6 s"
 | Window titles | setup window "Set up Avanzel"; bubble window "Avanzel" |
 | Footer (every step) | missing (bytes > 0): "Speech model, {673} MB. Downloads when you continue." |
 | | downloading: "Getting my ears ready", a `Progress` labelled "Downloading the speech model", and "{412} of {673} MB" (when the size is known) |
-| | download failed: "The speech model didn't finish downloading." with `Button size="small"` "Try again"; ready: nothing |
-| | buttons: "Back" (quiet), then the step's primary |
+| | download failed: "The speech model didn't finish downloading." with `Button size="small"` "Try the download again" (not "Try again": Notices use that, and no screen has two buttons of one name); ready: nothing |
+| | buttons: "Back" (quiet; on Found and Think only), then the step's primary |
 | Hello | heading "Hi, I'm Zel."; callout "Talk to me anytime with <⌥Space>. I write each thought on a card and file it in a library of plain notes on your Mac." |
 | | card: label "Thought", meta "{Wednesday 21 October}", placeholder "Nothing here yet.", stamp `hello` dated "{21 Oct 2026}" |
 | | primary "Set me up" (`size="large"`) |
@@ -84,7 +86,7 @@ Sentence case, verbs on buttons, no "!", the one-character "…", units as "6 s"
 | | each row: the agent's label, a status description, Claude Code's caption "Best results", and an `Icon name="check" label="Chosen"` or `Button size="small"` "Use {Codex}" |
 | | statuses: "Installed", "Checking…", "Signed in", "Replied in {1.6} s", "Not signed in", "Didn't reply within 15 s.", a failure's `ownLine(detail)` or "Didn't reply." |
 | | footnote, when Claude Code or OpenCode is chosen: "Your agent works only inside the library folder: no shell, no web." |
-| | primary "Looks good", or "Use this folder" when the folder has files or is a library |
+| | primary "Looks good", or "Use this folder" when the folder has files or is a library; secondary while a Notice with actions shows |
 | Found, problems | library: error `Notice` "I couldn't make the library at {~/Avanzel}." body "{error message}", action "Change…" |
 | | chosen agent signed out: error `Notice` "{Claude Code} isn't signed in on this Mac." body "Run `claude` once in Terminal and sign in, then check again." (Codex: "Run `codex login` in Terminal, then check again."; others: "Sign in to {name} in Terminal, then check again."), actions "Open Terminal", "Check again" (primary) |
 | | timed out: "{name} didn't reply within 15 s." body "It may be busy. Check again, or use another agent." action "Check again"; failed: "{name} didn't work." body "{ownLine(detail)}" action "Check again" |
@@ -100,7 +102,7 @@ Sentence case, verbs on buttons, no "!", the one-character "…", units as "6 s"
 | | no press within the wait: info `Notice` "Did {⌥Space} do nothing?" body "Another app may be using it, probably {Alfred}. Try another shortcut." (no holder: "Another app may be using it. Try another shortcut.") with the same actions |
 | | no press, none free: body "Another app may be using it. Pick another one in Settings → Voice." action "Open Settings" |
 | | ears not here: missing or downloading "My ears are still arriving. Type it instead, or talk to me once they land."; download failed "The speech model didn't finish downloading, so I can't hear you yet. Type it instead, or try the download again." |
-| | "Type it instead": secondary, and primary while the ears aren't here |
+| | "Type it instead": secondary, and primary while the ears aren't here and no Notice with actions shows; while the microphone is denied it is the denied Notice's action, not a second button |
 | | typing: `TextArea` "Your thought", placeholder "What's on your mind?", actions "Cancel" (quiet), "File it" (primary) |
 | | microphone: `PermissionPrimer kind="microphone"` (its fixed words) |
 | | denied: error `Notice` "Avanzel can't hear you yet." body "Allow it in System Settings, under Microphone." actions "Type it instead", "Open System Settings" (primary) |
@@ -111,7 +113,7 @@ Sentence case, verbs on buttons, no "!", the one-character "…", units as "6 s"
 | | signed out: error `Notice` "{Claude Code} isn't signed in on this Mac." body "Run `claude` once in Terminal and sign in, then try again. Your words are safe in the inbox." (Codex: "Run `codex login` in Terminal, then try again. …"; others: "Sign in to {name} in Terminal, then try again. …"), actions "Open Terminal", "Try again" (primary) |
 | | other failure: error `Notice` "{Claude Code} couldn't file it." body "{ownLine(line)} Your words are safe in the inbox." action "Try again" (primary); a capture gone from the inbox has the line "The note isn't in the inbox any more." |
 | | filed: heading "All filed. {Claude Code} took {12} s."; voice "Your first idea has a home." (only with pages) |
-| | footnote `pagesLine`: "{1} new page, all plain Markdown in {~/Avanzel}.", "{3} new pages and {1} updated, …", "{2} updated pages, …"; none: "{Claude Code} noted it in the log." |
+| | footnote `pagesLine`: "{1} new page, all plain Markdown in {~/Avanzel}.", "{3} new pages and {1} updated, …", "{1} updated page, …", "{2} updated pages, …"; none: "{Claude Code} noted it in the log." |
 | | footnotes: others "{1} more page in other folders." / "{2} more pages in other folders."; `restored` "Your exact words are kept."; with a commit "Press ⌘Z or Undo to put everything back." |
 | | buttons "Undo", and "Open in Obsidian" (the library is an Obsidian vault) or "Open the page"; footer primary "Continue" |
 | | undone: heading "Undone." body "Everything is back as it was, and your words are in the inbox." action "File it again"; refused: error `Notice` "This one can't be undone automatically." body "The library's history keeps both versions." |
@@ -158,9 +160,9 @@ Where this copy departs from the spec, and why:
 
 1. **The setup window closed part-way**, with the red button, during the filing or after the library exists. The filing still finishes and says so in a notification. ⌥Space then works as it does everywhere, and the next launch, which has a library, doesn't open setup. Pinned by Task 6's test "closing setup during the filing still files the thought and says so".
 2. **The shortcut, Quick or Ask used before there is a library.** Setup comes forward, and the capsule shows no card. Pinned by Task 1's test "with no library, the shortcut, Quick and Ask bring setup forward and the capsule stays hidden".
-3. **The speech model download failing while setup runs.** `launch()`'s dead port makes this every test's default. The footer says so with Try again, and step 3 says the ears aren't here and makes typing the main action. Nothing waits on the download. Pinned by Task 2's "a failed download says so in the footer, with Try again" and Task 7's "while the ears are still arriving, a press says so and typing is the way".
+3. **The speech model download failing while setup runs.** `launch()`'s dead port makes this every test's default. The footer says so with Try the download again, and step 3 says the ears aren't here and makes typing the main action. Nothing waits on the download. Pinned by Task 2's "a failed download says so in the footer, with Try the download again" and Task 7's "while the ears are still arriving, a press says so and typing is the way".
 4. **`~/Avanzel` already exists**, with files of its own or as an Avanzel library. The button reads "Use this folder", nothing in it is lost, and an existing library keeps its pages. Pinned by Task 3's two "existing folder" tests.
-5. **A filing that writes pages outside the six shelves, or no page at all.** The receipt lists the shelf pages and counts the others, no line claims a page that isn't there, and the suggested question still reads well. Pinned by Task 8's `receiptPages` and `pagesLine` tests and Task 9's `suggestQuestion` tests.
+5. **A filing that writes pages outside the six shelves, or no page at all.** The receipt lists the shelf pages and counts the others, no line claims a page that isn't there, and the suggested question still reads well. Pinned by Task 6's `receiptPages` test, Task 8's `pagesLine` tests and Task 9's `suggestQuestion` tests.
 
 ---
 
@@ -222,11 +224,11 @@ Where this copy departs from the spec, and why:
 - Produces (renderer, `frame.tsx`):
   - `interface StepProps { snap: SetupSnapshot; go(step: SetupStep): void }`;
   - `Frame({ stage, children, actions, model }: { stage: ReactNode; children: ReactNode; actions?: ReactNode; model: ModelStatus })`: a 40 px drag strip, the `Stage` (left, 45%) beside the step (right, 55%, scrolls), and a 56 px footer with `Download` on the left and `Actions` on the right;
-  - `Download({ model }: { model: ModelStatus })`: the footer rows of the copy table. Try again calls `window.avanzel.settings.downloadModel()`.
+  - `Download({ model }: { model: ModelStatus })`: the footer rows of the copy table. Try the download again calls `window.avanzel.settings.downloadModel()`.
 - Produces (renderer, `copy.ts`): `megabytes(bytes: number): number`, `cardDate(day: Date): string` ("Wednesday 21 October"), `stampDate(day: Date): string` ("21 Oct 2026").
 - Produces (controller):
   - `showSetup(): void`: opens or focuses the window and starts a session.
-  - `showHome(): void`: setup when there is no library and no `libraryProblem`; Settings otherwise.
+  - `showHome(): void`: setup when there is no library and the controller's own `libraryProblem` (why a stored library failed to open, set by `openLibrary`) is null; Settings otherwise. It never reads the setup session's `makeProblem` (Task 3).
   - `setupSnapshot(): SetupSnapshot`: without a session, it describes a fresh one.
   - `enterSetupStep(step: SetupStep): SetupSnapshot`: ignores anything that isn't `isSetupStep`.
   - `setupStepForTests(): SetupStep | null`: the step the session is on, for e2e tests of steps whose body a later task builds.
@@ -355,7 +357,7 @@ Behaviour:
     - `setupSnapshot().agent` is "claude";
     - `(await agentCalls(app)).sort()` equals `["claude auth status", "codex login status"]`.
   - "Codex is chosen while Claude Code isn't signed in": `firstRun({ claude: <body printing {"loggedIn": false} and exiting 1 for auth status> })`. "Not signed in" is visible, `agent` is "codex", and there is a button "Use Claude Code".
-  - "a failed download says so in the footer, with Try again" (Review Focus 3): `firstRun()` with a "missing" `fakeModelHub`. After "Set me up", the text "The speech model didn't finish downloading." and a button "Try again" show. Clicking it makes `hub.requests.length` grow, and the heading stays "Here's what I found.".
+  - "a failed download says so in the footer, with Try the download again" (Review Focus 3): `firstRun()` with a "missing" `fakeModelHub`. After "Set me up", the text "The speech model didn't finish downloading." and a button "Try the download again" show. Clicking it makes `hub.requests.length` grow, and the heading stays "Here's what I found.".
 - [ ] **Step 4:** Build and run the spec. Expected: fail.
 - [ ] **Step 5: Implement.**
 - [ ] **Step 6:** Run `npm test -w @avanzel/mac`, `npm run typecheck`, `npm run design:check`, and the e2e specs `setup` and `agents`. Expected: all pass; the agents tests are unchanged.
@@ -366,13 +368,14 @@ Behaviour:
 **Files:**
 - Modify: `apps/mac/src/shared/ipc.ts`, `apps/mac/src/preload/index.ts`, `apps/mac/src/main/ipc.ts`
 - Modify: `apps/mac/src/main/controller.ts` (`useLibrary` at ~1405 gains a `fromSetup` flag; setup section)
-- Modify: `apps/mac/src/renderer/setup/steps/Found.tsx`; create `apps/mac/src/renderer/setup/steps/Think.tsx` (heading and "Back" for now)
+- Modify: `apps/mac/src/renderer/setup/main.tsx` (the step switch shows Think), `apps/mac/src/renderer/setup/steps/Found.tsx`; create `apps/mac/src/renderer/setup/steps/Think.tsx` (heading and "Back" for now)
+- Modify: `apps/mac/e2e/helpers.ts` (`throughFound`)
 - Test: `apps/mac/e2e/setup.spec.ts`
 
 **Interfaces:**
 - Consumes: `libraryFolder`, `Vault.init`, `useLibrary`, `setLibrarySettings`, `dialog.showOpenDialog`.
 - Produces:
-  - `SetupSnapshot.libraryProblem: string | null`; `SetupSession.libraryProblem`.
+  - `SetupSnapshot.makeProblem: string | null`; `SetupSession.makeProblem`: why the library couldn't be made. It is not called `libraryProblem`: the controller's own field of that name is what `showHome()` reads.
   - Bridge:
     - `setup.createLibrary(): Promise<SetupSnapshot>` (`setup:create-library`);
     - `setup.chooseFolder(): Promise<SetupSnapshot>` (`setup:choose-folder`).
@@ -380,20 +383,20 @@ Behaviour:
     - `createSetupLibrary(): Promise<SetupSnapshot>`;
     - `chooseSetupFolder(): Promise<SetupSnapshot>`;
     - `useLibrary(target: string, fromSetup = false)`: with `fromSetup` it skips `noticeTakenShortcut()`, because step 3 names a taken shortcut itself (Task 5).
-  - `setup.spec.ts` helper `throughFound(app: ElectronApplication): Promise<Page>`. From Hello it clicks "Set me up", waits for `setupSnapshot().agent` to be "claude" (20 s), clicks "Looks good", and returns the setup page once the heading "What's on your mind this week?" shows.
+  - e2e helper `throughFound(app: ElectronApplication): Promise<Page>`, exported from `helpers.ts` so other specs can use it. From Hello it clicks "Set me up", waits for `setupSnapshot().agent` to be "claude" (20 s), clicks "Looks good", and returns the setup page once the heading "What's on your mind this week?" shows.
 
 Behaviour of `createSetupLibrary()` at `libraryPath`:
 - When that library is already the open one, only the agent is saved.
 - missing or empty: `mkdirSync` (recursive) and `Vault.init(target, { git: true })`. has-files: `Vault.init` keeps every file, and its first commit holds them. library: used as it is.
 - Then `useLibrary(target, true)`, and the chosen agent saved with `setLibrarySettings({ harness })`.
-- When anything throws, or `this.vault` is still null afterwards (`libraryProblem`), `SetupSession.libraryProblem` gets the message.
-- `chooseSetupFolder()` shows the folder picker as a sheet on the setup window, titled "Choose your library folder" with `openDirectory` and `createDirectory`. A chosen folder becomes `libraryPath`, which clears `libraryProblem`; nothing is made yet.
+- When anything throws, or `this.vault` is still null afterwards (the controller's `libraryProblem` says why), `SetupSession.makeProblem` gets the message.
+- `chooseSetupFolder()` shows the folder picker as a sheet on the setup window, titled "Choose your library folder" with `openDirectory` and `createDirectory`. A chosen folder becomes `libraryPath`, which clears `makeProblem`; nothing is made yet.
 - Found:
   - the row's "Change…" calls `chooseFolder`;
-  - the footer's primary is "Looks good", or "Use this folder" when `folder` is has-files or library;
+  - the footer's primary is "Looks good", or "Use this folder" when `folder` is has-files or library, and it is secondary while a Notice with actions shows;
   - it is enabled when the chosen agent's status is signed-in or replied, and busy while it works;
   - success goes to "think";
-  - a `libraryProblem` shows its Notice.
+  - a `makeProblem` shows its Notice, whose "Change…" is then the primary.
 
 - [ ] **Step 1: Write the failing e2e tests:**
   - "Looks good makes the library at ~/Avanzel with Claude Code, and moves on":
@@ -407,7 +410,7 @@ Behaviour of `createSetupLibrary()` at `libraryPath`:
   - "a library that can't be made says why, and Change… is the way out": `<home>/Avanzel` is a plain file. "Use this folder" shows "I couldn't make the library at ~/Avanzel." and a "Change…" in the Notice, and the heading stays "Here's what I found.".
 - [ ] **Step 2:** Build and run. Expected: fail.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4:** Run `npm run typecheck`, `npm run design:check`, and the e2e specs `setup`, `shortcuts` and `models`. Expected: all pass. Shortcuts' "setting up a library names a taken shortcut at once…" still passes, because `createLibrary` isn't `fromSetup`.
+- [ ] **Step 4:** Run `npm test -w @avanzel/mac`, `npm run typecheck`, `npm run design:check`, and the e2e specs `setup`, `shortcuts` and `models`. Expected: all pass. Shortcuts' "setting up a library names a taken shortcut at once…" still passes, because `createLibrary` isn't `fromSetup`.
 - [ ] **Step 5:** Commit: `mac: Looks good makes the library with the chosen agent, or uses the folder that is there`.
 
 ### Task 4: Setup says how to sign an agent in, asks a picked agent one question, and notices a new install
@@ -437,7 +440,7 @@ Behaviour:
 - "Check again" calls `settings.checkAgent(name)`. It reads the sign-in again, and asks the question only when the sign-in says nothing.
 - With no installed agent when Found is entered, a timer every `AGENT_POLL_MS` looks for installed agents again. When one appears, it stops, calls `checkAgents()` and broadcasts. `endSetup` clears it.
 - **Found:**
-  - the chosen agent's problem Notice: signed-out, timeout or failed;
+  - the chosen agent's problem Notice: signed-out, timeout or failed. Its "Check again" is the primary, so the footer's button is secondary while it shows;
   - with no agent, the no-agent Notice and the two install commands. "Copy" calls `setup.copy` and reads "Copied" for 2 s.
 
 - [ ] **Step 1: Write the failing e2e tests:**
@@ -455,7 +458,7 @@ Behaviour:
     - Copy `claude` from a fresh `agentStubs()` folder into `bin` (it answers as signed in), and `chmodSync` it to 0o755. Within 15 s "Signed in" shows, `agent` is "claude", and the no-agent Notice is gone.
 - [ ] **Step 2:** Build and run. Expected: fail.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4:** Run `npm run typecheck`, `npm run design:check`, and the e2e specs `setup` and `agents`. Expected: all pass.
+- [ ] **Step 4:** Run `npm test -w @avanzel/mac`, `npm run typecheck`, `npm run design:check`, and the e2e specs `setup` and `agents`. Expected: all pass.
 - [ ] **Step 5:** Commit: `mac: setup says how to sign an agent in, asks a picked agent one question, and notices a new install`.
 
 ### Task 5: Setup listens for the shortcut, and offers free ones when no press arrives
@@ -465,7 +468,6 @@ Behaviour:
 - Modify: `apps/mac/src/shared/ipc.ts`, `apps/mac/src/preload/index.ts`, `apps/mac/src/main/ipc.ts`
 - Modify: `apps/mac/src/main/controller.ts`:
   - `toggleDictate` at ~556;
-  - `noticeTakenShortcut`;
   - the setup session, including `enterSetupStep("think")`;
   - new `useSetupShortcut`.
 - Modify: `apps/mac/src/renderer/setup/steps/Think.tsx`
@@ -502,13 +504,14 @@ Behaviour:
   - When dictate is taken, it marks the accelerator noticed, so the capsule won't name it at the next launch, and waits for nothing.
   - Otherwise it starts the timer. If no press arrives within `PRESS_WAIT_MS`, it sets `silent`, reads `runningAppNames()` for `likelyHolder`, and takes `freeAlternatives("dictate", shortcuts, shortcutApi())`.
   - Entering any other step clears the timer.
+- `endSetup` clears `pressTimer` too, so the wait can't fire against a closed session.
 - `setupPress()` sets `heard`, clears `silent` and the timer, and broadcasts.
-- `noticeTakenShortcut()` returns early while setup is open.
+- `noticeTakenShortcut()` is not changed, and gets no early return while setup is open: Task 3's `fromSetup` skip suffices, and shortcuts.spec.ts's "setting up a library names a taken shortcut at once…" opens its library from Settings while setup is open.
 - `useSetupShortcut(a)` is `useShortcut("dictate", a)`, then the same reset and timer as entering "think".
 - **Think:**
   - the instruction and hint rows of the copy table;
   - the stage: the card's placeholder, a `Row` of `Kbd size="key"` per `keyCaps(shortcut)`, and `Zel mood="idle"`;
-  - the keycaps press themselves twice (`pressed` for 200 ms at 700 ms and at 1600 ms) while nothing has been heard, except under Reduce Motion;
+  - the keycaps press themselves twice (`pressed` for 200 ms at 700 ms and at 1600 ms), once each time the step is entered, and only while nothing has been heard. That is step 3's orchestrated moment (§5.2 asks for it): under Reduce Motion the keycaps show their final frame, unpressed, at once;
   - a heard press shows the "is free" footnote;
   - the taken and silent Notices offer "Use {alt}", the best last and primary, which calls `setup.useShortcut`. With none free, they offer "Open Settings", which calls `window.avanzel.capsule.openSettingsFor("open-settings:voice")`.
 
@@ -540,8 +543,8 @@ The first thought arrives typed here; Task 7 adds the spoken one, which takes th
   - `FilingJob` gains `setup?` and `cancelled?`;
   - `runFiling` at ~840, `filingFailed` and `filingProgress`;
   - setup section.
-- Modify: `apps/mac/src/renderer/setup/copy.ts`, `apps/mac/src/renderer/setup/steps/Think.tsx` (typing); create `apps/mac/src/renderer/setup/steps/Filing.tsx`
-- Modify: `apps/mac/e2e/helpers.ts` (`filingClaude`)
+- Modify: `apps/mac/src/renderer/setup/copy.ts`, `apps/mac/src/renderer/setup/main.tsx` (the step switch shows Filing, and goes there when `snap.filing` appears), `apps/mac/src/renderer/setup/steps/Think.tsx` (typing); create `apps/mac/src/renderer/setup/steps/Filing.tsx`
+- Modify: `apps/mac/e2e/helpers.ts` (`filingClaude`, `typeFirstThought`)
 - Test: `packages/engine/test/core/harness.test.ts`, `apps/mac/test/setup-copy.test.ts`, `apps/mac/e2e/setup.spec.ts`
 
 **Interfaces:**
@@ -560,17 +563,19 @@ The first thought arrives typed here; Task 7 adds the spoken one, which takes th
     | { kind: "failed"; words: string; agent: string; /** The harness name, "claude". */ harness: string;
         /** errorLine of the failure. */ line: string; /** That line asks to sign in. */ signedOut: boolean };
   ```
-  - `SetupSnapshot.filing: SetupFiling | null`.
+  - `SetupSnapshot.filing: SetupFiling | null` and `SetupSnapshot.typeProblem: string | null`: why a typed thought wasn't taken.
   - Bridge:
     - `setup.typeThought(words: string): Promise<SetupSnapshot>` (`setup:type-thought`);
     - `setup.cancelFiling(): void` (`setup:cancel-filing`);
     - `setup.fileAgain(): void` (`setup:file-again`).
   - Controller:
-    - `typeSetupThought(words: string): SetupSnapshot`: writes a `source: "text"` capture and calls `takeThought`; empty words throw.
+    - `typeSetupThought(words: string): SetupSnapshot`: writes a `source: "text"` capture and calls `takeThought`. It never throws: empty words, or a capture that can't be written, set `SetupSession.typeProblem` to the message and come back in the snapshot, and each call starts by clearing it.
     - `cancelSetupFiling(): void` and `fileSetupAgain(): void`.
-    - Private `takeThought(capturePath: string, words: string, transcribedIn: number | null): void`. It sets `session.step = "filing"`, hides the capsule, adds the capture to `queuedToFile`, and enqueues `runFiling` for a job with `setup: true`.
-    - `SetupSession` gains `job: FilingJob | null` and `filing: SetupFiling | null`.
-- Produces (copy.ts): `ESTIMATE_SECONDS = 15`; `workingLine(agent: string, seconds: number): string`.
+    - Private `takeThought(capturePath: string, words: string, transcribedIn: number | null): void`. It calls `enterSetupStep("filing")` (it does not set `session.step` itself, so what Tasks 5 and 11 hang on entering a step runs), hides the capsule, adds the capture to `queuedToFile`, and enqueues `runFiling` for a job with `setup: true`.
+    - `SetupSession` gains `job: FilingJob | null`, `filing: SetupFiling | null` and `typeProblem: string | null`.
+- Produces (copy.ts):
+  - `ESTIMATE_SECONDS = 15`; `workingLine(agent: string, seconds: number): string`;
+  - `receiptPages(pages: readonly FiledPage[]): { pages: ReceiptPage[]; others: number }`: pages on the six shelves become receipt rows, in order; the rest are counted (`ReceiptPage` is `@avanzel/ui`'s).
 - Produces (helpers.ts): `filingClaude(): string`, a `claude` body for `agentStubs`. It answers `{"loggedIn": true}` to `auth status`, and otherwise runs `exec '<process.execPath>' '<fake-agent.mjs>' "$2"`: the prompt follows `-p`.
 
 Behaviour:
@@ -582,21 +587,23 @@ Behaviour:
   - With the window closed, the job falls to today's branches: a notification "Filed by {agent}", or "A note couldn't be filed".
   - A `cancelled` job returns early, as an edited one does, in both places `runFiling` checks `job.edited`.
 - `cancelSetupFiling()` marks the job `cancelled` and `cancelling`, and aborts its run. It then enqueues the job's `takeBack`, after which the filing is `cancelled` with `partial` = whether a problem came back.
-- `fileSetupAgain()`, after cancelled or failed, files the same capture in a new job.
-- **Think:** "Type it instead" opens the typing rows, and "File it" (or Return) calls `typeThought`. A thrown message shows as the `TextArea`'s description.
+- `fileSetupAgain()`, after cancelled, failed or undone (Task 8's state), files the same capture in a new job.
+- **Think:** "Type it instead" opens the typing rows, and "File it" (or Return) calls `typeThought`. `snap.typeProblem`, when set, shows as the `TextArea`'s description.
 - The renderer goes to "filing" when `snap.filing` appears on "think".
 - **Filing:**
   - the stage: a `Card` (label "Thought", meta "Inbox", the words), a `Row` of the six `ShelfTag variant="tab"`, and `Zel` thinking while running, `needs-you` when failed, `filed` when filed, `idle` otherwise;
   - the heading sits in a `div role="status"`, so VoiceOver hears the start and the end, not each second;
   - while running, a `Stack` holds the working line (ticking every 250 ms) and "Cancel" (busy while cancelling). Phase 1b adds its rows to this `Stack`;
-  - "filed" shows its heading and the `Receipt` of its shelf pages (Task 8 adds the rest), and the footer shows "Continue", which goes to "done" for now;
-  - cancelled and failed show their copy, and the footer offers "Continue".
+  - "filed" shows its heading and the `Receipt` of `receiptPages(pages).pages` (Task 8 adds the rest), and the footer shows "Continue", which goes to "done" for now;
+  - cancelled and failed show their copy, and the footer offers "Continue" (secondary while a Notice with actions shows);
+  - the footer has no Back in any Filing state.
 
 - [ ] **Step 1: Write the failing unit tests.**
   - harness.test.ts, "asksToSignIn knows a sign-in line": "Error: not logged in. Run cursor-agent login" is true; "Error: usage limit reached" is false.
   - setup-copy.test.ts, "the working line counts up to the estimate, then only counts": ("Claude Code", 6.9) gives "Claude Code is working: 6 s of about 15", and 15 gives "Claude Code is working: 15 s".
+  - setup-copy.test.ts, "receiptPages keeps the shelves and counts the rest" (Review Focus 5): `[ideas/a, projects/b, people/c]` gives two rows (Ideas, People) and `others: 1`.
 - [ ] **Step 2:** Run both workspaces' tests. Expected: fail.
-- [ ] **Step 3: Write the failing e2e tests.** Each launches `firstRun({ claude: filingClaude() })`. A local helper `typeFirstThought(setup, words)` clicks "Type it instead", fills "Your thought" and clicks "File it".
+- [ ] **Step 3: Write the failing e2e tests.** Each launches `firstRun({ claude: filingClaude() })`. The helper `typeFirstThought(setup: Page, words: string): Promise<void>`, exported from `helpers.ts` so other specs can use it, clicks "Type it instead", fills "Your thought" and clicks "File it".
   - "a typed first thought is filed in the window, with the time shown":
     - with `FAKE_AGENT_DELAY_MS: "1500"` and `FAKE_AGENT_DELAY_TASK: "file"`, type "Plant tulips in October";
     - expect "Watch me file it." and `/^Claude Code is working: \d+ s of about 15$/`, then the heading `/^All filed\. Claude Code took \d+ s\.$/`;
@@ -608,9 +615,12 @@ Behaviour:
   - "a filing that asks to sign in names it and offers Open Terminal": a `claude` that answers its sign-in and otherwise prints "Error: not logged in" to stderr and exits 1. The page shows "Claude Code isn't signed in on this Mac.", "Open Terminal" and "Try again", and the inbox keeps the capture.
   - "another failure shows its own line": printing "Error: usage limit reached" shows "Claude Code couldn't file it." and the text "Usage limit reached. Your words are safe in the inbox.".
   - "closing setup during the filing still files the thought and says so" (Review Focus 1):
+    - it launches with its own `AVANZEL_USER_DATA`, and with `AVANZEL_FAKE_AUDIO: speechWav("Plant tulips in October")` and `AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October"` too;
     - with a 3000 ms filing delay, `closeSetup` while "Watch me file it." shows, then `idleForTests`;
     - `notificationsForTests()` holds an entry titled "Filed by Claude Code", and `ideas/` has one page;
-    - `shown(app, "setup")` stays false.
+    - `shown(app, "setup")` stays false;
+    - a normal dictation works: `call(app, "toggleDictate")` makes `capsuleKind` "listening", then `cancelRecording`;
+    - after closing the app, a relaunch with the same `firstRun()` env and `AVANZEL_USER_DATA` has the library open and not setup: `snapshot().library.path` is `<home>/Avanzel` and `shown(app, "setup")` is false.
 - [ ] **Step 4:** Build and run. Expected: fail.
 - [ ] **Step 5: Implement.**
 - [ ] **Step 6:** Run both workspaces' tests, `npm run typecheck`, `npm run design:check`, and the e2e specs `setup`, `filing` and `app`. Expected: all pass, with filing.spec.ts unchanged.
@@ -672,9 +682,9 @@ Behaviour:
 - electron-builder.yml's `NSMicrophoneUsageDescription` becomes "Avanzel listens only while you can see it listening, and turns speech into text on this Mac.".
 - **Think:**
   - the primer replaces the step's panel, and Continue calls `allowMicrophone`;
-  - listening shows `Zel mood="listening"` and its copy; transcribing, its row; denied and failed, their Notices (Try again calls `tryAgain`, Open System Settings calls `window.avanzel.settings.openPrivacy("microphone")`);
+  - listening shows `Zel mood="listening"` and its copy; transcribing, its row; denied and failed, their Notices (Try again calls `tryAgain`, Open System Settings calls `window.avanzel.settings.openPrivacy("microphone")`). While denied, the Notice's "Type it instead" does what the standalone button does and replaces it, so there is one button of that name;
   - a test shows the words on the card, Zel's line, and "File it anyway" and "Try again";
-  - without `hears`, the ears line shows, and "Type it instead" becomes the primary.
+  - without `hears`, the ears line shows, and "Type it instead" becomes the primary, unless a Notice with actions shows.
 
 - [ ] **Step 1: Write the failing unit tests.**
   - setup-model.test.ts, "looksLikeATest knows a mic check from a thought": "Testing, testing.", "Test test one two three", "Hello?", "Can you hear me?" and "Is this on?" are true. "Testing the podcast idea with Mark", "Hello, I want to run a marathon in spring" and "" are false.
@@ -685,7 +695,7 @@ Behaviour:
     - with `AVANZEL_FAKE_PERMISSIONS: "microphone:not-determined"`, `AVANZEL_FAKE_MIC_ANSWER: "granted"` and `AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October"`, a press shows "Next, macOS asks about the microphone.";
     - Continue makes `capsuleKind` "listening" and shows "I'm listening.";
     - another press ends at "All filed.".
-  - "a denied microphone says where to allow it, and offers typing": with `microphone:denied` and a fake transcript, a press shows "Avanzel can't hear you yet.", "Open System Settings" and "Type it instead". `capsuleKind` stays "hidden".
+  - "a denied microphone says where to allow it, and offers typing": with `microphone:denied` and a fake transcript, a press shows "Avanzel can't hear you yet.", "Open System Settings" and one button "Type it instead" (the Notice's). `capsuleKind` stays "hidden".
   - "testing, testing gets a warm answer, and Try again starts over":
     - with `AVANZEL_FAKE_TRANSCRIPT: "Testing, testing."`, press twice to get "Heard you. Want to try a real thought?", with one capture in the inbox;
     - "Try again" empties the inbox and `raw/audio/`, and the instruction shows again.
@@ -708,12 +718,11 @@ Behaviour:
 - Test: `apps/mac/test/setup-copy.test.ts`, `apps/mac/e2e/setup.spec.ts`
 
 **Interfaces:**
-- Consumes: `SetupFiling` (Task 6), `librarian().undo`, `recentFromLog`, `obsidianUrl`, `obsidianInstalled()`; opening a page through `window.avanzel.ask.openPage(name)`, where `name` is the page's file name without `.md`.
+- Consumes: `SetupFiling` and `receiptPages` (both Task 6: `receiptPages` and its unit test moved there), `librarian().undo`, `recentFromLog`, `obsidianUrl`, `obsidianInstalled()`; opening a page through `window.avanzel.ask.openPage(name)`, where `name` is the page's file name without `.md`.
 - Produces:
   - `SetupFiling` gains `{ kind: "undone"; words: string }`, and `filed` gains `undoRefused: boolean`.
   - `SetupSnapshot.opensInObsidian: boolean`: Obsidian is installed and `obsidianUrl(root, "")` isn't null.
   - Bridge `setup.undo(): void` (`setup:undo`); controller `undoSetupFiling(): Promise<void>`. It enqueues `undo([commit])`; one undone gives `undone`, otherwise `filed` with `undoRefused: true`. Either way it refreshes `recent`.
-  - `receiptPages(pages: readonly FiledPage[]): { pages: ReceiptPage[]; others: number }`: pages on the six shelves become receipt rows, in order; the rest are counted.
   - `pagesLine(created: number, updated: number, where: string): string | null`: the filed footnote of the copy table; null when both are 0.
 
 Behaviour:
@@ -724,16 +733,17 @@ Behaviour:
   - ⌘Z (a `keydown` with `metaKey` and "z", its default prevented) undoes while `canUndo`;
   - `undoRefused` shows its Notice, and "Undo" goes away;
   - "Continue" goes to "ask" when the filing has pages, and to "done" otherwise.
-- **Filing, undone:** its copy, and "File it again" calls `fileAgain`; "Continue" goes to "done".
+- **Filing, undone:** its copy, and "File it again" calls `fileAgain` (Task 6's `fileSetupAgain()` runs after undone too); "Continue" goes to "done".
+- Filing has no Back in any state (Back is on Found and Think only).
 
-- [ ] **Step 1: Write the failing unit tests** in setup-copy.test.ts (Review Focus 5):
-  - "receiptPages keeps the shelves and counts the rest": `[ideas/a, projects/b, people/c]` gives two rows (Ideas, People) and `others: 1`.
-  - "pagesLine says what the filing wrote": (1, 0, "~/Avanzel") gives "1 new page, all plain Markdown in ~/Avanzel."; (3, 1) gives "3 new pages and 1 updated, all plain Markdown in ~/Avanzel."; (0, 2) gives "2 updated pages, all plain Markdown in ~/Avanzel."; (0, 0) gives null.
+- [ ] **Step 1: Write the failing unit test** in setup-copy.test.ts (Review Focus 5; the `receiptPages` test is Task 6's now):
+  - "pagesLine says what the filing wrote", with `where` "~/Avanzel": (1, 0) gives "1 new page, all plain Markdown in ~/Avanzel."; (3, 1) gives "3 new pages and 1 updated, all plain Markdown in ~/Avanzel."; (0, 1) gives "1 updated page, all plain Markdown in ~/Avanzel."; (0, 2) gives "2 updated pages, all plain Markdown in ~/Avanzel."; (0, 0) gives null.
 - [ ] **Step 2:** Run `npm test -w @avanzel/mac`. Expected: fail.
 - [ ] **Step 3: Write the failing e2e tests** (typed thoughts, `filingClaude()`):
   - "a filed thought shows its stamp, its page and how to undo it, and Undo puts everything back":
     - "Plant tulips in October" shows "Your first idea has a home.", "1 new page, all plain Markdown in ~/Avanzel.", "Press ⌘Z or Undo to put everything back.", the receipt row "Plant tulips in October" and "Ideas", the image `/^Filed, /`, and the button "Open the page";
-    - "Undo" shows "Undone.", with the inbox holding one capture and `ideas/` empty.
+    - "Undo" shows "Undone.", with the inbox holding one capture and `ideas/` empty;
+    - "File it again" ends at "All filed.".
   - "⌘Z undoes it too": `setup.keyboard.press("Meta+z")` shows "Undone.".
   - "a filing that changed the words says they are kept": `FAKE_AGENT_MODE: "tamper"` shows "Your exact words are kept.".
   - "Continue goes to Ask after a filing, and to the end after an undo": in one launch, "Continue" after "All filed." makes `call(app, "setupStepForTests")` "ask". In a second launch, "Undo", then "Continue", makes it "done". Those steps get their bodies in Tasks 9 and 10.
@@ -748,7 +758,8 @@ Behaviour:
 - Modify: `apps/mac/src/main/setup-model.ts` (`suggestQuestion`, `answerSources`)
 - Modify: `apps/mac/src/shared/ipc.ts`, `apps/mac/src/preload/index.ts`, `apps/mac/src/main/ipc.ts`
 - Modify: `apps/mac/src/main/controller.ts` (`ask` at ~1190 is split around a new private `answerQuestion`; setup section)
-- Create: `apps/mac/src/renderer/setup/steps/Ask.tsx`
+- Create: `apps/mac/src/renderer/setup/steps/Ask.tsx`, and `apps/mac/src/shared/wikilinks.ts` (the wikilink pattern, moved out of `apps/mac/src/renderer/ask/main.tsx:20`)
+- Modify: `apps/mac/src/renderer/setup/main.tsx` (the step switch shows Ask), `apps/mac/src/renderer/ask/main.tsx` (imports the pattern from `shared/wikilinks.ts`)
 - Test: `apps/mac/test/setup-model.test.ts`, `apps/mac/e2e/setup.spec.ts`
 
 **Interfaces:**
@@ -768,10 +779,11 @@ Behaviour:
     - `askInSetup(question: string): Promise<SetupSnapshot>` (one question at a time);
     - `skipSetupAsk(): void` aborts it and clears `answer`;
     - `SetupSession` gains `answer` and `askAbort`; `endSetup` aborts too.
-    - Private `answerQuestion(question: string, abort: AbortController, progress: (message: string) => void): Promise<{ ok: boolean; text: string; agent: string; seconds: number }>`. `text` is the answer, or on failure the agent's last lines (`lastLines(stderr || output)`), or the error's message. `ask()` keeps its `AskResult` exactly as today, adding its "{agent} couldn't answer:\n" in front on failure.
+    - Private `answerQuestion(question: string, abort: AbortController, progress: (message: string) => void): Promise<{ ok: boolean; ran: boolean; text: string; agent: string; seconds: number }>`. `ran` says whether the agent ran to the end of its run: true for an answer and for a failed run, false when an error was thrown instead. `text` is the answer, or on a failed run the agent's last lines (`lastLines(stderr || output)`), or on a thrown error the error's message. `ask()` keeps its `AskResult` exactly as today: only a failed run (`ran` and not `ok`) gets "{agent} couldn't answer:\n" in front of `text`, and a thrown error's message comes back bare.
+  - `WIKILINK` (shared/wikilinks.ts): the pattern of `[[name]]`, `[[name|label]]` and `[[name#heading|label]]`, moved as it is from `renderer/ask/main.tsx:20`, which now imports it. Its groups are the name and the label.
   - `suggestQuestion(pages: readonly FiledPage[]): string | null`: the first `people` page gives "What am I doing with {title}?"; otherwise the first page gives "What did I say about {title}?"; none gives null.
   - `answerSources(answer: string): { paragraphs: string[]; names: string[] }`:
-    - `[[name]]`, `[[name|label]]` and `[[name#heading|label]]` become the label or the name; the pattern is the Ask window's;
+    - `[[name]]`, `[[name|label]]` and `[[name#heading|label]]` become the label or the name; the pattern is `WIKILINK`, so the regex exists once;
     - `names` are the link names in order, without repeats;
     - `paragraphs` are the non-empty trimmed lines, without leading `#`s and without `**`.
 
@@ -780,7 +792,7 @@ Behaviour:
 - **Ask:**
   - the stage: a `Card` labelled "Question" holding the question asked, or the suggestion; Zel `thinking` while asking, `idle` otherwise;
   - the panel: the suggestion as a secondary `Button`, which asks it; the `TextField`, which asks on Return; the asking line, ticking every 250 ms; the answer; and "Pages I used:" with a `Row` per source: a `ShelfTag` (shelf pages only) beside a `Button variant="link"` with the title, which opens it;
-  - "Skip" calls `skipAsk` and goes to "done"; "Continue" goes to "done".
+  - "Skip" calls `skipAsk` and goes to "done"; "Continue" goes to "done"; there is no Back (Back is on Found and Think only).
 
 - [ ] **Step 1: Write the failing unit tests** (Review Focus 5 for `suggestQuestion`):
   - "suggestQuestion asks about a person first": `[ideas "Indie game dev podcast", people "Mark"]` gives "What am I doing with Mark?".
@@ -801,7 +813,8 @@ Behaviour:
 **Files:**
 - Modify: `apps/mac/src/shared/ipc.ts`, `apps/mac/src/preload/index.ts`, `apps/mac/src/main/ipc.ts`
 - Modify: `apps/mac/src/main/controller.ts` (`changeApp` at ~1339; setup section)
-- Modify: `apps/mac/src/renderer/setup/copy.ts` (`reviewLabel`); create `apps/mac/src/renderer/setup/steps/Done.tsx`
+- Modify: `apps/mac/src/renderer/setup/copy.ts` (`reviewLabel`), `apps/mac/src/renderer/setup/main.tsx` (the step switch shows Done); create `apps/mac/src/renderer/setup/steps/Done.tsx`
+- Modify: `apps/mac/e2e/helpers.ts` (`toDone`)
 - Test: `apps/mac/test/setup-copy.test.ts`, `apps/mac/e2e/setup.spec.ts`
 
 **Interfaces:**
@@ -811,7 +824,7 @@ Behaviour:
   - Bridge `setup.finish(): void` (`setup:finish`); controller `finishSetup(): Promise<void>`. In this task it closes the window; Task 12 adds the flight and the bubble.
   - `SetupSession.doneEntered: boolean`.
   - `reviewLabel(schedule: string): string`: "daily 21:00" gives "Review my inbox every day at 21:00", and "weekly sun 18:00" gives "Review my inbox every Sunday at 18:00".
-  - `setup.spec.ts` helper `toDone(app): Promise<Page>`: `throughFound`, a typed thought, Continue, Skip, then the heading "You're all set.".
+  - e2e helper `toDone(app): Promise<Page>`, exported from `helpers.ts` so other specs can use it: `throughFound`, a typed thought (`typeFirstThought`), Continue, Skip, then the heading "You're all set.".
 
 Behaviour:
 - `changeApp` calls `app.setLoginItemSettings` only without `AVANZEL_TEST=1`; the setting itself is still saved.
@@ -819,7 +832,7 @@ Behaviour:
 - **Done:**
   - its copy, with `Zel mood="idle"` on the stage;
   - a `Group` of the two `Switch`es: login reads `launchAtLogin`, and the evening one reads `eveningReview.enabled` and isn't there without the task;
-  - "Start using Avanzel" calls `finish`.
+  - "Start using Avanzel" calls `finish`; the footer has no Back (Back is on Found and Think only).
 
 - [ ] **Step 1: Write the failing unit test:** "reviewLabel says when the review runs", with both cases above.
 - [ ] **Step 2:** Run `npm test -w @avanzel/mac`. Expected: fail.
@@ -827,7 +840,7 @@ Behaviour:
   - "the last step turns on opening at login, and both switches apply at once":
     - after `toDone`, `snapshot().app.launchAtLogin` is true and the switch "Open Avanzel when I log in" has `aria-checked="true"`; clicking it makes the setting false;
     - clicking "Review my inbox every day at 21:00" makes `read(lib, "tasks/evening-review.md")` contain "enabled: false".
-  - "Start using Avanzel closes the window, and the menu bar is where Avanzel lives": after `toDone`, the click makes `shown(app, "setup")` false, and `menuForTests()` holds "Record a thought".
+  - "Start using Avanzel closes the window, and the menu bar is where Avanzel lives": after `toDone`, the click turns `shown(app, "setup")` false within 5 s, and `menuForTests()` holds "Record a thought".
 - [ ] **Step 4:** Build and run. Expected: fail.
 - [ ] **Step 5: Implement.**
 - [ ] **Step 6:** Run `npm test -w @avanzel/mac`, `npm run typecheck`, `npm run design:check`, and the e2e specs `setup`, `shortcuts` and `app`. Expected: all pass.
@@ -838,7 +851,8 @@ Behaviour:
 Nothing is reported anywhere. The file gives the owner "time from first launch to first filed thought" and "people who finish setup" from a test Mac. The other §5.4 measures come from the library's `log.md` and git history.
 
 **Files:**
-- Modify: `apps/mac/src/main/store.ts` (new `FirstRunLog`)
+- Modify: `apps/mac/src/main/store.ts` (new `writeJsonAtomic`, which `SettingsStore.update` and `NoticedShortcuts.save` call; new `FirstRunLog`)
+- Modify: `apps/mac/src/main/run-state.ts` (`RunStateStore.set` calls `writeJsonAtomic`)
 - Modify: `apps/mac/src/main/controller.ts` (the constructor, `start`, `enterSetupStep`, the setup filing's `filed`, `undoSetupFiling`, `finishSetup`, `endSetup`)
 - Test: `apps/mac/test/store.test.ts`, `apps/mac/e2e/setup.spec.ts`
 
@@ -869,7 +883,8 @@ Nothing is reported anywhere. The file gives the owner "time from first launch t
     closed(step: SetupStep): void;
   }
   ```
-  Times are ISO strings. `launched`, `entered` (per step), `filed` and `finished` keep the first time only. A missing or broken file reads as all-null. Writes are atomic, as `SettingsStore` writes.
+  Times are ISO strings. `launched`, `entered` (per step), `filed` and `finished` keep the first time only. A missing or broken file reads as all-null. Writes go through `writeJsonAtomic`.
+- Produces (store.ts): `writeJsonAtomic(file: string, value: unknown): void`: makes the file's folder, writes `JSON.stringify(value, null, 2)` and a newline to `<file>.tmp`, and renames it over `file`. `SettingsStore.update`, `NoticedShortcuts.save` and `RunStateStore.set` each repeat these lines now; they call it instead, and so does `FirstRunLog`.
 
 Behaviour:
 - `SetupSession` gains `finished: boolean`, which `finishSetup()` sets first.
@@ -888,7 +903,7 @@ Behaviour:
 - [ ] **Step 3: Write the failing e2e test:** "a finished setup leaves its milestones in first-run.json". With its own `AVANZEL_USER_DATA`, `toDone` and "Start using Avanzel", the file's `steps` has hello, found, think, filing, ask and done. `firstFiledAt` and `finishedAt` are set, and `closedOn` is null.
 - [ ] **Step 4:** Build and run. Expected: fail.
 - [ ] **Step 5: Implement.**
-- [ ] **Step 6:** Run `npm test -w @avanzel/mac`, `npm run typecheck`, and the `setup` e2e spec. Expected: all pass.
+- [ ] **Step 6:** Run `npm test -w @avanzel/mac`, `npm run typecheck`, `npm run design:check`, and the `setup` e2e spec. Expected: all pass.
 - [ ] **Step 7:** Commit: `mac: setup notes when each first-run milestone was reached, on this Mac only`.
 
 ### Task 12: The setup window flies into the menu bar, and Zel says it's up there
@@ -903,7 +918,7 @@ The bubble gets its own small window, because the end of setup is when the perso
 - Modify: `apps/mac/src/shared/ipc.ts`, `apps/mac/src/preload/index.ts`, `apps/mac/src/main/ipc.ts`
 - Modify: `apps/mac/src/main/controller.ts` (`finishSetup`; new `tryItNow`, `closeUpHere`)
 - Create: `apps/mac/src/renderer/up-here/index.html`, `main.tsx`, `styles.css`
-- Modify: `apps/mac/src/renderer/setup/main.tsx` (hides the content when finishing), `apps/mac/src/renderer/setup/styles.css`
+- Modify: `apps/mac/src/renderer/setup/main.tsx` (hides the content when finishing), `apps/mac/src/renderer/setup/steps/Done.tsx` (where Start using Avanzel calls `finish`), `apps/mac/src/renderer/setup/styles.css`
 - Test: `apps/mac/test/setup-model.test.ts`, `apps/mac/e2e/setup.spec.ts`
 
 **Interfaces:**
@@ -912,7 +927,7 @@ The bubble gets its own small window, because the end of setup is when the perso
   - `flightTarget(tray: Box): Box | null`: a 24 × 24 square centred on the icon, rounded; null when the icon's width or height is 0;
   - `upHerePlace(tray: Box, work: Box, size: { width: number; height: number }): { x: number; y: number }`. The tail's tip, 42 px in from the window's right edge, sits under the icon's centre, at `y = max(work.y, tray.y + tray.height)`; the window is then clamped into `work`.
 - Produces:
-  - `MenuBar.bounds(): Electron.Rectangle` (`tray.getBounds()`);
+  - `MenuBar.bounds(): Electron.Rectangle`: `tray.getBounds()`, or with `AVANZEL_TEST=1` and `AVANZEL_FAKE_TRAY_BOUNDS` set ("x,y,width,height"), those;
   - `UP_HERE_SIZE = { width: 320, height: 200 }`;
   - `createUpHereWindow(): BrowserWindow`: `UP_HERE_SIZE`, title "Avanzel", frameless, transparent, no shadow, not resizable, `alwaysOnTop`, `skipTaskbar`, `type: "panel"`, visible on all workspaces, `show: false`; it loads `pagePath("up-here")`;
   - `FLIGHT_MS = 700` (the drawer duration).
@@ -938,17 +953,19 @@ Behaviour of `finishSetup()`:
   - "flightTarget centres a 24 px square on the icon, and has none without one": `{ x: 1000, y: 2, width: 30, height: 22 }` gives `{ x: 1003, y: 1, width: 24, height: 24 }`; a zero box gives null.
   - "upHerePlace puts the tail under the icon and keeps the bubble on the display": tray `{ x: 1000, y: 0, width: 24, height: 24 }`, work `{ x: 0, y: 25, width: 1440, height: 875 }` and size 320 × 200 give `{ x: 734, y: 25 }`; tray `{ x: 1420, y: 0, width: 20, height: 24 }` gives `x: 1120`.
 - [ ] **Step 2:** Run `npm test -w @avanzel/mac`. Expected: fail.
-- [ ] **Step 3: Write the failing e2e tests** (`toDone`, with `AVANZEL_FAKE_AUDIO` and `AVANZEL_FAKE_TRANSCRIPT` set):
+- [ ] **Step 3: Write the failing e2e tests** (`toDone`, with `AVANZEL_FAKE_AUDIO`, `AVANZEL_FAKE_TRANSCRIPT` and `AVANZEL_FAKE_TRAY_BOUNDS: "1000,0,24,24"` set):
   - "Start using Avanzel flies the window to the menu bar, Zel says it's up there, and Try it now records":
     - after the click, `shown(app, "setup")` turns false within 5 s;
     - `windowFor(app, "up-here")` shows "I'm up here." and the text "⌥Space";
     - "Try it now" makes `capsuleKind` "listening" and `shown(app, "up-here")` false; then `cancelRecording`.
   - "Not now and Esc put the bubble away": with Not now, then on a second launch with Esc pressed in the bubble, `shown(app, "up-here")` turns false.
 - [ ] **Step 4:** Build and run. Expected: fail.
-- [ ] **Step 5: Implement.** Then try it by hand once, keeping clear of the owner's own library and CLI config:
-  - run `AVANZEL_USER_DATA=$(mktemp -d) XDG_CONFIG_HOME=$(mktemp -d) npm run dev -w @avanzel/mac`, so there is no library and nothing is remembered in `~/.config`;
+- [ ] **Step 5: Implement.** Then try it by hand once, in the test environment only, so no real agent runs and nothing downloads, and keeping clear of the owner's own library and CLI config:
+  - from `apps/mac`, run `npm run build`; then set `bin` to a new folder of executable `claude` and `codex` scripts that answer as `agentStubs()`'s do (signed in, and "ready" to anything else), and `electron` to `$(node -p 'require("electron")')`, since the narrowed PATH below has no `node` or `npm`;
+  - still in `apps/mac`, run `env -u ELECTRON_RUN_AS_NODE AVANZEL_TEST=1 AVANZEL_EXACT_PATH=1 AVANZEL_MODELS_URL=http://127.0.0.1:9 AVANZEL_USER_DATA=$(mktemp -d) XDG_CONFIG_HOME=$(mktemp -d) PATH="$bin:/usr/bin:/bin:/usr/sbin:/sbin" "$electron" .`, so there is no library, nothing is remembered in `~/.config`, the speech download fails at once, and the only agents are the stand-ins;
   - pick a temp folder with Change…, and finish setup;
-  - watch the window go to the icon, with the bubble under it. With Reduce Motion on, the window just closes.
+  - watch the window go to the icon, with the bubble under it. With Reduce Motion on, the window just closes;
+  - a run with the owner's real agent and the real download is the owner's to do: Task 14's report lists it.
 - [ ] **Step 6:** Run `npm test -w @avanzel/mac`, `npm run typecheck`, `npm run design:check`, and the `setup` e2e spec. Expected: all pass.
 - [ ] **Step 7:** Commit: `mac: the setup window flies into the menu bar, and Zel says it's up there`.
 
@@ -958,7 +975,7 @@ Behaviour of `finishSetup()`:
 - Modify: `apps/mac/e2e/contrast.spec.ts` (a new test; reuse `readable` and `desktops`)
 - Modify: `README.md:53-80` (Good to know), `README.md:93-99` (first launch)
 
-- [ ] **Step 1: Write the test** "every setup step and the bubble are readable in light and dark" (timeout 240 s). Use `firstRun({ claude: filingClaude() })` with `AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space"`, so step 3 shows its Notice.
+- [ ] **Step 1: Write the test** "every setup step and the bubble are readable in light and dark" (timeout 240 s). Use `firstRun({ claude: filingClaude() })` with `AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space"`, so step 3 shows its Notice, and `AVANZEL_FAKE_TRAY_BOUNDS: "1000,0,24,24"`, so the bubble opens. The walk can use `throughFound`, `typeFirstThought` and `toDone`, which Tasks 3, 6 and 10 export from `helpers.ts`.
   - Read each surface with `readable(app, page, "Setup › …", desktops)`:
     - Hello (its stamp landed);
     - Found (both "Signed in");
@@ -969,7 +986,7 @@ Behaviour of `finishSetup()`:
     - Done;
     - the bubble.
   - Expect `found` to equal `[]`.
-- [ ] **Step 2:** Build and run `contrast.spec.ts`. Expected: pass. A failure here is a component's contrast or a wrong tone chosen in a step: fix the step's variant or tone, never by painting in the window.
+- [ ] **Step 2:** Run `npm test -w @avanzel/mac`, `npm run typecheck` and `npm run design:check`, then build and run the e2e specs `contrast` and `setup`. Expected: all pass. A failure here is a component's contrast or a wrong tone chosen in a step: fix the step's variant or tone, never by painting in the window.
 - [ ] **Step 3: Update the README.**
   - Lines 93–99's first two sentences become:
     - On first launch, a setup window walks you through six short steps with no visit to Settings.
@@ -986,9 +1003,11 @@ Behaviour of `finishSetup()`:
 
 ### Task 14: The whole branch, checked
 
-- [ ] **Step 1:** From the worktree root, run `npm test`, `npm run typecheck`, `npm run design:check` and `npm run ui:e2e`. Then, from `apps/mac`, run the whole e2e suite (`env -u ELECTRON_RUN_AS_NODE npm run e2e`). Expected: all pass. The gallery screenshots are unchanged, since `packages/ui` wasn't touched.
+- [ ] **Step 1:** From the worktree root, run `npm test`, `npm run typecheck`, `npm run design:check` and `npm run ui:e2e`. Then, from `apps/mac`, run the whole e2e suite (`env -u ELECTRON_RUN_AS_NODE npm run e2e`). Expected: all pass, except the known flakes, which fail on `main` too. The gallery screenshots are unchanged, since `packages/ui` wasn't touched.
 - [ ] **Step 2:** Run the `design-reviewer` agent on the branch's window changes (`apps/mac/src/renderer/setup/**`, `apps/mac/src/renderer/up-here/**`) and fix what it reports against DESIGN.md.
-- [ ] **Step 3:** Report:
+- [ ] **Step 3:** Commit the fixes from Steps 1 and 2, if there are any, as one commit with a subject in the Process form (`area: a sentence saying what now happens`).
+- [ ] **Step 4:** Report:
   - the components each step used;
   - that no gallery section changed;
-  - the owner items above, each with the stand-in now in the window.
+  - the owner items above, each with the stand-in now in the window;
+  - that a run through setup with the owner's real agent and the real 673 MB download hasn't been done (Task 12's run by hand used the test environment), so it is the owner's to try once.
