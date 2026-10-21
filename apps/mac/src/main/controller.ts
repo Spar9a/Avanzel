@@ -137,6 +137,11 @@ const AGENT_POLL_MS = 2_000;
  * shortcut another app holds, so only a press that arrives says it works (tests change it).
  */
 const PRESS_WAIT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PRESS_WAIT_MS)) || 3_000;
+/**
+ * At most how often a download's progress reaches the setup window: each setup snapshot reads the agents, the library's
+ * place and its tasks afresh, so not at each of the download's ticks (Settings gets those).
+ */
+const SETUP_PROGRESS_MS = 1_000;
 /** Where Open Terminal goes: the person signs an agent in there. */
 const TERMINAL = "/System/Applications/Utilities/Terminal.app";
 const HARNESS_NAMES: Record<string, string> = {
@@ -376,6 +381,8 @@ export class Controller {
   private running = new Set<string>();
   private lastEveningCommits: string[] = [];
   private audioTimeout: NodeJS.Timeout | null = null;
+  /** When the setup window was last sent the download's progress (`broadcastProgress`). */
+  private setupProgressAt = 0;
   /** Whether the capsule page listens yet; commands for its recorder wait until it does. */
   private capsuleListening = false;
   private heldCommands: ("start" | "stop" | "cancel")[] = [];
@@ -1575,6 +1582,20 @@ export class Controller {
     this.refreshMenu();
   }
 
+  /**
+   * The download's progress, to the windows that show it: Settings at each tick, and the setup window at most once every
+   * SETUP_PROGRESS_MS, since each of its snapshots reads the agents, the library's place and its tasks afresh. The menu
+   * shows no progress, so it isn't rebuilt. The download's end goes to all of them (`broadcast`).
+   */
+  private broadcastProgress(): void {
+    const win = this.settingsWindow;
+    if (win && !win.isDestroyed()) win.webContents.send("settings:changed", this.snapshot());
+    const setup = this.setup?.window;
+    if (!setup || setup.isDestroyed() || Date.now() - this.setupProgressAt < SETUP_PROGRESS_MS) return;
+    this.setupProgressAt = Date.now();
+    setup.webContents.send("setup:changed", this.setupSnapshot());
+  }
+
   snapshot(): SettingsSnapshot {
     const vault = this.vault;
     let settings: Settings | null = null;
@@ -1657,7 +1678,8 @@ export class Controller {
    * setApp, for `picked`'s shortcut chosen on the capsule's notice of a taken one, when it is (`useShortcut`). A new
    * Record a thought shortcut while setup's first-thought step shows starts that step's press test over, wherever it was
    * set: on the step itself, or in Settings → Voice, where the step's Open Settings leads. Opening at login is saved,
-   * and macOS's login items follow it, except with AVANZEL_TEST=1, which leaves this Mac's login items be.
+   * and macOS's login items follow it in a packaged Avanzel. Not with AVANZEL_TEST=1, which leaves this Mac's login
+   * items be, nor in a development run, whose app is node_modules' Electron.app: the setting is kept all the same.
    */
   private async changeApp(patch: Partial<AppSettings>, picked?: keyof Shortcuts): Promise<SettingsSnapshot> {
     const before = this.store.get();
@@ -1667,7 +1689,9 @@ export class Controller {
       this.followShortcuts(picked);
       if (before.shortcuts.dictate !== after.shortcuts.dictate && this.setup?.step === "think") this.listenForPress(this.setup);
     }
-    if (patch.launchAtLogin !== undefined && process.env.AVANZEL_TEST !== "1") app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
+    if (patch.launchAtLogin !== undefined && process.env.AVANZEL_TEST !== "1" && app.isPackaged) {
+      app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
+    }
     this.broadcast();
     return this.snapshot();
   }
@@ -1753,7 +1777,11 @@ export class Controller {
     this.showSettings();
   }
 
-  /** Brings the setup window forward, or opens a new one, which starts a new session on Hello once it has drawn. */
+  /**
+   * Brings the setup window forward, or opens a new one, which starts a new session on Hello once it has drawn. While
+   * the window is open, Avanzel shows its Dock icon, so a window gone behind Terminal, say, can be found again; setup's
+   * end hides it (`endSetup`).
+   */
   showSetup(): void {
     if (this.setup && !this.setup.window.isDestroyed()) {
       app.focus({ steal: true });
@@ -1762,6 +1790,7 @@ export class Controller {
       return;
     }
     const win = createSetupWindow();
+    void app.dock?.show().catch((error: unknown) => console.error("dock", error));
     // Shown once its page has drawn, so it never flashes blank first.
     win.once("ready-to-show", () => {
       if (win.isDestroyed()) return;
@@ -1806,8 +1835,9 @@ export class Controller {
    * wait can't end against a closed window. A question it was answering is given up: its agent stops, and the library
    * is free. A mic check waiting for File it anyway or Try again goes, its note and its recording (`discardTest`), as
    * Try again would: left in the inbox, the evening review would file "Testing, testing" with an agent run. A filing it
-   * started goes on, and says how it went by notification (`runFiling`). A newer window's session is its own. Unless
-   * Start using Avanzel ended it, the step it was closed on is noted (`firstRun`).
+   * started goes on, and says how it went by notification (`runFiling`). The Dock icon goes again: Avanzel lives in the
+   * menu bar. A newer window's session is its own. Unless Start using Avanzel ended it, the step it was closed on is
+   * noted (`firstRun`).
    */
   private endSetup(win: BrowserWindow): void {
     const session = this.setup;
@@ -1816,6 +1846,7 @@ export class Controller {
     this.stopPressTest(session);
     this.discardTest(session);
     session.askAbort?.abort();
+    app.dock?.hide();
     if (!session.finished) this.firstRun.closed(session.step);
     this.setup = null;
   }
@@ -2306,26 +2337,24 @@ export class Controller {
 
   /**
    * File it, on the first-thought step's typing rows: the words become a capture in the inbox, which setup files
-   * (`takeThought`). It never throws: empty words, or a capture that can't be written, are the session's `typeProblem`,
-   * which the step shows under the box, and each try clears the last one. Only the first-thought step takes a thought,
-   * and only words: anything else is ignored.
+   * (`takeThought`). It never throws: a capture that can't be written is the session's `typeProblem`, which the step
+   * shows under the box, and each try clears the last one. Only the first-thought step takes a thought, and only words:
+   * anything else, empty words included, is ignored (File it waits for words).
    */
   typeSetupThought(words: unknown): SetupSnapshot {
     const session = this.setup;
-    if (session?.step !== "think" || typeof words !== "string") return this.setupSnapshot();
+    const trimmed = typeof words === "string" ? words.trim() : "";
+    if (session?.step !== "think" || !trimmed) return this.setupSnapshot();
     session.typeProblem = null;
-    const trimmed = words.trim();
-    let capture: Capture | null = null;
-    if (!trimmed) session.typeProblem = "Type a thought first.";
-    else {
-      try {
-        capture = this.requireVault().newCapture(trimmed, { source: "text", now: new Date() });
-      } catch (error) {
-        session.typeProblem = errorMessage(error);
-      }
+    let capture: Capture;
+    try {
+      capture = this.requireVault().newCapture(trimmed, { source: "text", now: new Date() });
+    } catch (error) {
+      session.typeProblem = errorMessage(error);
+      this.broadcast();
+      return this.setupSnapshot();
     }
-    if (capture) this.takeThought(capture.path, trimmed, null);
-    else this.broadcast();
+    this.takeThought(capture.path, trimmed, null);
     return this.setupSnapshot();
   }
 
@@ -2513,31 +2542,42 @@ export class Controller {
    * has. Closing it ends the session. Then Zel's bubble says it's up there (openUpHere). Under Reduce Motion the window
    * just closes. So it does when the icon is hidden, and there is no bubble, since there is nothing to point at:
    * opening Avanzel again finds it (`showHome`). A window closed during the flight, or by quitting, gets no bubble
-   * either.
+   * either. Whatever goes wrong in the flight, the window still closes: the person pressed Start using Avanzel.
    */
-  async finishSetup(): Promise<void> {
+  finishSetup(): void {
     const session = this.setup;
     if (session?.step !== "done" || session.finished || session.window.isDestroyed()) return;
     session.finished = true;
     this.firstRun.finished(new Date());
     const win = session.window;
-    const tray = this.menuBar.bounds();
-    const target = flightTarget(tray);
-    if (target && !systemPreferences.getAnimationSettings().prefersReducedMotion) {
-      win.setWindowButtonVisibility(false);
-      win.setBounds(target, true); // returns once it has landed
-      if (win.isDestroyed()) return;
+    let icon: Box | null = null;
+    try {
+      const tray = this.menuBar.bounds();
+      const target = flightTarget(tray);
+      if (target) icon = tray;
+      if (target && !systemPreferences.getAnimationSettings().prefersReducedMotion) {
+        win.setWindowButtonVisibility(false);
+        win.setBounds(target, true); // returns once it has landed
+      }
+    } catch (error) {
+      console.error("the flight into the menu bar", error);
+    } finally {
+      if (!win.isDestroyed()) {
+        // Once the window has gone, so the bubble takes the focus from nothing on its way out.
+        const at = icon;
+        if (at) win.once("closed", () => this.openUpHere(at));
+        win.close();
+      }
     }
-    // Once the window has gone, so the bubble takes the focus from nothing on its way out.
-    if (target) win.once("closed", () => this.openUpHere(tray));
-    win.close();
   }
 
   /**
    * Zel's bubble, once the setup window has gone into the menu bar icon at `tray`: on the icon's display, its tail
    * under the icon (upHerePlace). Like Quick, it takes focus, and a click elsewhere puts it away. Nothing brings it back.
+   * None opens once Avanzel is quitting (its agent checks have stopped then, busy or not).
    */
   private openUpHere(tray: Box): void {
+    if (this.quitting || this.checksStopped) return;
     this.closeUpHere();
     const win = createUpHereWindow();
     this.upHereWindow = win;
@@ -2750,7 +2790,7 @@ export class Controller {
         this.model = { kind: "downloading", ...progress };
         if (Date.now() - lastBroadcast > 250) {
           lastBroadcast = Date.now();
-          this.broadcast();
+          this.broadcastProgress();
           this.followDownload({ kind: "preparing", ...progress });
         }
       },

@@ -55,6 +55,9 @@ const shown = (app: ElectronApplication, page: string) =>
 const windowsTitled = (app: ElectronApplication, title: string) =>
   app.evaluate(({ BrowserWindow }, wanted) => BrowserWindow.getAllWindows().filter((w) => w.getTitle() === wanted).length, title);
 
+/** Whether Avanzel shows its Dock icon now. */
+const dockShown = (app: ElectronApplication) => app.evaluate(({ app: electronApp }) => electronApp.dock?.isVisible() ?? false);
+
 /** What the setup window is sent now. */
 const setupSnap = async (app: ElectronApplication) => (await call(app, "setupSnapshot")) as SetupSnapshot;
 
@@ -176,6 +179,8 @@ test("a first launch without a library opens setup on Hello, not Settings", asyn
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"))?.getTitle());
   expect(title).toBe("Set up Avanzel");
   expect(await shown(app, "settings")).toBe(false);
+  // While setup is open, Avanzel has a Dock icon, so its window is easy to find again behind other apps.
+  await expect.poll(() => dockShown(app)).toBe(true);
   await snap(setup, "setup-hello");
   await app.close();
 });
@@ -1031,18 +1036,28 @@ test("a typed first thought is filed in the window, with the time shown", async 
   await app.close();
 });
 
-test("an empty thought isn't filed, and the box says why", async () => {
+test("File it waits for words, and Return with none files nothing", async () => {
   const { env, home } = firstRun({ claude: filingClaude() });
   const app = await launch(env);
   const setup = await throughFound(app);
   await setup.getByRole("button", { name: "Type it instead" }).click();
   const box = setup.getByRole("textbox", { name: "Your thought" });
   await expect(box).toBeFocused();
+  const fileIt = setup.getByRole("button", { name: "File it", exact: true });
+  await expect(fileIt).toBeDisabled();
   await box.fill("   ");
-  await box.press("Enter"); // Return files, as File it does
-  await expect(box).toHaveAccessibleDescription("Type a thought first.");
+  await expect(fileIt).toBeDisabled();
+  await box.press("Enter"); // Return files, as File it does: here, nothing
+  await setup.evaluate(() => window.avanzel.setup.typeThought("   ")); // nor do empty words sent from the page
   expect(inbox(path.join(home, "Avanzel"))).toEqual([]);
   expect(await call(app, "setupStepForTests")).toBe("think");
+  // Nothing scolds: there is no problem to show under the box.
+  expect((await setupSnap(app)).typeProblem).toBeNull();
+  await expect(box).toHaveAccessibleDescription("");
+  await expect(setup.getByText("Type a thought first.")).toHaveCount(0);
+  await box.fill("Plant tulips in October");
+  await expect(fileIt).toBeEnabled();
+  await box.fill("");
   // Cancel puts the box away, and Type it instead brings it back.
   await setup.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(box).toHaveCount(0);
@@ -2168,11 +2183,13 @@ test("Start using Avanzel closes the window, and the menu bar is where Avanzel l
   await expect(zel(setup)).toHaveAttribute("data-look", "right");
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Start using Avanzel"]);
   await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
+  await expect.poll(() => dockShown(app)).toBe(true);
   await setup.getByRole("button", { name: "Start using Avanzel" }).click();
   await expect.poll(() => shown(app, "setup"), { timeout: 5_000 }).toBe(false);
-  // Closed, not hidden away: the session has ended with its window.
+  // Closed, not hidden away: the session has ended with its window, and the Dock icon went with it.
   await expect.poll(() => windowsTitled(app, "Set up Avanzel"), { timeout: 5_000 }).toBe(0);
   expect(await call(app, "setupStepForTests")).toBeNull();
+  await expect.poll(() => dockShown(app)).toBe(false);
   const menu = (await call(app, "menuForTests")) as MenuItemModel[];
   expect(menu).toContainEqual(expect.objectContaining({ type: "item", label: "Record a thought", action: "dictate" }));
   // Opening Avanzel again opens Settings now, as it does once there is a library, rather than setup.
@@ -2423,5 +2440,94 @@ test("with the menu bar icon hidden, the window just closes, and no bubble point
   // Opening Avanzel again finds it: Settings, now that there is a library.
   await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
   expect(await windowsTitled(app, "Avanzel Settings")).toBe(1);
+  await app.close();
+});
+
+test("Start using Avanzel closes the window even when its flight fails, and no bubble opens while Avanzel quits", async () => {
+  test.setTimeout(180_000); // two first runs, each walked to the end
+  // The flight fails: macOS refuses the window's new frame.
+  const app = await launch(endingRun());
+  const setup = await toDone(app);
+  await reduceMotion(app, false);
+  await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"));
+    if (!win) throw new Error("There is no setup window.");
+    win.setBounds = () => {
+      throw new Error("The window server refused the frame.");
+    };
+  });
+  await setup.getByRole("button", { name: "Start using Avanzel" }).click();
+  await expect.poll(() => windowsTitled(app, "Set up Avanzel"), { timeout: 5_000 }).toBe(0);
+  expect(await call(app, "setupStepForTests")).toBeNull();
+  // It closed where it was, as under Reduce Motion, and Zel still says it's up there.
+  await expect.poll(() => shown(app, "up-here")).toBe(true);
+  await app.close();
+  // Avanzel is quitting as Start using Avanzel is pressed: the window closes, and no bubble opens on the way out.
+  const quitting = await launch(endingRun());
+  const done = await toDone(quitting);
+  await reduceMotion(quitting, true);
+  const titled = await windowsTitled(quitting, "Avanzel");
+  await quitting.evaluate(({ app: electronApp }) => electronApp.emit("before-quit", { preventDefault: () => {} }));
+  await done.getByRole("button", { name: "Start using Avanzel" }).click();
+  await expect.poll(() => windowsTitled(quitting, "Set up Avanzel"), { timeout: 5_000 }).toBe(0);
+  await new Promise((resolve) => setTimeout(resolve, 1_000)); // a bubble opens as the window closes, if at all
+  expect(await windowsTitled(quitting, "Avanzel")).toBe(titled);
+  await quitting.close();
+});
+
+test("a download in progress reaches the setup window at most once a second", async () => {
+  const hub = await fakeModelHub("trickle");
+  const app = await launch({ ...firstRun().env, AVANZEL_MODELS_URL: hub.url });
+  const setup = await windowFor(app, "setup");
+  // From now on, when each snapshot is sent to the setup window is noted.
+  await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"));
+    if (!win) throw new Error("There is no setup window to watch.");
+    const sent: number[] = [];
+    Object.assign(globalThis, { setupSends: sent });
+    const send = win.webContents.send.bind(win.webContents);
+    win.webContents.send = (channel: string, ...args: unknown[]) => {
+      if (channel === "setup:changed") sent.push(Date.now());
+      send(channel, ...args);
+    };
+  });
+  const sends = () => app.evaluate(() => (globalThis as { setupSends?: number[] }).setupSends ?? []);
+  const received = async () => {
+    const { model } = await setupSnap(app);
+    return model.kind === "downloading" ? model.receivedBytes : 0;
+  };
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
+  // The agents have been read: for 3 s only the download moves, its progress ticking every 250 ms.
+  const from = Date.now();
+  const before = await received();
+  await setup.waitForTimeout(3_000);
+  expect(await received()).toBeGreaterThan(before);
+  const during = (await sends()).filter((at) => at >= from);
+  expect(during.length).toBeGreaterThan(0); // the footer still follows it
+  expect(during.length).toBeLessThanOrEqual(4); // once a second at most, rather than at each of a dozen ticks
+  await expect(setup.getByText(/^\d+ of 673 MB$/)).toBeVisible();
+  await app.close();
+});
+
+test("a development run saves opening at login, but leaves this Mac's login items be", async () => {
+  const app = await launch({ ...firstRun({ claude: filingClaude() }).env, AVANZEL_FAKE_TRAY_BOUNDS: "0,0,0,0" });
+  const setup = await toDone(app);
+  await stubLoginItems(app);
+  // This run's app is node_modules' Electron.app, not a packaged Avanzel. For the switch's change, AVANZEL_TEST (which
+  // keeps login items be in every test) is gone, as outside the tests; the stand-in still keeps this Mac's own be.
+  expect(await app.evaluate(({ app: electronApp }) => electronApp.isPackaged)).toBe(false);
+  await app.evaluate(() => {
+    delete process.env.AVANZEL_TEST;
+  });
+  try {
+    await setup.getByRole("switch", { name: "Open Avanzel when I log in" }).click();
+    await expect.poll(async () => (await settingsSnap(app)).app.launchAtLogin).toBe(false);
+  } finally {
+    await app.evaluate(() => {
+      process.env.AVANZEL_TEST = "1";
+    });
+  }
+  expect(await loginItemCalls(app)).toEqual([]);
   await app.close();
 });

@@ -1,4 +1,4 @@
-// Avanzel for Mac: a menu-bar app. No Dock icon, no main window.
+// Avanzel for Mac: a menu-bar app. No main window, and no Dock icon except while setup is open.
 import { app, Menu, session } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

@@ -141,10 +141,11 @@ const modelHubs = new Set<Server>();
 /**
  * A local stand-in for huggingface.co, to pass as AVANZEL_MODELS_URL: it serves `/<repo>/resolve/<revision>/<file>`
  * for the real MODELS and keeps every path asked for in `requests`. "stall" answers 200 with the file's pinned
- * content-length, sends 64 KB and holds the connection, so the download stays in progress; "missing" answers 404, so
- * it fails. A spec that uses it runs `test.afterEach(closeModelHubs)`, which closes it when the test ends.
+ * content-length, sends 64 KB and holds the connection, so the download stays in progress; "trickle" does the same,
+ * then sends 16 KB more every 100 ms, so its progress keeps moving; "missing" answers 404, so it fails. A spec that
+ * uses it runs `test.afterEach(closeModelHubs)`, which closes it when the test ends.
  */
-export async function fakeModelHub(mode: "stall" | "missing"): Promise<{ url: string; requests: string[] }> {
+export async function fakeModelHub(mode: "stall" | "trickle" | "missing"): Promise<{ url: string; requests: string[] }> {
   const sizes = new Map<string, number>();
   for (const { repo, revision, digests } of Object.values(MODELS)) {
     for (const [name, { size }] of Object.entries(digests)) sizes.set(`/${repo}/resolve/${revision}/${name}`, size);
@@ -159,8 +160,17 @@ export async function fakeModelHub(mode: "stall" | "missing"): Promise<{ url: st
       return;
     }
     res.writeHead(200, { "content-length": size, "content-type": "application/octet-stream" });
-    // 64 KB, or all but the last byte of a smaller file, and no more: the connection stays open until the hub closes.
-    res.write(Buffer.alloc(Math.min(64 * 1024, size - 1)));
+    // 64 KB, or all but the last byte of a smaller file: the connection stays open until the hub closes.
+    let sent = Math.min(64 * 1024, size - 1);
+    res.write(Buffer.alloc(sent));
+    if (mode !== "trickle") return;
+    const more = setInterval(() => {
+      const next = Math.min(16 * 1024, size - 1 - sent);
+      if (next <= 0 || res.destroyed) return clearInterval(more);
+      sent += next;
+      res.write(Buffer.alloc(next));
+    }, 100);
+    res.on("close", () => clearInterval(more));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   modelHubs.add(server);

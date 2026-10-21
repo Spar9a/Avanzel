@@ -381,7 +381,7 @@ export interface SetupSnapshot {
   press: SetupPress;
   /** The first thought's filing, from the moment the thought is handed over; null before. */
   filing: SetupFiling | null;
-  /** Why a typed thought wasn't taken (empty words, or a capture that couldn't be written); null once one is. */
+  /** Why a typed thought wasn't taken (a capture that couldn't be written); null once one is. */
   typeProblem: string | null;
   /** The first spoken thought on the first-thought step; waiting until a press, and again once its words are handed over. */
   thought: SetupThought;
@@ -513,7 +513,8 @@ export interface AvanzelBridge {
     reachForShortcut(): void;
     /**
      * File it, on the first-thought step's typing rows: `words` become a note in the inbox, which setup files while the
-     * window shows it; setup:changed follows. Words it can't take come back as typeProblem: nothing is thrown.
+     * window shows it; setup:changed follows. Words it can't write come back as typeProblem, and no words do nothing:
+     * nothing is thrown.
      */
     typeThought(words: string): Promise<SetupSnapshot>;
     /** Cancel, while the first thought is filed: its agent stops, and what it did is taken back. */

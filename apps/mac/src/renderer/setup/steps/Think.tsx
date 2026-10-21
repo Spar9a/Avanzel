@@ -70,9 +70,11 @@ export function Think({ snap, go }: StepProps) {
   // The odd beats are down. Once a press is heard the hint has done its work, and the keycaps stay up.
   const pressed = !still && !press.heard && beat % 2 === 1;
   const shortcut = prettyAccelerator(snap.shortcut);
-  // A thought taken moves the window on to its filing; one that isn't comes back as typeProblem, shown under the box.
+  // A thought taken moves the window on to its filing; one that can't be written comes back as typeProblem, shown under
+  // the box. File it waits for words, and so does Return.
+  const empty = !words.trim();
   const file = () => {
-    if (sending) return;
+    if (sending || empty) return;
     setSending(true);
     const sent = () => setSending(false);
     void api.typeThought(words).then(sent, sent);
@@ -161,7 +163,7 @@ export function Think({ snap, go }: StepProps) {
             />
             <Actions>
               <Button variant="quiet" onClick={() => setTyping(false)}>Cancel</Button>
-              <Button variant="primary" busy={sending} onClick={file}>File it</Button>
+              <Button variant="primary" busy={sending} disabled={empty} onClick={file}>File it</Button>
             </Actions>
           </Stack>
         ) : (
