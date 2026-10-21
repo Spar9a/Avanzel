@@ -1255,12 +1255,23 @@ export class Controller {
     };
   }
 
+  /**
+   * Undo, on the capsule's filed card or in setup: once the queue gets to it, git takes back `commit`, a filing's, which
+   * puts its capture back in the inbox. Whether it did; either way the menu's recent pages are read again.
+   */
+  private async revertFiling(commit: string): Promise<boolean> {
+    try {
+      return (await this.enqueue(async () => (await this.librarian()).undo([commit]))) === 1;
+    } finally {
+      this.recent = this.vault ? recentFromLog(this.vault.root) : [];
+    }
+  }
+
   async undo(): Promise<void> {
     const job = this.job;
     const commit = job?.outcome?.commit;
     if (!job || !commit) return;
-    const undone = await this.enqueue(async () => (await this.librarian()).undo([commit]));
-    this.recent = recentFromLog(this.requireVault().root);
+    const undone = await this.revertFiling(commit);
     this.setCapsule(
       undone ? { kind: "saved", text: job.text, note: "Undone. The note is back in your inbox." } : { kind: "error", message: "Couldn't undo", detail: "Git refused the revert; see the library's history." },
       undone ? 3500 : undefined,
@@ -1707,6 +1718,7 @@ export class Controller {
       typeProblem: this.setup?.typeProblem ?? null,
       thought: this.setup?.thought ?? { kind: "waiting" },
       hears: this.hears(),
+      opensInObsidian: !!this.vault && obsidianUrl(this.vault.root, "") !== null && this.obsidianInstalled(),
     };
   }
 
@@ -2159,6 +2171,26 @@ export class Controller {
   }
 
   /**
+   * Undo, or ⌘Z, once the first thought is filed: its commit is taken back in queue order, as the capsule's Undo does
+   * (`revertFiling`), which puts the words back in the inbox. Then the filing is undone, or, when git refused (or the
+   * revert failed), still filed with `undoRefused`, and nothing offers to undo it again. One undo at a time: while one
+   * runs, another press does nothing.
+   */
+  async undoSetupFiling(): Promise<void> {
+    const session = this.setup;
+    const job = session?.job;
+    const filing = session?.filing;
+    const commit = job?.outcome?.commit;
+    if (!session || !job || !commit || filing?.kind !== "filed" || !filing.canUndo || filing.undoing || filing.undoRefused) return;
+    session.filing = { ...filing, undoing: true };
+    this.broadcast();
+    const undone = await this.revertFiling(commit).catch(() => false);
+    if (this.setup !== session || session.job !== job) return; // the window has closed: there is nothing to tell
+    session.filing = undone ? { kind: "undone", words: job.text } : { ...filing, undoing: false, undoRefused: true };
+    this.broadcast();
+  }
+
+  /**
    * The setup window's filing is filed: its pages, new ones first, and how long the agent took, as the window's working
    * line counted it.
    */
@@ -2173,6 +2205,8 @@ export class Controller {
       created: pages.filter((page) => outcome.changes.created.includes(page.path)).length,
       restored: outcome.restored,
       canUndo: !!outcome.commit,
+      undoing: false,
+      undoRefused: false,
     };
     this.broadcast();
   }

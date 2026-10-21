@@ -64,6 +64,7 @@ export function registerIpc(controller: Controller): void {
   on("setup:copy", (_e, text: string) => controller.copyText(text));
   on("setup:cancel-filing", () => controller.cancelSetupFiling());
   on("setup:file-again", () => controller.fileSetupAgain());
+  on("setup:undo", () => void controller.undoSetupFiling());
   on("setup:allow-microphone", () => void controller.allowMicrophone());
   on("setup:try-again", () => controller.retrySetupThought());
   on("setup:file-anyway", () => controller.fileSetupAnyway());

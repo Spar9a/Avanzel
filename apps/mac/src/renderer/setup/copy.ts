@@ -123,6 +123,27 @@ export function failedLine(line: string): string {
   return `${ownLine(line)} Your words are safe in the inbox.`.trim();
 }
 
+/** `count` pages of a `kind`, in words: "1 new page", "2 updated pages". */
+const counted = (count: number, kind: string) => `${count} ${kind} ${count === 1 ? "page" : "pages"}`;
+
+/**
+ * What a filing wrote on the six shelves, under its heading: how many pages are new and how many updated, and where.
+ * Null when it wrote none there, so the line never claims a page that isn't on them.
+ */
+export function pagesLine(created: number, updated: number, where: string): string | null {
+  let what: string;
+  if (created && updated) what = `${counted(created, "new")} and ${updated} updated`;
+  else if (created) what = counted(created, "new");
+  else if (updated) what = counted(updated, "updated");
+  else return null;
+  return `${what}, all plain Markdown in ${where}.`;
+}
+
+/** The pages a filing wrote off the six shelves, which its receipt doesn't list; null when there are none. */
+export function othersLine(count: number): string | null {
+  return count ? `${counted(count, "more")} in other folders.` : null;
+}
+
 const isShelf = (shelf: string): shelf is Shelf => (SHELVES as readonly string[]).includes(shelf);
 
 /** A filing's pages as its receipt lists them: those on the six shelves, in order, and how many others it wrote. */

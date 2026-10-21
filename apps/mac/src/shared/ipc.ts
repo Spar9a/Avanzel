@@ -266,7 +266,13 @@ export type SetupFiling =
       restored: boolean;
       /** The filing is its own commit. */
       canUndo: boolean;
+      /** Undo was pressed, and the filing is being taken back. */
+      undoing: boolean;
+      /** Git refused to take the filing back: a later change touched what it wrote. */
+      undoRefused: boolean;
     }
+  /** Undo took the filing back: its pages are gone, and its words are in the inbox again. */
+  | { kind: "undone"; words: string }
   | {
       kind: "cancelled";
       words: string;
@@ -329,6 +335,8 @@ export interface SetupSnapshot {
   thought: SetupThought;
   /** Setup can turn speech into words: the speech models are ready, or AVANZEL_FAKE_TRANSCRIPT stands in for them. */
   hears: boolean;
+  /** A page opens in Obsidian: it is installed, and the library is a vault of its (obsidianUrl). */
+  opensInObsidian: boolean;
 }
 
 export interface AskResult {
@@ -432,8 +440,10 @@ export interface AvanzelBridge {
     typeThought(words: string): Promise<SetupSnapshot>;
     /** Cancel, while the first thought is filed: its agent stops, and what it did is taken back. */
     cancelFiling(): void;
-    /** File it again, or Try again, once a filing has stopped short: the same note is filed in a new run. */
+    /** File it again, or Try again, once a filing has stopped short or been undone: the same note is filed in a new run. */
     fileAgain(): void;
+    /** Undo, or ⌘Z, once the first thought is filed: the filing is taken back, and its words return to the inbox. */
+    undo(): void;
     /** Continue, on the microphone's primer: macOS asks, and a grant starts the recording; setup:changed follows. */
     allowMicrophone(): void;
     /**

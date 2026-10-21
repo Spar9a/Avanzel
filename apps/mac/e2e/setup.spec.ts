@@ -5,7 +5,7 @@ import { expect, test, type ElectronApplication, type Locator, type Page } from 
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
+import { git, loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { SettingsSnapshot, SetupSnapshot } from "../src/shared/ipc.ts";
 import {
@@ -1371,5 +1371,221 @@ test("Record a thought in the menu records on the first-thought step, but isn't 
   await expect(setup.getByText(/is free on this Mac/)).toHaveCount(0);
   await call(app, "menuAction", "dictate"); // Stop recording
   await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
+  await app.close();
+});
+
+// The first filing's end: the FILED stamp on its card, its pages on the shelves' tabs and in the receipt, and Undo (or
+// ⌘Z), which puts everything back as it was. Each test types its thought, which the stand-in Claude Code files as an
+// idea.
+
+/** The heading once the first thought is filed. */
+const FILED = /^All filed\. Claude Code took \d+ s\.$/;
+
+/** The titles under "Recently filed" in the menu bar menu. */
+const recentlyFiled = async (app: ElectronApplication) =>
+  ((await call(app, "menuForTests")) as MenuItemModel[]).flatMap((item) => (item.type === "item" && item.action.startsWith("open:") ? [item.label] : []));
+
+/** The stage's shelf tabs, each read as its name and then its count, when it has one: "Ideas1". */
+const tabs = (setup: Page) => setup.locator('[data-shelf][data-variant="tab"]');
+
+/** The commits that undid a filing, in `library`'s history. */
+const undoCommits = (library: string) => gitOut(library, "log", "--format=%s").split("\n").filter((subject) => subject.startsWith("avanzel: undo "));
+
+/**
+ * From now on, what Avanzel would open in this Mac's own apps (a page, the library) is noted for `openedWith`
+ * instead, so no test opens anything here.
+ */
+async function stubOpening(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ shell }) => {
+    const opened: string[] = [];
+    (globalThis as { openedWith?: string[] }).openedWith = opened;
+    shell.openPath = async (file: string) => {
+      opened.push(file);
+      return "";
+    };
+    shell.openExternal = async (url: string) => {
+      opened.push(url);
+    };
+  });
+}
+
+const openedWith = (app: ElectronApplication) => app.evaluate(() => (globalThis as { openedWith?: string[] }).openedWith ?? []);
+
+/** A first run launched with `env`, where "Plant tulips in October" is typed and filed: the app and its setup window, once filed. */
+async function filedFirstThought(env: Record<string, string>): Promise<{ app: ElectronApplication; setup: Page }> {
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  await typeFirstThought(setup, "Plant tulips in October");
+  await expect(setup.getByRole("heading", { name: FILED })).toBeVisible({ timeout: 30_000 });
+  return { app, setup };
+}
+
+test("a filed thought shows its stamp, its page and how to undo it, and Undo puts everything back", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await filedFirstThought(env);
+  const library = path.join(home, "Avanzel");
+  const [page = ""] = filesUnder(library, "ideas");
+  // The card is stamped FILED, with the day, and the page went in behind the Ideas tab.
+  await expect(setup.getByRole("img", { name: /^Filed, / })).toBeVisible();
+  await expect(tabs(setup)).toHaveText(["Goals", "Ideas1", "Problems", "Memories", "People", "Topics"]);
+  // The step, in order: the heading, Zel's praise, what the filing wrote, how to undo it, the receipt and its buttons.
+  await expect(setup.getByText("Your first idea has a home.", { exact: true })).toBeVisible();
+  await expect(setup.getByText("1 new page, all plain Markdown in ~/Avanzel.", { exact: true })).toBeVisible();
+  await expect(setup.getByText("Press ⌘Z or Undo to put everything back.", { exact: true })).toBeVisible();
+  await expect(setup.getByText("Your exact words are kept.")).toHaveCount(0); // the agent left them be
+  await expect(setup.getByRole("listitem")).toHaveText(["Plant tulips in OctoberIdeas"]);
+  await expect(setup.getByRole("main")).toHaveText(
+    /^All filed\. .+Your first idea has a home\.1 new page, .+Press ⌘Z or Undo .+Plant tulips in OctoberIdeasUndoOpen the page$/,
+  );
+  // Continue is the one primary, and there is no Back.
+  await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Continue"]);
+  await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
+  expect(await recentlyFiled(app)).toEqual(["Plant tulips in October"]);
+  // Open the page opens the new page.
+  await stubOpening(app);
+  await setup.getByRole("button", { name: "Open the page" }).click();
+  await expect.poll(() => openedWith(app)).toHaveLength(1);
+  expect(realpathSync((await openedWith(app))[0] ?? "")).toBe(realpathSync(path.join(library, "ideas", page)));
+  // Undo puts everything back: the words in the inbox, no page, and nothing in the menu's Recently filed.
+  await setup.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(setup.getByRole("heading", { name: "Undone." })).toBeVisible({ timeout: 30_000 });
+  await expect(setup.getByText("Everything is back as it was, and your words are in the inbox.", { exact: true })).toBeVisible();
+  expect(inbox(library)).toHaveLength(1);
+  expect(filesUnder(library, "ideas")).toEqual([]);
+  expect(await recentlyFiled(app)).toEqual([]);
+  await expect(setup.getByRole("img", { name: /^Filed, / })).toHaveCount(0);
+  await expect(tabs(setup)).toHaveText(["Goals", "Ideas", "Problems", "Memories", "People", "Topics"]);
+  // File it again is the moment's one primary (Ruling P24), and has the focus Undo had; Continue steps back.
+  const again = setup.getByRole("button", { name: "File it again" });
+  await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["File it again"]);
+  await expect(again).toBeFocused();
+  await expect(setup.getByRole("button", { name: "Continue" })).toHaveAttribute("data-variant", "secondary");
+  await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
+  await again.click();
+  await expect(setup.getByRole("heading", { name: FILED })).toBeVisible({ timeout: 30_000 });
+  expect(inbox(library)).toEqual([]);
+  expect(filesUnder(library, "ideas")).toHaveLength(1);
+  await app.close();
+});
+
+test("⌘Z undoes it too", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await filedFirstThought(env);
+  const library = path.join(home, "Avanzel");
+  // Pressed twice in a row, it undoes once: the second press comes while the first is under way.
+  await setup.keyboard.press("Meta+z");
+  await setup.keyboard.press("Meta+z");
+  await expect(setup.getByRole("heading", { name: "Undone." })).toBeVisible({ timeout: 30_000 });
+  await call(app, "idleForTests");
+  expect((await setupSnap(app)).filing?.kind).toBe("undone");
+  expect(undoCommits(library)).toHaveLength(1);
+  expect(inbox(library)).toHaveLength(1);
+  expect(filesUnder(library, "ideas")).toEqual([]);
+  // On a keyboard without Latin letters, ⌘ and the key in Z's place is ⌘Z too, as macOS reads it.
+  await setup.getByRole("button", { name: "File it again" }).click();
+  await expect(setup.getByRole("heading", { name: FILED })).toBeVisible({ timeout: 30_000 });
+  await setup.evaluate(() =>
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "я", code: "KeyZ", metaKey: true, bubbles: true, cancelable: true })),
+  );
+  await expect(setup.getByRole("heading", { name: "Undone." })).toBeVisible({ timeout: 30_000 });
+  expect(undoCommits(library)).toHaveLength(2);
+  await app.close();
+});
+
+test("a filing that changed the words says they are kept", async () => {
+  const { env } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await filedFirstThought({ ...env, FAKE_AGENT_MODE: "tamper" });
+  await expect(setup.getByText("Your exact words are kept.", { exact: true })).toBeVisible();
+  await app.close();
+});
+
+test("a filing that wrote no page says its agent noted it in the log, and Continue goes to the end", async () => {
+  const { env } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await filedFirstThought({ ...env, FAKE_AGENT_MODE: "logonly" });
+  await expect(setup.getByText("Claude Code noted it in the log.", { exact: true })).toBeVisible();
+  // No line claims a page, no tab counts one, and nothing offers to open one (Review Focus 5).
+  await expect(setup.getByText("Your first idea has a home.")).toHaveCount(0);
+  await expect(setup.getByText(/plain Markdown|in other folders/)).toHaveCount(0);
+  await expect(setup.getByRole("listitem")).toHaveCount(0);
+  await expect(tabs(setup)).toHaveText(["Goals", "Ideas", "Problems", "Memories", "People", "Topics"]);
+  await expect(setup.getByRole("button", { name: /^Open / })).toHaveCount(0);
+  // It is filed all the same, as its own commit: the stamp, and Undo.
+  await expect(setup.getByRole("img", { name: /^Filed, / })).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
+  await setup.getByRole("button", { name: "Continue" }).click();
+  await expect.poll(() => call(app, "setupStepForTests")).toBe("done");
+  await app.close();
+});
+
+test("an Undo that git refuses says so, and Undo goes away", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await filedFirstThought(env);
+  const library = path.join(home, "Avanzel");
+  // Meanwhile the new page is edited by hand, and the edit committed: undoing the filing would take the edit with it.
+  const [page = ""] = filesUnder(library, "ideas");
+  const file = path.join(library, "ideas", page);
+  writeFileSync(file, "# Tulips, by hand\n");
+  expect(await git.commitAll(library, "An edit by hand")).not.toBeNull();
+  await setup.getByRole("button", { name: "Undo", exact: true }).click();
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("This one can't be undone automatically.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(notice.getByText("The library's history keeps both versions.", { exact: true })).toBeVisible();
+  // Nothing offers to undo it any more, and the filing stays as it is, the edit by hand included.
+  await expect(setup.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
+  await expect(setup.getByText(/^Press ⌘Z or Undo/)).toHaveCount(0);
+  await expect(setup.getByRole("heading", { name: FILED })).toBeVisible();
+  await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Continue"]);
+  expect(readFileSync(file, "utf8")).toBe("# Tulips, by hand\n");
+  expect(inbox(library)).toEqual([]);
+  expect(undoCommits(library)).toEqual([]);
+  await app.close();
+});
+
+test("Continue goes to Ask after a filing, and to the end after an undo", async () => {
+  // Those steps draw nothing yet (Tasks 9 and 10): the step the session is on says where Continue went.
+  const filed = await filedFirstThought(firstRun({ claude: filingClaude() }).env);
+  await filed.setup.getByRole("button", { name: "Continue" }).click();
+  await expect.poll(() => call(filed.app, "setupStepForTests")).toBe("ask");
+  await filed.app.close();
+  const second = firstRun({ claude: filingClaude() });
+  const undone = await filedFirstThought(second.env);
+  // While the undo waits for the library (another run has it: this test holds its lock), Undo is busy and Continue
+  // waits, since the pages it would go on with are on their way out.
+  let letGo = () => {};
+  const held = new Vault(path.join(second.home, "Avanzel")).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
+  try {
+    await undone.setup.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect(undone.setup.getByRole("button", { name: "Undo", exact: true })).toHaveAttribute("aria-busy", "true");
+    await expect(undone.setup.getByRole("button", { name: "Continue" })).toBeDisabled();
+  } finally {
+    letGo();
+    await held;
+  }
+  await expect(undone.setup.getByRole("heading", { name: "Undone." })).toBeVisible({ timeout: 30_000 });
+  await undone.setup.getByRole("button", { name: "Continue" }).click();
+  await expect.poll(() => call(undone.app, "setupStepForTests")).toBe("done");
+  await undone.app.close();
+});
+
+test("in a library Obsidian has opened as a vault, the new page opens in Obsidian", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  // Obsidian is installed (a stand-in answers for its links), and has opened the library: it has an .obsidian folder.
+  await app.evaluate((electron) => {
+    electron.app.getApplicationNameForProtocol = () => "Obsidian";
+  });
+  mkdirSync(path.join(library, ".obsidian"));
+  await stubOpening(app);
+  await typeFirstThought(setup, "Plant tulips in October");
+  await expect(setup.getByRole("heading", { name: FILED })).toBeVisible({ timeout: 30_000 });
+  await expect(setup.getByRole("button", { name: "Open the page" })).toHaveCount(0);
+  await setup.getByRole("button", { name: "Open in Obsidian" }).click();
+  await expect.poll(() => openedWith(app)).toHaveLength(1);
+  const [url = ""] = await openedWith(app);
+  const [page = ""] = filesUnder(library, "ideas");
+  expect(url).toMatch(/^obsidian:\/\/open\?path=/);
+  expect(realpathSync(decodeURIComponent(url.slice("obsidian://open?path=".length)))).toBe(realpathSync(path.join(library, "ideas", page)));
   await app.close();
 });
