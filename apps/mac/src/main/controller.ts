@@ -92,6 +92,8 @@ import {
 const QUIT_WAIT_MS = 10_000;
 // How long a stopped recording's audio may take to arrive from the capsule (tests shorten it).
 const AUDIO_TIMEOUT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_AUDIO_TIMEOUT_MS)) || 15_000;
+// How long the download's progress stays in the capsule by itself; Settings → Voice keeps showing it (tests change it).
+const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PREPARING_SHOW_MS)) || 8_000;
 const HARNESS_NAMES: Record<string, string> = {
   claude: "Claude Code", codex: "Codex", opencode: "OpenCode", "cursor-agent": "Cursor Agent", gemini: "Gemini CLI",
 };
@@ -245,13 +247,14 @@ export class Controller {
     const envLibrary = process.env.AVANZEL_LIBRARY;
     if (envLibrary) this.store.update({ libraryPath: envLibrary });
     this.openLibrary(this.store.get().libraryPath);
+    // Before the shortcuts: one pressed while ps runs (applyShortcuts) finds what this Mac has, not "missing, 0 bytes".
+    await this.refreshModelStatus();
     await this.applyShortcuts();
     // A shortcut another app holds does nothing when pressed: the capsule says so at once, with free ones to pick. Not
     // without a library, whose menu has no Record a thought yet (Settings opens below, and its Voice pane offers the
     // free ones), and never over what the capsule already shows, such as a shortcut pressed while ps ran.
     const [taken] = this.takenShortcuts;
     if (taken && this.vault && this.capsuleState.kind === "hidden") this.setCapsule(taken);
-    await this.refreshModelStatus();
     // With a library the speech models download unasked; without one, Settings → Voice offers them.
     if (this.vault && this.model.kind === "missing") void this.downloadModel();
     this.refreshMenu();
@@ -1547,18 +1550,25 @@ export class Controller {
     return this.snapshot();
   }
 
-  /** A capsule showing the download's progress follows it to its end; the download never opens the capsule itself. */
+  /**
+   * A capsule showing the download's progress follows it to its end; the download never opens the capsule itself. The
+   * progress leaves the card's hide timer running.
+   */
   private followDownload(state: CapsuleState): void {
-    if (this.capsuleState.kind === "preparing") this.setCapsule(state);
+    if (this.capsuleState.kind !== "preparing") return;
+    if (state.kind !== "preparing") return this.setCapsule(state);
+    this.capsuleState = state;
+    this.capsule.webContents.send("capsule:state", state);
   }
 
   /**
-   * What the shortcut shows while the speech models aren't ready: the download's progress, a failed download with Try
-   * again, or the [voice] settings that keep anything from downloading.
+   * What the shortcut shows while the speech models aren't ready: the download's progress, which hides itself after a
+   * few seconds unless the pointer is on it, a failed download with Try again, or the [voice] settings that keep
+   * anything from downloading. The other two stay until the person acts on them.
    */
   private showModelStatus(): void {
     const model = this.model;
-    if (model.kind === "downloading") this.setCapsule({ kind: "preparing", receivedBytes: model.receivedBytes, totalBytes: model.totalBytes });
+    if (model.kind === "downloading") this.setCapsule({ kind: "preparing", receivedBytes: model.receivedBytes, totalBytes: model.totalBytes }, PREPARING_SHOW_MS);
     else if (model.kind === "error" && model.cause === "download") this.setCapsule({ kind: "model-failed" });
     else if (model.kind === "error") this.fail("Avanzel can't use these voice settings", model.message);
     else this.setCapsule({ kind: "hidden" }); // ready: nothing to wait for (missing never gets here: downloadModel() runs first)

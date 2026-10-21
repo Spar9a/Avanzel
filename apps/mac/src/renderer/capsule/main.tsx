@@ -189,19 +189,22 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
         </div>
       );
     case "preparing":
+      // Zel idles: no agent runs. Only the headline is a live region, so VoiceOver hears the start once, not each step.
       return (
         <div className="slot">
-          <Hud role="status">
+          <Hud>
             <Row gap={12} align="start">
-              <Zel mood="thinking" size="small" />
+              <Zel mood="idle" size="small" />
               <div className="fill">
                 <Stack gap={8}>
-                  <Text variant="headline">The speech model is still downloading</Text>
+                  <div role="status"><Text variant="headline">The speech model is still downloading</Text></div>
                   <Progress label="Downloading the speech model" value={state.totalBytes ? state.receivedBytes / state.totalBytes : undefined} />
-                  <Text variant="footnote" tone="secondary" numeric>{mb(state.receivedBytes)} of {mb(state.totalBytes)} MB. Typing works now.</Text>
-                  <Actions>
-                    <Button variant="quiet" onClick={() => api.dismiss()}>Hide</Button>
-                    <Button variant="primary" onClick={() => api.typeInstead()}>Type instead</Button>
+                  <Text variant="footnote" tone="secondary" numeric>
+                    {state.totalBytes > 0 && `${mb(state.receivedBytes)} of ${mb(state.totalBytes)} MB. `}Typing works now.
+                  </Text>
+                  <Actions align="start">
+                    <Button size="small" variant="quiet" onClick={() => api.dismiss()}>Hide</Button>
+                    <Button size="small" variant="primary" onClick={() => api.typeInstead()}>Type instead</Button>
                   </Actions>
                 </Stack>
               </div>
@@ -215,10 +218,10 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
           <CapsuleNotice
             title="The speech model didn't finish downloading."
             actions={
-              <Actions>
-                <Button variant="quiet" onClick={() => api.dismiss()}>Hide</Button>
-                <Button variant="secondary" onClick={() => api.typeInstead()}>Type instead</Button>
-                <Button variant="primary" onClick={() => api.retryDownload()}>Try again</Button>
+              <Actions align="start">
+                <Button size="small" variant="quiet" onClick={() => api.dismiss()}>Hide</Button>
+                <Button size="small" variant="secondary" onClick={() => api.typeInstead()}>Type instead</Button>
+                <Button size="small" variant="primary" onClick={() => api.retryDownload()}>Try again</Button>
               </Actions>
             }
           >
@@ -230,7 +233,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
       // The best one is the primary, so it goes last; with none free, Settings → Voice has the way out.
       const uses = state.alternatives
         .map((alternative, i) => (
-          <Button key={alternative} variant={i === 0 ? "primary" : "secondary"} onClick={() => api.useShortcut(state.key, alternative)}>
+          <Button key={alternative} size="small" variant={i === 0 ? "primary" : "secondary"} onClick={() => api.useShortcut(state.key, alternative)}>
             {`Use ${prettyAccelerator(alternative)}`}
           </Button>
         ))
@@ -240,9 +243,9 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
           <CapsuleNotice
             title={takenMessage(state.accelerator, state.holder)}
             actions={
-              <Actions>
-                <Button variant="quiet" onClick={() => api.dismiss()}>Hide</Button>
-                {uses.length ? uses : <Button variant="primary" onClick={() => api.openSettingsFor("open-settings:voice")}>Open Settings</Button>}
+              <Actions align="start">
+                <Button size="small" variant="quiet" onClick={() => api.dismiss()}>Hide</Button>
+                {uses.length ? uses : <Button size="small" variant="primary" onClick={() => api.openSettingsFor("open-settings:voice")}>Open Settings</Button>}
               </Actions>
             }
           >

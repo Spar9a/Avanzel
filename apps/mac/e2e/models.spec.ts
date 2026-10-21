@@ -84,20 +84,78 @@ test("a command backend needs no models", async () => {
 test("pressing the shortcut while the models download shows progress, and Type instead opens Quick", async () => {
   const hub = await fakeModelHub("stall");
   const library = await makeLibrary();
-  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
+  // The card stays up while the test reads it; it hides by itself after 8 s otherwise.
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache(), AVANZEL_PREPARING_SHOW_MS: "120000" });
   await call(app, "snapshot"); // the app has started: the poll's 5 s count from here, not from launch
   await expect.poll(async () => (await modelStatus(app)).kind).toBe("downloading");
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
   await expect(capsule.getByRole("progressbar", { name: "Downloading the speech model" })).toBeVisible();
-  await expect(capsule.getByText("The speech model is still downloading")).toBeVisible();
+  // The headline is the card's only live region, so VoiceOver hears the start once, not each step of the progress.
+  await expect(capsule.getByRole("status")).toHaveText("The speech model is still downloading");
+  await expect(capsule.getByRole("alert")).toHaveCount(0);
   // The hub sends 64 KB and holds on; the total is known before the first byte.
   await expect(capsule.getByText("0 of 673 MB. Typing works now.")).toBeVisible();
+  await expect(capsule.getByRole("button")).toHaveText(["Hide", "Type instead"]);
+  for (const button of await capsule.getByRole("button").all()) await expect(button).toHaveAttribute("data-size", "small");
   await snap(capsule, "capsule-preparing");
   await capsule.getByRole("button", { name: "Type instead" }).click();
   await expect.poll(() => shown(app, "quick")).toBe(true);
   expect(await capsuleKind(app)).toBe("hidden");
   await app.close();
+});
+
+test("the download's card hides itself, though not while the pointer is on it, and the next press shows it again", async () => {
+  test.setTimeout(150_000); // it waits out the card's time twice
+  const hub = await fakeModelHub("stall");
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache(), AVANZEL_PREPARING_SHOW_MS: "3000" });
+  await call(app, "snapshot"); // the app has started: the poll's 5 s count from here, not from launch
+  await expect.poll(async () => (await modelStatus(app)).kind).toBe("downloading");
+  await call(app, "toggleDictate");
+  expect(await capsuleKind(app)).toBe("preparing");
+  await expect.poll(() => capsuleKind(app), { timeout: 15_000 }).toBe("hidden");
+  // The download goes on, and Settings → Voice keeps showing it.
+  await call(app, "showSettings", "voice");
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByText(/^\d+ of 673 MB$/)).toBeVisible();
+  // The next press shows the card again. With the pointer on it (what the card's pointer-enter sends), it stays.
+  await call(app, "setKeepOpen", true);
+  await call(app, "toggleDictate");
+  expect(await capsuleKind(app)).toBe("preparing");
+  const capsule = await windowFor(app, "capsule");
+  await expect(capsule.getByText("The speech model is still downloading")).toBeVisible();
+  await capsule.waitForTimeout(4_500); // past its 3 s
+  expect(await capsuleKind(app)).toBe("preparing");
+  await call(app, "setKeepOpen", false);
+  await expect.poll(() => capsuleKind(app), { timeout: 15_000 }).toBe("hidden");
+  await app.close();
+});
+
+test("the download's card says only that typing works while the size isn't known", async () => {
+  const app = await launch({ HF_HUB_CACHE: emptyHfCache() }); // no library, so no download of its own ends the card
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "setCapsule", { kind: "preparing", receivedBytes: 0, totalBytes: 0 });
+  await expect(capsule.getByText("Typing works now.", { exact: true })).toBeVisible();
+  await expect(capsule.getByText(/MB/)).toHaveCount(0);
+  await app.close();
+});
+
+test("the welcome screen says that a library also downloads the speech models, and how big they are", async () => {
+  const app = await launch({ HF_HUB_CACHE: emptyHfCache() });
+  const welcome = await windowFor(app, "settings");
+  await expect(welcome.getByText(/any time\. Creating or choosing a library also downloads the speech models once \(673 MB\)\.$/)).toBeVisible();
+  await snap(welcome, "settings-welcome-download");
+  await app.close();
+  // Once both are on this Mac, there is nothing to download, and nothing to say.
+  const cache = emptyHfCache();
+  hfSnapshot(cache, PARAKEET);
+  hfSnapshot(cache, SILERO);
+  const ready = await launch({ HF_HUB_CACHE: cache });
+  const settings = await windowFor(ready, "settings");
+  await expect(settings.getByRole("heading", { name: "Welcome to Avanzel" })).toBeVisible();
+  expect((await modelStatus(ready)).kind).toBe("ready");
+  await expect(settings.getByText(/downloads the speech models/)).toHaveCount(0);
+  await ready.close();
 });
 
 test("a failed download waits quietly, then offers Try again", async () => {
@@ -112,6 +170,8 @@ test("a failed download waits quietly, then offers Try again", async () => {
   await call(app, "toggleDictate");
   await expect(capsule.getByText("The speech model didn't finish downloading.")).toBeVisible();
   expect(hub.requests.length).toBe(asked); // the shortcut says what happened; only Try again fetches
+  await expect(capsule.getByRole("button")).toHaveText(["Hide", "Type instead", "Try again"]);
+  for (const button of await capsule.getByRole("button").all()) await expect(button).toHaveAttribute("data-size", "small");
   await snap(capsule, "capsule-model-failed");
   await capsule.getByRole("button", { name: "Try again" }).click();
   await expect.poll(() => hub.requests.length).toBeGreaterThan(asked);

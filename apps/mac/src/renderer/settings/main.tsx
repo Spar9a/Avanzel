@@ -122,7 +122,11 @@ function Welcome({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Set
         </div>
       </Group>
       {error && <p className="note problem">{error}</p>}
-      <p className="note">A new folder gets the shelves, an AGENTS.md your agent reads, and git history so every change can be undone. Open it in Obsidian any time.</p>
+      <p className="note">
+        A new folder gets the shelves, an AGENTS.md your agent reads, and git history so every change can be undone. Open it in Obsidian any time.
+        {/* The size is part of saying yes: the download starts as soon as there is a library. */}
+        {snap.model.kind === "missing" && snap.model.bytes > 0 && ` Creating or choosing a library also downloads the speech models once (${Math.round(snap.model.bytes / 1e6)} MB).`}
+      </p>
     </div>
   );
 }
