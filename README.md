@@ -54,11 +54,11 @@ Good to know:
 
 - **Esc** cancels a dictation from any app while Avanzel is listening (it is a global shortcut
   for that moment only), and the recording is dropped.
-- **A shortcut another app holds** does nothing when pressed (⌥ Space is also the default of
+- **A shortcut another app holds** does nothing when pressed (⌥Space is also the default of
   Alfred, Raycast, ChatGPT and Superwhisper). When macOS reports a shortcut as taken, the capsule
   names it once, as soon as there is a library, with the app that probably holds it and two free
   shortcuts to pick; Settings → Voice offers the same, and the menu bar menu stops showing the
-  taken one. macOS can't always tell, so if ⌥ Space opens another app, pick another shortcut in
+  taken one. macOS can't always tell, so if ⌥Space opens another app, pick another shortcut in
   Settings → Voice.
 - **Setup** checks that ⌥Space really reaches Avanzel. When another app holds it, or no press
   arrives within 3 s, it names the likely app and offers two free shortcuts.
@@ -76,7 +76,8 @@ Good to know:
   run when the pane opens and when a library is set up; they read only the sign-in and never ask
   the model. Check asks other agents one short question, and Claude Code or Codex too when their
   sign-in can't be read.
-- **Agents without a sign-in command** are asked one short question only when you pick them.
+- **Agents without a sign-in command** are asked one short question in setup only when you pick
+  them or press Check again.
 - **No symlinks inside the library** for `inbox/`, `raw/` or `reviews/`: Avanzel never writes
   through a link, so filings into a linked `raw/` fail, a linked `reviews/` gets no summary, a
   capture an agent changes in a linked `inbox/` can't be put back (your words are kept in
@@ -98,13 +99,15 @@ npm run dist -w @avanzel/mac         # or build apps/mac/release/mac-arm64/Avanz
 On first launch, a setup window walks you through six short steps with no visit to Settings.
 **Set me up** starts downloading both speech models (Parakeet and the Silero VAD, 673 MB together;
 an existing Hugging Face cache copy is reused) and reads your agents' sign-in. **Looks good** makes
-the library (`~/Avanzel` by default; an existing folder or v0.1 library works as is) with the agent
-you chose. Then you press ⌥Space and say your first thought, or type it while the model downloads.
-Then you watch your agent file it, ask a question about it, and finish in the menu bar. macOS asks
-for the microphone at your first press in setup, after one screen that says why. The first screen
-capture shows where to allow Screen Recording (Open Settings); allow Avanzel there, then quit and
-reopen it. The local builds are unsigned, so macOS forgets those permissions whenever the app is
-rebuilt.
+the library in `~/Avanzel` with the agent you chose; **Change…** picks another folder. If the folder
+already holds a library or other files, the button reads **Use this folder** instead: a library (a
+v0.1 one included) is used as it is, and other files are kept while Avanzel adds the shelves, an
+`AGENTS.md` for your agent and git history that keeps them. Then you press ⌥Space and say your
+first thought, or type it while the model downloads. Then you watch your agent file it, ask a
+question about it, and finish in the menu bar. macOS asks for the microphone at your first press
+once the speech model has landed, after one screen in setup that says why. The first screen capture
+shows where to allow Screen Recording (Open Settings); allow Avanzel there, then quit and reopen
+it. The local builds are unsigned, so macOS forgets those permissions whenever the app is rebuilt.
 
 ## Command line (Python, v0.1)
 

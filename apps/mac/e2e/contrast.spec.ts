@@ -254,6 +254,7 @@ test("every setup step and the bubble are readable in light and dark", async () 
   // Hello, once Zel is awake and the stamp has landed.
   const setup = await windowFor(app, "setup");
   await expect(setup.getByRole("img", { name: /^Hello, / })).toBeVisible({ timeout: 15_000 });
+  // The HELLO stamp is a sibling overlay of the Card, read over the Stage tint, not paper; Filing reads one on paper.
   found.push(...(await readable(app, setup, "Setup › Hello", desktops)));
 
   // Found, once both agents' sign-in is read and Claude Code is chosen. The speech model can't download here, so the
