@@ -76,7 +76,7 @@ import type {
 } from "../shared/ipc.ts";
 import { frontContext } from "./front-app.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Correction, type FilingJob, type Recording } from "./jobs.ts";
-import { captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
+import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, withStep, withWritten } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
@@ -1326,7 +1326,7 @@ export class Controller {
   }
 
   closeAsk(): void {
-    this.askWindow?.close();
+    if (this.askWindow && !this.askWindow.isDestroyed()) this.askWindow.close();
   }
 
   async ask(question: string): Promise<AskResult> {
@@ -1343,8 +1343,15 @@ export class Controller {
     else win?.once("closed", giveUp);
     try {
       const { ok, ran, text, agent, seconds } = await this.answerQuestion(question, abort, progress);
-      // A run that failed says whose it was; a message thrown before any run comes back as it is.
-      return { ok, answer: ran && !ok ? `${agent} couldn't answer:\n${text}` : text, agent, seconds };
+      // A run that failed says whose it was; a message thrown before any run comes back as it is. An answer comes with its
+      // lines and the pages its links name; anything else has none.
+      return {
+        ok,
+        answer: ran && !ok ? `${agent} couldn't answer.\n${text}` : text,
+        agent,
+        seconds,
+        ...(ok ? answeredFrom(this.vault?.root ?? null, text) : { paragraphs: [], sources: [] }),
+      };
     } finally {
       if (win && !win.isDestroyed()) win.removeListener("closed", giveUp);
     }

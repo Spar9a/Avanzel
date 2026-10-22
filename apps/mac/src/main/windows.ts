@@ -159,7 +159,7 @@ export function createAskWindow(): BrowserWindow {
     show: false,
     title: "Ask your library",
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 16, y: 16 },
+    trafficLightPosition: { x: 18, y: 18 },
     webPreferences,
   });
   void win.loadFile(pagePath("ask"));

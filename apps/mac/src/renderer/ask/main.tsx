@@ -1,26 +1,32 @@
-import DOMPurify from "dompurify";
-import { marked } from "marked";
-import { useEffect, useState } from "react";
+// Ask: a question about the library, answered from the library only. Each turn is the question over its answer, as setup's
+// Ask step shows one: the answer's lines, the pages its [[links]] name (each a button that opens it, beside its shelf),
+// and who answered in how many seconds. While the agent looks, a line says what it is doing; when it couldn't answer, a
+// Notice says so. The newest turn is on top. One question is answered at a time, and Esc closes the window, which gives
+// up a question that is still being answered.
+import "@avanzel/ui/base.css";
+import { Button, Notice, Row, ShelfTag, Spinner, Stack, Text, TextField } from "@avanzel/ui";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AskResult, AvanzelBridge } from "../../shared/ipc.ts";
-import { WIKILINK } from "../../shared/wikilinks.ts";
-import "../common/mac.css";
+import { pageName } from "../../shared/wikilinks.ts";
+import { isShelf, sourceTitle } from "../setup/copy.ts";
+import { answeredLine, failureLines } from "./copy.ts";
 import "./styles.css";
 
 declare global {
-  interface Window { avanzel: AvanzelBridge }
+  interface Window {
+    avanzel: AvanzelBridge;
+  }
 }
+
+const api = window.avanzel.ask;
 
 interface Turn {
+  /** Counts up from the first question, so a turn keeps its place in the page as newer ones come above it. */
+  id: number;
   question: string;
+  /** Null while the agent looks. */
   result: AskResult | null;
-}
-
-/** Markdown answer → safe HTML, with [[page]] wikilinks turned into clickable links. */
-function render(answer: string): string {
-  const linked = answer.replace(WIKILINK, (_m, name: string, label?: string) =>
-    `<a href="#" data-page="${name.trim().replace(/"/g, "&quot;")}">${(label ?? name).trim()}</a>`);
-  return DOMPurify.sanitize(marked.parse(linked, { async: false }) as string, { ADD_ATTR: ["data-page"] });
 }
 
 function Ask() {
@@ -28,63 +34,111 @@ function Ask() {
   const [turns, setTurns] = useState<Turn[]>([]);
   /** What the pending question is doing now, as main last reported it (null: nothing reported yet). */
   const [progress, setProgress] = useState<string | null>(null);
-  const busy = turns.some((t) => t.result === null);
+  const counter = useRef(0);
+  const busy = turns.some((turn) => turn.result === null);
 
-  useEffect(() => window.avanzel.ask.onProgress(setProgress), []);
+  useEffect(() => api.onProgress(setProgress), []);
+  // Esc closes the window wherever the focus is: in the field, or on a page's button.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") api.close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
-  const ask = async () => {
-    const q = question.trim();
-    if (!q || busy) return;
+  // One question at a time: while one is answered, asking does nothing, and the field keeps its words.
+  const ask = () => {
+    const words = question.trim();
+    if (!words || busy) return;
+    const id = counter.current++;
     setQuestion("");
     setProgress(null);
-    setTurns((prev) => [{ question: q, result: null }, ...prev]);
-    const result = await window.avanzel.ask.ask(q);
-    setTurns((prev) => prev.map((t) => (t.question === q && t.result === null ? { question: q, result } : t)));
+    setTurns((prev) => [{ id, question: words, result: null }, ...prev]);
+    void api.ask(words).then((result) => setTurns((prev) => prev.map((turn) => (turn.id === id ? { ...turn, result } : turn))));
   };
 
   return (
     <main className="ask">
-      <div className="titlebar" />
-      <input
-        type="text"
-        autoFocus
-        aria-label="Ask your library"
-        placeholder="Ask your library…"
-        value={question}
-        onChange={(e) => setQuestion(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") void ask();
-          if (e.key === "Escape") window.avanzel.ask.close();
-        }}
-      />
-      <div
-        className="turns"
-        onClick={(e) => {
-          const link = (e.target as HTMLElement).closest("a[data-page]");
-          if (link) {
-            e.preventDefault();
-            window.avanzel.ask.openPage(link.getAttribute("data-page") ?? "");
-          }
-        }}
-      >
-        {turns.length === 0 && <p className="empty">Answers come from your library only, with links to the pages they use.</p>}
-        {turns.map((turn, i) => (
-          <article key={turns.length - i}>
-            <h2>{turn.question}</h2>
-            {turn.result === null ? (
-              <p className="pending"><span className="spin" />{progress ?? "Looking through your library…"}</p>
-            ) : turn.result.ok ? (
-              <>
-                <div className="answer" dangerouslySetInnerHTML={{ __html: render(turn.result.answer) }} />
-                <p className="meta">{turn.result.agent} answered in {Math.round(turn.result.seconds)} s</p>
-              </>
-            ) : (
-              <p className="error">{turn.result.answer}</p>
-            )}
-          </article>
-        ))}
+      <div className="ask-drag" />
+      <div className="ask-field">
+        <TextField label="Ask your library" labelHidden placeholder="Ask your library…" value={question} onChange={setQuestion} onEnter={ask} autoFocus />
+      </div>
+      <div className="ask-turns">
+        {turns.length === 0 ? (
+          <div className="ask-empty">
+            <Text variant="callout" tone="secondary">Answers come from your library only, with links to the pages they use.</Text>
+          </div>
+        ) : (
+          <Stack gap={24}>
+            {turns.map((turn) => (
+              <article key={turn.id}>
+                <Stack gap={8}>
+                  <Text variant="headline" as="h2">{turn.question}</Text>
+                  {turn.result !== null && !turn.result.ok ? (
+                    <Failed answer={turn.result.answer} />
+                  ) : (
+                    // The region that stays while the agent looks: VoiceOver hears the answer as it replaces the line before it.
+                    <div role="status">
+                      {turn.result === null ? (
+                        <Row gap={8}>
+                          <Spinner size="small" />
+                          <Text variant="footnote" tone="secondary">{progress ?? "Looking through your library…"}</Text>
+                        </Row>
+                      ) : (
+                        <Answer result={turn.result} />
+                      )}
+                    </div>
+                  )}
+                </Stack>
+              </article>
+            ))}
+          </Stack>
+        )}
       </div>
     </main>
+  );
+}
+
+/**
+ * A failed answer: what happened is the Notice's title, and what the agent said last its body. A Notice is an alert
+ * itself, so it sits outside the turn's status region.
+ */
+function Failed({ answer }: { answer: string }) {
+  const { title, body } = failureLines(answer);
+  return (
+    <Notice tone="error" title={title}>
+      {body || undefined}
+    </Notice>
+  );
+}
+
+/**
+ * An answer: its lines, then the pages its links name, each a button with its title that opens it, beside its shelf when
+ * it is on one, and last who answered in how many seconds. A button never wraps its words, so a title longer than a line
+ * is shortened (sourceTitle), as in setup's Ask step, rather than running out of the window.
+ */
+function Answer({ result }: { result: AskResult }) {
+  return (
+    <Stack gap={12}>
+      <Stack gap={6}>
+        {result.paragraphs.map((paragraph, i) => (
+          <Text key={i}>{paragraph}</Text>
+        ))}
+      </Stack>
+      {result.sources.length > 0 && (
+        <Stack gap={4}>
+          <Text variant="footnote" tone="secondary">Pages used:</Text>
+          {result.sources.map((page) => (
+            <Row key={page.path} gap={6} wrap>
+              {isShelf(page.shelf) && <ShelfTag shelf={page.shelf} />}
+              <Button variant="link" onClick={() => api.openPage(pageName(page.path))}>{sourceTitle(page.title)}</Button>
+            </Row>
+          ))}
+        </Stack>
+      )}
+      <Text variant="footnote" tone="secondary" numeric>{answeredLine(result.agent, result.seconds)}</Text>
+    </Stack>
   );
 }
 

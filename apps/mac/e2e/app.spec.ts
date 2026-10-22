@@ -231,17 +231,122 @@ test("asking shows the agent's answer", async () => {
   await ask.getByRole("textbox", { name: "Ask your library" }).fill("What are my goals?");
   await ask.getByRole("textbox", { name: "Ask your library" }).press("Enter");
   await expect(ask.getByText("Q: What are my goals?")).toBeVisible({ timeout: 60_000 });
+  // The question heads its answer, which ends with who answered and in how long. No link in it names a page, so none is listed.
+  await expect(ask.getByRole("heading", { name: "What are my goals?", exact: true })).toBeVisible();
+  await expect(ask.getByText(/^fake answered in \d+ s$/)).toBeVisible();
+  await expect(ask.getByText("Pages used:")).toHaveCount(0);
   await snap(ask, "9-ask");
+  await app.close();
+});
+
+test("an answer's links become buttons for the pages they name", async () => {
+  const library = await makeLibrary();
+  writeFileSync(path.join(library, "goals", "run-a-marathon.md"), "# Run a marathon\n");
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await ask.getByRole("textbox", { name: "Ask your library" }).fill("What about [[run-a-marathon]]?");
+  await ask.getByRole("textbox", { name: "Ask your library" }).press("Enter");
+  // The fake agent repeats the question, so its answer links the page: the link reads as the words it gives, and the page
+  // is a button beside its shelf.
+  await expect(ask.getByText("Q: What about run-a-marathon?")).toBeVisible({ timeout: 60_000 });
+  await expect(ask.getByText("Pages used:", { exact: true })).toBeVisible();
+  await expect(ask.getByRole("button", { name: "Run a marathon", exact: true })).toBeVisible();
+  await expect(ask.getByText("Goals", { exact: true })).toBeVisible();
+  await snap(ask, "9-ask-sources");
+  await app.close();
+});
+
+test("a page's long title is shortened, so its button stays inside the window", async () => {
+  const library = await makeLibrary();
+  // 215 characters: a button never wraps its words, so it would run out of the window, and its start out of sight.
+  const title = "A very long page title that goes on and on ".repeat(5).trim();
+  writeFileSync(path.join(library, "ideas", "long-title.md"), `# ${title}\n`);
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await ask.getByRole("textbox", { name: "Ask your library" }).fill("What is in [[long-title]]?");
+  await ask.getByRole("textbox", { name: "Ask your library" }).press("Enter");
+  // The button shows the title's first 39 characters and "…", as setup's Ask step does, and the turns don't scroll sideways.
+  await expect(ask.getByRole("button", { name: "A very long page title that goes on and…", exact: true })).toBeVisible({ timeout: 60_000 });
+  expect(await ask.locator(".ask-turns").evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+  await app.close();
+});
+
+test("the newest question comes first", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  const field = ask.getByRole("textbox", { name: "Ask your library" });
+  await field.fill("First question?");
+  await field.press("Enter");
+  await expect(ask.getByText("Q: First question?")).toBeVisible({ timeout: 60_000 });
+  await field.fill("Second question?");
+  await field.press("Enter");
+  // The second sits above the first at once, while the agent still looks, and stays there once it has answered.
+  await expect(ask.getByRole("heading")).toHaveText(["Second question?", "First question?"]);
+  await expect(ask.getByText("Q: Second question?")).toBeVisible({ timeout: 60_000 });
+  await expect(ask.getByRole("heading")).toHaveText(["Second question?", "First question?"]);
   await app.close();
 });
 
 test("a failed answer names the agent that couldn't answer, and a question that can't be asked says only why", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_MODE: "fail" });
-  // The agent ran and failed: its last lines, under the name of the agent whose run it was.
-  expect(await call(app, "ask", "What are my goals?")).toMatchObject({ ok: false, answer: "fake couldn't answer:\nagent crashed: not logged in", agent: "fake" });
+  // The agent ran and failed: its last lines, under the name of the agent whose run it was. There are no lines or pages to show.
+  expect(await call(app, "ask", "What are my goals?")).toMatchObject({
+    ok: false,
+    answer: "fake couldn't answer.\nagent crashed: not logged in",
+    agent: "fake",
+    paragraphs: [],
+    sources: [],
+  });
   // Nothing ran: the engine refused the question, and its message comes back as it is.
-  expect(await call(app, "ask", "   ")).toMatchObject({ ok: false, answer: 'Ask a question, e.g. "what are my goals this year?"', agent: "fake" });
+  expect(await call(app, "ask", "   ")).toMatchObject({
+    ok: false,
+    answer: 'Ask a question, e.g. "what are my goals this year?"',
+    agent: "fake",
+    paragraphs: [],
+    sources: [],
+  });
+  await app.close();
+});
+
+test("a failed answer says so in the window", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_MODE: "fail" });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await ask.getByRole("textbox", { name: "Ask your library" }).fill("What are my goals?");
+  await ask.getByRole("textbox", { name: "Ask your library" }).press("Enter");
+  // The Notice names the agent whose run failed, and says what that agent said last.
+  const notice = ask.getByRole("alert");
+  await expect(notice).toContainText("fake couldn't answer.", { timeout: 60_000 });
+  await expect(notice).toContainText("agent crashed: not logged in");
+  await expect(ask.getByRole("heading", { name: "What are my goals?", exact: true })).toBeVisible();
+  await snap(ask, "9-ask-failed");
+  await app.close();
+});
+
+test("Esc closes Ask from anywhere in it", async () => {
+  const library = await makeLibrary();
+  writeFileSync(path.join(library, "goals", "run-a-marathon.md"), "# Run a marathon\n");
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await ask.getByRole("textbox", { name: "Ask your library" }).fill("What about [[run-a-marathon]]?");
+  await ask.getByRole("textbox", { name: "Ask your library" }).press("Enter");
+  const page = ask.getByRole("button", { name: "Run a marathon", exact: true });
+  await expect(page).toBeVisible({ timeout: 60_000 });
+  // The focus is on a page's button, not in the field: Esc closes the window all the same.
+  await page.focus();
+  await expect(page).toBeFocused();
+  const closed = ask.waitForEvent("close");
+  await page.press("Escape").catch(() => undefined); // closes the Ask window, before the key press returns
+  await closed;
+  // Closing it again, as a second Esc may, does nothing: the window is gone.
+  await call(app, "closeAsk");
   await app.close();
 });
 

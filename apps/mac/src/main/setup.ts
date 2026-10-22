@@ -40,12 +40,11 @@ import type {
   UpHereSnapshot,
 } from "../shared/ipc.ts";
 import { errorMessage, harnessName, LIBRARY_PICKER, type FilingJob, type Recording } from "./jobs.ts";
-import { captureMeta, findPage, obsidianUrl, pageInfo } from "./library-info.ts";
+import { answeredFrom, captureMeta, obsidianUrl } from "./library-info.ts";
 import { permissionStatus, requestMicrophone } from "./permissions.ts";
 import { runningAppNames } from "./running-apps.ts";
 import type { RunState } from "./schedule.ts";
 import {
-  answerSources,
   bestAgent,
   flightTarget,
   libraryAgent,
@@ -1080,7 +1079,7 @@ export class Setup {
     if (!ours()) return this.snapshot();
     session.askAbort = null;
     session.answer = result.ok
-      ? { kind: "answered", question: asked, ...this.answeredFrom(result.text) }
+      ? { kind: "answered", question: asked, ...answeredFrom(this.host.vault()?.root ?? null, result.text) }
       : { kind: "failed", question: asked, agent: result.agent, line: errorLine(result.text) };
     this.host.broadcast();
     return this.snapshot();
@@ -1094,26 +1093,6 @@ export class Setup {
     session.askAbort = null;
     session.answer = null;
     this.host.broadcast();
-  }
-
-  /**
-   * An answer as the Ask step shows it: its lines, and the pages its [[links]] name, each found in the library as the Ask
-   * window finds one to open. A name that finds no page is left out, and so is one whose search hits a folder it can't
-   * read, so the answer still shows.
-   */
-  private answeredFrom(text: string): { paragraphs: string[]; sources: FiledPage[] } {
-    const { paragraphs, names } = answerSources(text);
-    const root = this.host.vault()?.root;
-    if (!root) return { paragraphs, sources: [] };
-    const sources = names.flatMap((name) => {
-      try {
-        const rel = findPage(root, name);
-        return rel ? [pageInfo(root, rel)] : [];
-      } catch {
-        return [];
-      }
-    });
-    return { paragraphs, sources };
   }
 
   /**

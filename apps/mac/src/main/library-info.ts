@@ -2,6 +2,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { FiledPage } from "../shared/ipc.ts";
+import { answerSources } from "./setup-model.ts";
 
 const NOT_PAGES = new Set(["inbox", "raw", "reviews", "tasks"]);
 
@@ -54,6 +55,26 @@ export function findPage(root: string, name: string): string | null {
   const matches = walk(root).filter((rel) => rel.includes("/") && path.basename(rel) === target);
   const rank = (rel: string) => (NOT_PAGES.has(rel.split("/")[0] ?? "") ? 1 : 0);
   return matches.sort((a, b) => rank(a) - rank(b))[0] ?? null;
+}
+
+/**
+ * An answer as the Ask window and setup's Ask step show it: its lines (answerSources), and the pages its [[links]] name,
+ * each found in the library `root` with findPage, as a page is found to open it. A name that finds no page is left out,
+ * and so is one whose search hits a folder it can't read, so the answer still shows. Without a library (`root` null) it
+ * names no page.
+ */
+export function answeredFrom(root: string | null, text: string): { paragraphs: string[]; sources: FiledPage[] } {
+  const { paragraphs, names } = answerSources(text);
+  if (!root) return { paragraphs, sources: [] };
+  const sources = names.flatMap((name) => {
+    try {
+      const rel = findPage(root, name);
+      return rel ? [pageInfo(root, rel)] : [];
+    } catch {
+      return [];
+    }
+  });
+  return { paragraphs, sources };
 }
 
 export function recentFromLog(root: string, limit = 3): FiledPage[] {

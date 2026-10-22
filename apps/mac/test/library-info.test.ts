@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "../src/main/library-info.ts";
+import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "../src/main/library-info.ts";
 
 function library() {
   const root = mkdtempSync(path.join(tmpdir(), "avz-lib-"));
@@ -41,6 +41,21 @@ describe("library info", () => {
     expect(findPage(root, "mark")).toBe("people/mark.md");
     expect(findPage(root, "2026-10-20-140312")).toBe("raw/2026/10/2026-10-20-140312.md");
     expect(findPage(root, "nope")).toBeNull();
+  });
+
+  it("answeredFrom reads an answer's lines and the pages its links name, and leaves out a name with no page", () => {
+    const answered = answeredFrom(library(), "See [[launch-podcast|the podcast]] and [[nowhere]].\n\n## Next\n**Call Mark**");
+    expect(answered.paragraphs).toEqual(["See the podcast and nowhere.", "Next", "Call Mark"]);
+    expect(answered.sources).toEqual([{ title: "Launch the indie game dev podcast", shelf: "goals", path: "goals/launch-podcast.md" }]);
+  });
+
+  it("answeredFrom without a library keeps the lines and names no page", () => {
+    expect(answeredFrom(null, "See [[x]].")).toEqual({ paragraphs: ["See x."], sources: [] });
+  });
+
+  it("answeredFrom leaves out a name whose search can't read the library, so the answer still shows", () => {
+    const notAFolder = path.join(library(), "log.md"); // a library path that is a file: reading it as a folder throws
+    expect(answeredFrom(notAFolder, "See [[mark]].")).toEqual({ paragraphs: ["See mark."], sources: [] });
   });
 
   it("turns an agent run's changes into the pages it filed, new pages first", () => {

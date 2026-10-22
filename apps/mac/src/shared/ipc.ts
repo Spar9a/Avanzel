@@ -443,9 +443,17 @@ export interface UpHereSnapshot {
 
 export interface AskResult {
   ok: boolean;
+  /**
+   * ok: the agent's reply. Otherwise what failed: "{agent} couldn't answer.\n{its last lines}" for a run that failed, or
+   * the message alone when nothing ran (no library, a question the engine refuses).
+   */
   answer: string;
   agent: string;
   seconds: number;
+  /** ok: the reply's lines, as answerSources reads them; [] otherwise. */
+  paragraphs: string[];
+  /** ok: the pages its [[links]] name that are in the library; [] otherwise. */
+  sources: FiledPage[];
 }
 
 /** Preload bridge exposed as `window.avanzel`. */

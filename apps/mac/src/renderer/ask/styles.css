@@ -1,17 +1,28 @@
-.ask { display: flex; flex-direction: column; height: 100vh; }
-.titlebar { height: 44px; flex: none; -webkit-app-region: drag; } /* clears the traffic lights, which windows.ts puts at y 16 */
-.ask > input { margin: 0 20px 14px; font-size: 18px; padding: 10px 14px; border-radius: 12px; }
-.turns { flex: 1; overflow-y: auto; padding: 0 22px 22px; }
-.empty { color: var(--text-2); margin-top: 24px; text-align: center; }
-article { padding: 14px 0 6px; border-top: 1px solid var(--hair); }
-article:first-child { border-top: 0; }
-h2 { font-size: 15px; margin: 0 0 8px; }
-.answer { font-size: 14px; line-height: 1.55; max-width: 68ch; user-select: text; }
-.answer p { margin: 0 0 10px; }
-.answer ul, .answer ol { padding-left: 20px; margin: 0 0 10px; }
-.meta { color: var(--text-2); font-size: 12px; margin: 4px 0 0; }
-.error { color: var(--danger-text); white-space: pre-wrap; }
-.pending { color: var(--text-2); display: flex; align-items: center; gap: 8px; }
-.spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--hair); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+/* The Ask window's layout. It only arranges: everything you see comes from @avanzel/ui. */
+#root {
+  height: 100%;
+}
+
+/* A strip to drag the window by, where the traffic lights sit; the field; the turns under it. The turns scroll and the
+   page doesn't, so the field stays where it is however many answers there are. */
+.ask {
+  display: grid;
+  grid-template-rows: 40px auto minmax(0, 1fr);
+  height: 100%;
+}
+.ask-drag {
+  -webkit-app-region: drag;
+}
+.ask-field {
+  padding: 0 var(--av-space-24) var(--av-space-16);
+}
+/* A word too long for its line, such as a path or an agent's message, breaks rather than pushing the turns sideways. */
+.ask-turns {
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  padding: 0 var(--av-space-24) var(--av-space-24);
+}
+.ask-empty {
+  padding-top: var(--av-space-24);
+  text-align: center;
+}
