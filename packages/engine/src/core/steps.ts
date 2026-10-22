@@ -14,14 +14,15 @@ export type FilingStep =
 
 // A library's real path, found once per root: it doesn't change while the app runs. A folder under os.tmpdir() on
 // macOS is reached as /var/folders/… but really lives in /private/var/folders/…, and an agent working there reports
-// the latter.
+// the latter. The native realpath, as the guard's hook uses, also spells each name as the disk does, letter case
+// included: Claude Code works from that spelling, while JavaScript's realpath keeps the case it is given.
 const realPaths = new Map<string, string>();
 
 function realPathOf(root: string): string {
   const known = realPaths.get(root);
   if (known !== undefined) return known;
   try {
-    const real = realpathSync(root);
+    const real = realpathSync.native(root);
     realPaths.set(root, real);
     return real;
   } catch {
@@ -38,7 +39,7 @@ function under(base: string, path: string): string | null {
 
 /**
  * `path` (absolute, or relative to the library) relative to the library: under `root` as given or under its real path
- * (realpathSync, remembered per root). Null when it is outside, or is the library itself.
+ * (realpathSync.native, remembered per root). Null when it is outside, or is the library itself.
  */
 export function insideLibrary(root: string, path: string): string | null {
   return under(root, path) ?? under(realPathOf(root), path);

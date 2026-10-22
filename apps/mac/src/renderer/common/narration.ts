@@ -46,7 +46,10 @@ export function rowLine(row: NarrationRow): string {
   }
 }
 
-/** A read: the library's index, log or rules by what they are for, a page of someone as theirs, any other by its title. */
+/**
+ * A read: the library's index, log or rules by what they are for, a Markdown page in people/ as someone's, and any other
+ * file by its title (a file in people/ that isn't Markdown is no one's page).
+ */
 function readLine({ path, title, shelf }: NarrationRow): string {
   switch (path) {
     case "index.md":
@@ -56,7 +59,7 @@ function readLine({ path, title, shelf }: NarrationRow): string {
     case "AGENTS.md":
       return "Reading the library's rules";
   }
-  return shelf === "people" ? `Reading ${title}'s page` : `Reading ${title}`;
+  return shelf === "people" && path?.endsWith(".md") ? `Reading ${title}'s page` : `Reading ${title}`;
 }
 
 /** A write to the index or the log, new or updated alike, by what it did; null for any other file. */

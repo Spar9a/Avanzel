@@ -68,7 +68,7 @@ export class ClaudeStream {
     return this.#result?.failed ?? false;
   }
 
-  /** `permission_denials[].tool_input.file_path` (or `notebook_path`), as given. */
+  /** `permission_denials[].tool_input.file_path` (or `notebook_path`) of each refused write, as given. */
   get refused(): string[] {
     return this.#result ? [...this.#result.refused] : [];
   }
@@ -148,10 +148,15 @@ function resultText(event: Json): string | null {
   return errors.length ? errors.join("\n") : null;
 }
 
+/** The tools that write: a denial of one of them is a refused write. */
+const WRITE_TOOLS: readonly unknown[] = ["Write", "Edit", "NotebookEdit"];
+
+/** The path of each write the result's `permission_denials` lists; a refused read or any other call isn't one. */
 function refusedPaths(denials: unknown): string[] {
   if (!Array.isArray(denials)) return [];
   return denials.flatMap((denial: unknown) => {
-    const input = isObject(denial) ? denial.tool_input : undefined;
+    if (!isObject(denial) || !WRITE_TOOLS.includes(denial.tool_name)) return [];
+    const input = denial.tool_input;
     const path = isObject(input) ? (input.file_path ?? input.notebook_path) : undefined;
     return typeof path === "string" && path ? [path] : [];
   });

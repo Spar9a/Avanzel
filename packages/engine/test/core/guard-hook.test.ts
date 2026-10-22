@@ -53,6 +53,10 @@ function refusal(answer: Answer): string {
 
 const LET_THROUGH: Answer = { status: 0, stdout: "" };
 
+/** The reason for a write to how the library is set up. */
+const SETUP_REASON =
+  "This is part of how the library is set up, and only its owner changes it. Write pages, index.md and log.md instead.";
+
 describe("the guard's hook", () => {
   it("refuses a write to the owner's words, with the reason", () => {
     const { root, command } = library();
@@ -112,6 +116,16 @@ describe("the guard's hook", () => {
     expect(refusal(write(command, join(root, "ideas/AGENTS.md"), root))).toBe(INSTRUCTION_REASON);
   });
 
+  it("refuses any dot path, at any depth", () => {
+    // .obsidian/ holds plugins Obsidian runs, with Node access, on its next launch.
+    const { root, command } = library();
+    for (const rel of [".obsidian/plugins/x/main.js", ".obsidian/community-plugins.json", ".gitignore", "ideas/.x/y.md"]) {
+      expect(refusal(write(command, join(root, rel), root)), rel).toBe(SETUP_REASON);
+    }
+    // A dot inside a name doesn't count.
+    expect(write(command, join(root, "ideas/a.b.md"), root)).toEqual(LET_THROUGH);
+  });
+
   it("takes a relative path from the agent's folder", () => {
     const { root, command } = library();
     expect(refusal(write(command, "raw/x.md", root))).toContain("own words");
@@ -156,7 +170,10 @@ describe("guardSettings", () => {
     expect(deny).toContain(`Edit(//${root.slice(1)}/raw)`);
     expect(deny).toContain(`Edit(//${root.slice(1)}/.claude/**)`);
     expect(deny).toContain(`Edit(//${root.slice(1)}/**/CLAUDE.md)`);
-    expect(deny).toHaveLength(KEEP_OUT.length * 2 + INSTRUCTION_FILES.length);
+    // Every dot path, at any depth: a dot file or folder, and anything in a dot folder.
+    expect(deny).toContain(`Edit(//${root.slice(1)}/**/.*)`);
+    expect(deny).toContain(`Edit(//${root.slice(1)}/**/.*/**)`);
+    expect(deny).toHaveLength(KEEP_OUT.length * 2 + 2 + INSTRUCTION_FILES.length);
     expect(settings.hooks).toEqual({
       PreToolUse: [{ matcher: "Write|Edit|NotebookEdit", hooks: [{ type: "command", command, timeout: 10 }] }],
     });
@@ -167,11 +184,13 @@ describe("guardSettings", () => {
     const both = denyOf(linked);
     expect(both).toContain(`Edit(//${linked.slice(1)}/AGENTS.md)`);
     expect(both).toContain(`Edit(//${root.slice(1)}/AGENTS.md)`);
-    expect(both).toHaveLength((KEEP_OUT.length * 2 + INSTRUCTION_FILES.length) * 2);
+    expect(both).toContain(`Edit(//${linked.slice(1)}/**/.*)`);
+    expect(both).toHaveLength((KEEP_OUT.length * 2 + 2 + INSTRUCTION_FILES.length) * 2);
 
-    // What a pattern reads as a wildcard is escaped.
+    // What a pattern reads as a wildcard is escaped in the root, and only there.
     const odd = join(tmp(), "My Notes [Kate's] *?");
     mkdirSync(odd);
     expect(denyOf(odd)).toContain(`Edit(//${tmp().slice(1)}/My Notes \\[Kate's\\] \\*\\?/raw/**)`);
+    expect(denyOf(odd)).toContain(`Edit(//${tmp().slice(1)}/My Notes \\[Kate's\\] \\*\\?/**/.*/**)`);
   });
 });

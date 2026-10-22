@@ -311,7 +311,8 @@ export class Librarian {
     const attachments = this.#attachments(original.toString("utf8"));
     const before = snapshot(root);
     const prompt = filePrompt(captureRel, captureId, now, { attachments, instructions });
-    // Only a caller that asked for the steps has the run watched.
+    // Only a caller that asked for the steps is told them: Claude Code's come from its own events, and other agents'
+    // from the folder.
     const { result, guarded } = await this.#run(prompt, {
       write: true,
       images: attachments,

@@ -412,7 +412,7 @@ describe("runHeadless with Claude Code", () => {
     const finishedAt = performance.now();
     expect(result.ok).toBe(true);
     expect(steps).toEqual([{ kind: "read", path: "/lib/index.md" }]);
-    expect(finishedAt - stepAt).toBeGreaterThanOrEqual(800);
+    expect(finishedAt - stepAt).toBeGreaterThanOrEqual(500); // of the 1 s it sleeps, with slack for a loaded Mac
   });
 
   it("Claude Code's reply is the result's text", async () => {

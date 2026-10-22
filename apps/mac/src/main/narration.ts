@@ -26,11 +26,11 @@ export function withStep(rows: readonly NarrationRow[], step: FilingStep, page: 
 }
 
 /**
- * The Markdown pages a filing has written so far, after one more step: a write adds its path, once however often the page
- * is written, and a removal takes its path off. Any other step, and any file that isn't Markdown, changes nothing, so the
- * list is the pages `filedPages` will find once the filing is filed. Unlike the rows, it is not cut to MAX_ROWS: the shelf
- * tabs count it, and a page written early in a long filing must keep its count when its row has gone by. The list given is
- * left as it was.
+ * Every Markdown path a filing has written so far, after one more step: a write adds its path, once however often it is
+ * written, and a removal takes its path off. Any other step, and any file that isn't Markdown, changes nothing. The list
+ * holds index.md, log.md and pages off the shelves too; the shelf tabs count only those on a shelf, which are the pages
+ * `filedPages` will find there once the filing is filed. Unlike the rows, it is not cut to MAX_ROWS: a page written early
+ * in a long filing must keep its count when its row has gone by. The list given is left as it was.
  */
 export function withWritten(written: readonly string[], step: FilingStep): string[] {
   if (step.kind === "wrote" && step.path.endsWith(".md") && !written.includes(step.path)) return [...written, step.path];

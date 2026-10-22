@@ -155,6 +155,8 @@ Sentence case, no "!", and the one-character "…". Rows have no closing period;
 
 `{title}` is the page's frontmatter `title:`, else its first `# ` heading, else its file name without `.md` (`pageInfo` in `apps/mac/src/main/library-info.ts`). Setup's working line doesn't change: "{agent} is working: N s of about 15".
 
+During execution, the snapshot line and the ⌘Z hint became one line, "Saved a snapshot. Press ⌘Z or Undo to put everything back.", so `SAVED_LINE` is "Saved a snapshot." (ruling F2 of the final checks).
+
 ### Process
 
 - Electron e2e runs with `ELECTRON_RUN_AS_NODE` unset. From `apps/mac`, run `npm run build`, then `env -u ELECTRON_RUN_AS_NODE npx playwright test e2e/<spec>.ts`.

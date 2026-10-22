@@ -137,6 +137,15 @@ describe("ClaudeStream", () => {
     expect(stream.refused).toEqual(["/lib/raw/n.ipynb", "/lib/raw/w.md"]);
   });
 
+  it("lists only the writes Claude Code refused", () => {
+    const denials = [
+      { tool_name: "Read", tool_use_id: "r", tool_input: { file_path: "/lib/.env" } },
+      { tool_name: "Edit", tool_use_id: "e", tool_input: { file_path: "/lib/raw/e.md" } },
+    ];
+    const { stream } = feed([resultEvent({ permission_denials: denials })]);
+    expect(stream.refused).toEqual(["/lib/raw/e.md"]);
+  });
+
   it("ignores everything else it sees", () => {
     const { stream, steps } = feed([
       JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Let me look." }] } }),

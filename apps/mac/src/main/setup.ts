@@ -1038,7 +1038,7 @@ export class Setup {
   failed(job: FilingJob, line: string): void {
     const session = this.session;
     if (session?.job !== job) return;
-    session.filing ={ kind: "failed", words: job.text, agent: job.agent, harness: this.libraryHarness() ?? "", line, signedOut: asksToSignIn(line) };
+    session.filing = { kind: "failed", words: job.text, agent: job.agent, harness: this.libraryHarness() ?? "", line, signedOut: asksToSignIn(line) };
     this.host.broadcast();
   }
 

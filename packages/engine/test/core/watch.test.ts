@@ -2,7 +2,7 @@
 // names only a path inside the library. Real files in a temporary library. What should happen is awaited with
 // `vi.waitFor` (3 s at most). A fixed wait is for asserting that nothing happened, or for the 100 ms a watch is given
 // to start.
-import { appendFileSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { snapshot, type Snapshot } from "../../src/core/changes.ts";
@@ -187,6 +187,14 @@ describe("insideLibrary", () => {
     expect(insideLibrary(link, "ideas/x.md")).toBe("ideas/x.md");
     expect(insideLibrary(link, real)).toBeNull();
     expect(insideLibrary(link, join(tmp(), "elsewhere/x.md"))).toBeNull();
+  });
+
+  it("a root written in another letter case still gives library paths", ({ skip }) => {
+    // Claude Code gives its paths as the disk spells them, whatever case the library's path was written in.
+    const real = library();
+    const upperRoot = real.toUpperCase();
+    skip(!existsSync(upperRoot), "this volume tells letter case apart");
+    expect(insideLibrary(upperRoot, join(real, "ideas/x.md"))).toBe("ideas/x.md");
   });
 });
 

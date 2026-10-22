@@ -21,6 +21,10 @@ describe("rowLine: a read", () => {
     expect(rowLine(row("read", "people/team/ana.md", "Ana"))).toBe("Reading Ana's page"); // a folder inside the shelf is still people/
   });
 
+  it("of a file in people/ that isn't a page names the file", () => {
+    expect(rowLine({ kind: "read", path: "people/mark.jpg", title: "mark.jpg", shelf: "people" })).toBe("Reading mark.jpg");
+  });
+
   it("of any other page names the page", () => {
     expect(rowLine(row("read", "ideas/p.md", "Indie game dev podcast"))).toBe("Reading Indie game dev podcast");
     expect(rowLine(row("read", "topics/budget.pdf", "budget.pdf"))).toBe("Reading budget.pdf"); // not a page, but named all the same

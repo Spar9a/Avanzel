@@ -1,11 +1,13 @@
 // The write guard of Claude Code's write runs: a write to the owner's words (inbox/, raw/), their scheduled tasks or
-// the library's settings, to a file Claude Code reads as instructions (INSTRUCTION_FILES, in any folder), or anywhere
-// outside the library, is refused before it happens. Every such run gets `--settings` with deny rules for KEEP_OUT and
-// INSTRUCTION_FILES, and a PreToolUse hook that refuses the same writes and any outside the library, and tells the
-// agent why. The deny rules hold in every permission mode, `--bare` included (which skips hooks); the hook adds the
-// reasons and the check for outside, and follows symlinks before it decides. It is a small Node program written into
-// the run's own temp folder, and Avanzel's own binary runs it as Node: nothing is installed in the library or anywhere
-// else on the Mac. What any agent still changes among the protected paths is put back after every run (guard.ts).
+// the library's settings, to any dot path (a file or folder whose name starts with ".", at any depth, such as
+// .obsidian/, which holds plugins Obsidian runs), to a file Claude Code reads as instructions (INSTRUCTION_FILES, in
+// any folder), or anywhere outside the library, is refused before it happens. Every such run gets `--settings` with
+// deny rules for KEEP_OUT, dot paths and INSTRUCTION_FILES, and a PreToolUse hook that refuses the same writes and any
+// outside the library, and tells the agent why. The deny rules hold in every permission mode, `--bare` included (which
+// skips hooks, as `disableAllHooks` does); the hook adds the reasons and the check for outside, and follows symlinks
+// before it decides. It is a small Node program written into the run's own temp folder, and Avanzel's own binary runs
+// it as Node: nothing is installed in the library or anywhere else on the Mac. What any agent still changes among the
+// protected paths is put back after every run (guard.ts).
 
 import { realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -49,9 +51,9 @@ function outsideReason(root: string): string {
 // backtick or dollar-brace in it: it sits in a template literal.)
 const HOOK = String.raw`// Avanzel's write guard, a PreToolUse hook. Claude Code runs it before each Write, Edit and
 // NotebookEdit of a write run, with the tool call as JSON on stdin; its one argument is its rules (guard-rules.json).
-// A write to a path the rules keep out, to a file Claude Code reads as instructions or outside the library is refused:
-// it prints the deny with the reason, which the agent reads. Anything else it lets through without a word, input it
-// can't read included; the deny rules in the run's settings still hold.
+// A write to a path the rules keep out, to a dot path, to a file Claude Code reads as instructions or outside the
+// library is refused: it prints the deny with the reason, which the agent reads. Anything else it lets through without
+// a word, input it can't read included; the deny rules in the run's settings still hold.
 import { readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -99,6 +101,9 @@ function refusal(input, guard) {
     return lower === name || lower.startsWith(name + "/");
   });
   if (rule) return rule.reason;
+  // Any other dot path, at any depth: a segment that starts with "." (a dot inside a name doesn't count, and a leading
+  // dot has no letter case). No agent is asked to write one, and .obsidian/ holds plugins Obsidian runs.
+  if (rel.split("/").some((segment) => segment.startsWith("."))) return guard.dotReason;
   // A file Claude Code reads as instructions, in any folder: by the name the agent gave, or the one the write lands on.
   const names = [basename(given), basename(rel)].map((name) => name.toLowerCase());
   const instructions = guard.instructionFiles.some((file) => names.includes(file.toLowerCase()));
@@ -130,6 +135,7 @@ export function installHook(dir: string, root: string, interpreter: string = pro
   const guard = {
     root: real,
     rules: KEEP_OUT,
+    dotReason: SETUP,
     instructionFiles: INSTRUCTION_FILES,
     instructionReason: INSTRUCTION_REASON,
     outside: outsideReason(real),
@@ -140,16 +146,21 @@ export function installHook(dir: string, root: string, interpreter: string = pro
   return `ELECTRON_RUN_AS_NODE=1 ${shellWord(interpreter)} ${shellWord(program)} ${shellWord(rules)}`;
 }
 
-/** The `--settings` JSON for a write run: deny rules for KEEP_OUT and INSTRUCTION_FILES, and the PreToolUse hook. */
+/**
+ * The `--settings` JSON for a write run: deny rules for KEEP_OUT, for every dot path and for INSTRUCTION_FILES, and
+ * the PreToolUse hook.
+ */
 export function guardSettings(root: string, hookCommand: string): string {
   const given = resolve(root);
   // `Edit(//<absolute path>)` covers Edit, Write and NotebookEdit, and `<root>/**/<name>` is a file of that name in any
-  // folder, the root's own included. The root comes in both forms when its real path differs: the agent may give a
-  // path through either.
+  // folder, the root's own included: `<root>/**/.*` is any dot file or folder, and `<root>/**/.*/**` what is in one.
+  // The root comes in both forms when its real path differs: the agent may give a path through either.
   const deny = [...new Set([given, realPath(given)])].flatMap((form) => {
     const base = `//${patternText(form.slice(1))}`;
     return [
       ...KEEP_OUT.flatMap(({ path }) => [`Edit(${base}/${path})`, `Edit(${base}/${path}/**)`]),
+      `Edit(${base}/**/.*)`,
+      `Edit(${base}/**/.*/**)`,
       ...INSTRUCTION_FILES.map((name) => `Edit(${base}/**/${name})`),
     ];
   });
