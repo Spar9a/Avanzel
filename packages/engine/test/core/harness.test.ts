@@ -436,6 +436,18 @@ describe("runHeadless with Claude Code", () => {
     expect(await runClaude()).toMatchObject({ ok: false, exitCode: 3, stderr: "Credit balance is too low" });
   });
 
+  it("a failed result without text puts its errors on stderr", async () => {
+    // The error subtypes carry errors[] and no result; the person still needs a reason.
+    onPath(
+      `${print('{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Claude AI usage limit reached"]}')}; exit 1`,
+    );
+    const result = await runClaude();
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(errorLine(result.stderr)).toBe("Claude AI usage limit reached");
+    expect(result.output).toBe("Claude AI usage limit reached");
+  });
+
   it("a Claude Code that prints plain text is read as before", async () => {
     onPath("echo 'Not logged in · Please run /login'; exit 1");
     const result = await runClaude();

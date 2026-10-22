@@ -7,9 +7,9 @@ export type ToolStep = { kind: "read"; path: string } | { kind: "search" } | { k
 
 type Json = Record<string, unknown>;
 
-/** What the result event, the last line of a run, said. */
+/** What the result event, the last line of a run, said. `reply` is null when it had neither a result nor errors. */
 interface Result {
-  reply: string;
+  reply: string | null;
   failed: boolean;
   refused: string[];
 }
@@ -45,7 +45,7 @@ export class ClaudeStream {
         break;
       case "result":
         this.#result = {
-          reply: typeof event.result === "string" ? event.result : "",
+          reply: resultText(event),
           failed: event.is_error === true,
           refused: refusedPaths(event.permission_denials),
         };
@@ -53,9 +53,12 @@ export class ClaudeStream {
     }
   }
 
-  /** The result event's `result`; with no result event, the lines that weren't JSON, joined with "\n". */
+  /**
+   * The result event's `result`; else its `errors`, one to a line (a run that failed before it could reply has those
+   * and no result); with neither, the lines that weren't JSON, joined with "\n".
+   */
   get reply(): string {
-    return this.#result ? this.#result.reply : this.#plain.join("\n");
+    return this.#result?.reply ?? this.#plain.join("\n");
   }
 
   /** The result event's `is_error`. */
@@ -128,6 +131,18 @@ function parseObject(text: string): Json | null {
 function blocks(event: Json): Json[] {
   const content = isObject(event.message) ? event.message.content : undefined;
   return Array.isArray(content) ? content.filter(isObject) : [];
+}
+
+/**
+ * What a result event has to say: its `result`, or else its `errors` (the error_during_execution and error_max_turns
+ * subtypes carry those and no result), one to a line. Null when it has neither.
+ */
+function resultText(event: Json): string | null {
+  if (typeof event.result === "string") return event.result;
+  const errors = Array.isArray(event.errors)
+    ? event.errors.filter((error: unknown): error is string => typeof error === "string" && error !== "")
+    : [];
+  return errors.length ? errors.join("\n") : null;
 }
 
 function refusedPaths(denials: unknown): string[] {

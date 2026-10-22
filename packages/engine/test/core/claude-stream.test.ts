@@ -71,6 +71,24 @@ describe("ClaudeStream", () => {
     expect(stream.reply).toBe("Credit balance is too low");
   });
 
+  it("a failed result without text gives its errors as the reply", () => {
+    // The error subtypes (error_during_execution, error_max_turns, …) carry errors[] and no result.
+    const { stream } = feed([
+      '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Claude AI usage limit reached"]}',
+    ]);
+    expect(stream.failed).toBe(true);
+    expect(stream.reply).toBe("Claude AI usage limit reached");
+  });
+
+  it("takes the result's text, else its errors one to a line, else the lines that weren't JSON", () => {
+    const errors = ["first", "second"];
+    const replyOf = (...lines: string[]) => feed(lines).stream.reply;
+    expect(replyOf("a line", resultEvent({ result: "text", errors }))).toBe("text");
+    expect(replyOf("a line", resultEvent({ result: undefined, errors }))).toBe("first\nsecond");
+    expect(replyOf("a line", resultEvent({ result: undefined, errors: [] }))).toBe("a line");
+    expect(replyOf("a line", resultEvent({ result: undefined }))).toBe("a line");
+  });
+
   it("hands over a read or a search at once, and a write once its result arrives", () => {
     const { stream, steps } = feed([
       toolUse("r", "Read", { file_path: "/lib/a.md" }),
