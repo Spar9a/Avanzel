@@ -1,15 +1,17 @@
 // Step 4, Watch me file it: the first thought is filed while the person watches. The stage holds their words on a card,
 // Zel, and the tabs of the six shelves the filing goes to. The working line counts the agent's seconds, with Cancel;
-// then the heading says it is all filed, and the card is stamped FILED, the step's one orchestrated moment, as each tab
-// counts the pages that went in behind it. Lines say what the filing wrote, over the receipt of its shelf pages, with
-// Undo (or ⌘Z), which puts everything back, and its first page to open. A cancelled or undone filing says what stayed
-// and offers to file it again; a failed one says why in a Notice with its one fix. The heading sits in a status region,
-// so VoiceOver hears the start and the end, not each second. There is no Back: the filing goes on by itself, even once
-// the window closes.
-import { Actions, Button, Card, Kbd, Notice, Receipt, Row, SHELVES, ShelfTag, Stack, Text, Zel, type ZelMood } from "@avanzel/ui";
+// under it come the agent's steps as it takes them, a row each, and the tabs count the pages it has written. Then the
+// heading says it is all filed, and the card is stamped FILED, the step's one orchestrated moment. Lines say what the
+// filing wrote, over the receipt of its shelf pages, with its proof (the words are kept in raw/, and a snapshot is
+// saved) and Undo (or ⌘Z), which puts everything back, and its first page to open. A cancelled or undone filing says
+// what stayed and offers to file it again; a failed one says why in a Notice with its one fix. The heading sits in a
+// status region, so VoiceOver hears the start and the end, not each second or each step. There is no Back: the filing
+// goes on by itself, even once the window closes.
+import { Actions, Button, Card, Kbd, Notice, Receipt, Row, SHELVES, ShelfTag, Stack, Text, Zel, type Shelf, type ZelMood } from "@avanzel/ui";
 import { useEffect, useState, type ReactNode } from "react";
-import { NOTE_GONE, type SetupFiling } from "../../../shared/ipc.ts";
+import { NOTE_GONE, type NarrationRow, type SetupFiling } from "../../../shared/ipc.ts";
 import { pageName } from "../../../shared/wikilinks.ts";
+import { KEPT_LINE, pagesWritten, rowLine, SAVED_LINE, SHOWN_ROWS } from "../../common/narration.ts";
 import { cancelledLine, failedLine, filedHeading, othersLine, pagesLine, receiptPages, stampDate, workingLine } from "../copy.ts";
 import { Frame, useNow, type StepProps } from "../frame.tsx";
 
@@ -77,12 +79,11 @@ function heading(filing: SetupFiling): string {
 
 /**
  * The stage: the card with the person's words, which are in the inbox until they are filed, Zel under it looking up at
- * it, and the six shelves' tabs below, where the filing goes. Once filed, the card is stamped, and each tab counts its
- * filed pages.
+ * it, and the six shelves' tabs below, where the filing goes. While the agent works, each tab counts the pages it has
+ * written on its shelf so far. Once filed, the card is stamped, and each tab counts its filed pages: the same ones.
  */
 function FilingStage({ filing }: { filing: SetupFiling }) {
   const inInbox = filing.kind !== "filed" && !(filing.kind === "failed" && filing.line === NOTE_GONE);
-  const filed = filing.kind === "filed" ? filing.pages : [];
   return (
     <div className="filing">
       <div className="filing-card">
@@ -92,10 +93,17 @@ function FilingStage({ filing }: { filing: SetupFiling }) {
         <Zel mood={MOOD[filing.kind]} size="medium" look="up" />
       </Row>
       <Row gap={4} wrap justify="center">
-        {SHELVES.map((shelf) => <ShelfTag key={shelf} shelf={shelf} variant="tab" count={filed.filter((page) => page.shelf === shelf).length} />)}
+        {SHELVES.map((shelf) => <ShelfTag key={shelf} shelf={shelf} variant="tab" count={pagesOn(filing, shelf)} />)}
       </Row>
     </div>
   );
+}
+
+/** What a shelf's tab counts: the pages the agent has written there so far, or, once filed, the pages that went in. */
+function pagesOn(filing: SetupFiling, shelf: Shelf): number {
+  if (filing.kind === "running") return pagesWritten(filing.rows, shelf);
+  if (filing.kind === "filed") return filing.pages.filter((page) => page.shelf === shelf).length;
+  return 0;
 }
 
 /** The card once its thought is filed, stamped FILED with the day it was: the stamp lands as the card shows it. */
@@ -105,11 +113,15 @@ function FiledCard({ words }: { words: string }) {
 }
 
 /**
- * While the agent works: how long it has worked, or that another run has the library, beside Cancel. Only this redraws
- * as the seconds count. The agent's actions, a row each, are to go in this Stack under the working line.
+ * While the agent works: how long it has worked, or that another run has the library, beside Cancel; and under that the
+ * agent's steps as it takes them, a row each. The six newest show, the newest in full ink and the others quieter. A row
+ * has no icon and comes without motion, and it sits outside the heading's status region, so nothing is announced as it
+ * comes. Only this redraws as the seconds count.
  */
 function Working({ filing }: { filing: Running }) {
   const now = useNow(TICK_MS);
+  const shown = filing.rows.slice(-SHOWN_ROWS);
+  const first = filing.rows.length - shown.length;
   return (
     <Stack gap={8}>
       <Row gap={8} justify="between">
@@ -118,15 +130,33 @@ function Working({ filing }: { filing: Running }) {
         </Text>
         <Button size="small" busy={filing.cancelling} onClick={() => api.cancelFiling()}>Cancel</Button>
       </Row>
+      {shown.length > 0 && (
+        <Stack gap={4}>
+          {shown.map((row, n) => (
+            <Text key={rowKey(row, first + n)} variant="footnote" tone={n === shown.length - 1 ? "default" : "secondary"}>
+              {rowLine(row)}
+            </Text>
+          ))}
+        </Stack>
+      )}
     </Stack>
   );
 }
 
 /**
+ * A row's key: its kind and its path, which no two rows share. A search has no path, so its key has its place among the
+ * rows kept, `at`, which doesn't change as rows are added.
+ */
+function rowKey(row: NarrationRow, at: number): string {
+  return row.kind === "search" ? `search:${at}` : `${row.kind}:${row.path}`;
+}
+
+/**
  * Once filed: Zel's praise when the filing wrote pages; what it wrote on the shelves and where, or else that the agent
- * noted it in the log; how many pages it wrote elsewhere; that the words were kept, when the agent had changed them;
- * and, while the filing can be taken back, how. Then the receipt of its shelf pages, Undo, and its first page to open.
- * Git refusing the undo says so in a Notice, and nothing offers to undo it again.
+ * noted it in the log; how many pages it wrote elsewhere; and, while the filing can be taken back, how. Then the receipt
+ * of its shelf pages, the proof (the words are kept in raw/, always, and a snapshot is saved while the filing can be
+ * taken back), Undo, and its first page to open. Git refusing the undo says so in a Notice, and nothing offers to undo it
+ * again, nor says a snapshot can be.
  */
 function Outcome({ filing, where, inObsidian }: { filing: Filed; where: string; inObsidian: boolean }) {
   const { pages: rows, others } = receiptPages(filing.pages);
@@ -142,7 +172,6 @@ function Outcome({ filing, where, inObsidian }: { filing: Filed; where: string; 
       <Stack gap={4}>
         <Text variant="footnote" tone="secondary">{pagesLine(created, rows.length - created, where) ?? `${filing.agent} noted it in the log.`}</Text>
         {more && <Text variant="footnote" tone="secondary">{more}</Text>}
-        {filing.restored && <Text variant="footnote" tone="secondary">Your exact words are kept.</Text>}
         {undoable && (
           <Text variant="footnote" tone="secondary">
             Press <Kbd>⌘Z</Kbd> or Undo to put everything back.
@@ -151,6 +180,10 @@ function Outcome({ filing, where, inObsidian }: { filing: Filed; where: string; 
       </Stack>
       {filing.undoRefused && <Notice tone="error" title="This one can't be undone automatically.">The library's history keeps both versions.</Notice>}
       {rows.length > 0 && <Receipt pages={rows} />}
+      <Stack gap={4}>
+        <Text variant="footnote" tone="secondary">{KEPT_LINE}</Text>
+        {undoable && <Text variant="footnote" tone="secondary">{SAVED_LINE}</Text>}
+      </Stack>
       {(undoable || first) && (
         <Actions align="start">
           {undoable && <Button busy={filing.undoing} onClick={() => api.undo()}>Undo</Button>}

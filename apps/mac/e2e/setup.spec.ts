@@ -1116,6 +1116,161 @@ test("setup's snapshot carries each step while the first thought is filed", asyn
   await app.close();
 });
 
+// The same steps, as the Filing step shows them: a row each under the working line, the shelf tabs counting the pages as
+// they are written, and nothing announced but the heading. The stand-in takes a second over each step, so the rows come
+// while the run goes on.
+
+/**
+ * The rows the stand-in's filing of "Call the vet on Monday" shows, in the order it takes its steps. Its first read, of the
+ * capture, is no row.
+ */
+const VET_ROWS = ["Reading your library index", "New idea page: Call the vet on Monday", "Updated your library index", "Added a line to the log"];
+
+/**
+ * A first run whose stand-in Claude Code reports its steps as Claude Code does and takes a second over each (`agent` steers
+ * it further), taken through Found.
+ */
+async function steppedRun(agent: Record<string, string> = {}): Promise<{ app: ElectronApplication; setup: Page }> {
+  const { env } = firstRun({ claude: filingClaude() });
+  const app = await launch({ ...env, FAKE_AGENT_STREAM: "claude", FAKE_AGENT_STEP_MS: "1000", ...agent });
+  return { app, setup: await throughFound(app) };
+}
+
+/** What the setup step showed at one moment, as `watchStep` notes it. */
+interface Shown {
+  heading: string;
+  /** The step's paragraphs in page order, each with its tone: "secondary", or null for the default ink. */
+  paragraphs: { text: string; tone: string | null }[];
+  /** The shelf tabs, each as its name and then its count. */
+  tabs: string[];
+  /** What the tabs' counts are labelled. */
+  counts: string[];
+}
+
+/**
+ * From now on, the setup window notes what its step shows after each change to it. A test then reads every moment as it was,
+ * however slowly it polls: a row that is up for a second is caught, with the heading that read beside it.
+ */
+async function watchStep(setup: Page): Promise<void> {
+  await setup.evaluate(() => {
+    const moments: Shown[] = [];
+    Object.assign(window, { moments });
+    const note = () => {
+      const step = document.querySelector("main");
+      moments.push({
+        heading: step?.querySelector("h2")?.textContent ?? "",
+        paragraphs: [...(step?.querySelectorAll("p") ?? [])].map((p) => ({ text: p.textContent ?? "", tone: p.getAttribute("data-tone") })),
+        tabs: [...document.querySelectorAll('[data-shelf][data-variant="tab"]')].map((tab) => tab.textContent ?? ""),
+        counts: [...document.querySelectorAll('[data-variant="tab"] [aria-label]')].map((count) => count.getAttribute("aria-label") ?? ""),
+      });
+    };
+    new MutationObserver(note).observe(document.body, { subtree: true, childList: true, characterData: true });
+    note();
+  });
+}
+
+/** What `watchStep` noted while the filing worked, so while the heading still read "Watch me file it.". */
+const whileWorking = async (setup: Page) =>
+  (await setup.evaluate(() => (window as { moments?: Shown[] }).moments ?? [])).filter((shown) => shown.heading === "Watch me file it.");
+
+/** The rows a moment showed: the paragraphs under the working line. */
+const rowsOf = (shown: Shown) => shown.paragraphs.slice(1).map((p) => p.text);
+
+test("the first filing shows each step the agent takes, as it takes it", async () => {
+  const { app, setup } = await steppedRun();
+  await watchStep(setup);
+  await typeFirstThought(setup, "Call the vet on Monday");
+  await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
+  // Each row came while the heading still read "Watch me file it.", in the order of the agent's steps and not all at once.
+  const working = await whileWorking(setup);
+  const first = VET_ROWS.map((line) => working.findIndex((shown) => rowsOf(shown).includes(line)));
+  expect(first).not.toContain(-1);
+  expect(first).toEqual([...first].sort((a, b) => a - b));
+  expect(first[0]).toBeLessThan(first.at(-1) ?? 0);
+  // A row stayed in view as the next came, and no other row ever showed: the capture is in none.
+  for (const shown of working) expect(rowsOf(shown)).toEqual(VET_ROWS.slice(0, rowsOf(shown).length));
+  expect(working.map((shown) => rowsOf(shown).length).at(-1)).toBe(VET_ROWS.length);
+  await app.close();
+});
+
+test("the shelf tabs count the pages while the filing runs", async () => {
+  const { app, setup } = await steppedRun();
+  await watchStep(setup);
+  await typeFirstThought(setup, "Call the vet on Monday");
+  await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
+  const working = await whileWorking(setup);
+  const idea = working.findIndex((shown) => rowsOf(shown).includes("New idea page: Call the vet on Monday"));
+  expect(idea).toBeGreaterThan(0);
+  // No tab counted anything before the idea's page was written. As its row showed, Ideas counted one, labelled "1 new",
+  // and no other tab did; the index and the log are on no shelf, so it stayed so while the rest of the steps came.
+  for (const shown of working.slice(0, idea)) expect(shown.counts).toEqual([]);
+  for (const shown of working.slice(idea)) {
+    expect(shown.tabs).toEqual(["Goals", "Ideas1", "Problems", "Memories", "People", "Topics"]);
+    expect(shown.counts).toEqual(["1 new"]);
+  }
+  // Once filed, the tabs count the same.
+  await expect(tabs(setup)).toHaveText(["Goals", "Ideas1", "Problems", "Memories", "People", "Topics"]);
+  await expect(setup.getByLabel("1 new")).toBeVisible();
+  await app.close();
+});
+
+test("the window shows the newest six steps, the newest in full ink", async () => {
+  // Ten pages are read back to back after the index: eleven rows by the time the idea's page is written, six of them shown.
+  const { app, setup } = await steppedRun({ FAKE_AGENT_READS: "10" });
+  await watchStep(setup);
+  await typeFirstThought(setup, "Call the vet on Monday");
+  await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
+  const working = await whileWorking(setup);
+  expect(Math.max(...working.map((shown) => rowsOf(shown).length))).toBe(6);
+  // Once the ten are read, the six newest are the last six of them.
+  const read = working.find((shown) => rowsOf(shown).at(-1) === "Reading seen-10");
+  expect(read && rowsOf(read)).toEqual(["Reading seen-5", "Reading seen-6", "Reading seen-7", "Reading seen-8", "Reading seen-9", "Reading seen-10"]);
+  // At every moment the newest row is in the default ink, and the others are secondary.
+  for (const shown of working) {
+    const tones = shown.paragraphs.slice(1).map((p) => p.tone);
+    expect(tones).toEqual(tones.map((_, n) => (n === tones.length - 1 ? null : "secondary")));
+  }
+  await app.close();
+});
+
+test("a hundred quick steps reach the setup window as a few updates", async () => {
+  // The stand-in reads a hundred pages back to back, after the index and before it writes.
+  const { app, setup } = await steppedRun({ FAKE_AGENT_READS: "100" });
+  // From now on, each snapshot sent to the setup window is noted: what state its filing is in, and how many rows it carries.
+  await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"));
+    if (!win) throw new Error("There is no setup window to watch.");
+    const sent: { kind: string | null; rows: number }[] = [];
+    Object.assign(globalThis, { stepSends: sent });
+    const send = win.webContents.send.bind(win.webContents);
+    win.webContents.send = (channel: string, ...args: unknown[]) => {
+      const filing = (args[0] as { filing?: { kind: string; rows?: unknown[] } | null } | undefined)?.filing;
+      if (channel === "setup:changed") sent.push({ kind: filing?.kind ?? null, rows: filing?.rows?.length ?? 0 });
+      send(channel, ...args);
+    };
+  });
+  await typeFirstThought(setup, "Call the vet on Monday");
+  await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
+  const sent = await app.evaluate(() => (globalThis as { stepSends?: { kind: string | null; rows: number }[] }).stepSends ?? []);
+  expect(sent.length).toBeLessThanOrEqual(20); // not one for each of the hundred
+  // They did arrive, in those few: a send held the fifty newest rows, which is all main keeps.
+  expect(Math.max(...sent.map((snapshot) => snapshot.rows))).toBe(50);
+  await app.close();
+});
+
+test("the steps aren't announced", async () => {
+  const { app, setup } = await steppedRun();
+  await typeFirstThought(setup, "Call the vet on Monday");
+  const row = setup.getByText("Reading your library index", { exact: true });
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await expect(setup.getByRole("heading", { name: "Watch me file it." })).toBeVisible();
+  // Components take no aria props, so the test climbs from the row's text: none of what holds it is a live region.
+  expect(await row.evaluate((el) => el.closest('[aria-live],[role="status"],[role="log"]')?.tagName ?? null)).toBeNull();
+  // The one live region on the step holds the heading alone, so VoiceOver hears the filing's start and its end, not its steps.
+  expect(await live(setup)).toEqual(["Watch me file it."]);
+  await app.close();
+});
+
 test("File it waits for words, and Return with none files nothing", async () => {
   const { env, home } = firstRun({ claude: filingClaude() });
   const app = await launch(env);
@@ -1748,6 +1903,10 @@ test("Record a thought in the menu records on the first-thought step, but isn't 
 /** The heading once the first thought is filed. */
 const FILED = /^All filed\. Claude Code took \d+ s\.$/;
 
+/** The step's proof, under the receipt: the words are kept in raw/, and, while the filing can be taken back, a snapshot is saved. */
+const KEPT = "Kept your exact words in raw/.";
+const SAVED = "Saved a snapshot you can undo.";
+
 /** The stage's shelf tabs, each read as its name and then its count, when it has one: "Ideas1". */
 const tabs = (setup: Page) => setup.locator('[data-shelf][data-variant="tab"]');
 
@@ -1791,14 +1950,14 @@ test("a filed thought shows its stamp, its page and how to undo it, and Undo put
   // The card is stamped FILED, with the day, and the page went in behind the Ideas tab.
   await expect(setup.getByRole("img", { name: /^Filed, / })).toBeVisible();
   await expect(tabs(setup)).toHaveText(["Goals", "Ideas1", "Problems", "Memories", "People", "Topics"]);
-  // The step, in order: the heading, Zel's praise, what the filing wrote, how to undo it, the receipt and its buttons.
+  // The step, in order: the heading, Zel's praise, what the filing wrote, how to undo it, the receipt, the proof and its buttons.
   await expect(setup.getByText("Your first thought has a home.", { exact: true })).toBeVisible();
   await expect(setup.getByText("1 new page, all plain Markdown in ~/Avanzel.", { exact: true })).toBeVisible();
   await expect(setup.getByText("Press ⌘Z or Undo to put everything back.", { exact: true })).toBeVisible();
-  await expect(setup.getByText("Your exact words are kept.")).toHaveCount(0); // the agent left them be
   await expect(setup.getByRole("listitem")).toHaveText(["Plant tulips in OctoberIdeas"]);
+  await expect(setup.getByText(KEPT, { exact: true })).toBeVisible(); // the agent left the words be: the line is there all the same
   await expect(setup.getByRole("main")).toHaveText(
-    /^All filed\. .+Your first thought has a home\.1 new page, .+Press ⌘Z or Undo .+Plant tulips in OctoberIdeasUndoOpen the page$/,
+    /^All filed\. .+Your first thought has a home\.1 new page, .+Press ⌘Z or Undo .+Plant tulips in OctoberIdeasKept your exact words in raw\/\.Saved a snapshot you can undo\.UndoOpen the page$/,
   );
   // Continue is the one primary, and there is no Back.
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Continue"]);
@@ -1855,10 +2014,19 @@ test("⌘Z undoes it too", async () => {
   await app.close();
 });
 
+test("the first filing ends with its proof", async () => {
+  const { env } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await filedFirstThought(env);
+  // The words are kept in raw/, and setup's library has git, so the filing is its own commit and can be taken back.
+  await expect(setup.getByText(KEPT, { exact: true })).toBeVisible();
+  await expect(setup.getByText(SAVED, { exact: true })).toBeVisible();
+  await app.close();
+});
+
 test("a filing that changed the words says they are kept", async () => {
   const { env } = firstRun({ claude: filingClaude() });
   const { app, setup } = await filedFirstThought({ ...env, FAKE_AGENT_MODE: "tamper" });
-  await expect(setup.getByText("Your exact words are kept.", { exact: true })).toBeVisible();
+  await expect(setup.getByText(KEPT, { exact: true })).toBeVisible();
   await app.close();
 });
 
@@ -1872,8 +2040,10 @@ test("a filing that wrote no page says its agent noted it in the log, and Contin
   await expect(setup.getByRole("listitem")).toHaveCount(0);
   await expect(tabs(setup)).toHaveText(["Goals", "Ideas", "Problems", "Memories", "People", "Topics"]);
   await expect(setup.getByRole("button", { name: /^Open / })).toHaveCount(0);
-  // It is filed all the same, as its own commit: the stamp, and Undo.
+  // It is filed all the same, as its own commit: the stamp, the proof, and Undo.
   await expect(setup.getByRole("img", { name: /^Filed, / })).toBeVisible();
+  await expect(setup.getByText(KEPT, { exact: true })).toBeVisible();
+  await expect(setup.getByText(SAVED, { exact: true })).toBeVisible();
   await expect(setup.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
   await setup.getByRole("button", { name: "Continue" }).click();
   await expect.poll(() => call(app, "setupStepForTests")).toBe("done");
@@ -1896,6 +2066,8 @@ test("an Undo that git refuses says so, and Undo goes away", async () => {
   // Nothing offers to undo it any more, and the filing stays as it is, the edit by hand included.
   await expect(setup.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
   await expect(setup.getByText(/^Press ⌘Z or Undo/)).toHaveCount(0);
+  await expect(setup.getByText(SAVED, { exact: true })).toHaveCount(0); // no snapshot can be undone now, but the words are still kept
+  await expect(setup.getByText(KEPT, { exact: true })).toBeVisible();
   await expect(setup.getByRole("heading", { name: FILED })).toBeVisible();
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Continue"]);
   expect(readFileSync(file, "utf8")).toBe("# Tulips, by hand\n");

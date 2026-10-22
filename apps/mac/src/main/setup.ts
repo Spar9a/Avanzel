@@ -1026,7 +1026,6 @@ export class Setup {
       seconds: (Date.now() - startedAt) / 1000,
       pages,
       created: pages.filter((page) => outcome.changes.created.includes(page.path)).length,
-      restored: outcome.restored,
       canUndo: !!outcome.commit,
       undoing: false,
       undoRefused: false,

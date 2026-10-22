@@ -312,8 +312,6 @@ export type SetupFiling =
       pages: FiledPage[];
       /** How many of pages are new. */
       created: number;
-      /** The engine put the words back. */
-      restored: boolean;
       /** The filing is its own commit. */
       canUndo: boolean;
       /** Undo was pressed, and the filing is being taken back. */
