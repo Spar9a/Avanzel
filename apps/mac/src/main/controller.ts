@@ -3,16 +3,12 @@
 import {
   app,
   BrowserWindow,
-  clipboard,
   dialog,
   globalShortcut,
   nativeImage,
   Notification,
   powerMonitor,
-  screen,
   shell,
-  systemPreferences,
-  type OpenDialogOptions,
 } from "electron";
 import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -22,7 +18,6 @@ import {
   Librarian,
   Vault,
   WAITING,
-  asksToSignIn,
   checkAgent as checkHarness,
   defaultSettings,
   downloadModels,
@@ -58,9 +53,8 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { AGENT_INSTALLS, agentWorks, isSettingsPane, isSetupStep, NOTE_GONE } from "../shared/ipc.ts";
+import { isSettingsPane, NOTE_GONE } from "../shared/ipc.ts";
 import type {
-  AgentInstall,
   AgentStatus,
   AppSettings,
   AskResult,
@@ -72,18 +66,13 @@ import type {
   ScreenContext,
   SettingsPane,
   SettingsSnapshot,
-  SetupAgent,
-  SetupAnswer,
-  SetupFiling,
-  SetupPress,
   SetupSnapshot,
   SetupStep,
-  SetupThought,
   Shortcuts,
   TaskInfo,
-  UpHereSnapshot,
 } from "../shared/ipc.ts";
 import { frontContext } from "./front-app.ts";
+import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import { captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
@@ -91,19 +80,7 @@ import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
-import {
-  answerSources,
-  bestAgent,
-  flightTarget,
-  libraryAgent,
-  libraryFolder,
-  looksLikeATest,
-  suggestQuestion,
-  tildePath,
-  tooBroad,
-  upHerePlace,
-  type Box,
-} from "./setup-model.ts";
+import { Setup, type SetupHost } from "./setup.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
@@ -112,11 +89,8 @@ import {
   createCapsuleWindow,
   createQuickWindow,
   createSettingsWindow,
-  createSetupWindow,
-  createUpHereWindow,
   placeCapsule,
   placeQuick,
-  UP_HERE_SIZE,
 } from "./windows.ts";
 
 // Quitting waits at most this long for stopped agent runs to finish their bookkeeping.
@@ -127,147 +101,6 @@ const AUDIO_TIMEOUT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env
 const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PREPARING_SHOW_MS)) || 8_000;
 // How long the capsule says that a shortcut picked on its notice works.
 const PICKED_SHOW_MS = 3_000;
-/** The folder picker for the library, in Settings (Choose existing…) and in setup (Change…). */
-const LIBRARY_PICKER: OpenDialogOptions = { title: "Choose your library folder", properties: ["openDirectory", "createDirectory"] };
-/** How often setup looks for an installed agent while this Mac has none: Found says it notices one. */
-const AGENT_POLL_MS = 2_000;
-/**
- * How long the first-thought step waits for a press of Record a thought's shortcut, once the person reaches for it (its
- * first modifier goes down in the setup window), before it offers free ones (§5.2). macOS lets an app register a
- * shortcut another app holds, so only a press that arrives says it works (tests change it).
- */
-const PRESS_WAIT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PRESS_WAIT_MS)) || 3_000;
-/**
- * At most how often a download's progress reaches the setup window: each setup snapshot reads the agents, the library's
- * place and its tasks afresh, so not at each of the download's ticks (Settings gets those).
- */
-const SETUP_PROGRESS_MS = 1_000;
-/** Where Open Terminal goes: the person signs an agent in there. */
-const TERMINAL = "/System/Applications/Utilities/Terminal.app";
-const HARNESS_NAMES: Record<string, string> = {
-  claude: "Claude Code", codex: "Codex", opencode: "OpenCode", "cursor-agent": "Cursor Agent", gemini: "Gemini CLI",
-};
-export const harnessName = (name: string) => HARNESS_NAMES[name] ?? name;
-
-interface Recording {
-  mode: CapsuleMode;
-  startedAt: number;
-  shot?: { path: string; thumbnail: string; context: ScreenContext };
-  maxTimer: NodeJS.Timeout;
-  /** Asked to stop (the shortcut, the menu or the time limit); its audio is on the way. */
-  stopping: boolean;
-}
-
-interface FilingJob {
-  capturePath: string;
-  text: string;
-  transcribedIn: number | null;
-  agent: string;
-  /** Stops this filing's agent run: Edit, or quitting. */
-  abort: AbortController;
-  /** Edit stopped the run: what it did is taken back (`refile`), not shown. */
-  edited: boolean;
-  /** The editor's text after Edit, as the owner types it: what `keepEdit` saves. */
-  draft?: string;
-  /** The corrected words it files (File after Edit); a Cancel files the same ones as the job it refiles. */
-  correction?: Correction;
-  /** A line under the words on the filing card, e.g. why the recording itself wasn't kept. */
-  detail?: string;
-  /** Its run waits for the library (another run has it); the filing card says so until the run starts. */
-  waiting?: boolean;
-  outcome?: FileOutcome;
-  pages?: FiledPage[];
-  /**
-   * Setup's first thought (`takeThought`): it reports to the setup window while the window shows it (its session's
-   * `job`), and once the window has closed, by notification, as any filing whose card isn't showing does.
-   */
-  setup?: boolean;
-  /** Cancel, in setup, stopped the run: what it did is taken back (`cancelSetupFiling`), not shown. */
-  cancelled?: boolean;
-}
-
-/** The setup window and what it is doing, from the moment it opens until it closes. */
-interface SetupSession {
-  window: BrowserWindow;
-  /** The step the window shows. */
-  step: SetupStep;
-  /** Where Looks good makes or uses the library. */
-  libraryPath: string;
-  /**
-   * Found has been entered: Set me up started the download and the agents' checks, which happens once a session. Set
-   * once that work has run, so work that threw is tried again when Found is entered again.
-   */
-  begun: boolean;
-  /**
-   * The agents installed when Found was first entered, by harness name, in the table's order. With none then, the ones
-   * installed since, once `pollTimer` finds the first.
-   */
-  installed: string[];
-  /** While no agent is installed, it looks for one every AGENT_POLL_MS (`pollForAgents`); null otherwise. */
-  pollTimer: NodeJS.Timeout | null;
-  /** The agent the person picked on Found (Use {agent}); null while setup chooses (bestAgent). */
-  picked: string | null;
-  /**
-   * Why Looks good couldn't make or use the library at `libraryPath`, for Found to show. Not the controller's own
-   * `libraryProblem`, which says why a stored library didn't open (showHome() and the menu read that one).
-   */
-  makeProblem: string | null;
-  /**
-   * While the first-thought step waits for a press of the shortcut, which it does once the person reaches for it
-   * (`reachForShortcut`): the wait's timer (PRESS_WAIT_MS), which stays set until the wait has ended, the running apps'
-   * read included (`noPressArrived`). Null otherwise.
-   */
-  pressTimer: NodeJS.Timeout | null;
-  /** A press of the shortcut arrived since the step asked for one. */
-  heard: boolean;
-  /** The person reached for the shortcut, no press arrived within the wait, and none since. */
-  silent: boolean;
-  /** While silent: the running app whose default shortcut it is, if one is running. */
-  holder: string | null;
-  /** While silent: free shortcuts to use instead, best first. */
-  alternatives: string[];
-  /** The first thought's filing, from the moment its words exist (`takeThought`); the newest one after File it again. */
-  job: FilingJob | null;
-  /** What the window shows of that filing; null before the thought is handed over. */
-  filing: SetupFiling | null;
-  /** Why the last typed thought wasn't taken; each try clears it. */
-  typeProblem: string | null;
-  /**
-   * The first spoken thought on the first-thought step. Its recording's own hooks move it on while the window shows that
-   * step (`moveThought`, `setupHeard`, `setupLost`); once its words are handed over (`takeThought`), it waits again.
-   */
-  thought: SetupThought;
-  /**
-   * The capsule's recording of that thought, from the press that starts it until its words or its problem arrive: what
-   * tells setup's own recording from another one, which the capsule shows as ever. Null otherwise.
-   */
-  recording: Recording | null;
-  /** While the thought is a mic check: its capture in the inbox, which File it anyway files and Try again removes. */
-  testCapture: string | null;
-  /** macOS is being asked about the microphone (`allowMicrophone`), which happens once at a time. */
-  askingMicrophone: boolean;
-  /** The question on the Ask step and how it went; null until one is asked, and again after Skip. */
-  answer: SetupAnswer | null;
-  /** Stops the question being answered (Skip, or the window closing); null while none is. */
-  askAbort: AbortController | null;
-  /** The last step has shown: it turned opening at login on, which happens once a session. */
-  doneEntered: boolean;
-  /**
-   * Start using Avanzel was used. The window's closing is then the end of setup, not a close in the middle of it
-   * (`endSetup`).
-   */
-  finished: boolean;
-}
-
-/** Words filed after Edit, on their way to the inbox: only in memory until the refile's `recapture` writes them. */
-interface Correction {
-  words: string;
-  /** The job they correct: its capture's recording, transcriber and creation time go with them (`recaptureOptions`). */
-  of: FilingJob;
-}
-
-const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
-const lastLines = (text: string, n = 3) => text.trim().split("\n").filter(Boolean).slice(-n).join("\n");
 
 /** What an evening review that had nothing to file says: an empty inbox, or how many notes it left to their own filing or edit. */
 function nothingFiled(left: number): string {
@@ -329,10 +162,8 @@ export class Controller {
   private settingsWindow: BrowserWindow | null = null;
   private quickWindow: BrowserWindow | null = null;
   private askWindow: BrowserWindow | null = null;
-  /** Zel's bubble under the menu bar icon, from the end of setup until it is put away (`closeUpHere`). */
-  private upHereWindow: BrowserWindow | null = null;
-  /** The setup window's session while it is open. */
-  private setup: SetupSession | null = null;
+  /** First-run setup: its window and session, and Zel's bubble once it has ended (setup.ts). */
+  readonly setup: Setup;
   private menuBar!: MenuBar;
   private capsuleState: CapsuleState = { kind: "hidden" };
   private recording: Recording | null = null;
@@ -381,8 +212,6 @@ export class Controller {
   private running = new Set<string>();
   private lastEveningCommits: string[] = [];
   private audioTimeout: NodeJS.Timeout | null = null;
-  /** When the setup window was last sent the download's progress (`broadcastProgress`). */
-  private setupProgressAt = 0;
   /** Whether the capsule page listens yet; commands for its recorder wait until it does. */
   private capsuleListening = false;
   private heldCommands: ("start" | "stop" | "cancel")[] = [];
@@ -401,6 +230,7 @@ export class Controller {
     this.runState = new RunStateStore(path.join(userData, "run-state.json"));
     this.noticed = new NoticedShortcuts(path.join(userData, "noticed-shortcuts.json"));
     this.firstRun = new FirstRunLog(path.join(userData, "first-run.json"));
+    this.setup = new Setup(this.setupHost()); // last: the host hands setup the stores made above
   }
 
   // ---------------------------------------------------------------- lifecycle
@@ -618,7 +448,7 @@ export class Controller {
     if (action === "type") return this.openQuick();
     if (action === "ask") return this.openAsk();
     if (action === "settings") return this.showSettings();
-    if (action === "setup") return this.showSetup();
+    if (action === "setup") return this.setup.show();
     if (action === "open-library") return this.openLibraryFolder();
     if (action === "open-inbox" && this.vault) return void shell.openPath(this.vault.inbox);
     if (action === "undo-review") return void this.undoEveningReview();
@@ -720,7 +550,7 @@ export class Controller {
 
   /**
    * `recording` went wrong: the capsule's card says so (`message`, `detail`), unless it is setup's first spoken thought,
-   * which the setup window says in its own words instead (`setupLost`): the `problem`, and whether the recording is
+   * which the setup window says in its own words instead (`setup.lost`): the `problem`, and whether the recording is
    * `kept` in the library, which nothing else of it is.
    */
   private recordingFailed(
@@ -730,23 +560,23 @@ export class Controller {
     detail?: string,
     action?: ErrorAction,
   ): void {
-    if (!this.setupLost(recording, { kind: "failed", problem, kept })) this.fail(message, detail, action);
+    if (!this.setup.lost(recording, { kind: "failed", problem, kept })) this.fail(message, detail, action);
   }
 
   // ---------------------------------------------------------------- recording
 
   /**
-   * Record a thought's own shortcut was pressed: setup's press test hears it (`notePress`), then it records or stops as
-   * Record a thought in the menu does. Only this is a press of the shortcut.
+   * Record a thought's own shortcut was pressed: setup's press test hears it (`setup.notePress`), then it records or stops
+   * as Record a thought in the menu does. Only this is a press of the shortcut.
    */
   private pressDictate(): void {
-    this.notePress();
+    this.setup.notePress();
     void this.toggleDictate();
   }
 
-  /** Record a thought, from its shortcut or the menu. On setup's first-thought step, the press is setup's (`setupPress`). */
+  /** Record a thought, from its shortcut or the menu. On setup's first-thought step, the press is setup's (`setup.press`). */
   async toggleDictate(): Promise<void> {
-    if (this.setupTakesPress()) return this.setupPress();
+    if (this.setup.takesPress()) return this.setup.press();
     if (this.recording) return this.stopRecording();
     return this.startRecording("dictate");
   }
@@ -865,7 +695,7 @@ export class Controller {
     clearTimeout(recording.maxTimer);
     globalShortcut.unregister("Escape");
     this.setCapsule({ kind: "transcribing", mode: recording.mode });
-    this.moveThought(recording, { kind: "transcribing", startedAt: Date.now() });
+    this.setup.moveThought(recording, { kind: "transcribing", startedAt: Date.now() });
     this.capsuleCommand("stop");
     this.clearAudioTimeout();
     this.audioTimeout = setTimeout(() => {
@@ -892,7 +722,7 @@ export class Controller {
     if (!recording) return;
     this.abandonRecording(recording);
     this.setCapsule({ kind: "hidden" });
-    this.moveThought(recording, { kind: "waiting" });
+    this.setup.moveThought(recording, { kind: "waiting" });
   }
 
   micError(message: string): void {
@@ -1029,11 +859,11 @@ export class Controller {
 
   /**
    * `detail`: a line the capsule shows under the words, e.g. why the recording itself wasn't kept. Words spoken in
-   * `recording` that is setup's first spoken thought are setup's first (`setupHeard`), which files them now, whatever
+   * `recording` that is setup's first spoken thought are setup's first (`setup.heard`), which files them now, whatever
    * the file mode.
    */
   private afterCapture(capturePath: string, text: string, transcribedIn: number | null, detail?: string, recording?: Recording): void {
-    if (recording && this.setupHeard(recording, capturePath, text, transcribedIn)) return;
+    if (recording && this.setup.heard(recording, capturePath, text, transcribedIn)) return;
     if (this.store.get().fileMode === "evening") {
       this.setCapsule({ kind: "saved", text, note: "Saved to your inbox for tonight's review", ...(detail ? { detail } : {}) }, 4000);
       return;
@@ -1071,11 +901,7 @@ export class Controller {
     if (!!job.waiting === waiting) return;
     job.waiting = waiting;
     if (this.job === job && this.capsuleState.kind === "filing") this.showFiling(job);
-    const session = this.setup;
-    if (session?.job === job && session.filing?.kind === "running") {
-      session.filing = { ...session.filing, waiting, ...(waiting ? {} : { startedAt: Date.now() }) };
-      this.broadcast();
-    }
+    this.setup.waiting(job, waiting);
   }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
@@ -1103,7 +929,7 @@ export class Controller {
     if (!existsSync(job.capturePath)) {
       // Already filed meanwhile (e.g. by another Avanzel on this library); nothing left to do. The setup window, which
       // is waiting on this filing, says the note has gone.
-      if (this.setup?.job === job) return this.setupFailed(this.setup, job, NOTE_GONE);
+      if (this.setup.owns(job)) return this.setup.failed(job, NOTE_GONE);
       if (this.job === job && this.capsuleState.kind === "filing") this.setCapsule({ kind: "hidden" });
       return;
     }
@@ -1129,8 +955,8 @@ export class Controller {
     this.recent = [...job.pages, ...this.recent.filter((p) => !job.pages?.some((q) => q.path === p.path))].slice(0, 3);
     // Setup's thought is filed, which counts whether its window is still there to show it or has closed (§5.4).
     if (job.setup) this.firstRun.filed(new Date());
-    if (this.setup?.job === job) {
-      this.setupFiled(this.setup, job, outcome, job.pages);
+    if (this.setup.owns(job)) {
+      this.setup.filed(job, outcome, job.pages);
     } else if (this.job === job && this.capsuleState.kind === "filing") {
       this.setCapsule(
         { kind: "filed", agent: job.agent, seconds, pages: job.pages, canUndo: !!outcome.commit, message: outcome.message || "Filed." },
@@ -1145,7 +971,7 @@ export class Controller {
 
   /** `where`: what the card says of the owner's words when it isn't the usual (in the inbox, or kept aside by the engine). */
   private filingFailed(job: FilingJob, error: string, outcome?: FileOutcome, where?: string): void {
-    if (this.setup?.job === job) return this.setupFailed(this.setup, job, errorLine(error));
+    if (this.setup.owns(job)) return this.setup.failed(job, errorLine(error));
     where ??= outcome?.savedOriginal
       ? `Your words are kept in ${outcome.savedOriginal}; the inbox now holds the agent's version.`
       : "The note is still in your inbox; the evening review will try again.";
@@ -1577,23 +1403,20 @@ export class Controller {
   private broadcast(): void {
     const win = this.settingsWindow;
     if (win && !win.isDestroyed()) win.webContents.send("settings:changed", this.snapshot());
-    const setup = this.setup?.window;
-    if (setup && !setup.isDestroyed()) setup.webContents.send("setup:changed", this.setupSnapshot());
+    this.setup.publish();
     this.refreshMenu();
   }
 
   /**
    * The download's progress, to the windows that show it: Settings at each tick, and the setup window at most once every
-   * SETUP_PROGRESS_MS, since each of its snapshots reads the agents, the library's place and its tasks afresh. The menu
-   * shows no progress, so it isn't rebuilt. The download's end goes to all of them (`broadcast`).
+   * SETUP_PROGRESS_MS (`setup.publishProgress`), since each of its snapshots reads the agents, the library's place and
+   * its tasks afresh. The menu shows no progress, so it isn't rebuilt. The download's end goes to all of them
+   * (`broadcast`).
    */
   private broadcastProgress(): void {
     const win = this.settingsWindow;
     if (win && !win.isDestroyed()) win.webContents.send("settings:changed", this.snapshot());
-    const setup = this.setup?.window;
-    if (!setup || setup.isDestroyed() || Date.now() - this.setupProgressAt < SETUP_PROGRESS_MS) return;
-    this.setupProgressAt = Date.now();
-    setup.webContents.send("setup:changed", this.setupSnapshot());
+    this.setup.publishProgress();
   }
 
   snapshot(): SettingsSnapshot {
@@ -1687,7 +1510,7 @@ export class Controller {
     if (JSON.stringify(before.shortcuts) !== JSON.stringify(after.shortcuts)) {
       await this.applyShortcuts();
       this.followShortcuts(picked);
-      if (before.shortcuts.dictate !== after.shortcuts.dictate && this.setup?.step === "think") this.listenForPress(this.setup);
+      if (before.shortcuts.dictate !== after.shortcuts.dictate) this.setup.shortcutChanged();
     }
     if (patch.launchAtLogin !== undefined && process.env.AVANZEL_TEST !== "1" && app.isPackaged) {
       app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
@@ -1773,858 +1596,85 @@ export class Controller {
    * fixes it. With a library, Settings.
    */
   showHome(): void {
-    if (this.setup || (!this.vault && this.libraryProblem === null)) return this.showSetup();
+    if (this.setup.isOpen() || (!this.vault && this.libraryProblem === null)) return this.setup.show();
     this.showSettings();
   }
 
-  /**
-   * Brings the setup window forward, or opens a new one, which starts a new session on Hello once it has drawn. While
-   * the window is open, Avanzel shows its Dock icon, so a window gone behind Terminal, say, can be found again; setup's
-   * end hides it (`endSetup`).
-   */
-  showSetup(): void {
-    if (this.setup && !this.setup.window.isDestroyed()) {
-      app.focus({ steal: true });
-      this.setup.window.show();
-      this.setup.window.focus();
-      return;
-    }
-    const win = createSetupWindow();
-    void app.dock?.show().catch((error: unknown) => console.error("dock", error));
-    // Shown once its page has drawn, so it never flashes blank first.
-    win.once("ready-to-show", () => {
-      if (win.isDestroyed()) return;
-      app.focus({ steal: true });
-      win.show();
-      win.focus();
-    });
-    win.on("closed", () => this.endSetup(win));
-    // Back from Terminal, say, where the person may have signed an agent in: Found notices.
-    win.on("focus", () => this.rereadSignIns());
-    this.setup = {
-      window: win,
-      step: "hello",
-      libraryPath: this.setupLibraryPath(),
-      begun: false,
-      installed: [],
-      pollTimer: null,
-      picked: null,
-      makeProblem: null,
-      pressTimer: null,
-      heard: false,
-      silent: false,
-      holder: null,
-      alternatives: [],
-      job: null,
-      filing: null,
-      typeProblem: null,
-      thought: { kind: "waiting" },
-      recording: null,
-      testCapture: null,
-      askingMicrophone: false,
-      answer: null,
-      askAbort: null,
-      doneEntered: false,
-      finished: false,
-    };
-    this.firstRun.entered("hello", new Date()); // the renderer starts there, and doesn't enter it
-  }
+  // What the e2e tests call on the controller by name (`call(app, name)`) that is now setup's: each passes the call on.
 
-  /**
-   * The setup window closed: its session ends with it, stops looking for agents, and stops waiting for a press, so the
-   * wait can't end against a closed window. A question it was answering is given up: its agent stops, and the library
-   * is free. A mic check waiting for File it anyway or Try again goes, its note and its recording (`discardTest`), as
-   * Try again would: left in the inbox, the evening review would file "Testing, testing" with an agent run. A filing it
-   * started goes on, and says how it went by notification (`runFiling`). The Dock icon goes again: Avanzel lives in the
-   * menu bar. A newer window's session is its own. Unless Start using Avanzel ended it, the step it was closed on is
-   * noted (`firstRun`).
-   */
-  private endSetup(win: BrowserWindow): void {
-    const session = this.setup;
-    if (session?.window !== win) return;
-    this.stopPolling(session);
-    this.stopPressTest(session);
-    this.discardTest(session);
-    session.askAbort?.abort();
-    app.dock?.hide();
-    if (!session.finished) this.firstRun.closed(session.step);
-    this.setup = null;
-  }
-
-  /** Where a new session makes or uses the library: the stored libraryPath, else ~/Avanzel. */
-  private setupLibraryPath(): string {
-    return this.store.get().libraryPath ?? path.join(homedir(), "Avanzel");
-  }
-
-  /**
-   * What the setup window shows; without a session, what a fresh one would show. A folder that is a library already
-   * offers its own agent first (bestAgent), so a library brought from another Mac keeps the agent it files with.
-   */
   setupSnapshot(): SetupSnapshot {
-    const libraryPath = this.setup?.libraryPath ?? this.setupLibraryPath();
-    const folder = libraryFolder(libraryPath);
-    const agents = this.setupAgents();
-    // Ask suggests a question only about pages that stand: not once an undo of the filing has begun, nor after it.
-    const filing = this.setup?.filing;
-    const standing = filing?.kind === "filed" && !filing.undoing ? filing.pages : [];
-    return {
-      libraryPath,
-      libraryLabel: tildePath(libraryPath, homedir()),
-      folder,
-      tooBroad: tooBroad(libraryPath, homedir()),
-      libraryReady: !!this.vault,
-      model: this.model,
-      shortcut: this.store.get().shortcuts.dictate,
-      typeShortcut: this.typeShortcut(),
-      noAgent: this.setup?.begun === true && this.setup.installed.length === 0,
-      agents,
-      agent: this.setup?.picked ?? bestAgent(agents, folder === "library" ? libraryAgent(libraryPath) : null),
-      makeProblem: this.setup?.makeProblem ?? null,
-      press: this.setupPressState(),
-      filing: filing ?? null,
-      typeProblem: this.setup?.typeProblem ?? null,
-      thought: this.setup?.thought ?? { kind: "waiting" },
-      hears: this.hears(),
-      opensInObsidian: !!this.vault && obsidianUrl(this.vault.root, "") !== null && this.obsidianInstalled(),
-      suggestion: suggestQuestion(standing),
-      answer: this.setup?.answer ?? null,
-      launchAtLogin: this.store.get().launchAtLogin,
-      eveningReview: this.eveningReview(),
-    };
+    return this.setup.snapshot();
   }
 
-  /**
-   * The library's evening review, as Settings lists it, for the last step's switch: its first task whose kind is
-   * "evening-review". Null without a library, and when the library has none (its owner deleted the file, say).
-   */
-  private eveningReview(): TaskInfo | null {
-    const vault = this.vault;
-    const task = vault ? this.safeTasks(vault).find((t) => t.kind === "evening-review") : undefined;
-    return vault && task ? this.taskInfo(task, this.readRunState(vault).ran, new Date()) : null;
-  }
-
-  /**
-   * The press test as the first-thought step shows it: a shortcut another app holds, with the holder and the free ones
-   * its registration found (takenShortcuts); otherwise what the session heard, or didn't within the wait.
-   */
-  private setupPressState(): SetupPress {
-    const taken = this.takenShortcuts.find((notice) => notice.key === "dictate");
-    if (taken) return { taken: true, heard: false, silent: false, holder: taken.holder, alternatives: taken.alternatives };
-    const session = this.setup;
-    return {
-      taken: false,
-      heard: session?.heard ?? false,
-      silent: session?.silent ?? false,
-      holder: session?.holder ?? null,
-      alternatives: session?.alternatives ?? [],
-    };
-  }
-
-  /**
-   * The agents Found lists: those installed when it was first entered (or, with none then, since), with what their
-   * checks found in this app run.
-   */
-  private setupAgents(): SetupAgent[] {
-    const installed = this.setup?.installed ?? [];
-    if (!installed.length) return []; // before Set me up, or with nothing installed: the table needn't be read
-    const table = this.harnessTable();
-    return installed.flatMap((name) => {
-      const harness = Object.hasOwn(table, name) ? table[name] : undefined;
-      if (!harness) return []; // a library made since has no such agent
-      return [{ name, label: harnessName(name), freeCheck: harness.signIn !== undefined, status: this.agentChecks.get(name) ?? null }];
-    });
-  }
-
-  /**
-   * The setup window shows `step` now; anything that isn't a step is ignored. Each step's work hangs on this: the first
-   * time Found is entered, Set me up's work; each time the first-thought step is, its press test afresh
-   * (`listenForPress`), which any other step stops, and its spoken thought afresh, so coming back never shows the last
-   * visit's Notice. A mic check stays, since its note waits in the inbox for File it anyway or Try again. The first time
-   * the last step is entered, opening at login turns on, so its switch shows the spec's default; what the person sets
-   * there then stays. The first time each step is entered is noted (`firstRun`).
-   */
   enterSetupStep(step: SetupStep): SetupSnapshot {
-    const session = this.setup;
-    if (session && isSetupStep(step)) {
-      session.step = step;
-      this.firstRun.entered(step, new Date());
-      if (step === "found" && !session.begun) this.beginSetup(session);
-      if (step === "think") {
-        if (session.thought.kind !== "test") session.thought = { kind: "waiting" };
-        this.listenForPress(session);
-      } else this.stopPressTest(session);
-      if (step === "done" && !session.doneEntered) {
-        session.doneEntered = true;
-        // Saved before this returns (changeApp waits only when shortcuts change), so the snapshot below has it on.
-        void this.changeApp({ launchAtLogin: true }).catch((error: unknown) => console.error("launch at login", error));
-      }
-    }
-    return this.setupSnapshot();
+    return this.setup.enterSetupStep(step);
   }
 
-  /**
-   * Set me up, the first time Found is entered in a session: the speech models start downloading if this Mac doesn't
-   * have them, and the installed agents are noted and their sign-in read. Nothing asks an agent anything. With none
-   * installed, setup looks for one until it comes (`pollForAgents`). The session has begun only once all of that has
-   * run: if any of it throws, entering Found again tries again.
-   */
-  private beginSetup(session: SetupSession): void {
-    if (this.model.kind === "missing") void this.downloadModel();
-    session.installed = this.installedAgents();
-    this.checkAgents();
-    if (!session.installed.length) this.pollForAgents(session);
-    session.begun = true;
-  }
-
-  /** The agents installed on this Mac now, by harness name, in the harness table's order. */
-  private installedAgents(): string[] {
-    return Object.entries(this.harnessTable()).filter(([, harness]) => harness.available()).map(([name]) => name);
-  }
-
-  /**
-   * With no agent installed, Found says to install one and that setup notices it: every AGENT_POLL_MS this looks again.
-   * Once one is there, the looking stops, the agents are noted, their sign-in read (checkAgents), and Found shows them.
-   */
-  private pollForAgents(session: SetupSession): void {
-    this.stopPolling(session);
-    session.pollTimer = setInterval(() => {
-      const installed = this.installedAgents();
-      if (!installed.length) return;
-      this.stopPolling(session);
-      session.installed = installed;
-      this.checkAgents();
-      this.broadcast();
-    }, AGENT_POLL_MS);
-  }
-
-  private stopPolling(session: SetupSession): void {
-    if (session.pollTimer) clearInterval(session.pollTimer);
-    session.pollTimer = null;
-  }
-
-  /** Use {agent}, on Found: the person's pick files from now on. Only an installed agent can be picked (`askPicked`). */
   chooseSetupAgent(name: string): SetupSnapshot {
-    const session = this.setup;
-    if (session?.installed.includes(name)) {
-      session.picked = name;
-      this.askPicked(name);
-      this.broadcast();
-    }
-    return this.setupSnapshot();
+    return this.setup.chooseSetupAgent(name);
   }
 
-  /**
-   * Setup's picked agent `name`, when nothing has said yet whether it works (it has no sign-in command, or its sign-in
-   * couldn't be read), is asked its one short question: the person picked it, so the question's cost is theirs to
-   * choose. Picked while its sign-in is still being read, it is asked once that read has said nothing (`checkAgents`).
-   */
-  private askPicked(name: string): void {
-    const harness = this.harnessNamed(name);
-    if (harness && this.setup?.picked === name && !this.agentChecks.has(name)) void this.runAgentCheck(name, harness, true);
+  createSetupLibrary(): Promise<SetupSnapshot> {
+    return this.setup.createSetupLibrary();
   }
 
-  /**
-   * Looks good, or Use this folder, on Found: the library at the session's place, with the chosen agent saved as its
-   * own. A missing or empty folder becomes a new library; a folder with files keeps every one (its history starts with
-   * them, unless it is a git repository already); an Avanzel library is used as it is; the library already open only
-   * has the agent saved. Whatever goes wrong, or a library that still isn't open afterwards, is the session's
-   * `makeProblem`, which Found shows. Without a chosen agent that works, nothing is made: Found's button waits for one.
-   * Nor is anything made at a place too broad for a library (tooBroad), such as ~/Documents: Found says why.
-   */
-  async createSetupLibrary(): Promise<SetupSnapshot> {
-    const session = this.setup;
-    if (!session) return this.setupSnapshot();
-    const target = session.libraryPath;
-    const before = this.setupSnapshot(); // before the library's own agents replace the built-in ones
-    const chosen = before.agents.find((agent) => agent.name === before.agent);
-    if (!chosen || !agentWorks(chosen.status) || before.tooBroad) return before;
-    let problem: string | null = null;
-    try {
-      if (this.vault?.root !== target) {
-        const folder = libraryFolder(target);
-        if (folder === "missing" || folder === "empty") mkdirSync(target, { recursive: true });
-        if (folder !== "library") await Vault.init(target, { git: true });
-        await this.useLibrary(target, true);
-        if (!this.vault) throw new Error(this.libraryProblem ?? `There is no Avanzel library at ${target}.`);
-      }
-      await this.setLibrarySettings({ harness: chosen.name });
-    } catch (error) {
-      problem = errorMessage(error);
-    }
-    session.makeProblem = problem;
-    this.broadcast();
-    return this.setupSnapshot();
-  }
-
-  /**
-   * Change…, on Found: the folder picker, as a sheet on the setup window. The folder chosen is where Looks good makes or
-   * uses the library, and a problem making the last one goes with it. Nothing is made yet.
-   */
-  async chooseSetupFolder(): Promise<SetupSnapshot> {
-    const session = this.setup;
-    if (!session || session.window.isDestroyed()) return this.setupSnapshot();
-    const result = await dialog.showOpenDialog(session.window, LIBRARY_PICKER);
-    const chosen = result.filePaths[0];
-    if (!result.canceled && chosen && this.setup === session) {
-      session.libraryPath = chosen;
-      session.makeProblem = null;
-      this.broadcast();
-    }
-    return this.setupSnapshot();
-  }
-
-  /** Open Terminal, on a signed-out agent's Notice. With AVANZEL_TEST=1 Terminal stays shut, and openedForTests says so. */
-  openTerminal(): void {
-    if (process.env.AVANZEL_TEST === "1") this.opened.push("Terminal");
-    else void shell.openPath(TERMINAL);
-  }
-
-  /**
-   * Copy, beside an install command on Found: the command that installs `agent` ("claude"), from AGENT_INSTALLS, so only
-   * a command Found shows ever reaches the clipboard; anything else is ignored. With AVANZEL_TEST=1 the clipboard is left
-   * be, and copiedForTests says what.
-   */
-  copyInstall(agent: unknown): void {
-    if (typeof agent !== "string" || !Object.hasOwn(AGENT_INSTALLS, agent)) return;
-    const { command } = AGENT_INSTALLS[agent as AgentInstall];
-    if (process.env.AVANZEL_TEST === "1") this.copied.push(command);
-    else clipboard.writeText(command);
-  }
-
-  /**
-   * Record a thought, from its shortcut or the menu, is setup's while the first-thought step shows and nothing records;
-   * stopping a recording isn't.
-   */
-  private setupTakesPress(): boolean {
-    return this.setup?.step === "think" && !this.recording;
-  }
-
-  /**
-   * Record a thought's own shortcut was pressed while setup takes presses: it works, so the press test's wait ends and
-   * the step says so. Only the shortcut's callback calls this (`pressDictate`): Record a thought in the menu records the
-   * same way, but says nothing of the shortcut.
-   */
-  private notePress(): void {
-    const session = this.setup;
-    if (!session || !this.setupTakesPress()) return;
-    this.stopPressTest(session);
-    session.heard = true;
-    this.broadcast();
-  }
-
-  /**
-   * Record a thought on the first-thought step: the first spoken thought. Nothing happens while macOS is about to ask
-   * about the microphone (primer) or the words are being made (transcribing). A mic check on the step is put away
-   * first, as Try again does: the press that arrived is the one Try again would wait for. Without the speech models
-   * (`hears`) nothing records: a missing one starts downloading, and the step says its ears are on the way. A microphone
-   * macOS hasn't asked about shows the primer; one turned down, where to allow it. Otherwise the capsule records it.
-   */
-  private async setupPress(): Promise<void> {
-    const session = this.setup;
-    if (!session) return;
-    const { kind } = session.thought;
-    if (kind === "primer" || kind === "transcribing") return;
-    if (kind === "test") {
-      this.discardTest(session);
-      session.thought = { kind: "waiting" };
-    }
-    const microphone = permissionStatus("microphone");
-    if (!this.hears()) {
-      if (this.model.kind === "missing") void this.downloadModel();
-    } else if (microphone === "not-determined") {
-      session.thought = { kind: "primer" };
-    } else if (microphone === "denied" || microphone === "restricted") {
-      session.thought = { kind: "denied" };
-    } else {
-      return this.recordThought(session);
-    }
-    this.broadcast();
-  }
-
-  /**
-   * The capsule records the first spoken thought, as it records any; once the recording exists, it is setup's own
-   * (`recording`), and the step is listening.
-   */
-  private async recordThought(session: SetupSession): Promise<void> {
-    await this.startRecording("dictate");
-    if (this.setup === session && session.step === "think" && this.recording) {
-      session.recording = this.recording;
-      session.thought = { kind: "listening", startedAt: this.recording.startedAt };
-    }
-    this.broadcast();
-  }
-
-  /**
-   * Continue, on the microphone's primer: macOS asks, once at a time. A grant records the thought at once, as the press
-   * that brought the primer asked; any other answer says where to allow it.
-   */
-  async allowMicrophone(): Promise<void> {
-    const session = this.setup;
-    if (!session || session.thought.kind !== "primer" || session.askingMicrophone) return;
-    session.askingMicrophone = true;
-    const granted = await requestMicrophone().catch(() => false);
-    session.askingMicrophone = false;
-    if (this.setup !== session || session.step !== "think" || session.thought.kind !== "primer") return;
-    if (granted) return this.recordThought(session);
-    session.thought = { kind: "denied" };
-    this.broadcast();
-  }
-
-  /**
-   * What became of `recording`, said to setup's first spoken thought when it is that thought's own recording and the
-   * window shows the first-thought step: the thought moves on to `next`. One that no longer listens or waits for its
-   * words lets go of the recording. Whether it did. Any other recording is none of setup's business.
-   */
-  private moveThought(recording: Recording, next: SetupThought): boolean {
-    const session = this.setup;
-    if (session?.recording !== recording || session.step !== "think") return false;
-    session.thought = next;
-    if (next.kind !== "listening" && next.kind !== "transcribing") session.recording = null;
-    this.broadcast();
-    return true;
-  }
-
-  /**
-   * `recording` went wrong. When it is setup's first spoken thought, the setup window says so, and the capsule's card of
-   * it goes (`hideThoughtCard`). Whether it was.
-   */
-  private setupLost(recording: Recording, failed: Extract<SetupThought, { kind: "failed" }>): boolean {
-    if (!this.moveThought(recording, failed)) return false;
-    this.hideThoughtCard();
-    return true;
-  }
-
-  /**
-   * The setup window has taken setup's first spoken thought over from the capsule: the capsule's card of its recording
-   * (listening, or transcribing) goes. Not while another recording runs, whose card the capsule shows now, and which
-   * must stay in view.
-   */
-  private hideThoughtCard(): void {
-    const { kind } = this.capsuleState;
-    if (!this.recording && (kind === "listening" || kind === "transcribing")) this.setCapsule({ kind: "hidden" });
-  }
-
-  /**
-   * The words of the capture at `capturePath` exist, spoken in `recording`. When that is setup's first spoken thought,
-   * they are that thought, and the capsule's card of it goes: a mic check stays on the step with its warm answer, its
-   * capture kept in the inbox for File it anyway or Try again; anything else is filed in the window (`takeThought`).
-   * Whether setup took them.
-   */
-  private setupHeard(recording: Recording, capturePath: string, words: string, transcribedIn: number | null): boolean {
-    const session = this.setup;
-    if (session?.recording !== recording || session.step !== "think") return false;
-    session.recording = null;
-    this.hideThoughtCard();
-    if (looksLikeATest(words)) {
-      session.testCapture = capturePath;
-      session.thought = { kind: "test", words };
-      this.broadcast();
-    } else {
-      this.takeThought(capturePath, words, transcribedIn);
-    }
-    return true;
-  }
-
-  /**
-   * Try again, on a mic check's answer or a recording problem's Notice: the mic check's capture and its recording leave
-   * the library, and the step asks for the thought afresh, and for a press: its press test starts over, though its wait
-   * starts only once the person reaches for the shortcut.
-   */
-  retrySetupThought(): void {
-    const session = this.setup;
-    const kind = session?.thought.kind;
-    if (!session || session.step !== "think" || (kind !== "test" && kind !== "failed")) return;
-    this.discardTest(session);
-    session.thought = { kind: "waiting" };
-    this.listenForPress(session);
-    this.broadcast();
-  }
-
-  /** File it anyway, on a mic check's answer: its capture is the first thought after all, filed in the window. */
-  fileSetupAnyway(): void {
-    const session = this.setup;
-    const thought = session?.thought;
-    if (!session || session.step !== "think" || thought?.kind !== "test" || !session.testCapture) return;
-    this.takeThought(session.testCapture, thought.words, null);
-  }
-
-  /**
-   * A mic check isn't a thought: its capture leaves the inbox, and its recording leaves raw/audio/. Only a recording in
-   * there goes. Gone already (say, filed by another Avanzel), it is left be.
-   */
-  private discardTest(session: SetupSession): void {
-    const capture = session.testCapture;
-    session.testCapture = null;
-    const vault = this.vault;
-    if (!capture || !vault || !existsSync(capture)) return;
-    try {
-      const audio = captureMeta(capture).audio;
-      const recording = audio ? path.resolve(vault.root, audio) : null;
-      if (recording?.startsWith(path.resolve(vault.root, "raw", "audio") + path.sep)) rmSync(recording, { force: true });
-      rmSync(capture, { force: true });
-    } catch (error) {
-      console.error("mic check", error);
-    }
-  }
-
-  /**
-   * The first-thought step asks for a press of Record a thought's shortcut, afresh: nothing heard or missed yet. One
-   * another app holds is named by the step at once, so it is noticed (the capsule won't name it at the next launch).
-   * Nothing is waited for yet: the wait starts when the person reaches for the shortcut (`reachForShortcut`), so
-   * entering the step, reading it, thinking and typing never bring the nudge.
-   */
-  private listenForPress(session: SetupSession): void {
-    this.stopPressTest(session);
-    const taken = this.takenShortcuts.find((notice) => notice.key === "dictate");
-    if (taken) this.noticed.add(taken.accelerator);
-  }
-
-  /**
-   * Record a thought's first modifier (reachKey: ⌥ for ⌥Space) went down in the setup window, outside the box for a
-   * typed thought, where it types a character: the person reaches for the shortcut. On the first-thought step, while a
-   * press would be setup's and none has been heard or missed, the press test waits PRESS_WAIT_MS for one from now, a
-   * wait under way included (`noPressArrived`). Not while macOS is about to ask about the microphone or the words are
-   * being made, when no press is asked for, nor for a shortcut another app holds, which the step names already.
-   */
-  reachForShortcut(): void {
-    const session = this.setup;
-    if (!session || !this.setupTakesPress() || session.heard || session.silent) return;
-    const { kind } = session.thought;
-    if (kind === "primer" || kind === "transcribing" || this.takenShortcuts.some((notice) => notice.key === "dictate")) return;
-    if (session.pressTimer) clearTimeout(session.pressTimer);
-    const timer: NodeJS.Timeout = setTimeout(() => void this.noPressArrived(session, timer), PRESS_WAIT_MS);
-    session.pressTimer = timer;
-  }
-
-  /**
-   * The person reached for the shortcut, and no press arrived within the wait: the shortcut may be another app's, though
-   * it registered. The step says so, naming the running app whose default it is, with free ones to use instead. A
-   * press, another shortcut or step, or the window closing while the running apps are read ends this wait first
-   * (`stopPressTest`), and it says nothing; so does another reach, which waits afresh.
-   */
-  private async noPressArrived(session: SetupSession, timer: NodeJS.Timeout): Promise<void> {
-    const running = await runningAppNames();
-    if (session.pressTimer !== timer) return;
-    session.pressTimer = null;
-    const shortcuts = this.store.get().shortcuts;
-    session.silent = true;
-    session.holder = likelyHolder(shortcuts.dictate, running);
-    session.alternatives = freeAlternatives("dictate", shortcuts, shortcutApi());
-    this.broadcast();
-  }
-
-  /** The press test stops: no wait goes on, and nothing is heard or missed. The first-thought step starts it again. */
-  private stopPressTest(session: SetupSession): void {
-    if (session.pressTimer) clearTimeout(session.pressTimer);
-    session.pressTimer = null;
-    session.heard = false;
-    session.silent = false;
-    session.holder = null;
-    session.alternatives = [];
-  }
-
-  /**
-   * Use {shortcut}, on the first-thought step's Notice of a taken or silent shortcut: `accelerator` becomes Record a
-   * thought's shortcut, the way the capsule's Use sets one. Changing it starts the step's press test over (changeApp),
-   * so the window never shows the new shortcut beside what the old one's test found. Only on that step, and only for a
-   * shortcut its Notice offers: anything else is ignored.
-   */
-  async useSetupShortcut(accelerator: unknown): Promise<SetupSnapshot> {
-    const offered = this.setup?.step === "think" ? this.setupPressState().alternatives : [];
-    if (typeof accelerator === "string" && offered.includes(accelerator)) await this.useShortcut("dictate", accelerator);
-    return this.setupSnapshot();
-  }
-
-  /**
-   * File it, on the first-thought step's typing rows: the words become a capture in the inbox, which setup files
-   * (`takeThought`). It never throws: a capture that can't be written is the session's `typeProblem`, which the step
-   * shows under the box, and each try clears the last one. Only the first-thought step takes a thought, and only words:
-   * anything else, empty words included, is ignored (File it waits for words).
-   */
   typeSetupThought(words: unknown): SetupSnapshot {
-    const session = this.setup;
-    const trimmed = typeof words === "string" ? words.trim() : "";
-    if (session?.step !== "think" || !trimmed) return this.setupSnapshot();
-    session.typeProblem = null;
-    let capture: Capture;
-    try {
-      capture = this.requireVault().newCapture(trimmed, { source: "text", now: new Date() });
-    } catch (error) {
-      session.typeProblem = errorMessage(error);
-      this.broadcast();
-      return this.setupSnapshot();
-    }
-    this.takeThought(capture.path, trimmed, null);
-    return this.setupSnapshot();
+    return this.setup.typeSetupThought(words);
   }
 
-  /**
-   * The first thought's words exist, as the capture at `capturePath`: the window shows its filing from now on (entered as
-   * any step is, so what hangs on entering one runs). It files as any filing does, in queue order and in `withRun`, but
-   * no Edit reaches it: it is never the capsule's `job`. While the window shows it, `runFiling` reports to it; once the
-   * window has closed, by notification. The spoken thought has been handed over: it waits again. The capsule is left as
-   * it is: a recording started meanwhile, on Filing say, keeps its card.
-   */
-  private takeThought(capturePath: string, words: string, transcribedIn: number | null): void {
-    const session = this.setup;
-    if (!session) return;
-    session.thought = { kind: "waiting" };
-    session.testCapture = null;
-    this.enterSetupStep("filing");
-    const job: FilingJob = { capturePath, text: words, transcribedIn, agent: this.agentName(), abort: new AbortController(), edited: false, setup: true };
-    session.job = job;
-    session.filing = { kind: "running", words, agent: job.agent, startedAt: Date.now(), waiting: false, cancelling: false };
-    this.queuedToFile.add(capturePath);
-    void this.enqueue(() => this.runFiling(job));
-    this.broadcast();
+  askInSetup(question: unknown): Promise<SetupSnapshot> {
+    return this.setup.askInSetup(question);
   }
 
-  /**
-   * Cancel, while the first thought is filed: its run stops at once, and once that run is over (queue order), what it did
-   * is taken back. Then the filing is cancelled, its words back in the inbox; `partial` says that what the run did stays
-   * as its own commit, because taking it back failed.
-   */
-  cancelSetupFiling(): void {
-    const session = this.setup;
-    const job = session?.job;
-    if (!session || !job || job.cancelled || session.filing?.kind !== "running") return;
-    job.cancelled = true;
-    job.abort.abort();
-    session.filing = { ...session.filing, cancelling: true };
-    this.broadcast();
-    void this.enqueue(async () => {
-      const problem = await this.takeBack(job);
-      if (this.setup !== session || session.job !== job) return; // the window has closed: there is nothing to tell
-      session.filing = { kind: "cancelled", words: job.text, agent: job.agent, partial: problem !== null };
-      this.broadcast();
-    });
-  }
-
-  /**
-   * File it again, or Try again: once the first thought's filing has stopped short or been taken back (any state but
-   * running and filed), the same capture is filed in a new run.
-   */
-  fileSetupAgain(): void {
-    const job = this.setup?.job;
-    const kind = this.setup?.filing?.kind;
-    if (!job || kind === undefined || kind === "running" || kind === "filed") return;
-    this.takeThought(job.capturePath, job.text, job.transcribedIn);
-  }
-
-  /**
-   * Undo, or ⌘Z, once the first thought is filed: its commit is taken back in queue order, as the capsule's Undo does
-   * (`revertFiling`), which puts the words back in the inbox. Then the filing is undone, or, when git refused (or the
-   * revert failed), still filed with `undoRefused`, and nothing offers to undo it again. One undo at a time: while one
-   * runs, another press does nothing.
-   */
-  async undoSetupFiling(): Promise<void> {
-    const session = this.setup;
-    const job = session?.job;
-    const filing = session?.filing;
-    const commit = job?.outcome?.commit;
-    if (!session || !job || !commit || filing?.kind !== "filed" || !filing.canUndo || filing.undoing || filing.undoRefused) return;
-    this.firstRun.undid(); // Undo was used, whether git takes the filing back or refuses
-    session.filing = { ...filing, undoing: true };
-    this.broadcast();
-    const undone = await this.revertFiling(commit).catch(() => false);
-    if (this.setup !== session || session.job !== job) return; // the window has closed: there is nothing to tell
-    session.filing = undone ? { kind: "undone", words: job.text } : { ...filing, undoing: false, undoRefused: true };
-    this.broadcast();
-  }
-
-  /**
-   * The setup window's filing is filed: its pages, new ones first, and how long the agent took, as the window's working
-   * line counted it.
-   */
-  private setupFiled(session: SetupSession, job: FilingJob, outcome: FileOutcome, pages: FiledPage[]): void {
-    const startedAt = session.filing?.kind === "running" ? session.filing.startedAt : Date.now();
-    session.filing = {
-      kind: "filed",
-      words: job.text,
-      agent: job.agent,
-      seconds: (Date.now() - startedAt) / 1000,
-      pages,
-      created: pages.filter((page) => outcome.changes.created.includes(page.path)).length,
-      restored: outcome.restored,
-      canUndo: !!outcome.commit,
-      undoing: false,
-      undoRefused: false,
+  /** What setup reads from and calls on the controller (`SetupHost`), handed to it once, as it is made. */
+  private setupHost(): SetupHost {
+    return {
+      vault: () => this.vault,
+      model: () => this.model,
+      settings: () => this.store.get(),
+      hears: () => this.hears(),
+      recording: () => this.recording,
+      capsuleKind: () => this.capsuleState.kind,
+      agentCheck: (name) => this.agentChecks.get(name),
+      libraryProblem: () => this.libraryProblem,
+      shortcutProblems: () => this.shortcutProblems,
+      takenShortcuts: () => this.takenShortcuts,
+      trayBounds: () => this.menuBar.bounds(),
+      quitting: () => this.quitting,
+      checksStopped: () => this.checksStopped,
+      harnessTable: () => this.harnessTable(),
+      harnessNamed: (name) => this.harnessNamed(name),
+      safeTasks: (vault) => this.safeTasks(vault),
+      readRunState: (vault) => this.readRunState(vault),
+      taskInfo: (task, ran, now) => this.taskInfo(task, ran, now),
+      shortcutApi: () => shortcutApi(),
+      obsidianInstalled: () => this.obsidianInstalled(),
+      agentName: (harness) => this.agentName(harness),
+      broadcast: () => this.broadcast(),
+      downloadModel: () => this.downloadModel(),
+      checkAgents: () => this.checkAgents(),
+      runAgentCheck: (name, harness, prompt, again) => this.runAgentCheck(name, harness, prompt, again),
+      rereadSignIns: () => this.rereadSignIns(),
+      useLibrary: (target, fromSetup) => this.useLibrary(target, fromSetup),
+      setLibrarySettings: (patch) => this.setLibrarySettings(patch),
+      changeApp: (patch, picked) => this.changeApp(patch, picked),
+      useShortcut: (key, accelerator) => this.useShortcut(key, accelerator),
+      startRecording: (mode, shot) => this.startRecording(mode, shot),
+      hideCapsule: () => this.setCapsule({ kind: "hidden" }),
+      toggleDictate: () => this.toggleDictate(),
+      openQuick: () => this.openQuick(),
+      enqueue: (work) => this.enqueue(work),
+      file: (job) => void this.enqueue(() => this.runFiling(job)),
+      takeBack: (job) => this.takeBack(job),
+      revert: (commit) => this.revertFiling(commit),
+      answer: (question, abort, progress) => this.answerQuestion(question, abort, progress),
+      newCapture: (text, options) => this.requireVault().newCapture(text, options),
+      firstRun: this.firstRun,
+      queuedToFile: this.queuedToFile,
+      noticed: this.noticed,
+      opened: this.opened,
+      copied: this.copied,
     };
-    this.broadcast();
-  }
-
-  /** The setup window's filing failed: the line that says why, and whether it asks to sign in. The capture stays put. */
-  private setupFailed(session: SetupSession, job: FilingJob, line: string): void {
-    session.filing = { kind: "failed", words: job.text, agent: job.agent, harness: this.libraryHarness() ?? "", line, signedOut: asksToSignIn(line) };
-    this.broadcast();
-  }
-
-  /** The harness the library files with, by name ("claude"); null when its settings don't say. */
-  private libraryHarness(): string | null {
-    try {
-      return this.vault ? selectHarness(loadSettings(this.vault.root)).name : null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * The suggestion, or Return in Ask your library, on the Ask step: the library's agent answers `question` as the Ask
-   * window's does (`answerQuestion`), one question at a time. While it waits for the library, the step says so; its
-   * seconds count from when the agent starts to look. Then the answer and the pages its [[links]] name, or the line that
-   * says why it failed. A result that comes after Skip, or after the window has closed, is dropped. Only the Ask step
-   * asks, and only a question in words: anything else is ignored.
-   */
-  async askInSetup(question: unknown): Promise<SetupSnapshot> {
-    const session = this.setup;
-    const asked = typeof question === "string" ? question.trim() : "";
-    if (session?.step !== "ask" || !asked || session.askAbort) return this.setupSnapshot();
-    const abort = new AbortController();
-    session.askAbort = abort;
-    session.answer = { kind: "asking", question: asked, startedAt: Date.now(), waiting: false };
-    this.broadcast();
-    // Still this window's question: not skipped, and its window still open.
-    const ours = () => this.setup === session && session.askAbort === abort;
-    const progress = (message: string) => {
-      const answer = session.answer;
-      const waiting = message === WAITING;
-      if (!ours() || answer?.kind !== "asking" || answer.waiting === waiting) return;
-      session.answer = { ...answer, waiting, ...(waiting ? {} : { startedAt: Date.now() }) };
-      this.broadcast();
-    };
-    const result = await this.answerQuestion(asked, abort, progress);
-    if (!ours()) return this.setupSnapshot();
-    session.askAbort = null;
-    session.answer = result.ok
-      ? { kind: "answered", question: asked, ...this.answeredFrom(result.text) }
-      : { kind: "failed", question: asked, agent: result.agent, line: errorLine(result.text) };
-    this.broadcast();
-    return this.setupSnapshot();
-  }
-
-  /** Skip, on the Ask step: the question being answered is given up, its agent stopped, and the answer cleared. */
-  skipSetupAsk(): void {
-    const session = this.setup;
-    if (!session) return;
-    session.askAbort?.abort();
-    session.askAbort = null;
-    session.answer = null;
-    this.broadcast();
-  }
-
-  /**
-   * An answer as the Ask step shows it: its lines, and the pages its [[links]] name, each found in the library as the Ask
-   * window finds one to open. A name that finds no page is left out, and so is one whose search hits a folder it can't
-   * read, so the answer still shows.
-   */
-  private answeredFrom(text: string): { paragraphs: string[]; sources: FiledPage[] } {
-    const { paragraphs, names } = answerSources(text);
-    const root = this.vault?.root;
-    if (!root) return { paragraphs, sources: [] };
-    const sources = names.flatMap((name) => {
-      try {
-        const rel = findPage(root, name);
-        return rel ? [pageInfo(root, rel)] : [];
-      } catch {
-        return [];
-      }
-    });
-    return { paragraphs, sources };
-  }
-
-  /**
-   * Start using Avanzel, on the last step: setup ends, once, and Avanzel waits in the menu bar, where Record a thought
-   * is now. Only the last step finishes setup. That is noted (`firstRun`) before the window goes, so its closing, even
-   * during the flight, isn't noted as a close in the middle of setup (`endSetup`).
-   *
-   * The window, whose page now shows Zel alone in its middle, flies onto a 24 px square on the menu bar icon
-   * (flightTarget): macOS animates its frame, holding this thread until it lands, and the window closes the moment it
-   * has. Closing it ends the session. Then Zel's bubble says it's up there (openUpHere). Under Reduce Motion the window
-   * just closes. So it does when the icon is hidden, and there is no bubble, since there is nothing to point at:
-   * opening Avanzel again finds it (`showHome`). A window closed during the flight, or by quitting, gets no bubble
-   * either. Whatever goes wrong in the flight, the window still closes: the person pressed Start using Avanzel.
-   */
-  finishSetup(): void {
-    const session = this.setup;
-    if (session?.step !== "done" || session.finished || session.window.isDestroyed()) return;
-    session.finished = true;
-    this.firstRun.finished(new Date());
-    const win = session.window;
-    let icon: Box | null = null;
-    try {
-      const tray = this.menuBar.bounds();
-      const target = flightTarget(tray);
-      if (target) icon = tray;
-      if (target && !systemPreferences.getAnimationSettings().prefersReducedMotion) {
-        win.setWindowButtonVisibility(false);
-        win.setBounds(target, true); // returns once it has landed
-      }
-    } catch (error) {
-      console.error("the flight into the menu bar", error);
-    } finally {
-      if (!win.isDestroyed()) {
-        // Once the window has gone, so the bubble takes the focus from nothing on its way out.
-        const at = icon;
-        if (at) win.once("closed", () => this.openUpHere(at));
-        win.close();
-      }
-    }
-  }
-
-  /**
-   * Zel's bubble, once the setup window has gone into the menu bar icon at `tray`: on the icon's display, its tail
-   * under the icon (upHerePlace). Like Quick, it takes focus, and a click elsewhere puts it away. Nothing brings it back.
-   * None opens once Avanzel is quitting (its agent checks have stopped then, busy or not).
-   */
-  private openUpHere(tray: Box): void {
-    if (this.quitting || this.checksStopped) return;
-    this.closeUpHere();
-    const win = createUpHereWindow();
-    this.upHereWindow = win;
-    const { x, y } = upHerePlace(tray, screen.getDisplayMatching(tray).workArea, UP_HERE_SIZE);
-    win.setPosition(x, y);
-    app.focus({ steal: true });
-    win.show();
-    win.focus();
-    win.on("blur", () => {
-      if (this.upHereWindow === win) this.closeUpHere();
-    });
-  }
-
-  /**
-   * What Zel's bubble says: the shortcuts to talk and to type, whether Avanzel can hear yet (`hears`), and the speech
-   * model, which says why not.
-   */
-  upHereSnapshot(): UpHereSnapshot {
-    return { shortcut: this.store.get().shortcuts.dictate, typeShortcut: this.typeShortcut(), hears: this.hears(), model: this.model };
-  }
-
-  /**
-   * Type a thought's shortcut while it works, for setup's last step and the bubble to teach; null when it didn't
-   * register (another app holds it, or another action has it), when they point to the menu bar's Type a thought….
-   */
-  private typeShortcut(): string | null {
-    const { type } = this.store.get().shortcuts;
-    return type && !this.shortcutProblems.type ? type : null;
-  }
-
-  /** Try it now, in the bubble: it goes, and Record a thought starts, as its shortcut would start it. */
-  tryItNow(): void {
-    this.closeUpHere();
-    void this.toggleDictate();
-  }
-
-  /** Type a thought, in the bubble while Avanzel can't hear yet: it goes, and Quick opens for the thought. */
-  typeFromUpHere(): void {
-    this.closeUpHere();
-    this.openQuick();
-  }
-
-  /** Not now, Esc or a click elsewhere: the bubble goes, for good. */
-  closeUpHere(): void {
-    const win = this.upHereWindow;
-    this.upHereWindow = null;
-    if (win && !win.isDestroyed()) win.close();
   }
 
   // ---------------------------------------------------------------- agent checks
@@ -2634,12 +1684,12 @@ export class Controller {
    * command and never asks the model (`prompt: false`). A sign-in it can't read leaves the agent unchecked, for Check.
    * Without a library, the built-in agents are checked in a scratch folder (`harnessTable`, `checkDir`). It returns at
    * once; Settings and setup get each result through settings:changed and setup:changed. An agent setup's person
-   * picked meanwhile is asked its question when its sign-in said nothing (`askPicked`).
+   * picked meanwhile is asked its question when its sign-in said nothing (`setup.agentChecked`).
    */
   checkAgents(): SettingsSnapshot {
     for (const [name, harness] of Object.entries(this.harnessTable())) {
       if (harness.signIn && !this.agentChecks.has(name) && harness.available()) {
-        void this.runAgentCheck(name, harness, false).then(() => this.askPicked(name));
+        void this.runAgentCheck(name, harness, false).then(() => this.setup.agentChecked(name));
       }
     }
     return this.snapshot();
@@ -2654,9 +1704,8 @@ export class Controller {
    * after a newer one (Check again's).
    */
   rereadSignIns(): void {
-    const session = this.setup;
-    if (!session?.begun) return;
-    for (const name of session.installed) {
+    if (!this.setup.begun()) return;
+    for (const name of this.setup.installed()) {
       const harness = this.harnessNamed(name);
       const status = this.agentChecks.get(name);
       if (!harness?.signIn || status?.kind !== "signed-out" || this.rereading.has(name)) continue;
@@ -2930,7 +1979,7 @@ export class Controller {
    */
   private leftAlone(left: Set<string>): (capturePath: string) => boolean {
     return (capturePath) => {
-      const theirs = this.editing.has(capturePath) || this.queuedToFile.has(capturePath) || this.setup?.testCapture === capturePath;
+      const theirs = this.editing.has(capturePath) || this.queuedToFile.has(capturePath) || this.setup.holds(capturePath);
       if (theirs) left.add(capturePath);
       return theirs;
     };
@@ -3014,7 +2063,7 @@ export class Controller {
 
   /** The step the setup session is on, or null without one: for tests of steps whose body a later change builds. */
   setupStepForTests(): SetupStep | null {
-    return this.setup?.step ?? null;
+    return this.setup.stepForTests();
   }
 
   /**

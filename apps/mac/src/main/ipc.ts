@@ -53,30 +53,30 @@ export function registerIpc(controller: Controller): void {
   on("ask:close", () => controller.closeAsk());
 
   // setup
-  handle("setup:get", () => controller.setupSnapshot());
-  handle("setup:enter", (_e, step: SetupStep) => controller.enterSetupStep(step));
-  handle("setup:choose-agent", (_e, name: string) => controller.chooseSetupAgent(name));
-  handle("setup:create-library", () => controller.createSetupLibrary());
-  handle("setup:choose-folder", () => controller.chooseSetupFolder());
+  handle("setup:get", () => controller.setup.snapshot());
+  handle("setup:enter", (_e, step: SetupStep) => controller.setup.enterSetupStep(step));
+  handle("setup:choose-agent", (_e, name: string) => controller.setup.chooseSetupAgent(name));
+  handle("setup:create-library", () => controller.setup.createSetupLibrary());
+  handle("setup:choose-folder", () => controller.setup.chooseSetupFolder());
   // What the page sends is checked where it is used: these take anything, and act only on what setup offers.
-  handle("setup:use-shortcut", (_e, accelerator: unknown) => controller.useSetupShortcut(accelerator));
-  handle("setup:type-thought", (_e, words: unknown) => controller.typeSetupThought(words));
-  handle("setup:ask", (_e, question: unknown) => controller.askInSetup(question));
-  on("setup:open-terminal", () => controller.openTerminal());
-  on("setup:reach-for-shortcut", () => controller.reachForShortcut());
-  on("setup:copy", (_e, agent: unknown) => controller.copyInstall(agent));
-  on("setup:cancel-filing", () => controller.cancelSetupFiling());
-  on("setup:file-again", () => controller.fileSetupAgain());
-  on("setup:undo", () => void controller.undoSetupFiling());
-  on("setup:allow-microphone", () => void controller.allowMicrophone());
-  on("setup:try-again", () => controller.retrySetupThought());
-  on("setup:file-anyway", () => controller.fileSetupAnyway());
-  on("setup:skip-ask", () => controller.skipSetupAsk());
-  on("setup:finish", () => void controller.finishSetup());
+  handle("setup:use-shortcut", (_e, accelerator: unknown) => controller.setup.useSetupShortcut(accelerator));
+  handle("setup:type-thought", (_e, words: unknown) => controller.setup.typeSetupThought(words));
+  handle("setup:ask", (_e, question: unknown) => controller.setup.askInSetup(question));
+  on("setup:open-terminal", () => controller.setup.openTerminal());
+  on("setup:reach-for-shortcut", () => controller.setup.reachForShortcut());
+  on("setup:copy", (_e, agent: unknown) => controller.setup.copyInstall(agent));
+  on("setup:cancel-filing", () => controller.setup.cancelSetupFiling());
+  on("setup:file-again", () => controller.setup.fileSetupAgain());
+  on("setup:undo", () => void controller.setup.undoSetupFiling());
+  on("setup:allow-microphone", () => void controller.setup.allowMicrophone());
+  on("setup:try-again", () => controller.setup.retrySetupThought());
+  on("setup:file-anyway", () => controller.setup.fileSetupAnyway());
+  on("setup:skip-ask", () => controller.setup.skipSetupAsk());
+  on("setup:finish", () => void controller.setup.finish());
 
   // the bubble under the menu bar icon, once setup has ended
-  handle("up-here:get", () => controller.upHereSnapshot());
-  on("up-here:try-it", () => controller.tryItNow());
-  on("up-here:type-it", () => controller.typeFromUpHere());
-  on("up-here:close", () => controller.closeUpHere());
+  handle("up-here:get", () => controller.setup.upHereSnapshot());
+  on("up-here:try-it", () => controller.setup.tryItNow());
+  on("up-here:type-it", () => controller.setup.typeFromUpHere());
+  on("up-here:close", () => controller.setup.closeUpHere());
 }
