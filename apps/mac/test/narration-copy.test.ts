@@ -2,8 +2,8 @@ import { posix } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { FilingStep } from "@avanzel/engine";
 import { filedPages } from "../src/main/library-info.ts";
-import { withStep } from "../src/main/narration.ts";
-import { KEPT_LINE, pagesWritten, rowLine, SAVED_LINE, SHOWN_ROWS } from "../src/renderer/common/narration.ts";
+import { withStep, withWritten } from "../src/main/narration.ts";
+import { KEPT_LINE, rowLine, SAVED_LINE, SHOWN_ROWS } from "../src/renderer/common/narration.ts";
 import type { FiledPage, NarrationRow } from "../src/shared/ipc.ts";
 
 /** A row as main makes it from a library path: the title it was given, and the path's first folder for a shelf ("" at the root). */
@@ -69,6 +69,14 @@ describe("rowLine: a search, a write and a removal", () => {
     expect(rowLine(row("new", "toString/p.md", "P"))).toBe("New page: P");
   });
 
+  it("a new file that isn't Markdown is a file, not a page", () => {
+    expect(rowLine(row("new", "topics/data.json", "data.json"))).toBe("New file: data.json");
+    expect(rowLine(row("new", "projects/budget.pdf", "budget.pdf"))).toBe("New file: budget.pdf"); // on no shelf
+    expect(rowLine(row("new", "notes.txt", "notes.txt"))).toBe("New file: notes.txt"); // at the root
+    // A file that was there already is only updated, as a page is.
+    expect(rowLine(row("updated", "topics/data.json", "data.json"))).toBe("Updated: data.json");
+  });
+
   it("an updated page says which", () => {
     expect(rowLine(row("updated", "people/mark.md", "Mark"))).toBe("Updated: Mark");
     expect(rowLine(row("updated", "ideas/p.md", "Indie game dev podcast"))).toBe("Updated: Indie game dev podcast");
@@ -131,6 +139,7 @@ describe("the proof and the rows' words", () => {
         "memories/a.md",
         "people/a.md",
         "topics/a.md",
+        "topics/data.json",
         "projects/a.md",
         "a.md",
         "index.md",
@@ -142,7 +151,7 @@ describe("the proof and the rows' words", () => {
 
   it("the proof lines, and how many rows show", () => {
     expect(KEPT_LINE).toBe("Kept your exact words in raw/.");
-    expect(SAVED_LINE).toBe("Saved a snapshot you can undo.");
+    expect(SAVED_LINE).toBe("Saved a snapshot."); // the step goes on with how to put everything back: ⌘Z or Undo
     expect(SHOWN_ROWS).toBe(6);
   });
 
@@ -161,43 +170,13 @@ describe("the proof and the rows' words", () => {
   });
 });
 
-describe("pagesWritten", () => {
-  it("counts the pages written on a shelf, the new and the updated, not the ones only read", () => {
-    const rows = [
-      row("read", "ideas/seen.md", "Seen"),
-      row("new", "ideas/a.md", "A"),
-      row("updated", "ideas/b.md", "B"),
-      row("new", "people/mark.md", "Mark"),
-    ];
-    expect(pagesWritten(rows, "ideas")).toBe(2);
-    expect(pagesWritten(rows, "people")).toBe(1);
-    expect(pagesWritten(rows, "goals")).toBe(0);
-    expect(pagesWritten([], "ideas")).toBe(0);
-  });
-
-  it("counts a path once, however many rows name it", () => {
-    const rows = [row("updated", "ideas/a.md", "A"), row("new", "ideas/a.md", "A"), row("new", "ideas/b.md", "B")];
-    expect(pagesWritten(rows, "ideas")).toBe(2);
-  });
-
-  it("counts a search, a removal, a root file, another folder and a file that is no page for no tab", () => {
-    const rows = [
-      search,
-      row("removed", "goals/old.md", "old"),
-      row("updated", "index.md", "index"),
-      row("new", "projects/launch.md", "Launch"),
-      row("new", "topics/data.json", "data.json"),
-      row("updated", "topics/budget.pdf", "budget.pdf"),
-    ];
-    for (const shelf of ["goals", "ideas", "problems", "memories", "people", "topics"]) expect(pagesWritten(rows, shelf), shelf).toBe(0);
-  });
-
-  it("counts a page in a folder inside the shelf for the shelf", () => {
-    expect(pagesWritten([row("new", "topics/deep/er/p.md", "P")], "topics")).toBe(1);
-  });
+describe("the tabs' count while the filing runs", () => {
+  const shelves = ["goals", "ideas", "problems", "memories", "people", "topics"];
+  /** What a shelf's tab counts while the filing runs (Filing.tsx): the written pages whose first folder is the shelf. */
+  const onShelf = (written: readonly string[], shelf: string) => written.filter((path) => path.startsWith(`${shelf}/`)).length;
 
   it("is what the tabs will count once the filing is filed", () => {
-    // One filing, as its steps and as its outcome: the rows while it runs, the pages once it is done.
+    // One filing, as its steps and as its outcome: the pages main lists as written while it runs, the pages once it is done.
     const steps: FilingStep[] = [
       { kind: "read", path: "index.md" },
       { kind: "read", path: "people/mark.md" },
@@ -205,23 +184,27 @@ describe("pagesWritten", () => {
       { kind: "wrote", path: "ideas/a.md", created: false }, // the page it just made, written again
       { kind: "wrote", path: "ideas/b.md", created: true },
       { kind: "wrote", path: "people/mark.md", created: false },
+      { kind: "wrote", path: "goals/draft.md", created: true },
+      { kind: "deleted", path: "goals/draft.md" }, // a page it made and then removed: the folder shows nothing of it
       { kind: "wrote", path: "topics/budget.pdf", created: true }, // a file that is no page
       { kind: "wrote", path: "projects/launch.md", created: true }, // a folder that is no shelf
+      { kind: "wrote", path: "topics/deep/er/p.md", created: true }, // a folder inside a shelf
       { kind: "wrote", path: "index.md", created: false },
       { kind: "wrote", path: "log.md", created: false },
     ];
-    const page = (rel: string): FiledPage => ({ title: posix.basename(rel, ".md"), shelf: rel.split("/")[0] ?? "", path: rel });
-    const rows = steps.reduce<NarrationRow[]>((kept, step) => withStep(kept, step, page), []);
-    const written = steps.flatMap((step) => (step.kind === "wrote" ? [step] : []));
-    const created = [...new Set(written.filter((step) => step.created).map((step) => step.path))];
-    const modified = [...new Set(written.filter((step) => !step.created && !created.includes(step.path)).map((step) => step.path))];
+    const written = steps.reduce<string[]>((kept, step) => withWritten(kept, step), []);
+    const removed = new Set(steps.flatMap((step) => (step.kind === "deleted" ? [step.path] : [])));
+    const writes = steps.flatMap((step) => (step.kind === "wrote" && !removed.has(step.path) ? [step] : []));
+    const created = [...new Set(writes.filter((step) => step.created).map((step) => step.path))];
+    const modified = [...new Set(writes.filter((step) => !step.created && !created.includes(step.path)).map((step) => step.path))];
     // filedPages reads titles from a library that isn't there, and keeps the file name: only the paths matter here.
     const filed = filedPages("/no/such/library", { created, modified });
-    for (const shelf of ["goals", "ideas", "problems", "memories", "people", "topics"]) {
-      expect(pagesWritten(rows, shelf), shelf).toBe(filed.filter((p) => p.shelf === shelf).length);
+    for (const shelf of shelves) {
+      expect(onShelf(written, shelf), shelf).toBe(filed.filter((p) => p.shelf === shelf).length);
     }
-    expect(pagesWritten(rows, "ideas")).toBe(2);
-    expect(pagesWritten(rows, "people")).toBe(1);
-    expect(pagesWritten(rows, "topics")).toBe(0);
+    expect(onShelf(written, "ideas")).toBe(2);
+    expect(onShelf(written, "people")).toBe(1);
+    expect(onShelf(written, "topics")).toBe(1);
+    expect(onShelf(written, "goals")).toBe(0);
   });
 });

@@ -204,8 +204,8 @@ interface SetupSession {
   /** The first thought's filing, from the moment its words exist (`takeThought`); the newest one after File it again. */
   job: FilingJob | null;
   /**
-   * What the window shows of that filing; null before the thought is handed over. While it runs, its `rows` are those of
-   * the `job`, as they are when a snapshot is made (`snapshot`).
+   * What the window shows of that filing; null before the thought is handed over. While it runs, its `rows` and `written`
+   * are those of the `job`, as they are when a snapshot is made (`snapshot`).
    */
   filing: SetupFiling | null;
   /** Why the last typed thought wasn't taken; each try clears it. */
@@ -347,8 +347,9 @@ export class Setup {
     // Ask suggests a question only about pages that stand: not once an undo of the filing has begun, nor after it.
     const filing = this.session?.filing;
     const standing = filing?.kind === "filed" && !filing.undoing ? filing.pages : [];
-    // A running filing shows what its agent has done so far: its job's rows, as they are now.
-    const shown = filing?.kind === "running" ? { ...filing, rows: this.session?.job?.rows ?? filing.rows } : (filing ?? null);
+    // A running filing shows what its agent has done so far: its job's rows and the pages it has written, as they are now.
+    const job = this.session?.job;
+    const shown = filing?.kind === "running" ? { ...filing, rows: job?.rows ?? filing.rows, written: job?.written ?? filing.written } : (filing ?? null);
     return {
       libraryPath,
       libraryLabel: tildePath(libraryPath, homedir()),
@@ -902,9 +903,9 @@ export class Setup {
     session.thought = { kind: "waiting" };
     session.testCapture = null;
     this.enterSetupStep("filing");
-    const job: FilingJob = { capturePath, text: words, transcribedIn, agent: this.host.agentName(), abort: new AbortController(), edited: false, rows: [], setup: true };
+    const job: FilingJob = { capturePath, text: words, transcribedIn, agent: this.host.agentName(), abort: new AbortController(), edited: false, rows: [], written: [], setup: true };
     session.job = job;
-    session.filing = { kind: "running", words, agent: job.agent, startedAt: Date.now(), waiting: false, cancelling: false, rows: job.rows };
+    session.filing = { kind: "running", words, agent: job.agent, startedAt: Date.now(), waiting: false, cancelling: false, rows: job.rows, written: job.written };
     this.host.queuedToFile.add(capturePath);
     this.host.file(job);
     this.host.broadcast();
@@ -981,12 +982,12 @@ export class Setup {
   }
 
   /**
-   * `job`, the first thought's filing, has taken another step, and its `rows` have it (`filingStep`): the setup window is
-   * sent them, at most once every STEP_MS. A step that comes sooner after the last send waits, and the steps that come
-   * meanwhile go in the one send that ends the wait, so the window is never more than STEP_MS behind. When a wait ends,
-   * it is asked again whether the window still shows this filing running; if the filing has ended, or another has taken
-   * its place, the send is dropped, since the window was told of that at once (`broadcast`). It sends only
-   * `setup:changed`, as `publishProgress` does: no Settings snapshot, and no menu.
+   * `job`, the first thought's filing, has taken another step, and its `rows` and `written` have it (`filingStep`): the
+   * setup window is sent them, at most once every STEP_MS. A step that comes sooner after the last send waits, and the
+   * steps that come meanwhile go in the one send that ends the wait, so the window is never more than STEP_MS behind.
+   * When a wait ends, it is asked again whether the window still shows this filing running; if the filing has ended, or
+   * another has taken its place, the send is dropped, since the window was told of that at once (`broadcast`). It sends
+   * only `setup:changed`, as `publishProgress` does: no Settings snapshot, and no menu.
    */
   stepped(job: FilingJob): void {
     if (!this.showsRunning(job) || this.stepWait?.job === job) return; // its newest steps go in the send that waits

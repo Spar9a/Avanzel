@@ -78,7 +78,7 @@ import { frontContext } from "./front-app.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import { captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
-import { rowPage, withStep } from "./narration.ts";
+import { rowPage, withStep, withWritten } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
 import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
@@ -872,7 +872,7 @@ export class Controller {
       this.setCapsule({ kind: "saved", text, note: "Saved to your inbox for tonight's review", ...(detail ? { detail } : {}) }, 4000);
       return;
     }
-    this.beginFiling({ capturePath, text, transcribedIn, agent: this.agentName(), abort: new AbortController(), edited: false, rows: [], detail });
+    this.beginFiling({ capturePath, text, transcribedIn, agent: this.agentName(), abort: new AbortController(), edited: false, rows: [], written: [], detail });
   }
 
   /** Filing starts right away; Edit can stop it until it ends. */
@@ -910,12 +910,13 @@ export class Controller {
 
   /**
    * A step the agent takes in setup's first filing, told as it takes it (`file`'s `steps`): it joins the filing's rows,
-   * and the setup window, if it still shows the filing, is sent them (`setup.stepped`). Narration is best effort: what
-   * goes wrong here is noted, and never fails the filing.
+   * and the pages written, which the shelf tabs count, and the setup window, if it still shows the filing, is sent them
+   * (`setup.stepped`). Narration is best effort: what goes wrong here is noted, and never fails the filing.
    */
   private filingStep(job: FilingJob, step: FilingStep): void {
     try {
       const root = this.requireVault().root;
+      job.written = withWritten(job.written, step);
       job.rows = withStep(job.rows, step, (rel) => rowPage(root, rel));
       if (this.setup.owns(job)) this.setup.stepped(job);
     } catch (error) {
@@ -1055,6 +1056,7 @@ export class Controller {
       abort: new AbortController(),
       edited: false,
       rows: [],
+      written: [],
       correction: correction ?? job.correction,
     };
     this.showFiling(next);

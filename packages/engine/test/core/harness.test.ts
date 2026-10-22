@@ -383,6 +383,11 @@ describe("runHeadless with Claude Code", () => {
       type: "assistant",
       message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: path } }] },
     });
+  /** Claude Code's answer to `readEvent`: the page was read. A read is a step only once it has this. */
+  const readDone = JSON.stringify({
+    type: "user",
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "# Index" }] },
+  });
   const resultEvent = (result: string, isError = false) =>
     JSON.stringify({ type: "result", subtype: "success", is_error: isError, result, permission_denials: [] });
   const runClaude = (options: Partial<RunOptions> = {}) =>
@@ -394,7 +399,8 @@ describe("runHeadless with Claude Code", () => {
   };
 
   it("a streaming run hands over each step before the agent exits", async () => {
-    onPath(`${print(readEvent("/lib/index.md"))}; /bin/sleep 1; ${print(resultEvent("Filed."))}`);
+    // The read and its answer first, then the wait: the step is there to hand over long before the agent is done.
+    onPath(`${print(readEvent("/lib/index.md"), readDone)}; /bin/sleep 1; ${print(resultEvent("Filed."))}`);
     const steps: ToolStep[] = [];
     let stepAt = 0;
     const result = await runClaude({
@@ -467,7 +473,7 @@ describe("runHeadless with Claude Code", () => {
   it("a line split across two writes is one step", async () => {
     const line = readEvent("/lib/index.md");
     const half = Math.floor(line.length / 2);
-    onPath(`printf '%s' '${line.slice(0, half)}'; /bin/sleep 0.2; printf '%s\\n' '${line.slice(half)}'; ${print(resultEvent("Filed."))}`);
+    onPath(`printf '%s' '${line.slice(0, half)}'; /bin/sleep 0.2; printf '%s\\n' '${line.slice(half)}'; ${print(readDone, resultEvent("Filed."))}`);
     const { steps, onStep } = collecting();
     await runClaude({ onStep });
     expect(steps).toEqual([{ kind: "read", path: "/lib/index.md" }]);
@@ -477,14 +483,14 @@ describe("runHeadless with Claude Code", () => {
     const bytes = Buffer.from(`${readEvent("/lib/café.md")}\n`);
     const cut = bytes.indexOf(0xc3) + 1; // between the two bytes of "é"
     const octal = (part: Buffer) => [...part].map((byte) => `\\${byte.toString(8).padStart(3, "0")}`).join("");
-    onPath(`printf '${octal(bytes.subarray(0, cut))}'; /bin/sleep 0.2; printf '${octal(bytes.subarray(cut))}'`);
+    onPath(`printf '${octal(bytes.subarray(0, cut))}'; /bin/sleep 0.2; printf '${octal(bytes.subarray(cut))}'; ${print(readDone)}`);
     const { steps, onStep } = collecting();
     await runClaude({ onStep });
     expect(steps).toEqual([{ kind: "read", path: "/lib/café.md" }]);
   });
 
   it("a cancelled run keeps its code and message, and the steps it had handed over", async () => {
-    onPath(`${print(readEvent("/lib/index.md"))}; /bin/sleep 30`);
+    onPath(`${print(readEvent("/lib/index.md"), readDone)}; /bin/sleep 30`);
     const controller = new AbortController();
     const steps: ToolStep[] = [];
     const result = await runClaude({

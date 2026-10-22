@@ -11,7 +11,7 @@ import { Actions, Button, Card, Kbd, Notice, Receipt, Row, SHELVES, ShelfTag, St
 import { useEffect, useState, type ReactNode } from "react";
 import { NOTE_GONE, type NarrationRow, type SetupFiling } from "../../../shared/ipc.ts";
 import { pageName } from "../../../shared/wikilinks.ts";
-import { KEPT_LINE, pagesWritten, rowLine, SAVED_LINE, SHOWN_ROWS } from "../../common/narration.ts";
+import { KEPT_LINE, rowLine, SAVED_LINE, SHOWN_ROWS } from "../../common/narration.ts";
 import { cancelledLine, failedLine, filedHeading, othersLine, pagesLine, receiptPages, stampDate, workingLine } from "../copy.ts";
 import { Frame, useNow, type StepProps } from "../frame.tsx";
 
@@ -99,9 +99,12 @@ function FilingStage({ filing }: { filing: SetupFiling }) {
   );
 }
 
-/** What a shelf's tab counts: the pages the agent has written there so far, or, once filed, the pages that went in. */
+/**
+ * What a shelf's tab counts: the pages the agent has written there so far (those of `written` whose first folder is the
+ * shelf), or, once filed, the pages that went in. `written` isn't cut as the rows are, so the count never falls.
+ */
 function pagesOn(filing: SetupFiling, shelf: Shelf): number {
-  if (filing.kind === "running") return pagesWritten(filing.rows, shelf);
+  if (filing.kind === "running") return filing.written.filter((path) => path.startsWith(`${shelf}/`)).length;
   if (filing.kind === "filed") return filing.pages.filter((page) => page.shelf === shelf).length;
   return 0;
 }
@@ -153,10 +156,10 @@ function rowKey(row: NarrationRow, at: number): string {
 
 /**
  * Once filed: Zel's praise when the filing wrote pages; what it wrote on the shelves and where, or else that the agent
- * noted it in the log; how many pages it wrote elsewhere; and, while the filing can be taken back, how. Then the receipt
- * of its shelf pages, the proof (the words are kept in raw/, always, and a snapshot is saved while the filing can be
- * taken back), Undo, and its first page to open. Git refusing the undo says so in a Notice, and nothing offers to undo it
- * again, nor says a snapshot can be.
+ * noted it in the log; and how many pages it wrote elsewhere. Then the receipt of its shelf pages, the proof (the words
+ * are kept in raw/, always; and, while the filing can be taken back, one sentence that a snapshot is saved and how to put
+ * everything back: ⌘Z or Undo), Undo, and its first page to open. Git refusing the undo says so in a Notice, and nothing
+ * offers to undo it again, nor says a snapshot can be.
  */
 function Outcome({ filing, where, inObsidian }: { filing: Filed; where: string; inObsidian: boolean }) {
   const { pages: rows, others } = receiptPages(filing.pages);
@@ -172,17 +175,16 @@ function Outcome({ filing, where, inObsidian }: { filing: Filed; where: string; 
       <Stack gap={4}>
         <Text variant="footnote" tone="secondary">{pagesLine(created, rows.length - created, where) ?? `${filing.agent} noted it in the log.`}</Text>
         {more && <Text variant="footnote" tone="secondary">{more}</Text>}
-        {undoable && (
-          <Text variant="footnote" tone="secondary">
-            Press <Kbd>⌘Z</Kbd> or Undo to put everything back.
-          </Text>
-        )}
       </Stack>
       {filing.undoRefused && <Notice tone="error" title="This one can't be undone automatically.">The library's history keeps both versions.</Notice>}
       {rows.length > 0 && <Receipt pages={rows} />}
       <Stack gap={4}>
         <Text variant="footnote" tone="secondary">{KEPT_LINE}</Text>
-        {undoable && <Text variant="footnote" tone="secondary">{SAVED_LINE}</Text>}
+        {undoable && (
+          <Text variant="footnote" tone="secondary">
+            {SAVED_LINE} Press <Kbd>⌘Z</Kbd> or Undo to put everything back.
+          </Text>
+        )}
       </Stack>
       {(undoable || first) && (
         <Actions align="start">

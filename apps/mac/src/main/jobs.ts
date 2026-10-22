@@ -45,6 +45,12 @@ export interface FilingJob {
    */
   rows: NarrationRow[];
   /**
+   * The Markdown pages the agent has written so far, new or updated, each once, as library paths (`withWritten`); the
+   * shelf tabs count them. Unlike `rows`, it is not cut to the newest fifty, so a long filing's count doesn't fall as its
+   * early rows go. Like the rows, it is kept for setup's first thought only.
+   */
+  written: string[];
+  /**
    * Setup's first thought (`takeThought`): it reports to the setup window while the window shows it (its session's
    * `job`), and once the window has closed, by notification, as any filing whose card isn't showing does.
    */

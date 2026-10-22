@@ -27,7 +27,8 @@
 // FAKE_AGENT_STREAM=claude prints what `claude -p --output-format stream-json --verbose` prints, in the shapes of
 // test/fixtures/claude-filing.jsonl: an init line, then each tool call of a filing with its answer (a Read of the
 // capture and of index.md, a Write of the idea page, an Edit of index.md and, when the agent logs, of log.md), then a
-// result event with the reply. Every path is absolute, built from the library the agent runs in. Put on PATH as
+// result event with the reply. Every path is absolute, built from the library the agent runs in. Every Read it reports is
+// answered at once by an ok tool_result, because a Read is a step only once Claude Code has done it. Put on PATH as
 // `claude`, with the prompt as its second argument, it is read as Claude Code is.
 // FAKE_AGENT_STEP_MS=<ms> waits that long before each file a filing reads or writes, and before every reply, so a
 // watcher or a window sees each step while the run is still going. It works with the stream and without it.
@@ -35,7 +36,7 @@
 // write it: a tool_result with is_error and "PreToolUse:Write hook error: …", and the path in the result event's
 // permission_denials. A filing makes it after the idea page; a noop run, which writes nothing, makes it and gives up.
 // FAKE_AGENT_READS=<n> (stream mode) reports n Reads of ideas/seen-<i>.md before the agent files, back to back, with
-// no wait between them. The pages need not exist.
+// no wait between them. The pages need not exist: each is answered as read all the same.
 
 import {
   appendFileSync,

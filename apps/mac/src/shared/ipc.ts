@@ -302,6 +302,11 @@ export type SetupFiling =
       cancelling: boolean;
       /** What the agent has done so far, oldest first and the newest fifty at most (`withStep`). */
       rows: NarrationRow[];
+      /**
+       * The Markdown pages it has written so far, new or updated, each once, as library paths (`withWritten`): what the
+       * shelf tabs count. Not cut to fifty as the rows are, so a tab's count doesn't fall in a long filing.
+       */
+      written: string[];
     }
   | {
       kind: "filed";

@@ -1,6 +1,6 @@
-// What a filing's steps say, in words: a row for each step the agent takes, the count of pages they wrote for each shelf's
-// tab, and the two lines that end the first filing with its proof. Setup's window shows them, and the capsule will (1c), so
-// the words are written once, here. A row is not Zel speaking: it never says "I".
+// What a filing's steps say, in words: a row for each step the agent takes, and the two lines that end the first filing
+// with its proof. Setup's window shows them, and the capsule will (1c), so the words are written once, here. A row is not
+// Zel speaking: it never says "I".
 import type { Shelf } from "@avanzel/ui";
 import type { NarrationRow } from "../../shared/ipc.ts";
 
@@ -10,8 +10,11 @@ export const SHOWN_ROWS = 6;
 /** The first line of a filing's proof: the person's words are kept in raw/, whatever the agent did to their capture. */
 export const KEPT_LINE = "Kept your exact words in raw/.";
 
-/** The second: the filing is its own commit, and git has not refused to take it back. */
-export const SAVED_LINE = "Saved a snapshot you can undo.";
+/**
+ * The second: the filing is its own commit, and git has not refused to take it back. The step goes on in the same line
+ * with how to put everything back, ⌘Z or Undo, so a window says that once.
+ */
+export const SAVED_LINE = "Saved a snapshot.";
 
 /** What a new page on each shelf is called: "New idea page: …". */
 const NOUN: Record<Shelf, string> = {
@@ -26,7 +29,7 @@ const NOUN: Record<Shelf, string> = {
 /**
  * A row in words, with no closing period. The library's own files, which sit at its root, are named for their job; any
  * other page is named by its title, which is its file name for a page that is gone (a removal) or a file that isn't a page.
- * A new page says what kind it is by the shelf it is on.
+ * A new page says what kind it is by the shelf it is on, and a new file that isn't a page says it is a file.
  */
 export function rowLine(row: NarrationRow): string {
   switch (row.kind) {
@@ -63,21 +66,12 @@ function ownFileWritten({ path }: NarrationRow): string | null {
   return null;
 }
 
-/** A new page: of its shelf's kind on one of the six shelves ("New idea page: …"), only a page anywhere else. */
-function newLine({ title, shelf }: NarrationRow): string {
+/**
+ * A new page: of its shelf's kind on one of the six shelves ("New idea page: …"), only a page anywhere else. A file that
+ * isn't Markdown is not a page, wherever it is: it is a file, named by its file name.
+ */
+function newLine({ path, title, shelf }: NarrationRow): string {
+  if (!path?.endsWith(".md")) return `New file: ${title}`;
   // Own properties only, since a folder may be called anything, "constructor" included.
   return Object.hasOwn(NOUN, shelf) ? `New ${NOUN[shelf as Shelf]} page: ${title}` : `New page: ${title}`;
-}
-
-/**
- * How many pages the rows say were written on `shelf` so far, for its tab: the distinct paths of its "new" and "updated"
- * rows. Only Markdown counts, as it does for the pages a filed filing lists (`filedPages`), so the count a tab shows while
- * the filing works is the count it shows once it is filed. A page that was only read counts for nothing.
- */
-export function pagesWritten(rows: readonly NarrationRow[], shelf: string): number {
-  const written = new Set<string>();
-  for (const row of rows) {
-    if ((row.kind === "new" || row.kind === "updated") && row.shelf === shelf && row.path?.endsWith(".md")) written.add(row.path);
-  }
-  return written.size;
 }

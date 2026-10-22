@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path, { posix } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { FilingStep } from "@avanzel/engine";
-import { MAX_ROWS, rowPage, withStep } from "../src/main/narration.ts";
+import { MAX_ROWS, rowPage, withStep, withWritten } from "../src/main/narration.ts";
 import type { FiledPage, NarrationRow } from "../src/shared/ipc.ts";
 
 // The titles pageInfo would find for the pages these tests name; any other page has its file name for a title. Its shelf
@@ -97,6 +97,56 @@ describe("withStep", () => {
     expect(before).toEqual(copy);
     expect(after).not.toBe(before);
     expect(kinds(after)).toEqual(["read", "new"]);
+  });
+});
+
+/** The pages written after each step in turn, from none. */
+const writtenAfter = (...steps: FilingStep[]) => steps.reduce<string[]>((written, step) => withWritten(written, step), []);
+
+describe("withWritten", () => {
+  it("lists the pages written, new or updated, in the order they were first written", () => {
+    expect(writtenAfter(wrote("ideas/x.md", true), wrote("people/mark.md"), wrote("index.md"))).toEqual(["ideas/x.md", "people/mark.md", "index.md"]);
+  });
+
+  it("a page only read, or searched for, is not written", () => {
+    expect(writtenAfter(read("people/mark.md"), search, wrote("ideas/x.md", true), read("ideas/y.md"))).toEqual(["ideas/x.md"]);
+  });
+
+  it("a page written twice counts once", () => {
+    expect(writtenAfter(wrote("ideas/x.md", true), wrote("ideas/x.md"), wrote("ideas/x.md", true))).toEqual(["ideas/x.md"]);
+    expect(writtenAfter(wrote("people/mark.md"), wrote("people/mark.md"))).toEqual(["people/mark.md"]);
+  });
+
+  it("a removed page stops counting", () => {
+    expect(writtenAfter(wrote("ideas/x.md", true), wrote("people/mark.md"), deleted("ideas/x.md"))).toEqual(["people/mark.md"]);
+    // Written again after it was removed, it counts again; a removal of a page that was never written changes nothing.
+    expect(writtenAfter(wrote("ideas/x.md", true), deleted("ideas/x.md"), wrote("ideas/x.md", true))).toEqual(["ideas/x.md"]);
+    expect(writtenAfter(wrote("ideas/x.md", true), deleted("ideas/other.md"))).toEqual(["ideas/x.md"]);
+  });
+
+  it("only Markdown paths count", () => {
+    expect(writtenAfter(wrote("topics/data.json", true), wrote("topics/budget.pdf"), wrote("notes.txt"), wrote("ideas/x.md", true))).toEqual([
+      "ideas/x.md",
+    ]);
+  });
+
+  it("keeps more than fifty", () => {
+    // The rows keep the newest fifty, so by the sixtieth write the first page's row has gone by; its page still counts.
+    const steps = Array.from({ length: 60 }, (_, n) => wrote(`ideas/page-${n + 1}.md`, true));
+    expect(rowsAfter(...steps)).toHaveLength(MAX_ROWS);
+    const written = writtenAfter(...steps);
+    expect(written).toHaveLength(60);
+    expect(written[0]).toBe("ideas/page-1.md");
+    expect(written.at(-1)).toBe("ideas/page-60.md");
+  });
+
+  it("leaves the list it is given as it was", () => {
+    const before = ["ideas/x.md"];
+    const after = withWritten(before, wrote("people/mark.md"));
+    expect(before).toEqual(["ideas/x.md"]);
+    expect(after).toEqual(["ideas/x.md", "people/mark.md"]);
+    expect(withWritten(before, deleted("ideas/x.md"))).toEqual([]);
+    expect(before).toEqual(["ideas/x.md"]);
   });
 });
 

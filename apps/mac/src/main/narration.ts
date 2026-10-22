@@ -1,6 +1,7 @@
 // What setup's first filing says the agent is doing: each step it takes (the engine's `FilingStep`) becomes a row of the
-// Filing step. `withStep` is pure, so its tests reach it; the controller hands it each step, with `rowPage` to name the
-// pages, and setup sends the rows to its window.
+// Filing step, and a page it writes joins the list the shelf tabs count. `withStep` and `withWritten` are pure, so their
+// tests reach them; the controller hands each of them every step, `withStep` with `rowPage` to name the pages, and setup
+// sends the rows and the list to its window.
 import { posix } from "node:path";
 import type { FilingStep } from "@avanzel/engine";
 import type { FiledPage, NarrationRow } from "../shared/ipc.ts";
@@ -22,6 +23,19 @@ const shelfOf = (rel: string) => (rel.includes("/") ? rel.slice(0, rel.indexOf("
 export function withStep(rows: readonly NarrationRow[], step: FilingStep, page: (rel: string) => FiledPage): NarrationRow[] {
   const added = rowFor(rows, step, page);
   return (added ? [...rows, added] : [...rows]).slice(-MAX_ROWS);
+}
+
+/**
+ * The Markdown pages a filing has written so far, after one more step: a write adds its path, once however often the page
+ * is written, and a removal takes its path off. Any other step, and any file that isn't Markdown, changes nothing, so the
+ * list is the pages `filedPages` will find once the filing is filed. Unlike the rows, it is not cut to MAX_ROWS: the shelf
+ * tabs count it, and a page written early in a long filing must keep its count when its row has gone by. The list given is
+ * left as it was.
+ */
+export function withWritten(written: readonly string[], step: FilingStep): string[] {
+  if (step.kind === "wrote" && step.path.endsWith(".md") && !written.includes(step.path)) return [...written, step.path];
+  if (step.kind === "deleted") return written.filter((path) => path !== step.path);
+  return [...written];
 }
 
 /** The row `step` adds to `rows`, or null when it adds none. */

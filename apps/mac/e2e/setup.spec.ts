@@ -1903,9 +1903,12 @@ test("Record a thought in the menu records on the first-thought step, but isn't 
 /** The heading once the first thought is filed. */
 const FILED = /^All filed\. Claude Code took \d+ s\.$/;
 
-/** The step's proof, under the receipt: the words are kept in raw/, and, while the filing can be taken back, a snapshot is saved. */
+/**
+ * The step's proof, under the receipt: the words are kept in raw/, and, while the filing can be taken back, one more
+ * sentence says a snapshot is saved and how to put everything back. That is the only place the step says how to undo.
+ */
 const KEPT = "Kept your exact words in raw/.";
-const SAVED = "Saved a snapshot you can undo.";
+const SAVED = "Saved a snapshot. Press ⌘Z or Undo to put everything back.";
 
 /** The stage's shelf tabs, each read as its name and then its count, when it has one: "Ideas1". */
 const tabs = (setup: Page) => setup.locator('[data-shelf][data-variant="tab"]');
@@ -1950,14 +1953,16 @@ test("a filed thought shows its stamp, its page and how to undo it, and Undo put
   // The card is stamped FILED, with the day, and the page went in behind the Ideas tab.
   await expect(setup.getByRole("img", { name: /^Filed, / })).toBeVisible();
   await expect(tabs(setup)).toHaveText(["Goals", "Ideas1", "Problems", "Memories", "People", "Topics"]);
-  // The step, in order: the heading, Zel's praise, what the filing wrote, how to undo it, the receipt, the proof and its buttons.
+  // The step, in order: the heading, Zel's praise, what the filing wrote, the receipt, the proof (which says how to undo it,
+  // once) and its buttons.
   await expect(setup.getByText("Your first thought has a home.", { exact: true })).toBeVisible();
   await expect(setup.getByText("1 new page, all plain Markdown in ~/Avanzel.", { exact: true })).toBeVisible();
-  await expect(setup.getByText("Press ⌘Z or Undo to put everything back.", { exact: true })).toBeVisible();
   await expect(setup.getByRole("listitem")).toHaveText(["Plant tulips in OctoberIdeas"]);
   await expect(setup.getByText(KEPT, { exact: true })).toBeVisible(); // the agent left the words be: the line is there all the same
+  await expect(setup.getByText(SAVED, { exact: true })).toBeVisible();
+  // The whole step reads: the receipt's row, the proof's two lines, Undo, then Open the page. No ⌘Z line comes before the receipt.
   await expect(setup.getByRole("main")).toHaveText(
-    /^All filed\. .+Your first thought has a home\.1 new page, .+Press ⌘Z or Undo .+Plant tulips in OctoberIdeasKept your exact words in raw\/\.Saved a snapshot you can undo\.UndoOpen the page$/,
+    /^All filed\. .+Your first thought has a home\.1 new page, all plain Markdown in ~\/Avanzel\.Plant tulips in OctoberIdeasKept your exact words in raw\/\.Saved a snapshot\. Press ⌘Z or Undo to put everything back\.UndoOpen the page$/,
   );
   // Continue is the one primary, and there is no Back.
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Continue"]);
@@ -2020,6 +2025,9 @@ test("the first filing ends with its proof", async () => {
   // The words are kept in raw/, and setup's library has git, so the filing is its own commit and can be taken back.
   await expect(setup.getByText(KEPT, { exact: true })).toBeVisible();
   await expect(setup.getByText(SAVED, { exact: true })).toBeVisible();
+  // The snapshot's line is the one place that says how to undo it: no other line has a word of it.
+  await expect(setup.getByText(/put everything back/)).toHaveCount(1);
+  await expect(setup.getByText(/⌘Z/)).toHaveCount(1);
   await app.close();
 });
 
@@ -2065,8 +2073,8 @@ test("an Undo that git refuses says so, and Undo goes away", async () => {
   await expect(notice.getByText("The library's history keeps both versions.", { exact: true })).toBeVisible();
   // Nothing offers to undo it any more, and the filing stays as it is, the edit by hand included.
   await expect(setup.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
-  await expect(setup.getByText(/^Press ⌘Z or Undo/)).toHaveCount(0);
-  await expect(setup.getByText(SAVED, { exact: true })).toHaveCount(0); // no snapshot can be undone now, but the words are still kept
+  await expect(setup.getByText(/⌘Z|put everything back/)).toHaveCount(0);
+  await expect(setup.getByText(/Saved a snapshot/)).toHaveCount(0); // no snapshot can be undone now, but the words are still kept
   await expect(setup.getByText(KEPT, { exact: true })).toBeVisible();
   await expect(setup.getByRole("heading", { name: FILED })).toBeVisible();
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Continue"]);

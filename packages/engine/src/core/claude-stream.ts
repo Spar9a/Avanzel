@@ -1,6 +1,7 @@
 // What `claude -p --output-format stream-json --verbose` prints: one JSON event per line, as the run goes. Reading the
-// lines as they arrive hands over each tool call while it happens, and the run's reply is the result event's text, so a
-// caller sees the same plain reply that `--output-format text` printed whole.
+// lines as they arrive hands over each step the agent takes while it takes it (a read or a write once Claude Code has
+// done it, a search when it is made), and the run's reply is the result event's text, so a caller sees the same plain
+// reply that `--output-format text` printed whole.
 
 /** One thing a Claude Code run did, with the path as the agent gave it (absolute). */
 export type ToolStep = { kind: "read"; path: string } | { kind: "search" } | { kind: "wrote"; path: string };
@@ -17,9 +18,10 @@ interface Result {
 /** Reads `claude -p --output-format stream-json --verbose` one stdout line at a time. */
 export class ClaudeStream {
   readonly #onStep: (step: ToolStep) => void;
-  // A write or an edit is a step once its tool_result comes back without an error, not when it is asked for: the
-  // write guard may refuse it. They wait here by tool_use id, with the path they were asked to write.
-  readonly #writing = new Map<string, string>();
+  // A read, a write or an edit is a step once its tool_result comes back without an error, not when it is asked for: a
+  // page that isn't there can't be read, and the write guard may refuse a write. They wait here by tool_use id, with the
+  // step they will be. A search is a step when it is made, since it was made even when it found nothing.
+  readonly #pending = new Map<string, ToolStep>();
   // The lines that weren't JSON objects. A run that never got as far as a result has nothing else to say.
   readonly #plain: string[] = [];
   #result: Result | null = null;
@@ -75,7 +77,7 @@ export class ClaudeStream {
     const input: Json = isObject(block.input) ? block.input : {};
     switch (block.name) {
       case "Read":
-        if (typeof input.file_path === "string" && input.file_path) this.#step({ kind: "read", path: input.file_path });
+        this.#expect(block.id, "read", input.file_path);
         break;
       case "Glob":
       case "Grep":
@@ -83,25 +85,26 @@ export class ClaudeStream {
         break;
       case "Write":
       case "Edit":
-        this.#expectWrite(block.id, input.file_path);
+        this.#expect(block.id, "wrote", input.file_path);
         break;
       case "NotebookEdit":
-        this.#expectWrite(block.id, input.notebook_path);
+        this.#expect(block.id, "wrote", input.notebook_path);
         break;
     }
   }
 
-  #expectWrite(id: unknown, path: unknown): void {
-    if (typeof id === "string" && typeof path === "string" && path) this.#writing.set(id, path);
+  /** A call whose step waits for its result: a read or a write of `path`, asked for as tool_use `id`. */
+  #expect(id: unknown, kind: "read" | "wrote", path: unknown): void {
+    if (typeof id === "string" && typeof path === "string" && path) this.#pending.set(id, { kind, path });
   }
 
   #toolResult(block: Json): void {
     const id = block.tool_use_id;
     if (typeof id !== "string") return;
-    const path = this.#writing.get(id);
-    if (path === undefined) return;
-    this.#writing.delete(id);
-    if (!block.is_error) this.#step({ kind: "wrote", path });
+    const step = this.#pending.get(id);
+    if (step === undefined) return;
+    this.#pending.delete(id);
+    if (!block.is_error) this.#step(step);
   }
 
   #step(step: ToolStep): void {

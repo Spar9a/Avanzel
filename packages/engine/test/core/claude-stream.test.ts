@@ -89,7 +89,7 @@ describe("ClaudeStream", () => {
     expect(replyOf("a line", resultEvent({ result: undefined }))).toBe("a line");
   });
 
-  it("hands over a read or a search at once, and a write once its result arrives", () => {
+  it("hands over a search at once, and a read or a write once its result arrives", () => {
     const { stream, steps } = feed([
       toolUse("r", "Read", { file_path: "/lib/a.md" }),
       toolUse("g", "Glob", { pattern: "*.md" }),
@@ -97,13 +97,25 @@ describe("ClaudeStream", () => {
       toolUse("e", "Edit", { file_path: "/lib/c.md", old_string: "c", new_string: "d" }),
       toolUse("n", "NotebookEdit", { notebook_path: "/lib/d.ipynb", new_source: "d" }),
     ]);
-    expect(steps).toEqual([{ kind: "read", path: "/lib/a.md" }, { kind: "search" }]);
-    for (const id of ["w", "e", "n"]) stream.line(toolResult(id));
-    expect(steps.slice(2)).toEqual([
+    expect(steps).toEqual([{ kind: "search" }]);
+    for (const id of ["r", "w", "e", "n"]) stream.line(toolResult(id));
+    expect(steps.slice(1)).toEqual([
+      { kind: "read", path: "/lib/a.md" },
       { kind: "wrote", path: "/lib/b.md" },
       { kind: "wrote", path: "/lib/c.md" },
       { kind: "wrote", path: "/lib/d.ipynb" },
     ]);
+  });
+
+  it("a read Claude Code couldn't do is not a step", () => {
+    // A page that isn't there yet is an ordinary thing to read in a new library, and Claude Code answers it with an error.
+    const { steps } = feed([
+      toolUse("r", "Read", { file_path: "/lib/people/mark.md" }),
+      toolResult("r", true),
+      toolUse("s", "Read", { file_path: "/lib/people/ana.md" }), // never answered: the run ends first
+      resultEvent(),
+    ]);
+    expect(steps).toEqual([]);
   });
 
   it("makes no step of a write whose result is an error, or never comes", () => {
