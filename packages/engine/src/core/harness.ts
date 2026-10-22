@@ -8,7 +8,9 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { AvanzelError } from "../types.ts";
+import { ClaudeStream, type ToolStep } from "./claude-stream.ts";
 import type { CustomHarness, Env, Settings } from "./config.ts";
 import { which } from "./proc.ts";
 
@@ -42,6 +44,8 @@ export interface HeadlessOptions {
   outputFile: string;
   /** Screenshots to attach, for CLIs that take images on the command line. */
   images?: readonly string[];
+  /** Settings JSON for a write run, for CLIs that take it on the command line (Claude Code's `--settings`). */
+  settings?: string | null;
 }
 
 /** A command that says whether an agent is signed in, which asks the model nothing. */
@@ -58,6 +62,8 @@ export interface HarnessSpec {
   interactive: (vault: string, model: string | null) => string[];
   readsOutputFile?: boolean;
   experimental?: boolean;
+  /** Whether a run's stdout is Claude Code's stream-json, which a `ClaudeStream` reads as it arrives. */
+  streams?: boolean;
   /** The agent's own sign-in status command, when it has one. */
   signIn?: SignInCheck;
 }
@@ -67,6 +73,7 @@ export class Harness {
   readonly binary: string;
   readonly readsOutputFile: boolean;
   readonly experimental: boolean;
+  readonly streams: boolean;
   readonly signIn: SignInCheck | undefined;
   readonly #spec: HarnessSpec;
 
@@ -76,6 +83,7 @@ export class Harness {
     this.binary = spec.binary;
     this.readsOutputFile = spec.readsOutputFile ?? false;
     this.experimental = spec.experimental ?? false;
+    this.streams = spec.streams ?? false;
     this.signIn = spec.signIn;
   }
 
@@ -83,8 +91,12 @@ export class Harness {
     return which(this.binary) !== null;
   }
 
-  headlessArgv(prompt: string, vault: string, { write, model = null, outputFile, images = [] }: HeadlessOptions): string[] {
-    return this.#spec.headless(prompt, vault, { write, model, outputFile, images });
+  headlessArgv(
+    prompt: string,
+    vault: string,
+    { write, model = null, outputFile, images = [], settings = null }: HeadlessOptions,
+  ): string[] {
+    return this.#spec.headless(prompt, vault, { write, model, outputFile, images, settings });
   }
 
   interactiveArgv(vault: string, { model = null }: { model?: string | null } = {}): string[] {
@@ -98,6 +110,8 @@ export interface RunResult {
   stderr: string;
   seconds: number;
   ok: boolean;
+  /** The paths of the writes the agent was refused, as it gave them. Only Claude Code reports these; the rest give []. */
+  refused: string[];
 }
 
 export interface RunOptions {
@@ -106,6 +120,8 @@ export interface RunOptions {
   timeoutSeconds: number;
   images?: readonly string[];
   signal?: AbortSignal;
+  /** Called with each thing the agent does, as it happens, for an agent whose output `streams`. */
+  onStep?: (step: ToolStep) => void;
 }
 
 function opt(flag: string, value: string | null): string[] {
@@ -134,16 +150,19 @@ const BUILTINS: Readonly<Record<string, Harness>> = {
   claude: new Harness({
     name: "claude",
     binary: "claude",
-    headless: (prompt, _vault, { write, model }) => {
+    headless: (prompt, _vault, { write, model, settings }) => {
       const tools = write ? "Read,Write,Edit,Glob,Grep" : "Read,Glob,Grep";
       // --tools limits which tools exist (--allowedTools only pre-approves them); --strict-mcp-config
       // keeps the owner's MCP servers out of the run. Claude reads screenshots with its Read tool.
+      // stream-json prints each tool call as it happens (`streams`), and -p refuses it without --verbose.
       return [
-        "claude", "-p", prompt, "--output-format", "text", "--tools", tools, "--allowedTools", tools,
-        "--strict-mcp-config", ...(write ? ["--permission-mode", "acceptEdits"] : []), ...opt("--model", model),
+        "claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--tools", tools, "--allowedTools", tools,
+        "--strict-mcp-config", ...(write ? ["--permission-mode", "acceptEdits", ...opt("--settings", settings)] : []),
+        ...opt("--model", model),
       ];
     },
     interactive: (_vault, model) => ["claude", ...opt("--model", model)],
+    streams: true,
     signIn: { argv: ["claude", "auth", "status"], signedIn: claudeSignedIn },
   }),
   codex: new Harness({
@@ -256,14 +275,15 @@ export function childEnv(env: Env): Record<string, string> {
 
 /** Run one non-interactive agent turn inside the library and return its final message. */
 export async function runHeadless(harness: Harness, prompt: string, vault: string, options: RunOptions): Promise<RunResult> {
-  const { write, model = null, timeoutSeconds, images = [], signal } = options;
+  const { write, model = null, timeoutSeconds, images = [], signal, onStep } = options;
   const started = performance.now();
-  const result = (exitCode: number, output: string, stderr: string): RunResult => ({
+  const result = (exitCode: number, output: string, stderr: string, refused: string[] = []): RunResult => ({
     exitCode,
     output: output.replace(ANSI, "").trim(),
     stderr,
     seconds: (performance.now() - started) / 1000,
     ok: exitCode === 0,
+    refused,
   });
   if (!isDirectory(vault)) throw new AvanzelError(`No such folder: ${vault}`);
   const cancelled = `${harness.name} was cancelled`;
@@ -272,13 +292,23 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
   try {
     const outputFile = join(tmp, "last-message.txt");
     const argv = harness.headlessArgv(prompt, vault, { write, model, outputFile, images });
-    const run = await collect(argv, vault, timeoutSeconds * 1000, signal);
+    // Claude Code prints a JSON event per line. Reading them as they arrive hands over each step while the agent works,
+    // and its reply is the result event's text: what comes back as `output` is plain text, as for every other agent.
+    const stream = harness.streams ? new ClaudeStream(onStep ?? (() => {})) : null;
+    const run = await collect(argv, vault, timeoutSeconds * 1000, signal, stream ? (line) => stream.line(line) : undefined);
+    const stdout = stream ? stream.reply : run.stdout;
+    const refused = stream ? stream.refused : [];
     if (run.stopped === "timeout") {
-      return result(124, run.stdout, `${run.stderr}\n${harness.name} timed out after ${timeoutSeconds}s`.trim());
+      return result(124, stdout, `${run.stderr}\n${harness.name} timed out after ${timeoutSeconds}s`.trim(), refused);
     }
-    if (run.stopped === "cancel") return result(130, run.stdout, `${run.stderr}\n${cancelled}`.trim());
-    const output = harness.readsOutputFile && existsSync(outputFile) ? readFileSync(outputFile, "utf8") : run.stdout;
-    return result(run.exitCode, output, run.stderr);
+    if (run.stopped === "cancel") return result(130, stdout, `${run.stderr}\n${cancelled}`.trim(), refused);
+    if (stream?.failed) {
+      // The result says the run failed, whatever the exit code. Its words are what a plain run printed, so they go where
+      // the error line is read.
+      return result(run.exitCode || 1, stdout, `${run.stderr}\n${stream.reply}`.trim(), refused);
+    }
+    const output = harness.readsOutputFile && existsSync(outputFile) ? readFileSync(outputFile, "utf8") : stdout;
+    return result(run.exitCode, output, run.stderr, refused);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -361,7 +391,17 @@ interface Collected {
   stopped: "timeout" | "cancel" | null;
 }
 
-function collect(argv: readonly string[], cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<Collected> {
+/**
+ * Runs `argv` and collects what it printed. `onLine` is given each line of stdout as it arrives, without its line end
+ * (`\n` or `\r\n`), and the last one at close if it had none; stdout is still collected whole.
+ */
+function collect(
+  argv: readonly string[],
+  cwd: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  onLine?: (line: string) => void,
+): Promise<Collected> {
   const [file = "", ...args] = argv;
   return new Promise((resolve, reject) => {
     // In a process group of its own, so stopping the agent stops whatever it started too.
@@ -398,7 +438,11 @@ function collect(argv: readonly string[], cwd: string, timeoutMs: number, signal
       exited();
       clearTimeout(graceTimer);
     };
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    const lines = onLine ? lineSplitter(onLine) : null;
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout.push(chunk);
+      lines?.write(chunk);
+    });
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     // Something the agent started may hold its output open long after it exited; don't wait for that.
     child.on("exit", () => {
@@ -420,6 +464,7 @@ function collect(argv: readonly string[], cwd: string, timeoutMs: number, signal
     });
     child.on("close", (code, signalName) => {
       cleanUp();
+      lines?.end();
       resolve({
         exitCode: code ?? 128 + (signalName ? constants.signals[signalName] : 0),
         stdout: Buffer.concat(stdout).toString("utf8"),
@@ -428,6 +473,32 @@ function collect(argv: readonly string[], cwd: string, timeoutMs: number, signal
       });
     });
   });
+}
+
+/**
+ * Cuts what a process prints into lines as the chunks arrive. `\n` or `\r\n` ends a line, a character that two chunks
+ * split stays whole, and `end()` gives the last line if it had no line end.
+ */
+function lineSplitter(onLine: (line: string) => void): { write(chunk: Buffer): void; end(): void } {
+  const decoder = new StringDecoder("utf8");
+  let rest = "";
+  return {
+    write(chunk) {
+      const text = rest + decoder.write(chunk);
+      let start = 0;
+      for (let end = text.indexOf("\n"); end !== -1; end = text.indexOf("\n", start)) {
+        const line = text.slice(start, end);
+        onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+        start = end + 1;
+      }
+      rest = text.slice(start);
+    },
+    end() {
+      const last = rest + decoder.end();
+      rest = "";
+      if (last) onLine(last);
+    },
+  };
 }
 
 function isDirectory(path: string): boolean {
