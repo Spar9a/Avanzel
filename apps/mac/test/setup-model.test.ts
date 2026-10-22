@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -46,6 +46,31 @@ describe("setup model", () => {
     const fine = ["/Users/a/Avanzel", "/Users/a/Documents/Avanzel", "/Users/a/Notes", "/Users/a/Documents/../Avanzel",
       "/Volumes/Backup/Avanzel", "/Users/ab", "/Users/ab/Documents", "/Users/a/Library/Mobile Documents/Avanzel"];
     expect(fine.filter((place) => tooBroad(place, home))).toEqual([]);
+  });
+
+  it("tooBroad sees through ~, links and aliases of the startup disk to the place on disk", () => {
+    // A home of its own, under the system's temporary folder: /var/folders/…, which is /private/var/folders/… on disk.
+    const home = tmp();
+    mkdirSync(path.join(home, "Documents"));
+    const links = tmp();
+    const docs = path.join(links, "docs");
+    symlinkSync(path.join(home, "Documents"), docs); // a link to the home folder's Documents
+    const disk = path.join(links, "Macintosh HD");
+    symlinkSync("/", disk); // an alias of the startup disk, as /Volumes/Macintosh HD is
+    const real = realpathSync(home);
+    const broad = ["~", "~/", "~/Documents", "~/documents", docs, `${docs}/`, disk, path.join(disk, real), path.join(disk, real, "Documents"), path.join(real, "Documents")];
+    expect(broad.filter((place) => !tooBroad(place, home))).toEqual([]);
+    // A folder inside is a library's place like any other: made yet or not, and reached by a link or not.
+    mkdirSync(path.join(home, "Notes"));
+    const fine = ["~/Avanzel", "~/Notes", path.join(docs, "Avanzel"), path.join(home, "Documents", "Avanzel"), path.join(disk, real, "Avanzel")];
+    expect(fine.filter((place) => tooBroad(place, home))).toEqual([]);
+  });
+
+  it.runIf(existsSync("/Volumes/Macintosh HD"))("tooBroad knows this Mac's /Volumes/Macintosh HD is its startup disk", () => {
+    const home = tmp();
+    expect(tooBroad("/Volumes/Macintosh HD", home)).toBe(true);
+    expect(tooBroad(path.join("/Volumes/Macintosh HD", realpathSync(home), "Documents"), home)).toBe(true);
+    expect(tooBroad(path.join("/Volumes/Macintosh HD", realpathSync(home), "Avanzel"), home)).toBe(false);
   });
 
   it("libraryFolder tells missing, empty, has-files and library apart", async () => {

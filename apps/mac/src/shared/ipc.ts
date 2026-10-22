@@ -355,8 +355,11 @@ export interface SetupSnapshot {
   model: ModelStatus;
   /** Record a thought's shortcut, "Alt+Space". */
   shortcut: string;
-  /** Type a thought's shortcut, "Alt+Shift+Space": the last step offers it while Avanzel can't hear yet. */
-  typeShortcut: string;
+  /**
+   * Type a thought's shortcut, "Alt+Shift+Space", which the last step teaches while Avanzel can't hear yet; null when it
+   * didn't register (another app holds it, say), when the step points to the menu bar's Type a thought… instead.
+   */
+  typeShortcut: string | null;
   /**
    * Set me up found no agent installed on this Mac, and setup looks for one until it comes: Found says how to install
    * one. False before Set me up, and once one is installed.
@@ -406,10 +409,12 @@ export interface SetupSnapshot {
 export interface UpHereSnapshot {
   /** Record a thought's shortcut, "Alt+Space". */
   shortcut: string;
-  /** Type a thought's shortcut, "Alt+Shift+Space". */
-  typeShortcut: string;
+  /** Type a thought's shortcut, "Alt+Shift+Space"; null when it didn't register, when the bubble points to the menu instead. */
+  typeShortcut: string | null;
   /** Avanzel can turn speech into words: until it can, the bubble offers typing instead of talking. */
   hears: boolean;
+  /** The speech model, which says why Avanzel can't hear yet: still on its way, or its download failed. */
+  model: ModelStatus;
 }
 
 export interface AskResult {

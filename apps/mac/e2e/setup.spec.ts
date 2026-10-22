@@ -431,6 +431,36 @@ test("with no agent signed in, Found says at once how to sign Claude Code in, an
   await app.close();
 });
 
+test("a sign-in read again on return that can't be read leaves Not signed in, its Notice and Check again", async () => {
+  // Claude Code's sign-in can't be read (UNREADABLE_CLAUDE), and its one question asks to sign in, as at a lapsed login.
+  const lapsed = UNREADABLE_CLAUDE.replace("else echo ready", "else echo 'Error: not logged in' >&2; exit 1");
+  expect(lapsed).not.toBe(UNREADABLE_CLAUDE);
+  const app = await launch(firstRun({ claude: lapsed }).env);
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect.poll(async () => (await setupSnap(app)).agent, { timeout: 20_000 }).toBe("codex");
+  await setup.getByRole("button", { name: "Use Claude Code" }).click();
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code isn't signed in on this Mac.", { exact: true })).toBeVisible({ timeout: 20_000 });
+  // The person comes back from Terminal: the window has the focus again, and Claude Code's sign-in is read again. It
+  // still can't be read, so the read learns nothing.
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"))?.emit("focus");
+  });
+  const signInReads = async () => (await callsTo(app, "claude")).filter((line) => line === "claude auth status").length;
+  await expect.poll(signInReads, { timeout: 20_000 }).toBe(2);
+  const rereading = () => app.evaluate(() => (globalThis as { __avanzel?: { rereading: Set<string> } }).__avanzel?.rereading.size ?? 0);
+  await expect.poll(rereading, { timeout: 20_000 }).toBe(0);
+  // What the question found still stands: the row, the Notice and Check again, so Found isn't left with no way on.
+  expect(await statusKind(app, "claude")).toBe("signed-out");
+  await expect(setup.getByText("Not signed in", { exact: true })).toBeVisible();
+  await expect(notice.getByText("Claude Code isn't signed in on this Mac.", { exact: true })).toBeVisible();
+  await expect(notice.getByRole("button", { name: "Check again" })).toBeVisible();
+  // Reading the sign-in again asked nothing: its one question was asked once, when it was picked.
+  expect((await callsTo(app, "claude")).filter((line) => line.startsWith("claude -p "))).toHaveLength(1);
+  await app.close();
+});
+
 test("an agent without a sign-in command is asked one question only when picked", async () => {
   const app = await launch(firstRun({ opencode: "echo ready" }).env);
   const setup = await windowFor(app, "setup");
@@ -2373,10 +2403,17 @@ test("while the speech model isn't ready, Done and Zel's bubble offer typing, no
   await snap(setup, "setup-done-no-ears");
   await reduceMotion(app, true); // it just closes: no flight on this Mac's screen
   await setup.getByRole("button", { name: "Start using Avanzel" }).click();
-  // The bubble says the same, and its primary types a thought: Quick opens, and nothing records.
+  // The bubble says the download failed too, not that the ears are on their way, and its primary types a thought:
+  // Quick opens, and nothing records.
   const bubble = await windowFor(app, "up-here");
   await expect(bubble.getByText("I'm up here.", { exact: true })).toBeVisible();
-  await expect(bubble.getByText(/^My ears are still arriving\. Press ⌥⇧Space anywhere to type a thought\.$/)).toBeVisible();
+  await expect(
+    bubble.getByText(
+      "The speech model didn't finish downloading, so I can't hear you yet. Type a thought meanwhile, or try the download again in Settings → Voice.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(bubble.getByText(/still arriving/)).toHaveCount(0);
   await expect(bubble.locator('button[data-variant="primary"]')).toHaveText(["Type a thought"]);
   await expect(bubble.getByRole("button", { name: "Try it now" })).toHaveCount(0);
   await snap(bubble, "up-here-no-ears");
@@ -2386,6 +2423,30 @@ test("while the speech model isn't ready, Done and Zel's bubble offer typing, no
   await expect.poll(quickOpened).toBe(true);
   await expect.poll(() => shown(app, "up-here")).toBe(false);
   expect(await capsuleKind(app)).toBe("hidden");
+  await app.close();
+});
+
+test("while the speech model is on its way and ⌥⇧Space is another app's, Done and the bubble point to the menu bar", async () => {
+  // The download stays in progress, and another app holds Type a thought's shortcut, so it didn't register.
+  const hub = await fakeModelHub("stall");
+  const app = await launch({
+    ...firstRun({ claude: filingClaude() }).env,
+    AVANZEL_MODELS_URL: hub.url,
+    AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Shift+Space",
+    AVANZEL_FAKE_TRAY_BOUNDS: ICON,
+  });
+  const setup = await toDone(app);
+  await expect(setup.getByText("My ears are still arriving. Type it instead, or talk to me once they land.", { exact: true })).toBeVisible();
+  await expect(setup.getByText("Choose Type a thought… in the menu bar to type one. I'll wait there.", { exact: true })).toBeVisible();
+  await expect(setup.getByText(/⌥⇧Space/)).toHaveCount(0);
+  // The menu bar's item it names is there.
+  const menu = (await call(app, "menuForTests")) as MenuItemModel[];
+  expect(menu).toContainEqual(expect.objectContaining({ type: "item", label: "Type a thought…", action: "type" }));
+  await reduceMotion(app, true);
+  await setup.getByRole("button", { name: "Start using Avanzel" }).click();
+  const bubble = await windowFor(app, "up-here");
+  await expect(bubble.getByText(/^My ears are still arriving\. Choose Type a thought… in the menu bar to type one\.$/)).toBeVisible();
+  await expect(bubble.getByText(/⌥⇧Space/)).toHaveCount(0);
   await app.close();
 });
 

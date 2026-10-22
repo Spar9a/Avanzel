@@ -1,6 +1,7 @@
 // Zel's bubble under the menu bar icon, once setup has flown there: where Avanzel waits, and how to talk to it from
-// anywhere. Try it now records a thought. Until Avanzel can hear, the bubble promises no talking: it says how to type a
-// thought instead, and Type a thought opens Quick. Not now, Esc or a click elsewhere puts the bubble away, for good.
+// anywhere. Try it now records a thought. Until Avanzel can hear, the bubble promises no talking: it says why (the
+// speech model is on its way, or its download failed) and how to type a thought instead, and Type a thought opens
+// Quick. Not now, Esc or a click elsewhere puts the bubble away, for good.
 import "@avanzel/ui/base.css";
 import { Actions, Bubble, Button, Kbd, Text } from "@avanzel/ui";
 import { useEffect, useState } from "react";
@@ -31,6 +32,10 @@ function UpHere() {
   if (!snap) return null;
   const notNow = <Button size="small" variant="quiet" onClick={() => upHere.close()}>Not now</Button>;
   if (!snap.hears) {
+    // Why Avanzel can't hear yet: the speech model's download failed, or it is still on its way, as setup says.
+    const { model, typeShortcut } = snap;
+    const failed = model.kind === "error" && model.cause === "download";
+    const arriving = model.kind === "missing" || model.kind === "downloading";
     return (
       <Bubble
         title="I'm up here."
@@ -42,9 +47,21 @@ function UpHere() {
           </Actions>
         }
       >
-        <Text>
-          My ears are still arriving. Press <Kbd>{prettyAccelerator(snap.typeShortcut)}</Kbd> anywhere to type a thought.
-        </Text>
+        {failed ? (
+          <Text>
+            The speech model didn't finish downloading, so I can't hear you yet. Type a thought meanwhile, or try the download again in Settings → Voice.
+          </Text>
+        ) : (
+          <Text>
+            {arriving ? <>My ears are still arriving.</> : <>I can't hear you yet.</>}{" "}
+            {/* Type a thought's shortcut, while it works; else the menu bar's Type a thought…, which always does. */}
+            {typeShortcut ? (
+              <>Press <Kbd>{prettyAccelerator(typeShortcut)}</Kbd> anywhere to type a thought.</>
+            ) : (
+              <>Choose Type a thought… in the menu bar to type one.</>
+            )}
+          </Text>
+        )}
       </Bubble>
     );
   }

@@ -2,7 +2,7 @@
 // library's place, the agent that files, a mic check told from a thought, the question to suggest, the pages an answer
 // used, and at the end where the window flies and where Zel's bubble goes. No Electron, so the tests run them as they
 // are.
-import { existsSync, opendirSync, statSync } from "node:fs";
+import { existsSync, opendirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { loadSettings, Vault } from "@avanzel/engine";
 import { agentWorks, isAgentProblem, type FiledPage, type LibraryFolder, type SetupAgent } from "../shared/ipc.ts";
@@ -20,15 +20,36 @@ const HOME_FOLDERS: ReadonlySet<string> = new Set(
 );
 
 /**
+ * `place` as the disk has it: a leading `~` read as `home`, made absolute, and its links followed as far as it exists,
+ * so the real path of its nearest existing folder with the rest of it after. /var/… is /private/var/… then, a link to
+ * ~/Documents is ~/Documents, and /Volumes/Macintosh HD, an alias of the startup disk, is /. Should the disk not say
+ * (a folder it may not read, say), the absolute path as it is.
+ */
+function onDisk(place: string, home: string): string {
+  const absolute = path.resolve(place.replace(/^~(?=$|\/)/, () => home));
+  const rest: string[] = [];
+  let existing = absolute;
+  while (!existsSync(existing) && path.dirname(existing) !== existing) {
+    rest.unshift(path.basename(existing));
+    existing = path.dirname(existing);
+  }
+  try {
+    return path.join(realpathSync.native(existing), ...rest);
+  } catch {
+    return absolute;
+  }
+}
+
+/**
  * Whether `target` is too broad to be a library: the home folder `home`, one of the folders macOS makes in it
  * (Documents, Desktop…), the disk's root, or another disk's (/Volumes/Backup). Making a library there would put the
- * shelves, an AGENTS.md and git history over everything in it, so setup refuses. Names are compared as macOS's disks
- * do, whatever their case.
+ * shelves, an AGENTS.md and git history over everything in it, so setup refuses. Places are compared as they are on
+ * disk (`onDisk`), so no link or alias of one of them gets through, and names whatever their case.
  */
 export function tooBroad(target: string, home: string): boolean {
-  const place = path.resolve(target);
+  const place = onDisk(target, home);
   const parent = path.dirname(place);
-  const own = path.resolve(home);
+  const own = onDisk(home, home);
   if (place === parent || place === own || parent === "/Volumes" || place === "/Volumes") return true;
   return parent === own && HOME_FOLDERS.has(path.basename(place).toLowerCase());
 }

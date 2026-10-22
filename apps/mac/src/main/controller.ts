@@ -1875,7 +1875,7 @@ export class Controller {
       libraryReady: !!this.vault,
       model: this.model,
       shortcut: this.store.get().shortcuts.dictate,
-      typeShortcut: this.store.get().shortcuts.type,
+      typeShortcut: this.typeShortcut(),
       noAgent: this.setup?.begun === true && this.setup.installed.length === 0,
       agents,
       agent: this.setup?.picked ?? bestAgent(agents, folder === "library" ? libraryAgent(libraryPath) : null),
@@ -2591,10 +2591,21 @@ export class Controller {
     });
   }
 
-  /** What Zel's bubble says: the shortcuts to talk and to type, and whether Avanzel can hear yet (`hears`). */
+  /**
+   * What Zel's bubble says: the shortcuts to talk and to type, whether Avanzel can hear yet (`hears`), and the speech
+   * model, which says why not.
+   */
   upHereSnapshot(): UpHereSnapshot {
-    const { dictate, type } = this.store.get().shortcuts;
-    return { shortcut: dictate, typeShortcut: type, hears: this.hears() };
+    return { shortcut: this.store.get().shortcuts.dictate, typeShortcut: this.typeShortcut(), hears: this.hears(), model: this.model };
+  }
+
+  /**
+   * Type a thought's shortcut while it works, for setup's last step and the bubble to teach; null when it didn't
+   * register (another app holds it, or another action has it), when they point to the menu bar's Type a thought….
+   */
+  private typeShortcut(): string | null {
+    const { type } = this.store.get().shortcuts;
+    return type && !this.shortcutProblems.type ? type : null;
   }
 
   /** Try it now, in the bubble: it goes, and Record a thought starts, as its shortcut would start it. */
@@ -2638,7 +2649,9 @@ export class Controller {
    * The setup window has the focus again, say back from Terminal, where the person may have signed an agent in: each
    * installed agent whose sign-in last said it isn't signed in has it read again. That only reads the sign-in, and never
    * asks the agent its question, unlike Check again (`checkAgent`). The row keeps saying "Not signed in" while it is
-   * read, so Found changes only once the answer has; an answer that comes after a newer one (Check again's) is dropped.
+   * read, so Found changes only once the answer has. A read that learns nothing, as of a sign-in that can't be read
+   * (whose "not signed in" came from its question), leaves that finding and its Notice; so does an answer that comes
+   * after a newer one (Check again's).
    */
   rereadSignIns(): void {
     const session = this.setup;
@@ -2709,7 +2722,8 @@ export class Controller {
    * One check, run in the library or its scratch folder (`checkDir`): Settings and setup show it running, then what it
    * found. A scratch folder that can't be made is the check's failure, and the next check tries to make it again. Only
    * with `prompt` may it ask the model. Once Avanzel is quitting, none starts. A read `again` of a sign-in whose last
-   * finding was `again` shows nothing while it runs, and what it finds replaces only that finding, not a newer one.
+   * finding was `again` shows nothing while it runs, and what it finds replaces only that finding, not a newer one, and
+   * only when it found something: learning nothing, it leaves the finding as it was.
    */
   private async runAgentCheck(name: string, harness: Harness, prompt: boolean, again?: AgentStatus): Promise<void> {
     if (this.quitting || this.checksStopped) return;
@@ -2728,9 +2742,11 @@ export class Controller {
       this.runningChecks.delete(abort);
     }
     if (abort.signal.aborted) return; // stopped for quitting: its "… was cancelled" is no news
-    if (again && this.agentChecks.get(name) !== again) return; // a newer check has said more meanwhile
+    // A read again that learned nothing leaves the finding it was to check, which still stands; and a newer check may
+    // have said more meanwhile.
+    if (again && (!status || this.agentChecks.get(name) !== again)) return;
     if (status) this.agentChecks.set(name, status);
-    else this.agentChecks.delete(name); // a sign-in it couldn't read: back to "Installed", with Check
+    else this.agentChecks.delete(name); // a first read that couldn't read the sign-in: "Installed", with Check
     this.broadcast();
   }
 

@@ -1,9 +1,9 @@
 // Step 6, You're all set: how to talk to Avanzel from now on, and where it waits, beside Zel at rest. Until the speech
-// model is ready, it promises no talking: it says the ears are still arriving, as the first-thought step does, and how
-// to type a thought from anywhere instead. Two switches apply at once, as Settings' own do: opening at login, which
-// this step turned on the first time it showed, and the library's evening review, which isn't there when the library
-// has none. Each comes back through setup:changed. Start using Avanzel ends setup (`finish`): the window flies into the
-// menu bar. There is no Back.
+// model is ready, it promises no talking: it says why it can't hear yet, as the first-thought step does, and how to
+// type a thought instead (Type a thought's shortcut while it works, else the menu bar's Type a thought…). Two switches
+// apply at once, as Settings' own do: opening at login, which this step turned on the first time it showed, and the
+// library's evening review, which isn't there when the library has none. Each comes back through setup:changed. Start
+// using Avanzel ends setup (`finish`): the window flies into the menu bar. There is no Back.
 import { Button, Group, Kbd, Stack, Switch, Text, Zel } from "@avanzel/ui";
 import { prettyAccelerator } from "../../../main/shortcuts.ts";
 import { earsLine, reviewLabel } from "../copy.ts";
@@ -34,9 +34,14 @@ export function Done({ snap, finish }: StepProps & { finish(): void }) {
         ) : (
           <>
             {ears && <Text variant="callout">{ears}</Text>}
-            <Text variant="callout">
-              Press <Kbd>{prettyAccelerator(snap.typeShortcut)}</Kbd> anywhere to type a thought. I'll wait in the menu bar.
-            </Text>
+            {/* Type a thought's shortcut, while it works; else the menu bar's Type a thought…, which always does. */}
+            {snap.typeShortcut ? (
+              <Text variant="callout">
+                Press <Kbd>{prettyAccelerator(snap.typeShortcut)}</Kbd> anywhere to type a thought. I'll wait in the menu bar.
+              </Text>
+            ) : (
+              <Text variant="callout">Choose Type a thought… in the menu bar to type one. I'll wait there.</Text>
+            )}
           </>
         )}
         <Group>
