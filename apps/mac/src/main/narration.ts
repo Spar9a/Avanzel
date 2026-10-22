@@ -1,8 +1,10 @@
 // What setup's first filing says the agent is doing: each step it takes (the engine's `FilingStep`) becomes a row of the
-// Filing step. Pure, so its tests reach it; the controller hands it each step, and setup sends the rows to its window.
+// Filing step. `withStep` is pure, so its tests reach it; the controller hands it each step, with `rowPage` to name the
+// pages, and setup sends the rows to its window.
 import { posix } from "node:path";
 import type { FilingStep } from "@avanzel/engine";
 import type { FiledPage, NarrationRow } from "../shared/ipc.ts";
+import { pageInfo } from "./library-info.ts";
 
 /** How many rows a filing keeps: the newest. */
 export const MAX_ROWS = 50;
@@ -14,7 +16,7 @@ const shelfOf = (rel: string) => (rel.includes("/") ? rel.slice(0, rel.indexOf("
  * The rows after one more step, kept to the newest MAX_ROWS. A step adds a row unless it repeats one: a read, once the page
  * has a row of any kind; a write that creates a page, once it has a "new" row; a write that changes one, once it has a
  * "new" or an "updated" row; a removal, once it has a "removed" row; a search, when the newest row is a search. `page` gives
- * a page's title (`pageInfo`); a removed page is gone, so it is named by its file name. The rows given are left as they
+ * a page's title (`rowPage`); a removed page is gone, so it is named by its file name. The rows given are left as they
  * were.
  */
 export function withStep(rows: readonly NarrationRow[], step: FilingStep, page: (rel: string) => FiledPage): NarrationRow[] {
@@ -41,4 +43,14 @@ function rowFor(rows: readonly NarrationRow[], step: FilingStep, page: (rel: str
     case "deleted":
       return had.includes("removed") ? null : row("removed");
   }
+}
+
+/**
+ * The page `withStep` is given for a row, in the library at `root`: `info` (pageInfo) tells a Markdown page's title, from
+ * the file. Any other file, which a step may name too, is named by its file name, extension included, and is not opened:
+ * a big file would hold up the main process, and a title found in what isn't a page would be a guess.
+ */
+export function rowPage(root: string, rel: string, info: (root: string, rel: string) => FiledPage = pageInfo): FiledPage {
+  if (rel.endsWith(".md")) return info(root, rel);
+  return { title: posix.basename(rel), shelf: shelfOf(rel), path: rel };
 }

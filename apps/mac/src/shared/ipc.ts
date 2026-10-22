@@ -279,7 +279,10 @@ export interface NarrationRow {
   kind: "read" | "search" | "new" | "updated" | "removed";
   /** The library path; null for a search. */
   path: string | null;
-  /** pageInfo's title; for "removed", the file name without .md; "" for a search. */
+  /**
+   * pageInfo's title; for a file that isn't Markdown, its file name with the extension; for "removed", the file name
+   * without .md; "" for a search.
+   */
   title: string;
   /** The first folder of a path inside a folder; "" for a root file or a search. */
   shelf: string;

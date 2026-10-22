@@ -1,7 +1,9 @@
-import { posix } from "node:path";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path, { posix } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { FilingStep } from "@avanzel/engine";
-import { MAX_ROWS, withStep } from "../src/main/narration.ts";
+import { MAX_ROWS, rowPage, withStep } from "../src/main/narration.ts";
 import type { FiledPage, NarrationRow } from "../src/shared/ipc.ts";
 
 // The titles pageInfo would find for the pages these tests name; any other page has its file name for a title. Its shelf
@@ -95,5 +97,37 @@ describe("withStep", () => {
     expect(before).toEqual(copy);
     expect(after).not.toBe(before);
     expect(kinds(after)).toEqual(["read", "new"]);
+  });
+});
+
+describe("rowPage", () => {
+  // The lookup a library gives for a page it opens; asked to open anything but Markdown, it throws.
+  const opensOnlyMarkdown = (_root: string, rel: string): FiledPage => {
+    if (!rel.endsWith(".md")) throw new Error(`${rel} was opened`);
+    return page(rel);
+  };
+  const rowsFor = (...steps: FilingStep[]) =>
+    steps.reduce<NarrationRow[]>((rows, step) => withStep(rows, step, (rel) => rowPage("/library", rel, opensOnlyMarkdown)), []);
+
+  it("a file that isn't Markdown is named by its file name, unread", () => {
+    expect(rowsFor(read("topics/budget.pdf"))).toEqual([{ kind: "read", path: "topics/budget.pdf", title: "budget.pdf", shelf: "topics" }]);
+    // Written, it is named the same way, and at the library's root it has no shelf.
+    expect(rowsFor(wrote("topics/data.json", true), wrote("notes.txt"))).toEqual([
+      { kind: "new", path: "topics/data.json", title: "data.json", shelf: "topics" },
+      { kind: "updated", path: "notes.txt", title: "notes.txt", shelf: "" },
+    ]);
+  });
+
+  it("a Markdown page is opened for its title", () => {
+    expect(rowsFor(read("people/mark.md"))).toEqual([{ kind: "read", path: "people/mark.md", title: "Mark", shelf: "people" }]);
+  });
+
+  it("is pageInfo by default: a page is titled from its file, and a file that isn't one is not titled from what is in it", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "avz-narration-"));
+    mkdirSync(path.join(root, "topics"));
+    writeFileSync(path.join(root, "topics", "plan.md"), "# The plan\n");
+    writeFileSync(path.join(root, "topics", "budget.pdf"), "# A line that looks like a title\n");
+    expect(rowPage(root, "topics/plan.md").title).toBe("The plan");
+    expect(rowPage(root, "topics/budget.pdf").title).toBe("budget.pdf");
   });
 });

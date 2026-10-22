@@ -78,7 +78,7 @@ import { frontContext } from "./front-app.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import { captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
-import { withStep } from "./narration.ts";
+import { rowPage, withStep } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
 import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
@@ -916,7 +916,7 @@ export class Controller {
   private filingStep(job: FilingJob, step: FilingStep): void {
     try {
       const root = this.requireVault().root;
-      job.rows = withStep(job.rows, step, (rel) => pageInfo(root, rel));
+      job.rows = withStep(job.rows, step, (rel) => rowPage(root, rel));
       if (this.setup.owns(job)) this.setup.stepped(job);
     } catch (error) {
       console.warn("narration", error);
