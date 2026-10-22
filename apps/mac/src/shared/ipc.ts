@@ -16,8 +16,8 @@ export interface ScreenContext {
 
 export type CapsuleMode = "dictate" | "comment";
 
-/** The panes of the Settings window, in the order of its sidebar. */
-export const SETTINGS_PANES = ["general", "voice", "agents", "tasks", "tools", "privacy"] as const;
+/** The panes of the Settings window, in the order of its toolbar. "tasks" is the scheduled reviews' pane, named Reviews. */
+export const SETTINGS_PANES = ["general", "voice", "agents", "tasks", "privacy"] as const;
 export type SettingsPane = (typeof SETTINGS_PANES)[number];
 export const isSettingsPane = (value: unknown): value is SettingsPane => SETTINGS_PANES.some((pane) => pane === value);
 
@@ -167,6 +167,8 @@ export interface TaskFileProblem {
 
 export interface LibraryInfo {
   path: string;
+  /** The path with the home folder as "~" (tildePath). */
+  label: string;
   exists: boolean;
   isGit: boolean;
   inbox: number;
@@ -193,6 +195,8 @@ export interface SettingsSnapshot {
   /** For each shortcut another app holds, the free ones to use instead, best first (empty when none of them is free). */
   shortcutAlternatives: Partial<Record<keyof Shortcuts, string[]>>;
   obsidian: boolean;
+  /** Open in Obsidian works: Obsidian is installed, and the library has .obsidian/ (obsidianUrl). */
+  opensInObsidian: boolean;
 }
 
 /**
@@ -503,6 +507,10 @@ export interface AvanzelBridge {
     /** Checks agent `name` again, its prompt included; the result arrives through onChanged. */
     checkAgent(name: string): Promise<SettingsSnapshot>;
     openLibrary(): void;
+    /** Show in Finder: the library's folder opens in Finder. */
+    showLibrary(): void;
+    /** Set up Avanzel…: setup opens or comes forward, and Settings closes. */
+    openSetup(): void;
     openPrivacy(pane: "microphone" | "screen"): void;
     requestPermission(kind: "microphone" | "screen"): Promise<SettingsSnapshot>;
   };

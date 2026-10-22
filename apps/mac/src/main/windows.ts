@@ -52,20 +52,21 @@ export function placeCapsule(win: BrowserWindow): void {
   win.setPosition(Math.round(workArea.x + (workArea.width - width) / 2), Math.round(workArea.y + workArea.height - height));
 }
 
-/** `pane`: the pane the page opens on, passed in its address (?pane=voice); without one it opens on General. */
+/**
+ * Settings: an opaque window, as setup is, with the traffic lights inset over the page's drag strip and the panes'
+ * toolbar under it. `pane`: the pane the page opens on, passed in its address (?pane=voice); without one it opens on
+ * General.
+ */
 export function createSettingsWindow(pane?: SettingsPane): BrowserWindow {
   const win = new BrowserWindow({
-    width: 780,
+    width: 680,
     height: 600,
-    minWidth: 680,
-    minHeight: 460,
+    minWidth: 640,
+    minHeight: 440,
     show: false,
     title: "Avanzel Settings",
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 18, y: 18 },
-    vibrancy: "sidebar",
-    visualEffectState: "active",
-    backgroundColor: "#00000000",
     webPreferences,
   });
   void win.loadFile(pagePath("settings"), pane ? { query: { pane } } : undefined);

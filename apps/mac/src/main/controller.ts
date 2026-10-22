@@ -85,6 +85,7 @@ import { runningAppNames } from "./running-apps.ts";
 import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
+import { tildePath } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { MenuBar } from "./tray.ts";
@@ -1434,6 +1435,23 @@ export class Controller {
     this.settingsWindow.focus();
   }
 
+  /** Settings' Show in Finder: the library's folder opens in Finder. Nothing without a library. */
+  showLibraryInFinder(): void {
+    const vault = this.vault;
+    if (vault) void shell.openPath(vault.root);
+  }
+
+  /**
+   * Settings' Set up Avanzel…, offered while there is no library: setup, where a library is made, opens or comes forward,
+   * and Settings closes. Nothing while a library is open.
+   */
+  openSetupFromSettings(): void {
+    if (this.vault) return;
+    this.setup.show();
+    const win = this.settingsWindow;
+    if (win && !win.isDestroyed()) win.close();
+  }
+
   private broadcast(): void {
     const win = this.settingsWindow;
     if (win && !win.isDestroyed()) win.webContents.send("settings:changed", this.snapshot());
@@ -1471,11 +1489,14 @@ export class Controller {
     const stateRuns = vault ? this.readRunState(vault).ran : {};
     const report = vault ? loadTasksReport(vault) : { tasks: [], problems: [] };
     const now = new Date();
+    const home = homedir();
+    const kept = this.store.get().libraryPath; // the library to open at launch, which may not have opened
     return {
       app: this.store.get(),
       library: vault
         ? {
             path: vault.root,
+            label: tildePath(vault.root, home),
             exists: vault.exists(),
             isGit: existsSync(path.join(vault.root, ".git")),
             inbox: vault.pending().length,
@@ -1484,10 +1505,10 @@ export class Controller {
             models: settings?.models ?? {},
             timeoutSeconds: settings?.timeoutSeconds ?? 900,
           }
-        : this.store.get().libraryPath
-          ? { path: this.store.get().libraryPath!, exists: false, isGit: false, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900 }
+        : kept
+          ? { path: kept, label: tildePath(kept, home), exists: false, isGit: false, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900 }
           : null,
-      defaultLibraryPath: path.join(homedir(), "Avanzel"),
+      defaultLibraryPath: path.join(home, "Avanzel"),
       harnesses: Object.values(all).map((h) => ({
         name: h.name,
         available: h.available(),
@@ -1504,6 +1525,7 @@ export class Controller {
       shortcutProblems: this.shortcutProblems,
       shortcutAlternatives: Object.fromEntries(this.takenShortcuts.map((taken) => [taken.key, taken.alternatives])),
       obsidian: this.obsidianInstalled(),
+      opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
     };
   }
 

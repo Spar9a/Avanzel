@@ -25,13 +25,18 @@ import {
   launch,
   noAgents,
   onceMarker,
+  openedWith,
+  pickerAsked,
   read,
   recentlyFiled,
+  shown,
   SIGNED_IN,
   SIGNED_OUT_CLAUDE,
   SIGNED_OUT_CODEX,
   snap,
   speechWav,
+  stubOpening,
+  stubPicker,
   throughFound,
   toDone,
   typeFirstThought,
@@ -40,13 +45,6 @@ import {
 } from "./helpers.ts";
 
 test.afterEach(closeModelHubs);
-
-/** Whether a window of renderer `page` (say "setup") is on screen. */
-const shown = (app: ElectronApplication, page: string) =>
-  app.evaluate(
-    ({ BrowserWindow }, name) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes(`/renderer/${name}/`) && w.isVisible()),
-    page,
-  );
 
 /**
  * How many windows have `title` ("Set up Avanzel", "Avanzel Settings"), shown or not. A window has its title from the
@@ -92,22 +90,6 @@ const statusKind = async (app: ElectronApplication, name: string) =>
 
 /** How the app has called the stand-in for `binary` so far, oldest first. */
 const callsTo = async (app: ElectronApplication, binary: string) => (await agentCalls(app)).filter((line) => line.startsWith(`${binary} `));
-
-/**
- * Stands in for the folder picker: it answers that `dir` was chosen, and keeps how it was asked (the title of the window
- * it is a sheet on, and its options) for `pickerAsked`.
- */
-async function stubPicker(app: ElectronApplication, dir: string): Promise<void> {
-  await app.evaluate(({ dialog }, chosen) => {
-    dialog.showOpenDialog = async (...args: unknown[]) => {
-      const [parent, options] = args.length > 1 ? args : [null, args[0]];
-      (globalThis as { pickerAsked?: unknown }).pickerAsked = { sheetOn: (parent as { getTitle(): string } | null)?.getTitle() ?? null, options };
-      return { canceled: false, filePaths: [chosen] };
-    };
-  }, dir);
-}
-
-const pickerAsked = (app: ElectronApplication) => app.evaluate(() => (globalThis as { pickerAsked?: unknown }).pickerAsked ?? null);
 
 /** Whether `control` lies within the step's width, so none of it is cut off at the step's edge. */
 async function withinStep(control: Locator, step: Locator): Promise<boolean> {
@@ -1915,26 +1897,6 @@ const tabs = (setup: Page) => setup.locator('[data-shelf][data-variant="tab"]');
 
 /** The commits that undid a filing, in `library`'s history. */
 const undoCommits = (library: string) => gitOut(library, "log", "--format=%s").split("\n").filter((subject) => subject.startsWith("avanzel: undo "));
-
-/**
- * From now on, what Avanzel would open in this Mac's own apps (a page, the library) is noted for `openedWith`
- * instead, so no test opens anything here.
- */
-async function stubOpening(app: ElectronApplication): Promise<void> {
-  await app.evaluate(({ shell }) => {
-    const opened: string[] = [];
-    (globalThis as { openedWith?: string[] }).openedWith = opened;
-    shell.openPath = async (file: string) => {
-      opened.push(file);
-      return "";
-    };
-    shell.openExternal = async (url: string) => {
-      opened.push(url);
-    };
-  });
-}
-
-const openedWith = (app: ElectronApplication) => app.evaluate(() => (globalThis as { openedWith?: string[] }).openedWith ?? []);
 
 /** A first run launched with `env`, where "Plant tulips in October" is typed and filed: the app and its setup window, once filed. */
 async function filedFirstThought(env: Record<string, string>): Promise<{ app: ElectronApplication; setup: Page }> {

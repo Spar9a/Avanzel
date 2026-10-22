@@ -31,8 +31,6 @@ const APPEARANCES: Appearance[] = ["light", "dark"];
 // macOS draws them, at 3.4–4.0:1. The fills stay as they are; their labels are held to 3:1 while
 // they are white on exactly that fill, and to 4.5:1 otherwise.
 const ON_FILL = ".btn.primary, .ni.on, .warn";
-// The Settings sidebar's vibrancy, measured from screenshots of the real window.
-const sidebar: Bases = async (mode) => [mode === "light" ? "#e1e1e4" : "#464649"];
 // The capsule floats over any desktop: the lightest and the darkest.
 const desktops: Bases = async () => ["#ffffff", "#000000"];
 // Quick's page is clear, over the popover material macOS draws, which the page can't read: it is read over the window
@@ -196,17 +194,18 @@ function capsuleStates(): [string, CapsuleState, string][] {
 test("every Settings pane, Quick, Ask and capsule state is readable in light and dark", async () => {
   test.setTimeout(240_000);
   const library = await makeLibrary();
-  writeFileSync(path.join(library, "tasks", "broken.md"), "---\nschedule: sometimes\n---\nDo things.\n"); // Shadow tasks shows its problem in red
+  writeFileSync(path.join(library, "tasks", "broken.md"), "---\nschedule: sometimes\n---\nDo things.\n"); // Reviews shows its problem in red
   writeFileSync(path.join(library, "goals", "run-a-marathon.md"), "# Run a marathon\n"); // the page Ask's answer links
   const app = await launch({ AVANZEL_LIBRARY: library });
   const found: string[] = [];
 
+  // The window is opaque: its page draws the window's own surface, so what lies under it doesn't show through.
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  for (const pane of ["General", "Voice", "Agents", "Shadow tasks", "Tools & MCP", "Privacy"]) {
-    await settings.getByRole("button", { name: pane, exact: true }).click();
-    await expect(settings.getByRole("heading", { name: pane })).toBeVisible();
-    if (pane === "Shadow tasks") await expect(settings.getByText(/Unknown schedule "sometimes"/)).toBeVisible();
+  for (const pane of ["General", "Voice", "Agents", "Reviews", "Privacy"]) {
+    await settings.getByRole("radio", { name: pane, exact: true }).click();
+    await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
+    if (pane === "Reviews") await expect(settings.getByText(/Unknown schedule "sometimes"/)).toBeVisible();
     // launch()'s stand-ins for Claude Code and Codex read their sign-in as the pane opens: read the pane once both
     // are done, not while a Check button spins.
     if (pane === "Agents") {
@@ -214,7 +213,7 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
         await expect(settings.getByRole("group", { name }).getByRole("status")).toHaveText("Signed in", { timeout: 40_000 });
       }
     }
-    found.push(...(await readable(app, settings, `Settings › ${pane}`, sidebar)));
+    found.push(...(await readable(app, settings, `Settings › ${pane}`, desktops)));
   }
 
   await call(app, "openQuick");
@@ -245,12 +244,12 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   expect(found).toEqual([]);
 });
 
-test("the welcome screen is readable in light and dark", async () => {
-  const app = await launch({});
-  await call(app, "showSettings"); // without a library, setup opens by itself; Settings keeps its Welcome
-  const welcome = await windowFor(app, "settings");
-  await expect(welcome.getByRole("heading", { name: "Welcome to Avanzel" })).toBeVisible();
-  const found = await readable(app, welcome, "Settings › Welcome", sidebar);
+test("Settings without a library is readable in light and dark", async () => {
+  const app = await launch(firstRun().env); // without a library, setup opens by itself
+  await call(app, "showSettings");
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
+  const found = await readable(app, settings, "Settings › General, no library", desktops);
   await app.close();
   expect(found).toEqual([]);
 });

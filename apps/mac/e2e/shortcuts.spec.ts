@@ -175,7 +175,7 @@ test("without a library a taken shortcut shows no notice, and Settings → Voice
   expect(await capsuleKind(app)).toBe("hidden");
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  await settings.getByRole("button", { name: "Voice", exact: true }).click();
+  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
   await expect(settings.getByRole("button", { name: "Use ⌃⇧Space" })).toBeVisible();
   await expect(settings.getByRole("button", { name: "Use ⌃⌥R" })).toBeVisible();
   await app.close();

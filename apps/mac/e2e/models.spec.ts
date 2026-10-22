@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, MODELS, saveSettings } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { call, capsuleKind, closeModelHubs, emptyHfCache, fakeModelHub, hfSnapshot, launch, makeLibrary, snap, windowFor } from "./helpers.ts";
+import { call, capsuleKind, closeModelHubs, emptyHfCache, fakeModelHub, hfSnapshot, launch, makeLibrary, shown, snap, windowFor } from "./helpers.ts";
 
 const PARAKEET = "nemo-parakeet-tdt-0.6b-v3";
 const SILERO = "silero-vad";
@@ -18,10 +18,6 @@ const pinnedSize = (id: string) => MODELS[id]!.files.int8!.reduce((sum, name) =>
 const total = pinnedSize(PARAKEET) + pinnedSize(SILERO);
 
 const modelStatus = async (app: ElectronApplication) => ((await call(app, "snapshot")) as SettingsSnapshot).model;
-
-/** Whether the window of renderer `name` (say "quick") is on screen. */
-const shown = (app: ElectronApplication, name: string) =>
-  app.evaluate(({ BrowserWindow }, page) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes(`/renderer/${page}/`) && w.isVisible()), name);
 
 test.afterEach(closeModelHubs);
 
@@ -41,7 +37,7 @@ test("without a library nothing downloads, and Settings offers the download with
   expect(await modelStatus(app)).toEqual({ kind: "missing", bytes: total });
   await call(app, "showSettings"); // without a library, setup opens by itself, not Settings
   const settings = await windowFor(app, "settings");
-  await settings.getByRole("button", { name: "Voice", exact: true }).click();
+  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
   await expect(settings.getByRole("button", { name: "Download (673 MB)" })).toBeVisible();
   expect(hub.requests).toEqual([]);
   await app.close();
@@ -141,26 +137,6 @@ test("the download's card says only that typing works while the size isn't known
   await app.close();
 });
 
-test("the welcome screen says that a library also downloads the speech models, and how big they are", async () => {
-  const app = await launch({ HF_HUB_CACHE: emptyHfCache() });
-  await call(app, "showSettings"); // without a library, setup opens by itself; Settings keeps its Welcome
-  const welcome = await windowFor(app, "settings");
-  await expect(welcome.getByText(/any time\. Creating or choosing a library also downloads the speech models once \(673 MB\)\.$/)).toBeVisible();
-  await snap(welcome, "settings-welcome-download");
-  await app.close();
-  // Once both are on this Mac, there is nothing to download, and nothing to say.
-  const cache = emptyHfCache();
-  hfSnapshot(cache, PARAKEET);
-  hfSnapshot(cache, SILERO);
-  const ready = await launch({ HF_HUB_CACHE: cache });
-  await call(ready, "showSettings");
-  const settings = await windowFor(ready, "settings");
-  await expect(settings.getByRole("heading", { name: "Welcome to Avanzel" })).toBeVisible();
-  expect((await modelStatus(ready)).kind).toBe("ready");
-  await expect(settings.getByText(/downloads the speech models/)).toHaveCount(0);
-  await ready.close();
-});
-
 test("a failed download waits quietly, then offers Try again", async () => {
   const hub = await fakeModelHub("missing");
   const library = await makeLibrary();
@@ -182,7 +158,7 @@ test("a failed download waits quietly, then offers Try again", async () => {
   await expect(capsule.getByText("The speech model didn't finish downloading.")).toBeVisible();
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  await settings.getByRole("button", { name: "Voice", exact: true }).click();
+  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
   await expect(settings.getByRole("button", { name: "Try again" })).toBeVisible();
   await app.close();
 });
@@ -200,7 +176,7 @@ test("voice settings Avanzel can't use are named at the shortcut, and nothing do
   await expect(capsule.getByText(/Speech model 'parakeet-v9' is not supported/)).toBeVisible();
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  await settings.getByRole("button", { name: "Voice", exact: true }).click();
+  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
   await expect(settings.getByText(/Speech model 'parakeet-v9' is not supported/)).toBeVisible();
   await expect(settings.getByRole("button", { name: "Try again" })).toHaveCount(0); // trying again can't help
   expect(hub.requests).toEqual([]);

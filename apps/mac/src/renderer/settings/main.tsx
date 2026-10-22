@@ -1,8 +1,14 @@
-import { Button, Row, Text } from "@avanzel/ui";
+// The Settings window: a strip to drag it by, the toolbar that moves between its panes, and the pane under its
+// heading. Each pane applies a change at once and draws the snapshot main sends back. The panes not rebuilt on
+// @avanzel/ui yet (Voice, Agents, the tasks pane and Privacy) stay here, with their helpers, until their own tasks.
+import { Button, Row, Segmented, Stack, Text } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { createRoot } from "react-dom/client";
 import { SETTINGS_PANES, isSettingsPane, type AgentStatus, type AvanzelBridge, type SettingsPane, type SettingsSnapshot, type Shortcuts, type TaskInfo } from "../../shared/ipc.ts";
 import { ACTION_NAMES, prettyAccelerator } from "../../main/shortcuts.ts";
+import { PANE_LABELS } from "./copy.ts";
+import { General } from "./panes/General.tsx";
+import type { PaneProps } from "./parts.tsx";
 import "../common/mac.css";
 import "./styles.css";
 
@@ -18,23 +24,10 @@ function startingPane(): SettingsPane {
   return isSettingsPane(pane) ? pane : "general";
 }
 
-const ICONS: Record<SettingsPane, { bg: string; path: ReactNode; label: string }> = {
-  general: { bg: "#8e8e93", label: "General", path: <><circle cx="7" cy="7" r="2.2" /><path d="M7 1.5v2M7 10.5v2M1.5 7h2M10.5 7h2M3.1 3.1l1.4 1.4M9.5 9.5l1.4 1.4M3.1 10.9l1.4-1.4M9.5 4.5l1.4-1.4" /></> },
-  voice: { bg: "#ff375f", label: "Voice", path: <><rect x="5" y="1.5" width="4" height="7" rx="2" /><path d="M3 7a4 4 0 0 0 8 0M7 11v1.8" /></> },
-  agents: { bg: "#5856d6", label: "Agents", path: <path d="M7 1.8 8.2 5.8 12.2 7 8.2 8.2 7 12.2 5.8 8.2 1.8 7 5.8 5.8Z" /> },
-  tasks: { bg: "#af52de", label: "Shadow tasks", path: <><circle cx="7" cy="7" r="5" /><path d="M7 4v3.2l2.1 1.4" /></> },
-  tools: { bg: "#30b0c7", label: "Tools & MCP", path: <path d="M5 1.8v3M9 1.8v3M3.5 4.8h7v2.4a3.5 3.5 0 0 1-7 0ZM7 10.7v1.8" /> },
-  privacy: { bg: "#007aff", label: "Privacy", path: <path d="M7 1.6 11.6 3.4v3.4c0 2.8-2 4.6-4.6 5.6C4.4 11.4 2.4 9.6 2.4 6.8V3.4Z" /> },
-};
-
 const HARNESS_NAMES: Record<string, string> = {
   claude: "Claude Code", codex: "Codex", opencode: "OpenCode", "cursor-agent": "Cursor Agent", gemini: "Gemini CLI",
 };
 const harnessName = (name: string) => HARNESS_NAMES[name] ?? name;
-
-function Icon({ pane }: { pane: SettingsPane }) {
-  return <span className="ico" style={{ ["--bg" as string]: ICONS[pane].bg }}><svg viewBox="0 0 14 14">{ICONS[pane].path}</svg></span>;
-}
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return <input type="checkbox" role="switch" className="sw" aria-label={label} checked={checked} onChange={(e) => onChange(e.target.checked)} />;
@@ -86,89 +79,6 @@ function Group({ label, children, note }: { label?: string; children: ReactNode;
       {label && <div className="glabel">{label}</div>}
       <div className="group">{children}</div>
       {note && <p className="note">{note}</p>}
-    </>
-  );
-}
-
-function Welcome({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: SettingsSnapshot) => void }) {
-  const [path, setPath] = useState(snap.app.libraryPath ?? snap.defaultLibraryPath);
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <div className="welcome">
-      <h2>Welcome to Avanzel</h2>
-      <p>
-        Avanzel keeps your goals, ideas, problems, memories, people and topics as plain Markdown in a folder you own.
-        Your own agent files every thought there; your voice is turned into text on this Mac and never leaves it.
-      </p>
-      {snap.libraryProblem && <p className="note problem">{snap.libraryProblem}. Fix that, then choose the folder again.</p>}
-      <Group label="Your library">
-        <div className="grow">
-          <div className="fill pathrow">
-            <input type="text" aria-label="Library folder" value={path} onChange={(e) => setPath(e.target.value)} />
-          </div>
-          <button className="btn" onClick={async () => onChange(await api.chooseLibrary())}>Choose existing…</button>
-          <button
-            className="btn primary"
-            onClick={async () => {
-              try {
-                setError(null);
-                onChange(await api.createLibrary(path));
-              } catch (e) {
-                setError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (\w+Error: )?/, "") : String(e));
-              }
-            }}
-          >
-            Create library
-          </button>
-        </div>
-      </Group>
-      {error && <p className="note problem">{error}</p>}
-      <p className="note">
-        A new folder gets the shelves, an AGENTS.md your agent reads, and git history so every change can be undone. Open it in Obsidian any time.
-        {/* The size is part of saying yes: the download starts as soon as there is a library. */}
-        {snap.model.kind === "missing" && snap.model.bytes > 0 && ` Creating or choosing a library also downloads the speech models once (${Math.round(snap.model.bytes / 1e6)} MB).`}
-      </p>
-    </div>
-  );
-}
-
-function General({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: SettingsSnapshot) => void }) {
-  const lib = snap.library;
-  if (!lib || !lib.exists) return <Welcome snap={snap} onChange={onChange} />;
-  const pages = Object.values(lib.shelves).reduce((a, b) => a + b, 0);
-  return (
-    <>
-      <Group label="Library">
-        <div className="grow">
-          <span className="fill two"><b>Location</b><span className="path">{lib.path}</span></span>
-          <button className="btn" onClick={() => api.openLibrary()}>Open</button>
-          <button className="btn" onClick={async () => onChange(await api.chooseLibrary())}>Change…</button>
-        </div>
-        <div className="grow">
-          <span className="fill two">
-            <b>{lib.inbox === 0 ? "Inbox is empty" : lib.inbox === 1 ? "1 note in the inbox" : `${lib.inbox} notes in the inbox`}</b>
-            <small>{pages} pages: {Object.entries(lib.shelves).map(([shelf, n]) => `${n} ${shelf}`).join(", ")}</small>
-          </span>
-        </div>
-        <div className="grow">
-          <span className="fill two"><b>Version history</b><small>{lib.isGit ? "On: every change is a git commit you can undo." : "Off: this folder is not a git repository."}</small></span>
-        </div>
-      </Group>
-      <Group label="After you speak" note="The evening review is a shadow task; change its time under Shadow tasks.">
-        <div className="grow">
-          <span className="fill">File the note</span>
-          <span className="seg" role="radiogroup" aria-label="File the note">
-            <button className={snap.app.fileMode === "now" ? "on" : ""} onClick={async () => onChange(await api.setApp({ fileMode: "now" }))}>Right away</button>
-            <button className={snap.app.fileMode === "evening" ? "on" : ""} onClick={async () => onChange(await api.setApp({ fileMode: "evening" }))}>At the evening review</button>
-          </span>
-        </div>
-      </Group>
-      <Group label="Startup">
-        <div className="grow">
-          <span className="fill">Open Avanzel when you log in</span>
-          <Toggle label="Open at login" checked={snap.app.launchAtLogin} onChange={async (v) => onChange(await api.setApp({ launchAtLogin: v }))} />
-        </div>
-      </Group>
     </>
   );
 }
@@ -426,24 +336,6 @@ function Tasks({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Setti
   );
 }
 
-function Tools() {
-  const tools = [["Calendar", "#ff3b30"], ["Reminders", "#ff9500"], ["Mail", "#007aff"], ["Contacts", "#8e8e93"], ["Files", "#0a84ff"]];
-  return (
-    <Group
-      label="Coming next"
-      note="Shadow tasks will be able to use the Mac's apps and the MCP servers your agents already have. Each tool stays off until you switch it on for a task, and anything that would change something outside your library waits for your OK."
-    >
-      {tools.map(([name, color]) => (
-        <div className="grow" key={name}>
-          <span className="app-ico" style={{ ["--bg" as string]: color }}><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="4" /></svg></span>
-          <span className="fill">{name}</span>
-          <span className="sub">Coming soon</span>
-        </div>
-      ))}
-    </Group>
-  );
-}
-
 function Privacy({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: SettingsSnapshot) => void }) {
   const row = (kind: "microphone" | "screen", label: string, why: string) => {
     const status = snap.permissions[kind];
@@ -474,6 +366,29 @@ function Privacy({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Set
   );
 }
 
+/** The toolbar's choices: every pane, in order, by its name. */
+const PANES = SETTINGS_PANES.map((pane) => ({ value: pane, label: PANE_LABELS[pane] }));
+
+/**
+ * What pane `pane` holds. A rebuilt pane that needs a library is drawn here only while there is one, with NoLibrary in
+ * its place otherwise (`snap.library?.exists ? <Pane {...props} /> : <NoLibrary {...props} />`), rather than returning
+ * early above its own hooks.
+ */
+function paneContent(pane: SettingsPane, props: PaneProps): ReactNode {
+  switch (pane) {
+    case "general":
+      return <General {...props} />;
+    case "voice":
+      return <Voice {...props} />;
+    case "agents":
+      return <Agents {...props} />;
+    case "tasks":
+      return <Tasks {...props} />;
+    case "privacy":
+      return <Privacy {...props} />;
+  }
+}
+
 function App() {
   const [snap, setSnap] = useState<SettingsSnapshot | null>(null);
   const [pane, setPane] = useState<SettingsPane>(startingPane);
@@ -484,26 +399,18 @@ function App() {
   // An error card's Open Settings, while this window is open: a pane Settings doesn't have means General.
   useEffect(() => api.onShowPane((next) => setPane(isSettingsPane(next) ? next : "general")), []);
   if (!snap) return null;
-  const props = { snap, onChange: setSnap };
   return (
-    <div className="window">
-      <aside className="sidebar">
-        <nav aria-label="Settings sections">
-          {SETTINGS_PANES.map((p) => (
-            <button key={p} className={`ni${p === pane ? " on" : ""}`} aria-current={p === pane ? "page" : undefined} onClick={() => setPane(p)}>
-              <Icon pane={p} />{ICONS[p].label}
-            </button>
-          ))}
-        </nav>
-      </aside>
-      <main className="content">
-        <div className="tb"><h1>{ICONS[pane].label}</h1></div>
-        {pane === "general" && <General {...props} />}
-        {pane === "voice" && <Voice {...props} />}
-        {pane === "agents" && <Agents {...props} />}
-        {pane === "tasks" && <Tasks {...props} />}
-        {pane === "tools" && <Tools />}
-        {pane === "privacy" && <Privacy {...props} />}
+    <div className="settings">
+      <div className="settings-drag" />
+      <div className="settings-toolbar">
+        <Segmented label="Section" options={PANES} value={pane} onChange={setPane} />
+      </div>
+      {/* Keyed by its pane: a pane starts at its top, and the one left is unmounted, which ends whatever it had going. */}
+      <main key={pane} className="settings-pane">
+        <Stack gap={20}>
+          <Text variant="heading">{PANE_LABELS[pane]}</Text>
+          <div>{paneContent(pane, { snap, onChange: setSnap })}</div>
+        </Stack>
       </main>
     </div>
   );

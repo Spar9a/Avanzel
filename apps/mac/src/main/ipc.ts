@@ -43,6 +43,8 @@ export function registerIpc(controller: Controller): void {
   handle("settings:check-agent", (_e, name: string) => controller.checkAgent(name));
   handle("settings:request-permission", (_e, kind: "microphone" | "screen") => controller.requestPermission(kind));
   on("settings:open-library", () => controller.openLibraryFolder());
+  on("settings:show-library", () => controller.showLibraryInFinder());
+  on("settings:open-setup", () => controller.openSetupFromSettings());
   on("settings:open-privacy", (_e, pane: "microphone" | "screen") => void controller.openPrivacy(pane));
 
   // quick type & ask

@@ -1,19 +1,18 @@
-// The library around the captures: shadow tasks, their run state, and libraries that misbehave.
+// The library around the captures: shadow tasks, their run state, and libraries that misbehave or aren't there.
 import { expect, test } from "@playwright/test";
-import { chmodSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { call, capsuleKind, exists, filesUnder, launch, makeLibrary, snap, windowFor } from "./helpers.ts";
+import { call, capsuleKind, exists, filesUnder, firstRun, launch, makeLibrary, openSettings, snap, stubPicker, windowFor } from "./helpers.ts";
 
-test("a malformed task file shows up under Shadow tasks, and the evening review still runs", async () => {
+test("a malformed task file shows up under Reviews, and the evening review still runs", async () => {
   const library = await makeLibrary();
   writeFileSync(path.join(library, "tasks", "broken.md"), "---\nschedule: sometimes\n---\nDo things.\n");
   const app = await launch({ AVANZEL_LIBRARY: library });
   await call(app, "setApp", { fileMode: "evening" });
   await call(app, "submitQuick", "a thought for tonight");
-  await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
-  await settings.getByRole("button", { name: "Shadow tasks", exact: true }).click();
+  const settings = await openSettings(app, "Reviews");
   await expect(settings.getByText("tasks/broken.md")).toBeVisible();
   await expect(settings.getByText(/Unknown schedule "sometimes"/)).toBeVisible();
   await expect(settings.getByText("Evening review", { exact: true })).toBeVisible();
@@ -50,22 +49,42 @@ test("when shadow tasks last ran is kept with the app, not in the library (an ol
   await app.close();
 });
 
-test("a library that can't be opened is explained in Settings and the menu, and the menu bar icon stays", async () => {
+test("a library that can't be opened is explained in Settings and the menu, and Choose a folder… fixes it", async () => {
   const library = await makeLibrary();
+  const good = await makeLibrary();
   rmSync(path.join(library, "tasks"), { recursive: true });
   chmodSync(library, 0o555); // read-only: the default shadow tasks can't be created
   try {
-    const app = await launch({ AVANZEL_LIBRARY: library });
+    // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
+    const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
     const settings = await windowFor(app, "settings");
-    await expect(settings.getByText(/Avanzel couldn't open the library/)).toBeVisible();
-    await expect(settings.getByText(/permission denied/)).toBeVisible();
+    await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+    const problem = settings.getByRole("alert");
+    await expect(problem).toContainText(/Avanzel couldn't open the library/);
+    await expect(problem).toContainText(/permission denied/);
     await snap(settings, "settings-library-problem");
     const [setUp] = (await call(app, "menuForTests")) as { label: string; sublabel?: string }[];
     expect(setUp?.sublabel).toMatch(/^Avanzel couldn't open the library/);
+    await stubPicker(app, good);
+    await problem.getByRole("button", { name: "Choose a folder…" }).click();
+    await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.path).toBe(good);
+    await expect(settings.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
     await app.close();
   } finally {
     chmodSync(library, 0o755);
   }
+});
+
+test("Settings without a library offers setup, which comes forward as Settings closes", async () => {
+  const app = await launch(firstRun().env); // without a library, setup opens by itself
+  await call(app, "showSettings");
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
+  const closed = settings.waitForEvent("close");
+  await settings.getByRole("button", { name: "Set up Avanzel…" }).click().catch(() => undefined); // closes Settings, before the click returns
+  await closed;
+  expect(await call(app, "setupStepForTests")).toBe("hello");
+  await app.close();
 });
 
 test("a typed thought that can't be saved keeps its words and the box stays usable", async () => {

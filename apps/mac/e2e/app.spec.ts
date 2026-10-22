@@ -1,9 +1,26 @@
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { git, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { alive, call, capsuleKind, exists, filesUnder, launch, makeLibrary, read, recentlyFiled, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
+import {
+  alive,
+  call,
+  capsuleKind,
+  exists,
+  filesUnder,
+  launch,
+  makeLibrary,
+  openedWith,
+  read,
+  recentlyFiled,
+  screenshotFixture,
+  shown,
+  snap,
+  speechWav,
+  stubOpening,
+  windowFor,
+} from "./helpers.ts";
 
 const inbox = (root: string) => readdirSync(path.join(root, "inbox")).filter((n) => !n.startsWith("."));
 const archived = (root: string) => {
@@ -17,10 +34,6 @@ const archived = (root: string) => {
   walk(path.join(root, "raw"));
   return files;
 };
-
-/** Whether the window of renderer `name` (say "quick") is on screen. */
-const shown = (app: ElectronApplication, name: string) =>
-  app.evaluate(({ BrowserWindow }, page) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes(`/renderer/${page}/`) && w.isVisible()), name);
 
 test("dictation is transcribed on the Mac, filed by the agent, and shows the pages", async () => {
   const library = await makeLibrary();
@@ -276,7 +289,7 @@ test("asking shows the agent's answer", async () => {
   await app.close();
 });
 
-test("an answer's links become buttons for the pages they name", async () => {
+test("an answer's links become buttons that open the pages they name", async () => {
   const library = await makeLibrary();
   writeFileSync(path.join(library, "goals", "run-a-marathon.md"), "# Run a marathon\n");
   const app = await launch({ AVANZEL_LIBRARY: library });
@@ -288,9 +301,15 @@ test("an answer's links become buttons for the pages they name", async () => {
   // is a button beside its shelf.
   await expect(ask.getByText("Q: What about run-a-marathon?")).toBeVisible({ timeout: 60_000 });
   await expect(ask.getByText("Pages used:", { exact: true })).toBeVisible();
-  await expect(ask.getByRole("button", { name: "Run a marathon", exact: true })).toBeVisible();
+  const page = ask.getByRole("button", { name: "Run a marathon", exact: true });
+  await expect(page).toBeVisible();
   await expect(ask.getByText("Goals", { exact: true })).toBeVisible();
   await snap(ask, "9-ask-sources");
+  // The button opens its page.
+  await stubOpening(app);
+  await page.click();
+  await expect.poll(() => openedWith(app)).toHaveLength(1);
+  expect(realpathSync((await openedWith(app))[0] ?? "")).toBe(realpathSync(path.join(library, "goals", "run-a-marathon.md")));
   await app.close();
 });
 
@@ -531,19 +550,6 @@ test("the evening review transcribes a recording dropped into the inbox, with no
   const [capture] = archived(library);
   expect(readFileSync(capture!, "utf8")).toContain("source: audio");
   expect(readFileSync(capture!, "utf8")).toMatch(/bicycle helmet/i);
-  await app.close();
-});
-
-test("settings show every pane", async () => {
-  const library = await makeLibrary();
-  const app = await launch({ AVANZEL_LIBRARY: library });
-  await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
-  for (const pane of ["General", "Voice", "Agents", "Shadow tasks", "Tools & MCP", "Privacy"]) {
-    await settings.getByRole("button", { name: pane, exact: true }).click();
-    await expect(settings.getByRole("heading", { name: pane })).toBeVisible();
-    await snap(settings, `settings-${pane.toLowerCase().replace(/[^a-z]+/g, "-")}`);
-  }
   await app.close();
 });
 

@@ -271,6 +271,55 @@ export async function windowFor(app: ElectronApplication, name: string): Promise
   return app.windows().find((w) => w.url().includes(`/renderer/${name}/`))!;
 }
 
+/** Whether a window of renderer `name` (say "quick") is on screen. */
+export const shown = (app: ElectronApplication, name: string) =>
+  app.evaluate(({ BrowserWindow }, page) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes(`/renderer/${page}/`) && w.isVisible()), name);
+
+/** Opens Settings (showSettings) and moves to `pane` on its toolbar; returns the window once that pane's heading shows. */
+export async function openSettings(app: ElectronApplication, pane = "General"): Promise<Page> {
+  await call(app, "showSettings");
+  const settings = await windowFor(app, "settings");
+  await settings.getByRole("radiogroup", { name: "Section" }).getByRole("radio", { name: pane, exact: true }).click();
+  await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
+  return settings;
+}
+
+/**
+ * Stands in for the folder picker: it answers that `dir` was chosen, and keeps how it was asked (the title of the window
+ * it is a sheet on, and its options) for `pickerAsked`.
+ */
+export async function stubPicker(app: ElectronApplication, dir: string): Promise<void> {
+  await app.evaluate(({ dialog }, chosen) => {
+    dialog.showOpenDialog = async (...args: unknown[]) => {
+      const [parent, options] = args.length > 1 ? args : [null, args[0]];
+      (globalThis as { pickerAsked?: unknown }).pickerAsked = { sheetOn: (parent as { getTitle(): string } | null)?.getTitle() ?? null, options };
+      return { canceled: false, filePaths: [chosen] };
+    };
+  }, dir);
+}
+
+export const pickerAsked = (app: ElectronApplication) => app.evaluate(() => (globalThis as { pickerAsked?: unknown }).pickerAsked ?? null);
+
+/**
+ * From now on, what Avanzel would open in this Mac's own apps (a page, the library) is noted for `openedWith`
+ * instead, so no test opens anything here.
+ */
+export async function stubOpening(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ shell }) => {
+    const opened: string[] = [];
+    (globalThis as { openedWith?: string[] }).openedWith = opened;
+    shell.openPath = async (file: string) => {
+      opened.push(file);
+      return "";
+    };
+    shell.openExternal = async (url: string) => {
+      opened.push(url);
+    };
+  });
+}
+
+export const openedWith = (app: ElectronApplication) => app.evaluate(() => (globalThis as { openedWith?: string[] }).openedWith ?? []);
+
 /**
  * A first run from Hello to the first-thought step, as a person goes: Set me up, then Looks good once setup has chosen
  * Claude Code (its stand-in reads as signed in), which makes the library at ~/Avanzel. Returns the setup window.

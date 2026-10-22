@@ -7,18 +7,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, writeWav } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { agentCalls, agentPath, alive, call, launch, makeLibrary, SIGNED_OUT_CLAUDE, UNREADABLE_CLAUDE, windowFor } from "./helpers.ts";
-
-/** Opens Settings → Agents and returns it. */
-async function agentsPane(app: ElectronApplication): Promise<Page> {
-  await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
-  await settings.getByRole("button", { name: "Agents", exact: true }).click();
-  return settings;
-}
+import { agentCalls, agentPath, alive, call, launch, makeLibrary, openSettings, SIGNED_OUT_CLAUDE, UNREADABLE_CLAUDE, windowFor } from "./helpers.ts";
 
 /** Opens Settings → Agents and returns the fake agent's row, a group named for its agent. */
-const fakeAgentRow = async (app: ElectronApplication) => (await agentsPane(app)).getByRole("group", { name: "fake" });
+const fakeAgentRow = async (app: ElectronApplication) => (await openSettings(app, "Agents")).getByRole("group", { name: "fake" });
 
 /** What the agent's last check found, as the controller keeps it (null: not checked, or the check couldn't tell). */
 const statusOf = async (app: ElectronApplication, name: string) =>
@@ -63,7 +55,7 @@ test("an agent whose reply asks to sign in says how, then what it said", async (
 test("a problem is red only for the agent in use; a failure loses its Error label, and a sign-in command's no is the hint alone", async () => {
   // The fake agent, the library's, fails as Codex does: "ERROR: the model is not supported with this account".
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), FAKE_AGENT_MODE: "fail-noisy", PATH: agentPath({ claude: SIGNED_OUT_CLAUDE }) });
-  const settings = await agentsPane(app);
+  const settings = await openSettings(app, "Agents");
   const claude = settings.getByRole("group", { name: "Claude Code" }).getByText("Not signed in.", { exact: false });
   await expect(claude).toHaveText("Not signed in. Run claude once in Terminal and sign in.", { timeout: 20_000 });
   await expect(claude).toHaveAttribute("data-tone", "secondary"); // Claude Code isn't the agent in use
@@ -77,7 +69,7 @@ test("a problem is red only for the agent in use; a failure loses its Error labe
 
 test("the free checks read launch()'s stand-ins for Claude Code and Codex, and ask them nothing", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
-  const settings = await agentsPane(app);
+  const settings = await openSettings(app, "Agents");
   for (const name of ["Claude Code", "Codex"]) {
     await expect(settings.getByRole("group", { name }).getByRole("status")).toHaveText("Signed in", { timeout: 20_000 });
   }
@@ -88,7 +80,7 @@ test("the free checks read launch()'s stand-ins for Claude Code and Codex, and a
 
 test("a free check that can't read the sign-in leaves the agent unchecked, and Check then asks its one question", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), PATH: agentPath({ claude: UNREADABLE_CLAUDE }) });
-  const settings = await agentsPane(app);
+  const settings = await openSettings(app, "Agents");
   await expect(settings.getByRole("group", { name: "Codex" }).getByRole("status")).toHaveText("Signed in", { timeout: 20_000 });
   const claude = settings.getByRole("group", { name: "Claude Code" });
   await expect.poll(() => agentCalls(app), { timeout: 20_000 }).toContain("claude auth status");
@@ -151,8 +143,9 @@ test("a check stopped for quitting leaves no result, and no check starts while A
   await app.close();
 });
 
-// An error card's "Open Settings" opens the pane where the problem is fixed, not always General.
-const paneButton = (settings: Page, name: string) => settings.getByRole("button", { name, exact: true });
+// An error card's "Open Settings" opens the pane where the problem is fixed, not always General. Each pane is a radio on
+// the window's toolbar.
+const paneRadio = (settings: Page, name: string) => settings.getByRole("radio", { name, exact: true });
 
 test("Open Settings on a failed filing opens Settings → Agents", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), FAKE_AGENT_MODE: "fail" });
@@ -165,7 +158,7 @@ test("Open Settings on a failed filing opens Settings → Agents", async () => {
   await expect(capsule.getByText("couldn't file this note")).toBeVisible({ timeout: 60_000 });
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings"); // a new window: it opens on the pane its address names
-  await expect(paneButton(settings, "Agents")).toHaveAttribute("aria-current", "page");
+  await expect(paneRadio(settings, "Agents")).toHaveAttribute("aria-checked", "true");
   await app.close();
 });
 
@@ -173,21 +166,25 @@ test("Open Settings moves a Settings window that is open to the pane, and a pane
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   await call(app, "showSettings", "no-such-pane"); // an address that names a pane the page doesn't have
   const settings = await windowFor(app, "settings");
-  await expect(paneButton(settings, "General")).toHaveAttribute("aria-current", "page");
+  await expect(paneRadio(settings, "General")).toHaveAttribute("aria-checked", "true");
   await call(app, "openSettingsFor", "open-settings:voice");
-  await expect(paneButton(settings, "Voice")).toHaveAttribute("aria-current", "page");
-  await expect(paneButton(settings, "General")).not.toHaveAttribute("aria-current", "page");
+  await expect(paneRadio(settings, "Voice")).toHaveAttribute("aria-checked", "true");
+  await expect(paneRadio(settings, "General")).not.toHaveAttribute("aria-checked", "true");
   await call(app, "openSettingsFor", "open-settings:no-such-pane");
-  await expect(paneButton(settings, "General")).toHaveAttribute("aria-current", "page");
+  await expect(paneRadio(settings, "General")).toHaveAttribute("aria-checked", "true");
   await call(app, "openSettingsFor", "open-settings:privacy");
-  await expect(paneButton(settings, "Privacy")).toHaveAttribute("aria-current", "page");
+  await expect(paneRadio(settings, "Privacy")).toHaveAttribute("aria-checked", "true");
+  await call(app, "openSettingsFor", "open-settings:tools"); // a pane Settings had once: its toolbar has no place for it
+  await expect(paneRadio(settings, "General")).toHaveAttribute("aria-checked", "true");
+  await call(app, "openSettingsFor", "open-settings:tasks"); // the scheduled reviews' pane, named Reviews
+  await expect(paneRadio(settings, "Reviews")).toHaveAttribute("aria-checked", "true");
   await call(app, "openSettingsFor", "open-settings"); // an action that names no pane
-  await expect(paneButton(settings, "General")).toHaveAttribute("aria-current", "page");
+  await expect(paneRadio(settings, "General")).toHaveAttribute("aria-checked", "true");
   // The open window gets settings:show-pane with whatever pane it is asked for; one it doesn't have means General.
   await call(app, "openSettingsFor", "open-settings:privacy");
-  await expect(paneButton(settings, "Privacy")).toHaveAttribute("aria-current", "page");
+  await expect(paneRadio(settings, "Privacy")).toHaveAttribute("aria-checked", "true");
   await call(app, "showSettings", "no-such-pane");
-  await expect(paneButton(settings, "General")).toHaveAttribute("aria-current", "page");
+  await expect(paneRadio(settings, "General")).toHaveAttribute("aria-checked", "true");
   await expect(settings.getByRole("heading", { name: "General" })).toBeVisible();
   await app.close();
 });
@@ -209,7 +206,7 @@ test("Open Settings on a recording too short to hold speech opens Settings → V
   const blip = path.join(scratchDir(), "blip.wav");
   writeWav(blip, new Float32Array(1600)); // 0.1 s: under 0.3 s Avanzel doesn't try to transcribe
   const { app, settings } = await openSettingsAfterDictating(blip, "No speech recognized");
-  await expect(paneButton(settings, "Voice")).toHaveAttribute("aria-current", "page");
+  await expect(paneRadio(settings, "Voice")).toHaveAttribute("aria-checked", "true");
   await app.close();
 });
 
@@ -217,6 +214,6 @@ test("Open Settings on a recording that can't be read opens Settings → Voice",
   const notAudio = path.join(scratchDir(), "speech.wav");
   writeFileSync(notAudio, "this is not a recording");
   const { app, settings } = await openSettingsAfterDictating(notAudio, /is not a PCM WAV file/);
-  await expect(paneButton(settings, "Voice")).toHaveAttribute("aria-current", "page");
+  await expect(paneRadio(settings, "Voice")).toHaveAttribute("aria-checked", "true");
   await app.close();
 });

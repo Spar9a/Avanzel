@@ -43,6 +43,8 @@ const bridge: AvanzelBridge = {
     checkAgents: () => ipcRenderer.invoke("settings:check-agents"),
     checkAgent: (name) => ipcRenderer.invoke("settings:check-agent", name),
     openLibrary: () => ipcRenderer.send("settings:open-library"),
+    showLibrary: () => ipcRenderer.send("settings:show-library"),
+    openSetup: () => ipcRenderer.send("settings:open-setup"),
     openPrivacy: (pane) => ipcRenderer.send("settings:open-privacy", pane),
     requestPermission: (kind) => ipcRenderer.invoke("settings:request-permission", kind),
   },

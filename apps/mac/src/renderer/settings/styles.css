@@ -1,14 +1,35 @@
-html, body { background: transparent; }
-.window { display: grid; grid-template-columns: 210px 1fr; height: 100vh; }
-.sidebar { padding: 46px 10px 12px; -webkit-app-region: drag; }
-.sidebar nav { display: flex; flex-direction: column; gap: 1px; -webkit-app-region: no-drag; }
-.ni { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 6px; border-radius: 7px; border: 0; background: transparent; color: var(--text); text-align: left; font-size: 13px; }
-.ni.on { background: var(--accent); color: #fff; }
-.ico { width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; background: var(--bg); flex: none; }
-.ico svg { width: 13px; height: 13px; stroke: #fff; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.content { background: var(--window); overflow-y: auto; padding: 0 24px 28px; }
-.tb { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; height: 52px; background: var(--window); -webkit-app-region: drag; }
-.tb h1 { font-size: 15px; margin: 0; }
+/* The Settings window's layout. It only arranges: the toolbar and the rebuilt panes come from @avanzel/ui. */
+#root {
+  height: 100%;
+}
+
+/* A strip to drag the window by, where the traffic lights sit; the toolbar that moves between the panes, in the middle,
+   as a macOS settings window has it; the pane under them. The pane scrolls and the toolbar stays put. */
+.settings {
+  display: grid;
+  grid-template-rows: 40px auto minmax(0, 1fr);
+  height: 100%;
+}
+.settings-drag {
+  -webkit-app-region: drag;
+}
+.settings-toolbar {
+  display: flex;
+  justify-content: center;
+  padding: 0 var(--av-space-24) var(--av-space-20);
+}
+/* A word too long for its line, such as a path or an agent's message, breaks rather than pushing the pane sideways. */
+.settings-pane {
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  padding: 0 var(--av-space-24) var(--av-space-24);
+}
+/* The library's shelves, under its row in the same panel, 12 in from every edge as the row's label is. */
+.settings-shelves {
+  padding: var(--av-space-12);
+}
+
+/* The panes not rebuilt yet (Voice, Agents, the tasks pane and Privacy), until each is. */
 .glabel { font-size: 12.5px; font-weight: 600; color: var(--text-2); margin: 18px 4px 6px; }
 .group { border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--hair); }
 .grow { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px; border-top: 1px solid var(--hair); }
@@ -19,29 +40,18 @@ html, body { background: transparent; }
 .note { margin: 6px 4px 0; font-size: 12px; color: var(--text-2); line-height: 1.45; max-width: 70ch; }
 .problem { color: var(--danger-text); font-size: 12px; }
 .alternatives { padding-top: var(--av-space-6); }
-.path { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sw { appearance: none; width: 30px; height: 18px; border-radius: 9px; background: color-mix(in srgb, var(--text) 18%, transparent); position: relative; flex: none; margin: 0; border: 0; }
 .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: left 120ms; }
 .sw:checked { background: var(--accent); }
 .sw:checked::after { left: 14px; }
-.seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--seg); }
-.seg button { border: 0; background: transparent; color: var(--text-2); padding: 3px 10px; border-radius: 6px; font-size: 12px; }
-.seg button.on { background: var(--control); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 .keys { min-width: 120px; justify-content: center; }
 .keys.recording { box-shadow: 0 0 0 2px var(--accent); }
 .status-ok { color: var(--ok-text); font-size: 12px; }
 .status-bad { color: var(--danger-text); font-size: 12px; }
 .bar { width: 160px; height: 6px; border-radius: 3px; background: var(--seg); overflow: hidden; }
 .bar > i { display: block; height: 100%; background: var(--accent); }
-.welcome h2 { font-size: 22px; margin: 6px 0 6px; }
-.welcome p { color: var(--text-2); max-width: 60ch; margin: 0 0 14px; line-height: 1.5; }
-.welcome p.problem { color: var(--danger-text); }
-.welcome .pathrow { display: flex; gap: 8px; align-items: center; }
-.welcome .pathrow input { flex: 1; }
 .task-editor { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px 12px; border-top: 1px solid var(--hair); }
 .task-editor .line { display: flex; gap: 10px; align-items: center; }
 .task-editor .k { width: 92px; flex: none; color: var(--text-2); }
 .task-editor textarea { flex: 1; min-height: 70px; }
 .actions { display: flex; justify-content: flex-end; gap: 8px; }
-.app-ico { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; background: var(--bg); flex: none; }
-.app-ico svg { width: 13px; height: 13px; stroke: #fff; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
