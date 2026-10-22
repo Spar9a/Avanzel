@@ -8,6 +8,7 @@ export * from "./search.ts";
 export * as git from "./git.ts";
 export * from "./prompts.ts";
 export * from "./claude-stream.ts";
+export * from "./guard-hook.ts";
 export * from "./harness.ts";
 export * from "./librarian.ts";
 export * from "./tasks.ts";

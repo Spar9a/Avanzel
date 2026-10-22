@@ -515,6 +515,52 @@ describe("runHeadless with Claude Code", () => {
     expect(steps).toEqual([]);
   });
 
+  /** The shell that writes the agent's arguments into the library, one to a line (no argument here holds a newline). */
+  const recordArgs = `printf '%s\\n' "$@" > ARGV`;
+  const recordedArgs = () => readFileSync(join(tmp(), "ARGV"), "utf8").split("\n");
+  /** The --settings the agent was given, parsed. */
+  const recordedSettings = () => {
+    const args = recordedArgs();
+    return JSON.parse(args[args.indexOf("--settings") + 1] ?? "") as {
+      permissions: { deny: string[] };
+      hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> };
+    };
+  };
+
+  it("Claude Code's write runs carry the guard; reads and other agents don't", async () => {
+    vi.stubEnv("PATH", binScripts(tmp(), { claude: recordArgs, codex: recordArgs }));
+    await runClaude();
+    expect(recordedSettings().permissions.deny.length).toBeGreaterThan(0);
+    await runClaude({ write: false });
+    expect(recordedArgs()).not.toContain("--settings");
+    await runHeadless(builtin("codex"), "x", tmp(), { write: true, timeoutSeconds: 30 });
+    expect(recordedArgs()).not.toContain("--settings");
+    // Only the built-in Claude Code is guarded: not another agent, nor a custom harness that takes its name.
+    expect(builtin("claude").guard).toBe(true);
+    for (const name of ["codex", "opencode", "cursor-agent", "gemini"]) expect(builtin(name).guard).toBe(false);
+    const mine = { name: "claude", headless: ["claude", "-p", "{prompt}"], interactive: [] };
+    expect((harnesses(settingsWith({ harnesses: { claude: mine } })).claude as Harness).guard).toBe(false);
+  });
+
+  it("the hook works during the run and is gone after", async () => {
+    // A stand-in Claude Code that runs its own hook, as Claude Code does before a Write of raw/x.md, and replies with
+    // what the hook said. (Shell-quoted, so no single quote in it.)
+    const standIn = [
+      'const args = process.argv; const settings = JSON.parse(args[args.indexOf("--settings") + 1]);',
+      "const { command } = settings.hooks.PreToolUse[0].hooks[0];",
+      'const input = JSON.stringify({ tool_name: "Write", tool_input: { file_path: process.cwd() + "/raw/x.md" }, cwd: process.cwd() });',
+      'const said = require("child_process").execFileSync("/bin/sh", ["-c", command], { input, encoding: "utf8" });',
+      'console.log(JSON.stringify({ type: "result", is_error: false, result: said }));',
+    ].join(" ");
+    onPath(`${recordArgs}; exec '${process.execPath}' -e '${standIn}' -- "$@"`);
+    const result = await runClaude();
+    expect(result.output).toContain('"permissionDecision":"deny"');
+    const command = recordedSettings().hooks.PreToolUse[0]?.hooks[0]?.command ?? "";
+    const script = /'([^']*\/guard-hook\.mjs)'/.exec(command)?.[1] ?? "";
+    expect(script).not.toBe("");
+    expect(existsSync(script)).toBe(false);
+  });
+
   // `claude auth status` says nothing a check understands here, so the check asks Claude Code one short question.
   const authUnknown = `if [ "$1" = auth ]; then echo "unknown command"; exit 1; fi; `;
 

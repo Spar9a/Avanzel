@@ -10,6 +10,7 @@ import {
   powerMonitor,
   shell,
 } from "electron";
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -26,6 +27,7 @@ import {
   errorLine,
   formatSchedule,
   harnesses as listHarnesses,
+  installHook,
   lastDue,
   loadSettings,
   loadTasksReport,
@@ -2088,5 +2090,20 @@ export class Controller {
   /** The text Copy put on the clipboard, oldest first; recorded only with AVANZEL_TEST=1. */
   copiedForTests(): string[] {
     return this.copied;
+  }
+
+  /**
+   * What the filing guard's hook prints for a Write of `filePath` by an agent working in `root`: its deny, or "" when it
+   * lets the write through. The hook runs as in a filing, through the shell, with this binary as Node.
+   */
+  guardForTests(root: string, filePath: string): string {
+    const dir = mkdtempSync(path.join(tmpdir(), "avanzel-guard-"));
+    try {
+      const command = installHook(dir, root, process.execPath);
+      const input = JSON.stringify({ tool_name: "Write", tool_input: { file_path: filePath }, cwd: root });
+      return execFileSync("/bin/sh", ["-c", command], { input, encoding: "utf8" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 }

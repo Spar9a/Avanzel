@@ -169,7 +169,7 @@ permissions each CLI offers:
 
 | Agent | How Avanzel runs it |
 |---|---|
-| Claude Code | `claude -p … --tools Read,Write,Edit,Glob,Grep --permission-mode acceptEdits --strict-mcp-config`: file tools only, no shell, no web, none of your MCP servers (read-only tools for `ask`) |
+| Claude Code | In the Mac app, `claude -p … --output-format stream-json --verbose --tools Read,Write,Edit,Glob,Grep --permission-mode acceptEdits --strict-mcp-config --settings <guard>`: file tools only, no shell, no web, none of your MCP servers, and the write guard described below (read-only tools for `ask`) |
 | Codex | `codex exec --cd <library> --sandbox workspace-write` (`read-only` for `ask`) |
 | OpenCode | `opencode run --dir <library>`; the library's `opencode.json` denies bash and web access |
 | Cursor Agent | `cursor-agent -p --force` (without `--force` for `ask`); untested so far |
@@ -227,6 +227,8 @@ shelves or the rules; your agent reads it on every run.
 
 Avanzel enforces a few guarantees no matter how the agent behaves:
 
+- in the Mac app, a Claude Code write to `inbox/`, `raw/`, `tasks/`, the files listed below or
+  anywhere outside the library is refused before it happens, and the agent is told why;
 - your captured words are restored byte-for-byte if the agent touches them;
 - a capture is archived only after a run that actually filed it (an agent that only talks
   leaves it in the inbox), and never over an earlier capture with the same name;

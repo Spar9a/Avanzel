@@ -2,7 +2,8 @@
 //
 // Every run happens with cwd = the library, so the harness picks up AGENTS.md / CLAUDE.md, and with
 // the narrowest permissions each CLI offers: file tools only for Claude Code, the workspace sandbox
-// for Codex, the library's opencode.json for OpenCode.
+// for Codex, the library's opencode.json for OpenCode. Claude Code's write runs also carry the write
+// guard (guard-hook.ts), which refuses writes to the owner's words and the library's settings.
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -12,6 +13,7 @@ import { StringDecoder } from "node:string_decoder";
 import { AvanzelError } from "../types.ts";
 import { ClaudeStream, type ToolStep } from "./claude-stream.ts";
 import type { CustomHarness, Env, Settings } from "./config.ts";
+import { guardSettings, installHook } from "./guard-hook.ts";
 import { which } from "./proc.ts";
 
 export const BUILTIN_ORDER = ["claude", "codex", "opencode", "cursor-agent", "gemini"] as const;
@@ -66,6 +68,11 @@ export interface HarnessSpec {
   streams?: boolean;
   /** The agent's own sign-in status command, when it has one. */
   signIn?: SignInCheck;
+  /**
+   * Whether a write run carries the write guard (`guardSettings`), which refuses writes to the owner's words, the
+   * library's settings and anything outside the library before they happen. Only Claude Code takes it.
+   */
+  guard?: boolean;
 }
 
 export class Harness {
@@ -75,6 +82,7 @@ export class Harness {
   readonly experimental: boolean;
   readonly streams: boolean;
   readonly signIn: SignInCheck | undefined;
+  readonly guard: boolean;
   readonly #spec: HarnessSpec;
 
   constructor(spec: HarnessSpec) {
@@ -85,6 +93,7 @@ export class Harness {
     this.experimental = spec.experimental ?? false;
     this.streams = spec.streams ?? false;
     this.signIn = spec.signIn;
+    this.guard = spec.guard ?? false;
   }
 
   available(): boolean {
@@ -164,6 +173,7 @@ const BUILTINS: Readonly<Record<string, Harness>> = {
     interactive: (_vault, model) => ["claude", ...opt("--model", model)],
     streams: true,
     signIn: { argv: ["claude", "auth", "status"], signedIn: claudeSignedIn },
+    guard: true,
   }),
   codex: new Harness({
     name: "codex",
@@ -291,7 +301,10 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
   const tmp = mkdtempSync(join(tmpdir(), "avanzel-"));
   try {
     const outputFile = join(tmp, "last-message.txt");
-    const argv = harness.headlessArgv(prompt, vault, { write, model, outputFile, images });
+    // A guarded write run is refused writes to the owner's words and the library's settings before they happen. Its
+    // hook goes into this run's own folder, so it is gone with it.
+    const settings = write && harness.guard ? guardSettings(vault, installHook(tmp, vault)) : null;
+    const argv = harness.headlessArgv(prompt, vault, { write, model, outputFile, images, settings });
     // Claude Code prints a JSON event per line. Reading them as they arrive hands over each step while the agent works,
     // and its reply is the result event's text: what comes back as `output` is plain text, as for every other agent.
     const stream = harness.streams ? new ClaudeStream(onStep ?? (() => {})) : null;

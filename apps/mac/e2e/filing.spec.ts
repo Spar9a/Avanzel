@@ -283,6 +283,14 @@ test("a failed filing says its partial edits are kept as their own commit", asyn
   await app.close();
 });
 
+test("the filing guard's hook runs with Avanzel's own binary as Node", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  expect(await call(app, "guardForTests", library, path.join(library, "raw", "2026", "x.md"))).toContain('"permissionDecision":"deny"');
+  expect(await call(app, "guardForTests", library, path.join(library, "ideas", "a.md"))).toBe("");
+  await app.close();
+});
+
 test("when a symlinked inbox keeps the agent's rewrite, the capsule says where the owner's words are", async () => {
   const library = await makeLibrary();
   const elsewhere = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-inbox-")), "inbox");
