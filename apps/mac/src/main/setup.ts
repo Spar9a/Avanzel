@@ -153,6 +153,11 @@ const PRESS_WAIT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AV
  * place and its tasks afresh, so not at each of the download's ticks (Settings gets those).
  */
 const SETUP_PROGRESS_MS = 1_000;
+/**
+ * At most how often the steps of the first thought's filing reach the setup window (`stepped`): a burst of steps is a few
+ * updates rather than one each, and the newest is never more than this far behind.
+ */
+const STEP_MS = 250;
 /** Where Open Terminal goes: the person signs an agent in there. */
 const TERMINAL = "/System/Applications/Utilities/Terminal.app";
 
@@ -198,7 +203,10 @@ interface SetupSession {
   alternatives: string[];
   /** The first thought's filing, from the moment its words exist (`takeThought`); the newest one after File it again. */
   job: FilingJob | null;
-  /** What the window shows of that filing; null before the thought is handed over. */
+  /**
+   * What the window shows of that filing; null before the thought is handed over. While it runs, its `rows` are those of
+   * the `job`, as they are when a snapshot is made (`snapshot`).
+   */
   filing: SetupFiling | null;
   /** Why the last typed thought wasn't taken; each try clears it. */
   typeProblem: string | null;
@@ -236,6 +244,10 @@ export class Setup {
   private upHereWindow: BrowserWindow | null = null;
   /** When the setup window was last sent the download's progress (`publishProgress`). */
   private setupProgressAt = 0;
+  /** When the setup window was last sent a filing's steps, by `performance.now()` (`stepped`). */
+  private steppedAt = -Infinity;
+  /** The filing whose newest steps wait out STEP_MS before they are sent, and the timer that sends them (`stepped`). */
+  private stepWait: { job: FilingJob; timer: NodeJS.Timeout } | null = null;
 
   constructor(private readonly host: SetupHost) {}
 
@@ -335,6 +347,8 @@ export class Setup {
     // Ask suggests a question only about pages that stand: not once an undo of the filing has begun, nor after it.
     const filing = this.session?.filing;
     const standing = filing?.kind === "filed" && !filing.undoing ? filing.pages : [];
+    // A running filing shows what its agent has done so far: its job's rows, as they are now.
+    const shown = filing?.kind === "running" ? { ...filing, rows: this.session?.job?.rows ?? filing.rows } : (filing ?? null);
     return {
       libraryPath,
       libraryLabel: tildePath(libraryPath, homedir()),
@@ -349,7 +363,7 @@ export class Setup {
       agent: this.session?.picked ?? bestAgent(agents, folder === "library" ? libraryAgent(libraryPath) : null),
       makeProblem: this.session?.makeProblem ?? null,
       press: this.setupPressState(),
-      filing: filing ?? null,
+      filing: shown,
       typeProblem: this.session?.typeProblem ?? null,
       thought: this.session?.thought ?? { kind: "waiting" },
       hears: this.host.hears(),
@@ -888,9 +902,9 @@ export class Setup {
     session.thought = { kind: "waiting" };
     session.testCapture = null;
     this.enterSetupStep("filing");
-    const job: FilingJob = { capturePath, text: words, transcribedIn, agent: this.host.agentName(), abort: new AbortController(), edited: false, setup: true };
+    const job: FilingJob = { capturePath, text: words, transcribedIn, agent: this.host.agentName(), abort: new AbortController(), edited: false, rows: [], setup: true };
     session.job = job;
-    session.filing = { kind: "running", words, agent: job.agent, startedAt: Date.now(), waiting: false, cancelling: false };
+    session.filing = { kind: "running", words, agent: job.agent, startedAt: Date.now(), waiting: false, cancelling: false, rows: job.rows };
     this.host.queuedToFile.add(capturePath);
     this.host.file(job);
     this.host.broadcast();
@@ -964,6 +978,37 @@ export class Setup {
       session.filing = { ...session.filing, waiting, ...(waiting ? {} : { startedAt: Date.now() }) };
       this.host.broadcast();
     }
+  }
+
+  /**
+   * `job`, the first thought's filing, has taken another step, and its `rows` have it (`filingStep`): the setup window is
+   * sent them, at most once every STEP_MS. A step that comes sooner after the last send waits, and the steps that come
+   * meanwhile go in the one send that ends the wait, so the window is never more than STEP_MS behind. When a wait ends,
+   * it is asked again whether the window still shows this filing running; if the filing has ended, or another has taken
+   * its place, the send is dropped, since the window was told of that at once (`broadcast`). It sends only
+   * `setup:changed`, as `publishProgress` does: no Settings snapshot, and no menu.
+   */
+  stepped(job: FilingJob): void {
+    if (!this.showsRunning(job) || this.stepWait?.job === job) return; // its newest steps go in the send that waits
+    if (this.stepWait) clearTimeout(this.stepWait.timer); // another filing's wait, which the window no longer shows
+    this.stepWait = null;
+    const wait = this.steppedAt + STEP_MS - performance.now();
+    if (wait > 0) {
+      const timer = setTimeout(() => {
+        this.stepWait = null;
+        this.stepped(job);
+      }, wait);
+      this.stepWait = { job, timer };
+      return;
+    }
+    this.steppedAt = performance.now();
+    this.session?.window.webContents.send("setup:changed", this.snapshot());
+  }
+
+  /** The setup window shows `job`'s filing, and it is running. */
+  private showsRunning(job: FilingJob): boolean {
+    const session = this.session;
+    return session?.job === job && session.filing?.kind === "running" && !session.window.isDestroyed();
   }
 
   /**

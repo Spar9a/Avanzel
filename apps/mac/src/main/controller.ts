@@ -48,6 +48,7 @@ import {
   type Capture,
   type CaptureOptions,
   type FileOutcome,
+  type FilingStep,
   type Harness,
   type Settings,
   type ShadowTask,
@@ -77,6 +78,7 @@ import { frontContext } from "./front-app.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import { captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
+import { withStep } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
 import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
@@ -870,7 +872,7 @@ export class Controller {
       this.setCapsule({ kind: "saved", text, note: "Saved to your inbox for tonight's review", ...(detail ? { detail } : {}) }, 4000);
       return;
     }
-    this.beginFiling({ capturePath, text, transcribedIn, agent: this.agentName(), abort: new AbortController(), edited: false, detail });
+    this.beginFiling({ capturePath, text, transcribedIn, agent: this.agentName(), abort: new AbortController(), edited: false, rows: [], detail });
   }
 
   /** Filing starts right away; Edit can stop it until it ends. */
@@ -906,6 +908,21 @@ export class Controller {
     this.setup.waiting(job, waiting);
   }
 
+  /**
+   * A step the agent takes in setup's first filing, told as it takes it (`file`'s `steps`): it joins the filing's rows,
+   * and the setup window, if it still shows the filing, is sent them (`setup.stepped`). Narration is best effort: what
+   * goes wrong here is noted, and never fails the filing.
+   */
+  private filingStep(job: FilingJob, step: FilingStep): void {
+    try {
+      const root = this.requireVault().root;
+      job.rows = withStep(job.rows, step, (rel) => pageInfo(root, rel));
+      if (this.setup.owns(job)) this.setup.stepped(job);
+    } catch (error) {
+      console.warn("narration", error);
+    }
+  }
+
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     this.queued++;
     const run = this.queue.then(work, work);
@@ -938,8 +955,13 @@ export class Controller {
     const started = performance.now();
     let outcome: FileOutcome | undefined;
     const progress = (message: string) => this.filingProgress(job, message);
+    // Only setup's first thought is narrated; the capsule's filings are not, yet.
+    const steps = this.setup.owns(job) ? (step: FilingStep) => this.filingStep(job, step) : null;
     try {
-      [outcome] = await this.withRun(async (signal) => (await this.librarian()).file([job.capturePath], { signal, progress }), job.abort);
+      [outcome] = await this.withRun(
+        async (signal) => (await this.librarian()).file([job.capturePath], { signal, progress, ...(steps ? { steps } : {}) }),
+        job.abort,
+      );
     } catch (error) {
       if (job.edited || job.cancelled || this.quitting) return;
       return this.filingFailed(job, errorMessage(error));
@@ -1032,6 +1054,7 @@ export class Controller {
       agent: job.agent,
       abort: new AbortController(),
       edited: false,
+      rows: [],
       correction: correction ?? job.correction,
     };
     this.showFiling(next);

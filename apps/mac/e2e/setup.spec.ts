@@ -8,7 +8,7 @@ import path from "node:path";
 import { git, loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { FirstRun } from "../src/main/store.ts";
-import type { SettingsSnapshot, SetupSnapshot } from "../src/shared/ipc.ts";
+import type { NarrationRow, SettingsSnapshot, SetupSnapshot } from "../src/shared/ipc.ts";
 import {
   agentCalls,
   agentStubs,
@@ -1063,6 +1063,56 @@ test("a typed first thought is filed in the window, with the time shown", async 
   // Only the first-thought step takes a typed thought: one sent from here (a second click, say) makes no capture.
   await call(app, "typeSetupThought", "A second thought");
   expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("setup's snapshot carries each step while the first thought is filed", async () => {
+  const { env } = firstRun({ claude: filingClaude() });
+  // The stand-in Claude Code reports each tool call as the real one does, a second apart: the steps come while the run goes on.
+  const app = await launch({ ...env, FAKE_AGENT_STREAM: "claude", FAKE_AGENT_STEP_MS: "1000" });
+  const setup = await throughFound(app);
+  // From now on, each snapshot sent to the setup window is noted: what state its filing is in, and the rows it carries.
+  await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"));
+    if (!win) throw new Error("There is no setup window to watch.");
+    const sent: { kind: string | null; rows: unknown[] }[] = [];
+    Object.assign(globalThis, { setupSent: sent });
+    const send = win.webContents.send.bind(win.webContents);
+    win.webContents.send = (channel: string, ...args: unknown[]) => {
+      const filing = (args[0] as { filing?: { kind: string; rows?: unknown[] } | null } | undefined)?.filing;
+      if (channel === "setup:changed") sent.push({ kind: filing?.kind ?? null, rows: filing?.rows ?? [] });
+      send(channel, ...args);
+    };
+  });
+  const sent = () => app.evaluate(() => (globalThis as { setupSent?: { kind: string | null; rows: NarrationRow[] }[] }).setupSent ?? []);
+  await typeFirstThought(setup, "Call the vet on Monday");
+  // The rows of the filing while it runs; the filing that has ended has none to show.
+  let rows: NarrationRow[] = [];
+  await expect
+    .poll(
+      async () => {
+        const { filing } = await setupSnap(app);
+        rows = filing?.kind === "running" ? filing.rows : [];
+        return rows.some((row) => row.kind === "new" && row.title === "Call the vet on Monday" && row.shelf === "ideas");
+      },
+      { intervals: [50], timeout: 30_000 },
+    )
+    .toBe(true);
+  // What the agent has done by then, in the order it did it: it read the index, then wrote the idea's page (a slow machine
+  // may have let a later step in). Its first read, of the capture in the inbox, is no row.
+  expect(rows.slice(0, 2)).toEqual([
+    { kind: "read", path: "index.md", title: expect.any(String), shelf: "" },
+    { kind: "new", path: expect.stringMatching(/^ideas\/idea-.+\.md$/), title: "Call the vet on Monday", shelf: "ideas" },
+  ]);
+  expect(rows.flatMap((row) => (row.path && /^(inbox|raw)\//.test(row.path) ? [row.path] : []))).toEqual([]);
+  // The window was sent them, while the filing ran, not only offered them to whoever asks.
+  await expect
+    .poll(async () => (await sent()).some((snapshot) => snapshot.kind === "running" && snapshot.rows.some((row) => row.kind === "new")))
+    .toBe(true);
+  // The steps never fail the filing: it ends as it does without them.
+  await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
+  const { filing } = await setupSnap(app);
+  expect(filing).toMatchObject({ kind: "filed", pages: [{ title: "Call the vet on Monday", shelf: "ideas" }], canUndo: true });
   await app.close();
 });
 

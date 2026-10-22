@@ -270,6 +270,21 @@ export type SetupThought =
  */
 export const NOTE_GONE = "The note isn't in the inbox any more.";
 
+/**
+ * One thing the agent did while it filed the first thought, as a row of the Filing step: it read a page, searched the
+ * library, wrote a new page or an old one again, or removed one. A row names a page of the library, never the capture, a
+ * path under inbox/ or raw/, or a dot path.
+ */
+export interface NarrationRow {
+  kind: "read" | "search" | "new" | "updated" | "removed";
+  /** The library path; null for a search. */
+  path: string | null;
+  /** pageInfo's title; for "removed", the file name without .md; "" for a search. */
+  title: string;
+  /** The first folder of a path inside a folder; "" for a root file or a search. */
+  shelf: string;
+}
+
 /** The first thought's filing, in the setup window. */
 export type SetupFiling =
   | {
@@ -282,6 +297,8 @@ export type SetupFiling =
       waiting: boolean;
       /** Cancel was pressed; it is stopping. */
       cancelling: boolean;
+      /** What the agent has done so far, oldest first and the newest fifty at most (`withStep`). */
+      rows: NarrationRow[];
     }
   | {
       kind: "filed";

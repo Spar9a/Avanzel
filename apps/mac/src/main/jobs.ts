@@ -2,7 +2,7 @@
 // the library's folder picker, and how an error reads.
 import type { OpenDialogOptions } from "electron";
 import type { FileOutcome } from "@avanzel/engine";
-import type { CapsuleMode, FiledPage, ScreenContext } from "../shared/ipc.ts";
+import type { CapsuleMode, FiledPage, NarrationRow, ScreenContext } from "../shared/ipc.ts";
 
 /** The folder picker for the library, in Settings (Choose existing…) and in setup (Change…). */
 export const LIBRARY_PICKER: OpenDialogOptions = { title: "Choose your library folder", properties: ["openDirectory", "createDirectory"] };
@@ -39,6 +39,11 @@ export interface FilingJob {
   waiting?: boolean;
   outcome?: FileOutcome;
   pages?: FiledPage[];
+  /**
+   * What the agent has done so far, a row for each step it takes (`withStep`), oldest first. Only setup's first thought
+   * is narrated (`filingStep`); any other filing's stay empty.
+   */
+  rows: NarrationRow[];
   /**
    * Setup's first thought (`takeThought`): it reports to the setup window while the window shows it (its session's
    * `job`), and once the window has closed, by notification, as any filing whose card isn't showing does.
