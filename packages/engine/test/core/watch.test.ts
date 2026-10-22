@@ -125,6 +125,7 @@ describe("watchWrites", () => {
     const root = library();
     write(root, "ideas/f.md", "f");
     const { steps } = watching(root);
+    await pause(100); // the watch is given a moment to start, as in every other test that writes while it runs
     // The canary's event comes after the replay of f.md's, so by the time its step arrives, f.md has been judged.
     write(root, "ideas/canary.md", "c");
     await vi.waitFor(() => expect(steps).toEqual([{ kind: "wrote", path: "ideas/canary.md", created: true }]), WITHIN);
@@ -205,6 +206,15 @@ describe("stepPath", () => {
     ]) {
       expect(stepPath(root, path), path).toBeNull();
     }
+  });
+
+  it("matches inbox/ and raw/ in any letter case, as the library's disk does", () => {
+    const root = library();
+    expect(stepPath(root, "RAW/2026/x.md")).toBeNull();
+    expect(stepPath(root, "Inbox/x.md")).toBeNull();
+    expect(stepPath(root, join(root, "Raw/2026/10/x.md"))).toBeNull();
+    expect(stepPath(root, "ideas/Raw/x.md")).toBe("ideas/Raw/x.md"); // only the first segment names a source folder
+    expect(stepPath(root, "Rawness/x.md")).toBe("Rawness/x.md"); // and the whole segment
   });
 
   it("judges a path once its '..' is settled", () => {

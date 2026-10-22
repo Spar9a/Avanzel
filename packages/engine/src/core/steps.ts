@@ -44,11 +44,15 @@ export function insideLibrary(root: string, path: string): string | null {
   return under(root, path) ?? under(realPathOf(root), path);
 }
 
-/** insideLibrary, and also null for a dot path or a path under inbox/ or raw/: the paths a step may name. */
+/**
+ * insideLibrary, and also null for a dot path or a path under inbox/ or raw/: the paths a step may name. The first
+ * segment is compared without regard to letter case, as the disk (APFS) does: "RAW/x.md" is raw/x.md there.
+ */
 export function stepPath(root: string, path: string): string | null {
   const rel = insideLibrary(root, path);
   if (rel === null) return null;
   const parts = rel.split("/");
-  if (parts.some((part) => part.startsWith(".")) || parts[0] === "inbox" || parts[0] === "raw") return null;
+  const source = parts[0]?.toLowerCase();
+  if (parts.some((part) => part.startsWith(".")) || source === "inbox" || source === "raw") return null;
   return rel;
 }

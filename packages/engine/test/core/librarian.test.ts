@@ -21,6 +21,7 @@ import { defaultSettings, type Settings } from "../../src/core/config.ts";
 import * as git from "../../src/core/git.ts";
 import { errorLine } from "../../src/core/harness.ts";
 import { Librarian, type FileOutcome } from "../../src/core/librarian.ts";
+import type { FilingStep } from "../../src/core/steps.ts";
 import { Vault, type Capture } from "../../src/core/vault.ts";
 import { AvanzelError, type Transcriber, type Transcript } from "../../src/types.ts";
 import { FAKE_AGENT, NOW, binScripts, envHome, gitIdentity, useTmp, write } from "./helpers.ts";
@@ -101,6 +102,7 @@ describe("file", () => {
       error: "",
       restored: false,
       guarded: [],
+      refused: [],
       commit: null,
     });
     expect(outcome.changes.created).toEqual([`ideas/idea-${capture.id}.md`]);
@@ -504,6 +506,167 @@ describe("file", () => {
     expect(outcomes.map((outcome) => outcome.ok)).toEqual([false]);
     expect(errorLine(outcomes[0]?.error ?? "")).toBe("fake was cancelled");
     expect(vault.pending()).toEqual([first.path, second.path]);
+  });
+});
+
+describe("the steps of a filing", () => {
+  /** A `steps` option that keeps what it is told, in order. */
+  function collecting(): { steps: FilingStep[]; hear: (step: FilingStep) => void } {
+    const steps: FilingStep[] = [];
+    return { steps, hear: (step) => void steps.push(step) };
+  }
+
+  /**
+   * A librarian whose agent is Claude Code: a stand-in `claude`, and nothing else, on PATH runs the fake agent, which
+   * prints what Claude Code prints with --output-format stream-json. The prompt is the stand-in's second argument.
+   */
+  function claudeLibrarian(library: Vault = vault): Librarian {
+    vi.stubEnv("PATH", binScripts(tmp(), { claude: `exec '${process.execPath}' '${FAKE_AGENT}' "$2"` }));
+    vi.stubEnv("FAKE_AGENT_STREAM", "claude");
+    return new Librarian(library, { ...defaultSettings(), harness: "claude", timeoutSeconds: 30 }, { clock: () => NOW });
+  }
+
+  /** What Claude Code's filing tells, in order, for a capture whose idea page is `idea`. */
+  const claudeSteps = (idea: string): FilingStep[] => [
+    { kind: "read", path: "index.md" },
+    { kind: "wrote", path: idea, created: true },
+    { kind: "wrote", path: "index.md", created: false },
+    { kind: "wrote", path: "log.md", created: false },
+  ];
+
+  it("a filing tells each file the agent writes while it runs", async () => {
+    vi.stubEnv("FAKE_AGENT_STEP_MS", "150"); // the fake harness reports nothing itself: its writes are seen in the folder
+    const capture = librarian.captureText("Build a tiny greenhouse");
+    const { steps, hear } = collecting();
+    const outcome = await only(librarian.file(null, { steps: hear }));
+    expect(steps).toContainEqual({ kind: "wrote", path: `ideas/idea-${capture.id}.md`, created: true });
+    expect(steps).toContainEqual({ kind: "wrote", path: "index.md", created: false });
+    expect(steps).toContainEqual({ kind: "wrote", path: "log.md", created: false });
+    expect(steps).toHaveLength(3); // each one once
+    expect(outcome.ok).toBe(true);
+    expect(outcome.changes.pages).toEqual([`ideas/idea-${capture.id}.md`]);
+  });
+
+  it("tells a step while the agent is still working, not when it is over", async () => {
+    // The agent writes a page, then waits (10 s at most) for the proof that its step was told, and notes whether it came.
+    const told = join(tmp(), "told");
+    const noted = join(tmp(), "noted");
+    const agent = join(
+      binScripts(tmp(), {
+        agent: [
+          "printf '# Seen\\n' > ideas/seen.md",
+          "waited=0",
+          `while [ ! -e '${told}' ] && [ "$waited" -lt 200 ]; do /bin/sleep 0.05; waited=$((waited + 1)); done`,
+          `if [ -e '${told}' ]; then echo told > '${noted}'; else echo late > '${noted}'; fi`,
+        ].join("\n"),
+      }),
+      "agent",
+    );
+    const harnesses = { fake: { name: "fake", headless: [agent, "{prompt}"], interactive: [] } };
+    librarian = new Librarian(vault, fakeSettings({ harnesses }), { clock: () => NOW });
+    librarian.captureText("a thought");
+    const outcome = await only(librarian.file(null, { steps: () => writeFileSync(told, "") }));
+    expect(read(noted)).toBe("told\n");
+    expect(outcome.ok).toBe(true);
+  });
+
+  it("tells what the agent did, not what the guard then put back", async () => {
+    mode("plant-task"); // the agent adds a task and changes another, and exits at once; the guard undoes both
+    librarian.captureText("harmless words");
+    const { steps, hear } = collecting();
+    const outcome = await only(librarian.file(null, { steps: hear }));
+    expect(outcome.guarded).toEqual(["tasks/evening-review.md", "tasks/planted.md"]);
+    expect(existsSync(join(vault.root, "tasks", "planted.md"))).toBe(false);
+    // The watch ends before the guard runs. Were it to end after, the folder would no longer show the planted task.
+    expect(steps).toContainEqual({ kind: "wrote", path: "tasks/planted.md", created: true });
+  });
+
+  it("stops watching when the agent cannot be started", async () => {
+    // Node lists a watch that is open among its active resources, so one left open can be seen without a mock.
+    const open = () => process.getActiveResourcesInfo().filter((resource) => resource === "FSEventWrap").length;
+    await vi.waitFor(() => expect(open()).toBe(0), { timeout: 3000 }); // earlier filings' watches finish closing
+    const agent = write(tmp(), "bin/agent", "#!/avanzel/no/such/interpreter\n");
+    chmodSync(agent, 0o755);
+    const harnesses = { fake: { name: "fake", headless: [agent, "{prompt}"], interactive: [] } };
+    librarian = new Librarian(vault, fakeSettings({ harnesses }), { clock: () => NOW });
+    librarian.captureText("a thought");
+    const outcome = await only(librarian.file(null, { steps: () => {} }));
+    expect(outcome.error).toContain(`Could not start \`${agent}\``);
+    await vi.waitFor(() => expect(open()).toBe(0), { timeout: 3000 });
+  });
+
+  it("a Claude Code filing tells what it reads and writes from its own events", async () => {
+    librarian = claudeLibrarian();
+    const capture = librarian.captureText("Build a tiny greenhouse");
+    const { steps, hear } = collecting();
+    const outcome = await only(librarian.file(null, { steps: hear }));
+    expect(steps).toEqual(claudeSteps(`ideas/idea-${capture.id}.md`));
+    expect(outcome.message).toBe(`Filed into [[idea-${capture.id}]].`);
+    expect(outcome.ok).toBe(true);
+  });
+
+  it("steps never name the capture or raw/", async () => {
+    librarian = claudeLibrarian();
+    vi.stubEnv("FAKE_AGENT_REFUSE", "raw/2026/10/x.md");
+    librarian.captureText("Build a tiny greenhouse");
+    const { steps, hear } = collecting();
+    await only(librarian.file(null, { steps: hear }));
+    const paths = steps.flatMap((step) => ("path" in step ? [step.path] : []));
+    expect(paths.length).toBeGreaterThan(0); // the agent read the capture and tried raw/, so there is something to leave out
+    expect(paths.filter((path) => /^(inbox|raw)\//.test(path))).toEqual([]);
+  });
+
+  it("the outcome lists what Claude Code was refused", async () => {
+    librarian = claudeLibrarian();
+    vi.stubEnv("FAKE_AGENT_REFUSE", "raw/2026/10/x.md");
+    librarian.captureText("Build a tiny greenhouse");
+    const outcome = await only(librarian.file()); // refusals are told whether or not steps are asked for
+    expect(outcome.refused).toEqual(["raw/2026/10/x.md"]);
+    expect(outcome.ok).toBe(true);
+    expect(existsSync(join(vault.root, "raw", "2026", "10", "x.md"))).toBe(false);
+  });
+
+  it("a filing that failed still says what Claude Code was refused", async () => {
+    mode("noop"); // the agent tries a write it may not make, and gives up in words
+    librarian = claudeLibrarian();
+    vi.stubEnv("FAKE_AGENT_REFUSE", "raw/2026/10/x.md");
+    const capture = librarian.captureText("Build a tiny greenhouse");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(false);
+    expect(outcome.error).toContain("I would need permission to write files.");
+    expect(outcome.refused).toEqual(["raw/2026/10/x.md"]);
+    expect(vault.pending()).toEqual([capture.path]);
+  });
+
+  it("lists a refusal outside the library as the agent gave it", async () => {
+    librarian = claudeLibrarian();
+    vi.stubEnv("FAKE_AGENT_REFUSE", "../outside.md");
+    librarian.captureText("Build a tiny greenhouse");
+    const outcome = await only(librarian.file());
+    expect(outcome.refused).toEqual([join(tmp(), "outside.md")]);
+  });
+
+  it("names paths relative to the library when it is reached through a symlink", async () => {
+    // The agent works in the real folder and names real paths; the library is known by the link to it.
+    const link = join(tmp(), "link");
+    symlinkSync(vault.root, link);
+    librarian = claudeLibrarian(new Vault(link));
+    vi.stubEnv("FAKE_AGENT_REFUSE", "raw/2026/10/x.md");
+    const capture = librarian.captureText("Build a tiny greenhouse");
+    const { steps, hear } = collecting();
+    const outcome = await only(librarian.file(null, { steps: hear }));
+    expect(steps).toEqual(claudeSteps(`ideas/idea-${capture.id}.md`));
+    expect(outcome.refused).toEqual(["raw/2026/10/x.md"]);
+  });
+
+  it("the evening review tells its filings' steps too, and not the digest it writes", async () => {
+    const capture = librarian.captureText("Build a tiny greenhouse");
+    const { steps, hear } = collecting();
+    const review = await librarian.eveningReview({ steps: hear });
+    expect(review.outcomes.map((outcome) => outcome.ok)).toEqual([true]);
+    expect(review.digestPath).not.toBeNull();
+    expect(steps).toContainEqual({ kind: "wrote", path: `ideas/idea-${capture.id}.md`, created: true });
+    expect(steps.filter((step) => "path" in step && step.path.startsWith("reviews/"))).toEqual([]);
   });
 });
 

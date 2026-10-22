@@ -9,7 +9,8 @@
 import { copyFileSync, existsSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { AvanzelError, type Transcriber } from "../types.ts";
-import { Changes, diff, snapshot } from "./changes.ts";
+import { Changes, diff, snapshot, type Snapshot } from "./changes.ts";
+import type { ToolStep } from "./claude-stream.ts";
 import type { Settings } from "./config.ts";
 import { localDate } from "./dates.ts";
 import { flowItems, frontmatterFields, splitFrontmatter } from "./frontmatter.ts";
@@ -18,7 +19,9 @@ import { protectedState, undoProtected } from "./guard.ts";
 import { errorLine, runHeadless, selectHarness, type Harness, type RunResult } from "./harness.ts";
 import { createInside, lstatOrNull, realFoldersTo, removeInside, writeInside } from "./inside.ts";
 import { askPrompt, filePrompt, reviewPrompt } from "./prompts.ts";
+import { insideLibrary, stepPath, type FilingStep } from "./steps.ts";
 import { AUDIO_EXTS, IMAGE_EXTS, TEXT_EXTS, type Capture, type Vault } from "./vault.ts";
+import { watchWrites } from "./watch.ts";
 
 const SOURCES = ["inbox/", "raw/"];
 /** What `progress` hears when a run has to wait for the library lock. */
@@ -50,6 +53,11 @@ export interface FileOutcome {
    * any link that could not be checked or put back.
    */
   guarded: string[];
+  /**
+   * The writes Claude Code was refused during the run, as library paths (a path outside the library stays as the agent
+   * gave it). Only Claude Code reports these; the run of any other agent gives [].
+   */
+  refused: string[];
   /**
    * The run's commit, for Undo: the filing, or what a failed, timed-out or cancelled run left
    * behind. Null without git, with auto_commit off, or when a failed run changed nothing.
@@ -94,6 +102,12 @@ export interface FileOptions {
   signal?: AbortSignal;
   /** Captures to leave in the inbox, unreported (say, ones the owner is editing); asked as each next capture is picked. */
   leave?: (capturePath: string) => boolean;
+  /**
+   * Told each step the agent takes while it files a capture, as it takes it: what Claude Code reads, searches and writes
+   * (from its own tool calls), and what any other agent writes (seen in the folder). Paths are library paths, and never
+   * the capture, anything under inbox/ or raw/, or a dot path. Narration is best effort: it never fails a filing.
+   */
+  steps?: (step: FilingStep) => void;
 }
 
 export interface LibrarianOptions {
@@ -221,7 +235,7 @@ export class Librarian {
 
   async #fileQueue(
     only: readonly string[] | null,
-    { progress = quiet, instructions = null, signal, leave = () => false }: FileOptions,
+    { progress = quiet, instructions = null, signal, leave = () => false, steps }: FileOptions,
   ): Promise<FileOutcome[]> {
     const outcomes: FileOutcome[] = [];
     const attempted = new Set<string>();
@@ -257,7 +271,7 @@ export class Librarian {
       attempted.add(path);
       progress(`Filing ${basename(path)} with ${this.harness.name}…`);
       try {
-        outcomes.push(await this.#fileOne(path, instructions, signal));
+        outcomes.push(await this.#fileOne(path, instructions, signal, steps));
       } catch (error) {
         outcomes.push(outcome(stem(path), { error: errorMessage(error) })); // this capture fails alone; the rest go on
       }
@@ -280,7 +294,12 @@ export class Librarian {
     return capture.path;
   }
 
-  async #fileOne(path: string, instructions: string | null, signal?: AbortSignal): Promise<FileOutcome> {
+  async #fileOne(
+    path: string,
+    instructions: string | null,
+    signal?: AbortSignal,
+    steps?: (step: FilingStep) => void,
+  ): Promise<FileOutcome> {
     const root = this.vault.root;
     const now = this.clock();
     const captureId = stem(path);
@@ -292,11 +311,18 @@ export class Librarian {
     const attachments = this.#attachments(original.toString("utf8"));
     const before = snapshot(root);
     const prompt = filePrompt(captureRel, captureId, now, { attachments, instructions });
-    const { result, guarded } = await this.#run(prompt, { write: true, images: attachments, signal });
+    // Only a caller that asked for the steps has the run watched.
+    const { result, guarded } = await this.#run(prompt, {
+      write: true,
+      images: attachments,
+      signal,
+      ...(steps && { before, steps }),
+    });
     const restoral = restoreCapture(root, captureRel, original, archiveExisted ? null : archiveRel);
     const savedOriginal = restoral === "blocked" ? this.#keepOriginal(captureId, original) : null;
     const changes = diff(before, snapshot(root)).without([...SOURCES, ...guarded]);
-    const ran = { changes, message: result.output, restored: restoral === "restored", savedOriginal, guarded };
+    const refused = result.refused.map((refusedPath) => insideLibrary(root, refusedPath) ?? refusedPath);
+    const ran = { changes, message: result.output, restored: restoral === "restored", savedOriginal, guarded, refused };
     const error = this.#notFiled(result, restoral, changes, captureId, archiveRel);
     if (error !== null) {
       // What the run left behind (it failed, timed out, was cancelled or filed nothing) is its own
@@ -418,11 +444,24 @@ export class Librarian {
 
   /**
    * One agent run; returns its result and what the guard put back after it: changes to the protected paths and
-   * links the agent left in Avanzel's own paths (see `FileOutcome.guarded`).
+   * links the agent left in Avanzel's own paths (see `FileOutcome.guarded`). Given `steps` (and `before`, the library
+   * as it was when the run began), the run tells each step the agent takes as it takes it.
    */
   async #run(
     prompt: string,
-    { write, images = [], signal }: { write: boolean; images?: readonly string[]; signal?: AbortSignal | undefined },
+    {
+      write,
+      images = [],
+      signal,
+      before,
+      steps,
+    }: {
+      write: boolean;
+      images?: readonly string[];
+      signal?: AbortSignal | undefined;
+      before?: Snapshot | undefined;
+      steps?: ((step: FilingStep) => void) | undefined;
+    },
   ): Promise<{ result: RunResult; guarded: string[] }> {
     const root = this.vault.root;
     const protectedBefore = protectedState(root);
@@ -431,13 +470,20 @@ export class Librarian {
     try {
       const harness = this.harness;
       const model = Object.hasOwn(this.settings.models, harness.name) ? (this.settings.models[harness.name] ?? null) : null;
-      result = await runHeadless(harness, prompt, root, {
-        write,
-        model,
-        timeoutSeconds: this.settings.timeoutSeconds,
-        images,
-        signal,
-      });
+      const narration = before && steps ? narrate(root, harness, before, steps) : null;
+      try {
+        result = await runHeadless(harness, prompt, root, {
+          write,
+          model,
+          timeoutSeconds: this.settings.timeoutSeconds,
+          images,
+          signal,
+          onStep: narration?.onStep,
+        });
+      } finally {
+        // Right after the run, before the guard: what the guard puts back is its own doing, not a step of the agent's.
+        narration?.stop();
+      }
     } finally {
       guarded = undoProtected(root, protectedBefore);
     }
@@ -513,9 +559,38 @@ function outcome(captureId: string, fields: Partial<Omit<FileOutcome, "captureId
     restored: false,
     savedOriginal: null,
     guarded: [],
+    refused: [],
     commit: null,
     ...fields,
   };
+}
+
+/**
+ * How a run's steps reach `steps`. Claude Code tells its own tool calls (`onStep`, handed to the run). Any other agent
+ * has its writes seen in the folder (`watchWrites`) from now until `stop()`, which the caller calls when the run is over.
+ */
+function narrate(
+  root: string,
+  harness: Harness,
+  before: Snapshot,
+  steps: (step: FilingStep) => void,
+): { onStep: ((step: ToolStep) => void) | undefined; stop: () => void } {
+  if (!harness.streams) return { onStep: undefined, stop: watchWrites(root, before, steps) };
+  return {
+    onStep: (step) => {
+      const told = filingStep(root, before, step);
+      if (told) steps(told);
+    },
+    stop: quiet,
+  };
+}
+
+/** A tool call of Claude Code as a step in the library, or null when a step may not name its path. */
+function filingStep(root: string, before: Snapshot, step: ToolStep): FilingStep | null {
+  if (step.kind === "search") return step;
+  const rel = stepPath(root, step.path);
+  if (rel === null) return null;
+  return step.kind === "read" ? { kind: "read", path: rel } : { kind: "wrote", path: rel, created: !before.has(rel) };
 }
 
 function digest(outcomes: readonly FileOutcome[], now: Date): string {
