@@ -3,6 +3,7 @@ export * from "./config.ts";
 export { idStamp, localDate, localMinute } from "./dates.ts";
 export * from "./vault.ts";
 export * from "./changes.ts";
+export * from "./steps.ts";
 export * from "./search.ts";
 export * as git from "./git.ts";
 export * from "./prompts.ts";
