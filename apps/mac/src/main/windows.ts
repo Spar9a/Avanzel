@@ -120,15 +120,23 @@ export function createUpHereWindow(): BrowserWindow {
   return win;
 }
 
+/** The field is 44 px tall, with 12 px above and below it for its focus ring. */
+export const QUICK_SIZE = { width: 640, height: 68 };
+
+/**
+ * Type a thought: a panel macOS draws, with its popover material, corners and shadow. Its page is clear and holds the
+ * field.
+ */
 export function createQuickWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: 660,
-    height: 76,
+    ...QUICK_SIZE,
     show: false,
     frame: false,
-    transparent: true,
+    vibrancy: "popover",
+    visualEffectState: "active",
     backgroundColor: "#00000000",
-    hasShadow: false,
+    roundedCorners: true,
+    hasShadow: true,
     resizable: false,
     minimizable: false,
     maximizable: false,

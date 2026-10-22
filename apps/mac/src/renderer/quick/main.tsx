@@ -1,21 +1,46 @@
-import { useState } from "react";
+// Quick: type a thought. macOS draws the panel; this clear page holds the one field and the key that saves. Return saves
+// the words and puts the panel away; when they can't be saved (the capsule says why) they stay in the field for another
+// try. Esc puts the panel away from wherever the focus is.
+import "@avanzel/ui/base.css";
+import { Kbd, Text, TextField } from "@avanzel/ui";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AvanzelBridge } from "../../shared/ipc.ts";
-import "../common/mac.css";
 import "./styles.css";
 
 declare global {
-  interface Window { avanzel: AvanzelBridge }
+  interface Window {
+    avanzel: AvanzelBridge;
+  }
 }
+
+const api = window.avanzel.quick;
 
 function Quick() {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const field = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") api.close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // The panel is put away as a thought is saved, and the field is disabled until the save is over. That takes the focus
+  // from the field, so it takes the focus back once it is enabled again: the next time the panel opens, a person can
+  // type at once.
+  useEffect(() => {
+    if (!busy) field.current?.focus();
+  }, [busy]);
+
   const submit = async () => {
     if (!text.trim() || busy) return;
     setBusy(true);
     try {
-      await window.avanzel.quick.submit(text);
+      await api.submit(text);
       setText("");
     } catch {
       // Not saved (the capsule says why): the words stay here for another try.
@@ -23,23 +48,13 @@ function Quick() {
       setBusy(false);
     }
   };
+
   return (
     <div className="quick">
-      <svg className="glyph" width="18" height="16" viewBox="0 0 18 16" aria-hidden="true"><path d="M3 12V7M7 12V3M11 12V6M15 12V9M1 14.5h16" /></svg>
-      <input
-        type="text"
-        autoFocus
-        aria-label="Type a thought"
-        placeholder="Type a thought…"
-        value={text}
-        disabled={busy}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") void submit();
-          if (e.key === "Escape") window.avanzel.quick.close();
-        }}
-      />
-      <span className="hint">↩ to save</span>
+      <div className="quick-field">
+        <TextField ref={field} label="Type a thought" labelHidden size="large" variant="bare" icon="waveform" placeholder="Type a thought…" value={text} onChange={setText} autoFocus disabled={busy} onEnter={submit} />
+      </div>
+      <Text variant="footnote" tone="secondary" as="span"><Kbd>↩</Kbd> to save</Text>
     </div>
   );
 }

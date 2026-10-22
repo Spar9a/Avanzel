@@ -35,7 +35,17 @@ const ON_FILL = ".btn.primary, .ni.on, .warn";
 const sidebar: Bases = async (mode) => [mode === "light" ? "#e1e1e4" : "#464649"];
 // The capsule floats over any desktop: the lightest and the darkest.
 const desktops: Bases = async () => ["#ffffff", "#000000"];
-const windowColour: Bases = async (_mode, page) => [await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--window").trim())];
+// Quick's page is clear, over the popover material macOS draws, which the page can't read: it is read over the window
+// surface, the tone that material keeps.
+const surface: Bases = async (_mode, page) => [
+  await page.evaluate(() => {
+    const probe = document.body.appendChild(document.createElement("i"));
+    probe.style.backgroundColor = "var(--av-surface-window)";
+    const colour = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return colour;
+  }),
+];
 
 function rgba(css: string): RGBA {
   const hex = /^#([\da-f]{6})$/i.exec(css);
@@ -209,9 +219,9 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
 
   await call(app, "openQuick");
   const quick = await windowFor(app, "quick");
-  found.push(...(await readable(app, quick, "Quick, empty", windowColour)));
+  found.push(...(await readable(app, quick, "Quick, empty", surface)));
   await quick.getByRole("textbox", { name: "Type a thought" }).fill("Plant tulips in October");
-  found.push(...(await readable(app, quick, "Quick, typed", windowColour)));
+  found.push(...(await readable(app, quick, "Quick, typed", surface)));
   await call(app, "closeQuick");
 
   await call(app, "openAsk");

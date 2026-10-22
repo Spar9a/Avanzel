@@ -18,6 +18,10 @@ const archived = (root: string) => {
   return files;
 };
 
+/** Whether the window of renderer `name` (say "quick") is on screen. */
+const shown = (app: ElectronApplication, name: string) =>
+  app.evaluate(({ BrowserWindow }, page) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes(`/renderer/${page}/`) && w.isVisible()), name);
+
 test("dictation is transcribed on the Mac, filed by the agent, and shows the pages", async () => {
   const library = await makeLibrary();
   const app = await launch({
@@ -171,6 +175,39 @@ test("typing a thought files it", async () => {
   await quick.getByRole("textbox", { name: "Type a thought" }).press("Enter");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("Quick is a clear page on a native panel: its field has the focus, and Esc puts it away", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "openQuick");
+  const quick = await windowFor(app, "quick");
+  await expect(quick.getByRole("textbox", { name: "Type a thought" })).toBeFocused();
+  // macOS draws the panel's surface (its material, corners and shadow), so the page itself is clear. The key that
+  // saves is a Kbd.
+  await expect(quick.locator("html")).toHaveAttribute("data-backdrop", "clear");
+  await expect(quick.locator("kbd")).toHaveText("↩");
+  await expect.poll(() => shown(app, "quick")).toBe(true);
+  await quick.keyboard.press("Escape");
+  await expect.poll(() => shown(app, "quick")).toBe(false);
+  await app.close();
+});
+
+test("Quick's field has the focus again when the panel opens after a thought was saved", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "openQuick");
+  const quick = await windowFor(app, "quick");
+  const field = quick.getByRole("textbox", { name: "Type a thought" });
+  await field.fill("Plant tulips in October");
+  await field.press("Enter");
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  // The field is disabled while the thought is saved, which takes the focus from it: it must have it for the next one.
+  await call(app, "openQuick");
+  await expect(field).toBeEnabled();
+  await expect(field).toHaveValue("");
+  await expect(field).toBeFocused();
   await app.close();
 });
 
