@@ -228,7 +228,9 @@ shelves or the rules; your agent reads it on every run.
 Avanzel enforces a few guarantees no matter how the agent behaves:
 
 - in the Mac app, a Claude Code write to `inbox/`, `raw/`, `tasks/`, the files listed below or
-  anywhere outside the library is refused before it happens, and the agent is told why;
+  anywhere outside the library is refused before it happens, and the agent is told why. So is a
+  write to any file named `CLAUDE.md`, `CLAUDE.local.md` or `AGENTS.md`, in any folder, because
+  Claude Code reads such files as instructions;
 - your captured words are restored byte-for-byte if the agent touches them;
 - a capture is archived only after a run that actually filed it (an agent that only talks
   leaves it in the inbox), and never over an earlier capture with the same name;

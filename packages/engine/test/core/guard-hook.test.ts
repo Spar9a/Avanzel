@@ -5,7 +5,13 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { KEEP_OUT, guardSettings, installHook } from "../../src/core/guard-hook.ts";
+import {
+  INSTRUCTION_FILES,
+  INSTRUCTION_REASON,
+  KEEP_OUT,
+  guardSettings,
+  installHook,
+} from "../../src/core/guard-hook.ts";
 import { useTmp } from "./helpers.ts";
 
 const tmp = useTmp();
@@ -82,10 +88,28 @@ describe("the guard's hook", () => {
     // A link to a file that isn't there yet: the write would create it in raw/.
     symlinkSync("../raw/new.md", join(root, "ideas/new.md"));
     expect(refusal(write(command, join(root, "ideas/new.md"), root))).toContain("own words");
+    // Such a link whose target goes through another link before its "..": the disk follows that link first, so the
+    // write would land in raw/, not in ideas/.
+    mkdirSync(join(root, "raw/2026"));
+    symlinkSync(join(root, "raw/2026"), join(root, "ideas/sub"));
+    symlinkSync("sub/../planted.md", join(root, "ideas/a.md"));
+    expect(refusal(write(command, join(root, "ideas/a.md"), root))).toContain("own words");
     // A link that leads out of the library.
     mkdirSync(join(tmp(), "elsewhere"));
     symlinkSync(join(tmp(), "elsewhere"), join(root, "ideas/out"));
     expect(refusal(write(command, join(root, "ideas/out/x.md"), root))).toContain(`inside the library, ${root}`);
+  });
+
+  it("refuses files Claude Code reads as instructions, in any folder", () => {
+    const { root, command } = library();
+    for (const rel of ["ideas/CLAUDE.md", "topics/agents.md", "CLAUDE.local.md"]) {
+      expect(refusal(write(command, join(root, rel), root)), rel).toBe(INSTRUCTION_REASON);
+    }
+    // Through a link: by the name the write lands on, and by the name the agent gave.
+    symlinkSync("CLAUDE.md", join(root, "ideas/notes.md"));
+    expect(refusal(write(command, join(root, "ideas/notes.md"), root))).toBe(INSTRUCTION_REASON);
+    symlinkSync("page.md", join(root, "ideas/AGENTS.md"));
+    expect(refusal(write(command, join(root, "ideas/AGENTS.md"), root))).toBe(INSTRUCTION_REASON);
   });
 
   it("takes a relative path from the agent's folder", () => {
@@ -131,7 +155,8 @@ describe("guardSettings", () => {
     expect(deny).toContain(`Edit(//${root.slice(1)}/raw/**)`);
     expect(deny).toContain(`Edit(//${root.slice(1)}/raw)`);
     expect(deny).toContain(`Edit(//${root.slice(1)}/.claude/**)`);
-    expect(deny).toHaveLength(KEEP_OUT.length * 2);
+    expect(deny).toContain(`Edit(//${root.slice(1)}/**/CLAUDE.md)`);
+    expect(deny).toHaveLength(KEEP_OUT.length * 2 + INSTRUCTION_FILES.length);
     expect(settings.hooks).toEqual({
       PreToolUse: [{ matcher: "Write|Edit|NotebookEdit", hooks: [{ type: "command", command, timeout: 10 }] }],
     });
@@ -142,7 +167,7 @@ describe("guardSettings", () => {
     const both = denyOf(linked);
     expect(both).toContain(`Edit(//${linked.slice(1)}/AGENTS.md)`);
     expect(both).toContain(`Edit(//${root.slice(1)}/AGENTS.md)`);
-    expect(both).toHaveLength(KEEP_OUT.length * 4);
+    expect(both).toHaveLength((KEEP_OUT.length * 2 + INSTRUCTION_FILES.length) * 2);
 
     // What a pattern reads as a wildcard is escaped.
     const odd = join(tmp(), "My Notes [Kate's] *?");

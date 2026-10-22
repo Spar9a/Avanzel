@@ -10,7 +10,7 @@ import { lstatOrNull, realFoldersTo, removeInside, writeInside } from "./inside.
 // Instructions and settings that load or execute on later runs. A headless agent run may not change
 // them (a capture could carry a prompt injection); Avanzel undoes any change after every run.
 export const PROTECTED = [
-  "AGENTS.md", "CLAUDE.md", ".avanzel/config.toml", "opencode.json", ".mcp.json",
+  "AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".avanzel/config.toml", "opencode.json", ".mcp.json",
   ".git/config", ".git/hooks", ".agents", ".claude", ".codex", ".cursor", ".gemini", ".opencode", "tasks",
 ];
 // The folders those lie in (.avanzel, .git): swapping one for a symlink would redirect what is inside.

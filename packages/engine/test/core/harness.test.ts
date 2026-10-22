@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -518,6 +518,12 @@ describe("runHeadless with Claude Code", () => {
   /** The shell that writes the agent's arguments into the library, one to a line (no argument here holds a newline). */
   const recordArgs = `printf '%s\\n' "$@" > ARGV`;
   const recordedArgs = () => readFileSync(join(tmp(), "ARGV"), "utf8").split("\n");
+  /** The arguments `run` gave its agent: ARGV goes first, so what is read can't be an earlier run's. */
+  const argsOf = async (run: () => Promise<unknown>): Promise<string[]> => {
+    rmSync(join(tmp(), "ARGV"), { force: true });
+    await run();
+    return recordedArgs();
+  };
   /** The --settings the agent was given, parsed. */
   const recordedSettings = () => {
     const args = recordedArgs();
@@ -529,12 +535,12 @@ describe("runHeadless with Claude Code", () => {
 
   it("Claude Code's write runs carry the guard; reads and other agents don't", async () => {
     vi.stubEnv("PATH", binScripts(tmp(), { claude: recordArgs, codex: recordArgs }));
-    await runClaude();
+    await argsOf(() => runClaude());
     expect(recordedSettings().permissions.deny.length).toBeGreaterThan(0);
-    await runClaude({ write: false });
-    expect(recordedArgs()).not.toContain("--settings");
-    await runHeadless(builtin("codex"), "x", tmp(), { write: true, timeoutSeconds: 30 });
-    expect(recordedArgs()).not.toContain("--settings");
+    expect(await argsOf(() => runClaude({ write: false }))).not.toContain("--settings");
+    const codex = await argsOf(() => runHeadless(builtin("codex"), "x", tmp(), { write: true, timeoutSeconds: 30 }));
+    expect(codex[0]).toBe("exec"); // Codex's own arguments
+    expect(codex).not.toContain("--settings");
     // Only the built-in Claude Code is guarded: not another agent, nor a custom harness that takes its name.
     expect(builtin("claude").guard).toBe(true);
     for (const name of ["codex", "opencode", "cursor-agent", "gemini"]) expect(builtin(name).guard).toBe(false);
