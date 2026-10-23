@@ -3,7 +3,7 @@
 // and Run now apply at once, and the editor saves on Save. The pane needs a library: without one the shell draws
 // NoLibrary in its place.
 import { Actions, Button, Group, GroupRow, Notice, Segmented, Stack, Switch, Text, TextArea, TextField, type SegmentedOption } from "@avanzel/ui";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { harnessName } from "../../../main/jobs.ts";
 import type { HarnessInfo, PickOption, TaskInfo } from "../../../shared/ipc.ts";
 import { DAYS, kindLine, lastRunLine, remoteMessage, scheduleParts, scheduleText, validTime, whenLine } from "../copy.ts";
@@ -60,6 +60,8 @@ function agentOptions(agent: string, harnesses: readonly HarnessInfo[]): PickOpt
 interface EditorProps {
   draft: Draft;
   harnesses: readonly HarnessInfo[];
+  /** A save of this review is on its way: Save is busy until it is written. */
+  saving: boolean;
   /** Changes the draft. `change` makes the next draft from the one then, so a menu's pick keeps what was typed meanwhile. */
   onDraft(change: (draft: Draft) => Draft): void;
   onSave(): void;
@@ -70,7 +72,7 @@ interface EditorProps {
  * then the instructions and Save, each in a box of the window's own. They are given back side by side, so every row
  * stays a direct child of the group's panel.
  */
-function Editor({ draft, harnesses, onDraft, onSave }: EditorProps): ReactNode {
+function Editor({ draft, harnesses, saving, onDraft, onSave }: EditorProps): ReactNode {
   return (
     <>
       <GroupRow label="Repeats">
@@ -101,7 +103,7 @@ function Editor({ draft, harnesses, onDraft, onSave }: EditorProps): ReactNode {
       </div>
       <div className="settings-editor">
         <Actions>
-          <Button variant="primary" onClick={onSave}>Save</Button>
+          <Button variant="primary" busy={saving} onClick={onSave}>Save</Button>
         </Actions>
       </div>
     </>
@@ -114,6 +116,8 @@ interface ReviewProps {
   harnesses: readonly HarnessInfo[];
   /** The editor's draft while this review's editor is open, else null. */
   draft: Draft | null;
+  /** A save of this review is on its way: the switch and Save wait until it is written. */
+  saving: boolean;
   /** Why this review's last save failed, if it did. */
   failure: string | null;
   onDraft: EditorProps["onDraft"];
@@ -130,17 +134,36 @@ interface ReviewProps {
  * Its switch, then when it runs and when it last ran, with Run now and Edit; while it is edited, its editor; and under
  * the group, why its last save failed.
  */
-function Review({ task, now, harnesses, draft, failure, onDraft, onSwitch, onSave, onRun, onEditor }: ReviewProps): ReactNode {
+function Review({ task, now, harnesses, draft, saving, failure, onDraft, onSwitch, onSave, onRun, onEditor }: ReviewProps): ReactNode {
+  const group = useRef<HTMLDivElement>(null);
+  const toggle = () => group.current?.querySelector<HTMLElement>('[role="switch"]');
+  // The switch is disabled while its save is on its way, and a disabled control drops the keyboard focus. If the switch
+  // had it when it was turned, it gets it back once the save is done, unless something else has taken it meanwhile.
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (saving || !refocus.current) return;
+    refocus.current = false;
+    if (document.activeElement === document.body) toggle()?.focus();
+  }, [saving]);
   return (
-    <div role="group" aria-label={task.name}>
+    <div ref={group} role="group" aria-label={task.name}>
       <Stack gap={12}>
         <Group label={task.name} note={task.kind === "evening-review" ? EVENING_NOTE : undefined}>
-          <Switch label="On" description={kindLine(task.kind)} checked={task.enabled} onChange={onSwitch} />
+          <Switch
+            label="On"
+            description={kindLine(task.kind)}
+            checked={task.enabled}
+            disabled={saving}
+            onChange={(enabled) => {
+              refocus.current = document.activeElement === toggle();
+              onSwitch(enabled);
+            }}
+          />
           <GroupRow label={whenLine(task.schedule)} description={lastRunLine(task, now)}>
             <Button size="small" variant="secondary" busy={task.running} onClick={onRun}>Run now</Button>
             <Button size="small" variant="secondary" onClick={onEditor}>{draft ? "Close" : "Edit"}</Button>
           </GroupRow>
-          {draft && <Editor draft={draft} harnesses={harnesses} onDraft={onDraft} onSave={onSave} />}
+          {draft && <Editor draft={draft} harnesses={harnesses} saving={saving} onDraft={onDraft} onSave={onSave} />}
         </Group>
         {failure && <Notice tone="error" title="This review couldn't be saved.">{failure}</Notice>}
       </Stack>
@@ -156,11 +179,17 @@ export function Reviews({ snap, onChange }: PaneProps): ReactNode {
   const [draft, setDraft] = useState<Draft | null>(null);
   // The review whose last save failed, and why: shown until that review is saved again, or its editor opens or closes.
   const [failure, setFailure] = useState<{ id: string; message: string } | null>(null);
+  // The reviews with a save on its way. A save waits its turn behind a filing or a run, and carries every field as this
+  // pane last drew them, so a second save of the review meanwhile would write its stale fields over the first. Until
+  // the first is written, that review's switch and Save wait too.
+  const [saving, setSaving] = useState<ReadonlySet<string>>(() => new Set());
   const now = new Date();
 
   /** Saves `task` with `fields` changed and the rest as stored. Whether it saved: if not, the failure shows under it. */
   const save = async (task: TaskInfo, fields: Fields): Promise<boolean> => {
     const { id, name, schedule, agent, enabled, instructions } = task;
+    if (saving.has(id)) return false;
+    setSaving((last) => new Set(last).add(id));
     try {
       onChange(await api.saveTask({ id, name, schedule, agent, enabled, instructions, ...fields }));
       setFailure((last) => (last?.id === id ? null : last));
@@ -168,12 +197,14 @@ export function Reviews({ snap, onChange }: PaneProps): ReactNode {
     } catch (error) {
       setFailure({ id, message: remoteMessage(error) });
       return false;
+    } finally {
+      setSaving((last) => new Set([...last].filter((each) => each !== id)));
     }
   };
 
   /** Save, in the open editor: a time that isn't one is refused and nothing is saved; a save that works closes it. */
   const saveDraft = async (task: TaskInfo) => {
-    if (!draft) return;
+    if (!draft || saving.has(task.id)) return;
     const time = validTime(draft.time);
     if (!time) {
       setDraft({ ...draft, refused: true });
@@ -206,6 +237,7 @@ export function Reviews({ snap, onChange }: PaneProps): ReactNode {
           now={now}
           harnesses={snap.harnesses}
           draft={editing === task.id ? draft : null}
+          saving={saving.has(task.id)}
           failure={failure?.id === task.id ? failure.message : null}
           onDraft={(change) => setDraft((last) => last && change(last))}
           onSwitch={(enabled) => void save(task, { enabled })}

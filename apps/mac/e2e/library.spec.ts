@@ -114,6 +114,31 @@ test("a scheduled review's switch, schedule, agent and instructions are edited i
   await app.close();
 });
 
+test("a review's editor keeps what was typed when Settings gets a new snapshot", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  await weekly.getByRole("button", { name: "Edit", exact: true }).click();
+  await weekly.getByRole("radio", { name: "Every day", exact: true }).click();
+  await weekly.getByRole("textbox", { name: "Time", exact: true }).fill("7:30");
+  await answerMenus(app, "Codex");
+  await weekly.getByRole("group", { name: "Agent", exact: true }).getByRole("button", { name: "Choose…" }).click();
+  await expect(weekly.getByText("Codex", { exact: true })).toBeVisible();
+  await weekly.getByRole("textbox", { name: "Instructions" }).fill("Look for stale goals.");
+  // Another review runs: main sends Settings a snapshot as it starts, and another as it ends.
+  await call(app, "runTask", "evening-review");
+  await call(app, "idleForTests");
+  await expect(settings.getByRole("group", { name: "Evening review", exact: true }).getByText(/^Last run today at/)).toBeVisible();
+  // The draft is as it was typed, and nothing was saved.
+  await expect(weekly.getByRole("radio", { name: "Every day", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(weekly.getByRole("textbox", { name: "Time", exact: true })).toHaveValue("7:30");
+  await expect(weekly.getByText("Codex", { exact: true })).toBeVisible();
+  await expect(weekly.getByRole("textbox", { name: "Instructions" })).toHaveValue("Look for stale goals.");
+  await expect(weekly.getByText("Sundays at 18:00", { exact: true })).toBeVisible();
+  await app.close();
+});
+
 test("Run now runs a review at once, and the review says when it last ran", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
@@ -127,6 +152,65 @@ test("Run now runs a review at once, and the review says when it last ran", asyn
   await call(app, "idleForTests");
   await expect(weekly.getByText(/^Last run today at \d\d:\d\d\.$/)).toBeVisible();
   expect(await call(app, "notificationsForTests")).toContainEqual(expect.objectContaining({ title: "Weekly review is ready" }));
+  await app.close();
+});
+
+test("a review's save waits behind a run, and nothing else saves that review over it meanwhile", async () => {
+  // Each weekly review run holds the library for 4 s, and a save waits behind it in the queue.
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_DELAY_MS: "4000", FAKE_AGENT_DELAY_TASK: "review" });
+  const settings = await openSettings(app, "Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  const evening = settings.getByRole("group", { name: "Evening review", exact: true });
+  const on = evening.getByRole("switch", { name: "On" });
+  const instructions = evening.getByRole("textbox", { name: "Instructions" });
+  const save = evening.getByRole("button", { name: "Save", exact: true });
+  const hold = async () => {
+    await weekly.getByRole("button", { name: "Run now" }).click();
+    await expect(weekly.getByText("Running now…", { exact: true })).toBeVisible();
+  };
+
+  // The switch, then Save: while the switch's save waits, the switch and Save wait too, Return in the time included.
+  await hold();
+  await evening.getByRole("button", { name: "Edit", exact: true }).click();
+  await instructions.fill("File it all, and keep my words.");
+  await on.click();
+  await expect(on).toBeDisabled();
+  await expect(save).toHaveAttribute("aria-busy", "true");
+  await save.click();
+  await evening.getByRole("textbox", { name: "Time", exact: true }).press("Enter");
+  await call(app, "idleForTests");
+  await expect(on).toBeEnabled();
+  await expect(on).toHaveAttribute("aria-checked", "false");
+  expect(read(library, "tasks/evening-review.md")).toContain("enabled: false");
+  expect(read(library, "tasks/evening-review.md")).not.toContain("File it all");
+  // The editor kept what was typed, and Save now writes it with the review left off.
+  await save.click();
+  await expect.poll(() => read(library, "tasks/evening-review.md")).toContain("File it all, and keep my words.");
+  expect(read(library, "tasks/evening-review.md")).toContain("enabled: false");
+  await expect(save).toHaveCount(0);
+
+  // Save, then the switch: while Save waits, the switch does too, so it can't write the old instructions back.
+  await hold();
+  await evening.getByRole("button", { name: "Edit", exact: true }).click();
+  await instructions.fill("File only what's ready.");
+  await save.click();
+  await expect(save).toHaveAttribute("aria-busy", "true");
+  await expect(on).toBeDisabled();
+  await call(app, "idleForTests");
+  await expect(save).toHaveCount(0);
+  await on.click();
+  await expect.poll(() => read(library, "tasks/evening-review.md")).toContain("enabled: true");
+  expect(read(library, "tasks/evening-review.md")).toContain("File only what's ready.");
+
+  // From the keyboard: the switch drops the focus while it is disabled, and gets it back once its save is written.
+  await hold();
+  await on.press("Space");
+  await expect(on).toBeDisabled();
+  await call(app, "idleForTests");
+  await expect(on).toBeEnabled();
+  await expect(on).toBeFocused();
+  expect(read(library, "tasks/evening-review.md")).toContain("enabled: false");
   await app.close();
 });
 
