@@ -115,14 +115,52 @@ test("the model starts from the one saved, saves when the focus leaves the field
   const settings = await openSettings(app, "Agents");
   const model = settings.getByRole("textbox", { name: "fake model" });
   await expect(model).toHaveValue("tiny");
-  await expect(model).toHaveAttribute("placeholder", "Your agent's default");
+  // The row says what an empty field means, so the field draws no placeholder: its ink reads under AA in dark.
+  await expect(
+    settings.getByText("A smaller model often files just as well and costs less. Leave it empty to use the agent's own default.", { exact: true }),
+  ).toBeVisible();
+  await expect(model).not.toHaveAttribute("placeholder");
   await model.fill("small");
   await model.press("Tab"); // the focus leaves the field, which saves it, with the other agents' models kept
   await expect.poll(() => loadSettings(library).models).toEqual({ fake: "small", codex: "big" });
   await model.fill("");
   await model.press("Tab");
   await expect.poll(() => loadSettings(library).models).toEqual({ codex: "big" });
-  await expect(model).toHaveAttribute("placeholder", "Your agent's default");
+  await expect(model).toHaveValue("");
+  await expect(model).not.toHaveAttribute("placeholder");
+  await app.close();
+});
+
+test("an agent's name stays on one line at the window's least width, beside the longest status", async () => {
+  // Claude Code is signed out and isn't the agent chosen: its row holds the longest status, "Best results", Use and Check.
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), PATH: agentPath({ claude: SIGNED_OUT_CLAUDE }) });
+  const settings = await openSettings(app, "Agents");
+  const least = await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))!;
+    const [width = 0] = win.getMinimumSize();
+    win.setSize(width, 500); // short enough that the pane scrolls
+    return width;
+  });
+  await expect.poll(() => settings.evaluate(() => window.innerWidth)).toBe(least);
+  // Whether a scrolling pane gives 15 px of every row to a classic scrollbar depends on how this Mac shows scrollbars.
+  // Make it the narrower case, whatever the setting.
+  await settings.addStyleTag({ content: "main::-webkit-scrollbar { width: 15px; }" });
+  const claude = settings.getByRole("group", { name: "Claude Code", exact: true });
+  await expect(claude.getByText("Not signed in.", { exact: false })).toBeVisible({ timeout: 20_000 });
+  // The pane scrolls and the page doesn't. A field's hidden label is placed against the page unless the pane holds it, so
+  // one below the pane's fold stretched the page: a second scrollbar, which took another 15 px from every row.
+  expect(await settings.evaluate(() => document.documentElement.scrollHeight - window.innerHeight), "the page doesn't scroll").toBeLessThanOrEqual(0);
+  // Every name is on one line, as short Codex's is: not wrapped at its space, and not broken letter by letter.
+  const height = async (name: string) => {
+    const box = await settings.getByText(name, { exact: true }).boundingBox();
+    expect(box, `${name}'s row is on the page`).not.toBeNull();
+    return box!.height;
+  };
+  const oneLine = await height("Codex");
+  expect(oneLine).toBeGreaterThan(0);
+  for (const name of ["Claude Code", "Codex", "OpenCode", "Cursor Agent", "Gemini CLI"]) {
+    expect(await height(name), `${name} is on one line`).toBeLessThan(oneLine * 1.5);
+  }
   await app.close();
 });
 

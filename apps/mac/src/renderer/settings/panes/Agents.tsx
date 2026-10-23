@@ -116,10 +116,11 @@ function ModelGroup({ agent, models, onChange }: ModelGroupProps): ReactNode {
   };
   return (
     <Group label={label}>
-      <GroupRow label="Model" description="A smaller model often files just as well and costs less.">
+      {/* The row says what an empty field means, so the field has no placeholder: in a Group, its ink reads under AA in dark. */}
+      <GroupRow label="Model" description="A smaller model often files just as well and costs less. Leave it empty to use the agent's own default.">
         {/* TextField takes no onBlur, so the box around it hears the focus leave (React's onBlur bubbles). */}
         <div className="settings-field" onBlur={() => void save()}>
-          <TextField label={`${label} model`} labelHidden placeholder="Your agent's default" value={draft} onChange={setDraft} onEnter={() => void save()} />
+          <TextField label={`${label} model`} labelHidden value={draft} onChange={setDraft} onEnter={() => void save()} />
         </div>
       </GroupRow>
     </Group>

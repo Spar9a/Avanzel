@@ -212,10 +212,6 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
       for (const name of ["Claude Code", "Codex"]) {
         await expect(settings.getByRole("group", { name }).getByRole("status")).toHaveText("Signed in", { timeout: 40_000 });
       }
-      // The model field's placeholder reads about 4.2:1 in dark, where 4.5:1 is needed: --av-ink-secondary on a field's
-      // --av-surface-control, which a Group's --av-surface-group lightens. That is for the owner to settle in packages/ui,
-      // so the field holds a model while it is read, which draws in --av-ink.
-      await settings.getByRole("textbox", { name: "fake model" }).fill("small");
     }
     found.push(...(await readable(app, settings, `Settings › ${pane}`, desktops)));
   }

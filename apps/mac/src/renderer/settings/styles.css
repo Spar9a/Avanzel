@@ -18,8 +18,11 @@
   justify-content: center;
   padding: 0 var(--av-space-24) var(--av-space-20);
 }
-/* A word too long for its line, such as a path or an agent's message, breaks rather than pushing the pane sideways. */
+/* A word too long for its line, such as a path or an agent's message, breaks rather than pushing the pane sideways. The pane
+   holds what is positioned inside it, such as a field's hidden label: left to the page, one below the pane's fold
+   stretches the page, which grows a scrollbar of its own and narrows every row by that scrollbar's width. */
 .settings-pane {
+  position: relative;
   overflow-y: auto;
   overflow-wrap: anywhere;
   padding: 0 var(--av-space-24) var(--av-space-24);
@@ -32,9 +35,11 @@
 .settings-meter {
   width: 120px;
 }
-/* An agent's status, which wraps rather than pushing its buttons off the row: a sign-in hint or the agent's own line. */
+/* An agent's status, which wraps rather than pushing its buttons off the row: a sign-in hint or the agent's own line. Narrow
+   enough that the widest row, Claude Code's with Use, Check and "Best results", leaves its name on one line at the window's
+   least width, beside a scrollbar. */
 .settings-status {
-  max-width: 240px;
+  max-width: 144px;
 }
 /* The model's field, a short one in its row. */
 .settings-field {
