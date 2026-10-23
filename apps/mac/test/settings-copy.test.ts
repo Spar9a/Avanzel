@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { asSentence, libraryLine, microphoneName, microphoneOptions, PANE_LABELS, SPEECH_MODEL_DESCRIPTION } from "../src/renderer/settings/copy.ts";
+import {
+  asSentence,
+  DAYS,
+  kindLine,
+  lastRunLine,
+  libraryLine,
+  microphoneName,
+  microphoneOptions,
+  PANE_LABELS,
+  remoteMessage,
+  scheduleParts,
+  scheduleText,
+  SPEECH_MODEL_DESCRIPTION,
+  validTime,
+  whenLine,
+} from "../src/renderer/settings/copy.ts";
 import { SETTINGS_PANES } from "../src/shared/ipc.ts";
 
 describe("settings copy", () => {
@@ -67,5 +82,74 @@ describe("settings copy", () => {
     );
     // The languages are for the person to know; which model hears them is the app's business.
     expect(SPEECH_MODEL_DESCRIPTION).not.toMatch(/parakeet|whisper|silero|nemo/i);
+  });
+});
+
+describe("a scheduled review's copy", () => {
+  // A Friday, at noon.
+  const now = new Date(2026, 9, 23, 12, 0);
+  const ranAt = (date: Date) => ({ running: false, lastRun: date.toISOString() });
+
+  it("whenLine says when a review runs, and leaves a schedule it can't read as it is", () => {
+    expect(whenLine("daily 21:00")).toBe("Every day at 21:00");
+    expect(whenLine("weekly sun 18:00")).toBe("Sundays at 18:00");
+    expect(whenLine("weekly sat 07:05")).toBe("Saturdays at 07:05");
+    expect(whenLine("monthly 1 09:00")).toBe("monthly 1 09:00");
+  });
+
+  it("lastRunLine says whether a review runs now, and when it last ran, nearest first", () => {
+    expect(lastRunLine({ running: true, lastRun: null }, now)).toBe("Running now…");
+    expect(lastRunLine({ running: true, lastRun: new Date(2026, 9, 22, 21, 0).toISOString() }, now)).toBe("Running now…");
+    expect(lastRunLine({ running: false, lastRun: null }, now)).toBe("Not run yet.");
+    expect(lastRunLine(ranAt(new Date(2026, 9, 23, 9, 5)), now)).toBe("Last run today at 09:05.");
+    expect(lastRunLine(ranAt(new Date(2026, 9, 22, 21, 0)), now)).toBe("Last run yesterday at 21:00.");
+    expect(lastRunLine(ranAt(new Date(2026, 9, 18, 18, 0)), now)).toBe("Last run on Sunday at 18:00.");
+    // Six days back is still named by its weekday; a week back would be today's, so it goes by its date.
+    expect(lastRunLine(ranAt(new Date(2026, 9, 17, 6, 30)), now)).toBe("Last run on Saturday at 06:30.");
+    expect(lastRunLine(ranAt(new Date(2026, 9, 16, 21, 0)), now)).toBe("Last run on 16 Oct at 21:00.");
+    expect(lastRunLine(ranAt(new Date(2026, 9, 2, 18, 0)), now)).toBe("Last run on 2 Oct at 18:00.");
+    // A run in another year says which.
+    expect(lastRunLine(ranAt(new Date(2025, 11, 30, 21, 0)), now)).toBe("Last run on 30 Dec 2025 at 21:00.");
+  });
+
+  it("validTime takes HH:MM as a schedule does, zero-padded, and nothing else", () => {
+    expect(validTime(" 7:30 ")).toBe("07:30");
+    expect(validTime("21:00")).toBe("21:00");
+    expect(validTime("0:00")).toBe("00:00");
+    for (const text of ["24:00", "21:60", "9", "9:5", "", "7.30", "07:30 pm", "123:00"]) expect(validTime(text)).toBeNull();
+  });
+
+  it("scheduleParts and scheduleText take a schedule apart and put it back", () => {
+    const weekly = scheduleParts("weekly sun 18:00");
+    expect(weekly).toEqual({ every: "weekly", day: "sun", time: "18:00" });
+    expect(scheduleText(weekly.every, weekly.day, weekly.time)).toBe("weekly sun 18:00");
+    // A daily review starts the day from Sunday, for when it is made weekly.
+    const daily = scheduleParts("daily 21:00");
+    expect(daily).toEqual({ every: "daily", day: "sun", time: "21:00" });
+    expect(scheduleText(daily.every, daily.day, daily.time)).toBe("daily 21:00");
+    expect(scheduleText("weekly", "mon", "07:30")).toBe("weekly mon 07:30");
+    expect(scheduleText("daily", "mon", "07:30")).toBe("daily 07:30");
+  });
+
+  it("DAYS lists the week from Sunday, by name", () => {
+    expect(DAYS.map((day) => day.value)).toEqual(["sun", "mon", "tue", "wed", "thu", "fri", "sat"]);
+    expect(DAYS.map((day) => day.label)).toEqual(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]);
+  });
+
+  it("kindLine says what each kind of review does", () => {
+    expect(kindLine("evening-review")).toBe("Files anything still in the inbox and writes a short summary.");
+    expect(kindLine("review")).toBe("Looks over the whole library and writes a report in reviews/.");
+    expect(kindLine("custom")).toBe("Avanzel doesn't run custom reviews yet.");
+  });
+
+  it("remoteMessage keeps only what went wrong from an IPC rejection", () => {
+    expect(
+      remoteMessage(new Error("Error invoking remote method 'settings:save-task': AvanzelError: No scheduled review called x.")),
+    ).toBe("No scheduled review called x.");
+    expect(remoteMessage(new Error("Error invoking remote method 'settings:save-task': Error: EACCES: permission denied"))).toBe(
+      "EACCES: permission denied",
+    );
+    expect(remoteMessage(new Error("No scheduled review called x."))).toBe("No scheduled review called x.");
+    expect(remoteMessage("gone")).toBe("gone");
   });
 });

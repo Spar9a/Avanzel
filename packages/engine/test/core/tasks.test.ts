@@ -146,7 +146,8 @@ describe("task files", () => {
   });
 
   it.each([
-    ["no frontmatter", "Just words.\n", "starts with a --- block"],
+    // Settings shows this message under "Files that can't be used", so it names what a person calls the file.
+    ["no frontmatter", "Just words.\n", "A scheduled review starts with a --- block"],
     ["no schedule", "---\nname: X\n---\nDo things.\n", "`schedule` is missing"],
     ["a bad schedule", "---\nschedule: sometimes\n---\nDo things.\n", 'Unknown schedule "sometimes"'],
     ["an unknown kind", "---\nschedule: daily 07:00\nkind: party\n---\nDo things.\n", "`kind` must be one of"],

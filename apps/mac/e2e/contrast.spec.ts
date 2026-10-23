@@ -194,7 +194,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
 test("every Settings pane, Quick, Ask and capsule state is readable in light and dark", async () => {
   test.setTimeout(240_000);
   const library = await makeLibrary();
-  writeFileSync(path.join(library, "tasks", "broken.md"), "---\nschedule: sometimes\n---\nDo things.\n"); // Reviews shows its problem in red
+  writeFileSync(path.join(library, "tasks", "broken.md"), "---\nschedule: sometimes\n---\nDo things.\n"); // Reviews lists it, with why
   writeFileSync(path.join(library, "goals", "run-a-marathon.md"), "# Run a marathon\n"); // the page Ask's answer links
   const app = await launch({ AVANZEL_LIBRARY: library });
   const found: string[] = [];
@@ -214,6 +214,12 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
       }
     }
     found.push(...(await readable(app, settings, `Settings › ${pane}`, desktops)));
+    // A review's editor, open in its group: its rows, its instructions and its Save.
+    if (pane === "Reviews") {
+      await settings.getByRole("group", { name: "Weekly review", exact: true }).getByRole("button", { name: "Edit", exact: true }).click();
+      await expect(settings.getByRole("textbox", { name: "Instructions" })).toBeVisible();
+      found.push(...(await readable(app, settings, "Settings › Reviews, editing", desktops)));
+    }
   }
 
   await call(app, "openQuick");

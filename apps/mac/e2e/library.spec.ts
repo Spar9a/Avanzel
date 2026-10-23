@@ -4,22 +4,129 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { call, capsuleKind, exists, filesUnder, firstRun, launch, makeLibrary, openSettings, snap, stubPicker, windowFor } from "./helpers.ts";
+import {
+  answerMenus,
+  call,
+  capsuleKind,
+  exists,
+  filesUnder,
+  firstRun,
+  launch,
+  makeLibrary,
+  openSettings,
+  read,
+  shownMenus,
+  snap,
+  stubPicker,
+  windowFor,
+} from "./helpers.ts";
 
-test("a malformed task file shows up under Reviews, and the evening review still runs", async () => {
+test("a review file that can't be used is listed with why, and the evening review still runs", async () => {
   const library = await makeLibrary();
   writeFileSync(path.join(library, "tasks", "broken.md"), "---\nschedule: sometimes\n---\nDo things.\n");
   const app = await launch({ AVANZEL_LIBRARY: library });
   await call(app, "setApp", { fileMode: "evening" });
   await call(app, "submitQuick", "a thought for tonight");
   const settings = await openSettings(app, "Reviews");
-  await expect(settings.getByText("tasks/broken.md")).toBeVisible();
+  await expect(settings.getByRole("heading", { name: "Files that can't be used", exact: true })).toBeVisible();
+  await expect(settings.getByText("tasks/broken.md", { exact: true })).toBeVisible();
   await expect(settings.getByText(/Unknown schedule "sometimes"/)).toBeVisible();
-  await expect(settings.getByText("Evening review", { exact: true })).toBeVisible();
+  await expect(settings.getByRole("group", { name: "Evening review", exact: true })).toBeVisible();
   await snap(settings, "settings-task-problem");
   await call(app, "runTask", "evening-review");
   await call(app, "idleForTests");
   expect(filesUnder(library, "inbox")).toEqual([]);
+  await app.close();
+});
+
+test("a scheduled review's switch, schedule, agent and instructions are edited in Settings and saved to its file", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  await expect(weekly.getByText("Sundays at 18:00", { exact: true })).toBeVisible();
+  await expect(weekly.getByText("Not run yet.", { exact: true })).toBeVisible();
+
+  // The switch saves at once.
+  await weekly.getByRole("switch", { name: "On" }).click();
+  await expect.poll(() => read(library, "tasks/weekly-review.md")).toContain("enabled: false");
+
+  // A time that isn't one is refused, and the file keeps its schedule.
+  await weekly.getByRole("button", { name: "Edit", exact: true }).click();
+  const time = weekly.getByRole("textbox", { name: "Time", exact: true });
+  await time.fill("25:00");
+  await weekly.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(weekly.getByText("Use a time like 21:00.", { exact: true })).toBeVisible();
+  expect(read(library, "tasks/weekly-review.md")).toContain("schedule: weekly sun 18:00");
+
+  // The day comes from a menu of the seven days, with the one saved checked.
+  await answerMenus(app, "Monday");
+  await weekly.getByRole("group", { name: "Day", exact: true }).getByRole("button", { name: "Choose…" }).click();
+  await expect.poll(() => shownMenus(app)).toHaveLength(1);
+  expect((await shownMenus(app))[0]).toEqual([
+    { label: "Sunday", checked: true },
+    { label: "Monday", checked: false },
+    { label: "Tuesday", checked: false },
+    { label: "Wednesday", checked: false },
+    { label: "Thursday", checked: false },
+    { label: "Friday", checked: false },
+    { label: "Saturday", checked: false },
+  ]);
+  await expect(weekly.getByText("Monday", { exact: true })).toBeVisible();
+  // Every day has no day to choose, and Every week brings back the one chosen.
+  await weekly.getByRole("radio", { name: "Every day", exact: true }).click();
+  await expect(weekly.getByRole("group", { name: "Day", exact: true })).toHaveCount(0);
+  await weekly.getByRole("radio", { name: "Every week", exact: true }).click();
+  await expect(weekly.getByText("Monday", { exact: true })).toBeVisible();
+
+  // A time without its leading zero is one, and the agent comes from a menu that starts with the library's own.
+  await time.fill("7:30");
+  await answerMenus(app, "Codex");
+  await weekly.getByRole("group", { name: "Agent", exact: true }).getByRole("button", { name: "Choose…" }).click();
+  await expect.poll(() => shownMenus(app)).toHaveLength(1);
+  expect((await shownMenus(app))[0]![0]).toEqual({ label: "The library's agent", checked: true });
+  await expect(weekly.getByText("Codex", { exact: true })).toBeVisible();
+
+  await weekly.getByRole("textbox", { name: "Instructions" }).fill("Look for stale goals.");
+  await weekly.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => read(library, "tasks/weekly-review.md")).toContain("schedule: weekly mon 07:30");
+  const file = read(library, "tasks/weekly-review.md");
+  expect(file).toContain("agent: codex");
+  expect(file).toContain("Look for stale goals.");
+  expect(file).toContain("enabled: false"); // Save keeps what the switch saved
+  await expect(weekly.getByText("Mondays at 07:30", { exact: true })).toBeVisible();
+  // The editor is closed.
+  await expect(weekly.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  await expect(weekly.getByRole("textbox")).toHaveCount(0);
+
+  // One editor is open at a time, and Close drops what it held: the next Edit starts from the file.
+  await weekly.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(time).toHaveValue("07:30");
+  await time.fill("9:00");
+  const evening = settings.getByRole("group", { name: "Evening review", exact: true });
+  await evening.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(evening.getByRole("textbox", { name: "Time", exact: true })).toHaveValue("21:00");
+  await expect(weekly.getByRole("textbox")).toHaveCount(0);
+  await evening.getByRole("button", { name: "Close", exact: true }).click();
+  await weekly.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(time).toHaveValue("07:30");
+  expect(read(library, "tasks/weekly-review.md")).toContain("schedule: weekly mon 07:30");
+  await app.close();
+});
+
+test("Run now runs a review at once, and the review says when it last ran", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  await weekly.getByRole("button", { name: "Run now" }).click();
+  // The run has started once main notes when it ran; then it runs to its end.
+  await expect
+    .poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).tasks.find((task) => task.id === "weekly-review")?.lastRun ?? null)
+    .not.toBeNull();
+  await call(app, "idleForTests");
+  await expect(weekly.getByText(/^Last run today at \d\d:\d\d\.$/)).toBeVisible();
+  expect(await call(app, "notificationsForTests")).toContainEqual(expect.objectContaining({ title: "Weekly review is ready" }));
   await app.close();
 });
 
@@ -50,6 +157,20 @@ test("saving a review whose file has gone says so plainly", async () => {
   const app = await launch({ AVANZEL_LIBRARY: library });
   const patch = { id: "standup", name: "Standup", schedule: "daily 09:00", agent: "auto", enabled: true, instructions: "Ask about the day." };
   await expect(call(app, "saveTaskFromSettings", patch)).rejects.toThrow("No scheduled review called standup.");
+  // In Settings, the review's Save says so under it, in main's words alone, and the editor keeps what was typed.
+  const settings = await openSettings(app, "Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  await weekly.getByRole("button", { name: "Edit", exact: true }).click();
+  await weekly.getByRole("textbox", { name: "Instructions" }).fill("Look for stale goals.");
+  rmSync(path.join(library, "tasks", "weekly-review.md"));
+  await weekly.getByRole("button", { name: "Save", exact: true }).click();
+  const problem = weekly.getByRole("alert");
+  await expect(problem.getByText("This review couldn't be saved.", { exact: true })).toBeVisible();
+  await expect(problem.getByText("No scheduled review called weekly-review.", { exact: true })).toBeVisible();
+  await expect(weekly.getByRole("textbox", { name: "Instructions" })).toHaveValue("Look for stale goals.");
+  // Close drops the draft, and the failed save with it.
+  await weekly.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(weekly.getByRole("alert")).toHaveCount(0);
   await app.close();
 });
 
@@ -132,6 +253,10 @@ test("Settings without a library offers setup, which comes forward as Settings c
   await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
   await expect(settings.getByRole("button", { name: "Set up Avanzel…" })).toBeVisible();
   await expect(settings.getByRole("heading", { name: "Who files your thoughts", exact: true })).toHaveCount(0);
+  // Nor has Reviews any reviews to show.
+  await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+  await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
+  await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
   await settings.getByRole("radio", { name: "General", exact: true }).click();
   await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
   const closed = settings.waitForEvent("close");

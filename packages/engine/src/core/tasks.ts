@@ -165,7 +165,7 @@ function parseTask(path: string): ShadowTask {
   let text = readFileSync(path, "utf8").replace(/\r\n/g, "\n");
   if (text.endsWith("\n---")) text += "\n";
   const [front, body] = splitFrontmatter(text);
-  if (!front) fail("a task starts with a --- block holding at least `schedule:` (e.g. daily 21:00).");
+  if (!front) fail("A scheduled review starts with a --- block holding at least `schedule:` (e.g. daily 21:00).");
   const fields = frontmatterFields(front);
   const scheduleText = fields.get("schedule") ?? fail('`schedule` is missing (e.g. "daily 21:00").');
   let schedule: Schedule;
