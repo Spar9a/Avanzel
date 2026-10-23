@@ -1,7 +1,8 @@
 // Microphone and Screen Recording turned down (AVANZEL_FAKE_PERMISSIONS stands in for macOS):
-// the capsule says what to do, and nothing half-made is left in the library.
+// the capsule says what to do, and nothing half-made is left in the library. Settings → Privacy
+// says what each permission is for, where it stands, and how to allow it.
 import { expect, test } from "@playwright/test";
-import { call, capsuleKind, filesUnder, launch, makeLibrary, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
+import { call, capsuleKind, filesUnder, launch, makeLibrary, openSettings, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
 
 const saved = (root: string) => ({
   inbox: filesUnder(root, "inbox"),
@@ -63,5 +64,52 @@ test("a blank first screen capture asks for Screen Recording and a relaunch, and
   await expect(capsule.getByText(/then quit and reopen Avanzel\.$/)).toBeVisible();
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ action: "open-screen-settings" });
   expect(saved(library)).toEqual(before);
+  await app.close();
+});
+
+test("Settings → Privacy says what each permission is for, and Open System Settings goes where it's allowed", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_PERMISSIONS: "screen:denied" });
+  const settings = await openSettings(app, "Privacy");
+  const microphone = settings.getByRole("group", { name: "Microphone", exact: true });
+  const screen = settings.getByRole("group", { name: "Screen recording", exact: true });
+  // Each row says what its permission is for; its control says where it stands.
+  await expect(settings.getByText("Only while the capsule shows it listening.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Needed only to capture the screen with a comment.", { exact: true })).toBeVisible();
+  await expect(microphone.getByText("Allowed", { exact: true })).toBeVisible();
+  await expect(microphone.getByRole("button")).toHaveCount(0);
+  await expect(screen.getByRole("button")).toHaveText(["Open System Settings"]);
+  await expect(settings.getByText("After you allow screen recording, quit and reopen Avanzel: macOS applies it only then.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Your voice never leaves this Mac.", { exact: false })).toBeVisible();
+  await snap(settings, "settings-privacy-screen-denied");
+  // With AVANZEL_TEST=1 System Settings stays shut, and openedForTests says which pane it would have opened.
+  await screen.getByRole("button", { name: "Open System Settings" }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Screen Recording"]);
+  await app.close();
+});
+
+test("Allow… asks macOS for the microphone once, and the row then says Allowed", async () => {
+  const app = await launch({
+    AVANZEL_LIBRARY: await makeLibrary(),
+    AVANZEL_FAKE_PERMISSIONS: "microphone:not-determined",
+    AVANZEL_FAKE_MIC_ANSWER: "granted",
+  });
+  const settings = await openSettings(app, "Privacy");
+  const microphone = settings.getByRole("group", { name: "Microphone", exact: true });
+  // macOS hasn't asked yet: the row offers to ask, and doesn't say Allowed.
+  await expect(microphone.getByRole("button")).toHaveText(["Allow…"]);
+  await expect(microphone.getByText("Allowed", { exact: true })).toHaveCount(0);
+  await snap(settings, "settings-privacy-microphone-not-asked");
+  await microphone.getByRole("button", { name: "Allow…" }).click();
+  // The answer is the microphone's status from then on, so the row says Allowed and has nothing left to offer.
+  await expect(microphone.getByText("Allowed", { exact: true })).toBeVisible();
+  await expect(microphone.getByRole("button")).toHaveCount(0);
+  await app.close();
+});
+
+test("Screen recording never offers Allow…, since Electron can't tell never asked from denied", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_PERMISSIONS: "screen:not-determined" });
+  const settings = await openSettings(app, "Privacy");
+  await expect(settings.getByRole("group", { name: "Screen recording", exact: true }).getByRole("button")).toHaveText(["Open System Settings"]);
+  await expect(settings.getByRole("button", { name: "Allow…" })).toHaveCount(0);
   await app.close();
 });

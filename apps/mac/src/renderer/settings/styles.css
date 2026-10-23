@@ -1,4 +1,4 @@
-/* The Settings window's layout. It only arranges: the toolbar and the rebuilt panes come from @avanzel/ui. */
+/* The Settings window's layout. It only arranges: everything you see comes from @avanzel/ui. */
 #root {
   height: 100%;
 }
@@ -31,6 +31,10 @@
 .settings-shelves {
   padding: var(--av-space-12);
 }
+/* What leaves this Mac: a paragraph in its group's panel, which isn't a row, so it is padded as a row is. */
+.settings-words {
+  padding: var(--av-space-10) var(--av-space-12);
+}
 /* The speech model's progress bar, a short one beside the megabytes it has. */
 .settings-meter {
   width: 120px;
@@ -54,14 +58,3 @@
 .settings-editor {
   padding: var(--av-space-10) var(--av-space-12);
 }
-
-/* The pane not rebuilt yet (Privacy), until it is. */
-.glabel { font-size: 12.5px; font-weight: 600; color: var(--text-2); margin: 18px 4px 6px; }
-.group { border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--hair); }
-.grow { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px; border-top: 1px solid var(--hair); }
-.grow:first-child { border-top: 0; }
-.grow > .fill { flex: 1; min-width: 0; }
-.two { display: flex; flex-direction: column; gap: 1px; }
-.two small { color: var(--text-2); font-size: 12px; }
-.note { margin: 6px 4px 0; font-size: 12px; color: var(--text-2); line-height: 1.45; max-width: 70ch; }
-.status-ok { color: var(--ok-text); font-size: 12px; }
