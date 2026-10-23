@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   asSentence,
   DAYS,
+  failedSaveLine,
   fileModeLine,
   kindLine,
   lastRunLine,
@@ -16,7 +17,7 @@ import {
   validTime,
   whenLine,
 } from "../src/renderer/settings/copy.ts";
-import { SETTINGS_PANES } from "../src/shared/ipc.ts";
+import { noSuchReview, SETTINGS_PANES } from "../src/shared/ipc.ts";
 
 describe("settings copy", () => {
   it("the toolbar lists the panes in their order", () => {
@@ -150,6 +151,16 @@ describe("a scheduled review's copy", () => {
     const off = "Right away uses your agent now. Tonight keeps new thoughts in the inbox until the evening review runs.";
     expect(fileModeLine({ schedule: "daily 21:00", enabled: false })).toBe(off);
     expect(fileModeLine(null)).toBe(off);
+  });
+
+  it("failedSaveLine says what is true of a review whose save failed", () => {
+    // Main still lists the review, and refused for another reason: it runs as it was last saved.
+    expect(failedSaveLine("weekly-review", "EACCES: permission denied")).toBe("EACCES: permission denied. It still runs as last saved.");
+    // Main lists no review of that id any more: its file is gone, and it no longer runs.
+    expect(noSuchReview("weekly-review")).toBe("No scheduled review called weekly-review.");
+    expect(failedSaveLine("weekly-review", noSuchReview("weekly-review"))).toBe(
+      "No scheduled review called weekly-review. Its file is gone, so it no longer runs.",
+    );
   });
 
   it("kindLine says what each kind of review does", () => {

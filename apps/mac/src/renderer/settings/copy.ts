@@ -1,8 +1,8 @@
 // Settings' words that panes share or make from values: the name of each pane on the toolbar, the library's line, a
-// message ended as a sentence, the microphone's name, what the speech model row says, and a scheduled review's
-// schedule, last run and kind, with the checks its editor makes.
+// message ended as a sentence, the microphone's name, what the speech model row says, when Tonight files, and a
+// scheduled review's schedule, last run and kind, with the checks its editor makes and what a failed save says.
 import { SHELVES } from "@avanzel/ui";
-import type { PickOption, SettingsPane, TaskInfo } from "../../shared/ipc.ts";
+import { noSuchReview, type PickOption, type SettingsPane, type TaskInfo } from "../../shared/ipc.ts";
 
 /** Each pane's name on the toolbar, which is also its heading. The scheduled reviews' pane keeps its id, "tasks". */
 export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
@@ -149,6 +149,16 @@ export function validTime(text: string): string | null {
   const hour = Number(time[1]);
   const minute = Number(time[2]);
   return hour < 24 && minute < 60 ? `${twoDigits(hour)}:${twoDigits(minute)}` : null;
+}
+
+/**
+ * The body of the Notice under review `id` when its save failed: main's reason, then only what is true of the review
+ * now. Main refuses with noSuchReview when it lists no such review any more, its file having gone: then it no longer
+ * runs. Any other refusal leaves the review as it was, so it runs as it was last saved.
+ */
+export function failedSaveLine(id: string, reason: string): string {
+  const gone = reason === noSuchReview(id);
+  return `${asSentence(reason)} ${gone ? "Its file is gone, so it no longer runs." : "It still runs as last saved."}`;
 }
 
 /** What a review of `kind` does, under its switch. A kind Avanzel doesn't run is a custom one. */

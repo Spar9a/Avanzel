@@ -325,7 +325,8 @@ test("saving a review whose file has gone says so plainly", async () => {
   const app = await launch({ AVANZEL_LIBRARY: library });
   const patch = { id: "standup", name: "Standup", schedule: "daily 09:00", agent: "auto", enabled: true, instructions: "Ask about the day." };
   await expect(call(app, "saveTaskFromSettings", patch)).rejects.toThrow("No scheduled review called standup.");
-  // In Settings, the review's Save says so under it, in main's words, then what is safe, and the editor keeps what was typed.
+  // In Settings, the review's Save says so under it, in main's words, then what is true of the review now: its file is
+  // gone, so it no longer runs (and never that it still runs). The editor keeps what was typed.
   const settings = await openSettings(app, "Reviews");
   const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
   await weekly.getByRole("button", { name: "Edit", exact: true }).click();
@@ -334,7 +335,8 @@ test("saving a review whose file has gone says so plainly", async () => {
   await weekly.getByRole("button", { name: "Save", exact: true }).click();
   const problem = weekly.getByRole("alert");
   await expect(problem.getByText("This review couldn't be saved.", { exact: true })).toBeVisible();
-  await expect(problem.getByText("No scheduled review called weekly-review. It still runs as last saved.", { exact: true })).toBeVisible();
+  await expect(problem.getByText("No scheduled review called weekly-review. Its file is gone, so it no longer runs.", { exact: true })).toBeVisible();
+  await expect(problem).not.toContainText("It still runs as last saved.");
   await expect(weekly.getByRole("textbox", { name: "Instructions" })).toHaveValue("Look for stale goals.");
   // Cancel drops the draft, and the failed save with it.
   await weekly.getByRole("button", { name: "Cancel", exact: true }).click();

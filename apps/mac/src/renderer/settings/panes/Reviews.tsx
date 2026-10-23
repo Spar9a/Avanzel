@@ -7,7 +7,7 @@ import { Actions, Button, Group, GroupRow, Notice, Segmented, Stack, Switch, Tex
 import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { harnessName } from "../../../main/jobs.ts";
 import type { HarnessInfo, PickOption, TaskInfo } from "../../../shared/ipc.ts";
-import { asSentence, DAYS, kindLine, lastRunLine, remoteMessage, scheduleParts, scheduleText, validTime, whenLine } from "../copy.ts";
+import { DAYS, failedSaveLine, kindLine, lastRunLine, remoteMessage, scheduleParts, scheduleText, validTime, whenLine } from "../copy.ts";
 import { ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -177,7 +177,7 @@ interface ReviewProps {
   draft: Draft | null;
   /** A save of this review is on its way: the switch and Save wait until it is written. */
   saving: boolean;
-  /** Why this review's last save failed, if it did. */
+  /** What the Notice under it says when its last save failed (failedSaveLine): why, and what is true of it now. */
   failure: string | null;
   onDraft: EditorProps["onDraft"];
   /** The switch: the review saved with it on or off, and everything else as stored. */
@@ -259,7 +259,7 @@ function Review({ task, now, harnesses, draft, saving, failure, onDraft, onSwitc
             />
           )}
         </Group>
-        {failure && <Notice tone="error" title="This review couldn't be saved.">{`${asSentence(failure)} It still runs as last saved.`}</Notice>}
+        {failure && <Notice tone="error" title="This review couldn't be saved.">{failure}</Notice>}
       </Stack>
     </div>
   );
@@ -323,7 +323,7 @@ export function Reviews({ snap, onChange, edits }: PaneProps & { edits: ReviewEd
           harnesses={snap.harnesses}
           draft={drafts[task.id] ?? null}
           saving={saving.has(task.id)}
-          failure={failure?.id === task.id ? failure.message : null}
+          failure={failure?.id === task.id ? failedSaveLine(task.id, failure.message) : null}
           onDraft={(change) => changeDraft(task.id, change)}
           onSwitch={(enabled) => void save(task, { enabled })}
           onSave={() => void saveDraft(task)}

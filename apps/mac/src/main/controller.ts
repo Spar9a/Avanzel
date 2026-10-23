@@ -56,7 +56,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { isSettingsPane, NOTE_GONE } from "../shared/ipc.ts";
+import { isSettingsPane, NOTE_GONE, noSuchReview } from "../shared/ipc.ts";
 import type {
   AgentStatus,
   AppSettings,
@@ -2030,7 +2030,7 @@ export class Controller {
     const schedule = parseSchedule(patch.schedule);
     await this.enqueue(async () => {
       const task = this.safeTasks(vault).find((t) => t.id === patch.id);
-      if (!task) throw new AvanzelError(`No scheduled review called ${patch.id}.`);
+      if (!task) throw new AvanzelError(noSuchReview(patch.id));
       saveTask(vault, { ...task, name: patch.name, schedule, agent: patch.agent, enabled: patch.enabled, instructions: patch.instructions });
     });
     this.broadcast();

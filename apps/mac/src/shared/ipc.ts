@@ -277,6 +277,15 @@ export type SetupThought =
 export const NOTE_GONE = "The note isn't in the inbox any more.";
 
 /**
+ * What main refuses a review's save with when it lists no review of that id, the list its snapshot's `tasks` come from:
+ * the review's file has gone (or, rarely, was changed by hand into one that can't be used). Settings tells that refusal
+ * from the others by it.
+ */
+export function noSuchReview(id: string): string {
+  return `No scheduled review called ${id}.`;
+}
+
+/**
  * One thing the agent did while it filed the first thought, as a row of the Filing step: it read a page, searched the
  * library, wrote a new page or an old one again, or removed one. A row names a page of the library, never the capture, a
  * path under inbox/ or raw/, or a dot path.
