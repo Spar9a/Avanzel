@@ -1,14 +1,15 @@
 // The Settings window: a strip to drag it by, the toolbar that moves between its panes, and the pane under its
 // heading. Each pane applies a change at once and draws the snapshot main sends back. The panes not rebuilt on
-// @avanzel/ui yet (Agents, the tasks pane and Privacy) stay here, with their helpers, until their own tasks.
-import { Button, Segmented, Stack, Text } from "@avanzel/ui";
+// @avanzel/ui yet (the tasks pane and Privacy) stay here, with their helpers, until their own tasks.
+import { Segmented, Stack, Text } from "@avanzel/ui";
 import { useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { SETTINGS_PANES, isSettingsPane, type AgentStatus, type AvanzelBridge, type SettingsPane, type SettingsSnapshot, type TaskInfo } from "../../shared/ipc.ts";
+import { SETTINGS_PANES, isSettingsPane, type AvanzelBridge, type SettingsPane, type SettingsSnapshot, type TaskInfo } from "../../shared/ipc.ts";
 import { PANE_LABELS } from "./copy.ts";
+import { Agents } from "./panes/Agents.tsx";
 import { General } from "./panes/General.tsx";
 import { Voice } from "./panes/Voice.tsx";
-import type { PaneProps } from "./parts.tsx";
+import { NoLibrary, type PaneProps } from "./parts.tsx";
 import "../common/mac.css";
 import "./styles.css";
 
@@ -39,107 +40,6 @@ function Group({ label, children, note }: { label?: string; children: ReactNode;
       {label && <div className="glabel">{label}</div>}
       <div className="group">{children}</div>
       {note && <p className="note">{note}</p>}
-    </>
-  );
-}
-
-/** A problem's ink: red for the agent in use, which files and answers, and secondary for the others. */
-type ProblemTone = "danger" | "secondary";
-
-/** After "Not signed in.": how to sign in to agent `name`, with the command for the agents that have one. */
-function signInHint(name: string, tone: ProblemTone): ReactNode {
-  if (name === "claude") return <>Run <Text variant="code" tone={tone}>claude</Text> once in Terminal and sign in.</>;
-  if (name === "codex") return <>Run <Text variant="code" tone={tone}>codex login</Text> in Terminal.</>;
-  return `Sign in to ${harnessName(name)} in Terminal.`;
-}
-
-/** A line the agent printed, as a sentence: without the "Error:" label many CLIs put first. */
-function ownLine(detail: string): string {
-  const line = detail.replace(/^error\s*:\s*/i, "");
-  return line.charAt(0).toUpperCase() + line.slice(1);
-}
-
-/** The line under an installed agent's name: its check running, or what the check found. */
-function CheckStatus({ name, status, tone }: { name: string; status: AgentStatus; tone: ProblemTone }) {
-  switch (status.kind) {
-    case "checking":
-      return <Text variant="footnote" tone="secondary">Checking…</Text>;
-    case "signed-in":
-      return <Text variant="footnote" tone="secondary">Signed in</Text>;
-    case "replied":
-      return <Text variant="footnote" tone="secondary">Replied in {status.seconds.toFixed(1)} s</Text>;
-    case "signed-out":
-      // A reply that asked to sign in follows the hint with its own words; a sign-in command's answer is the hint alone.
-      return <Text variant="footnote" tone={tone}>Not signed in. {signInHint(name, tone)}{status.detail && ` ${ownLine(status.detail)}`}</Text>;
-    case "timeout": // 15 s is the engine's default for a check, which the controller keeps
-      return <Text variant="footnote" tone={tone}>Didn't reply within 15 s.</Text>;
-    case "failed":
-      // An agent that fails without printing anything has no line to show.
-      return <Text variant="footnote" tone={tone}>{status.detail ? ownLine(status.detail) : "Didn't reply."}</Text>;
-  }
-}
-
-function Agents({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: SettingsSnapshot) => void }) {
-  const lib = snap.library;
-  const installed = snap.harnesses.filter((h) => h.available);
-  const [models, setModels] = useState<Record<string, string>>(lib?.models ?? {});
-  // Agents whose check has had a result: while one is checked again, its button still reads "Check again".
-  const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
-  const results = snap.harnesses.filter((h) => h.status && h.status.kind !== "checking" && !checked.has(h.name));
-  if (results.length) setChecked(new Set([...checked, ...results.map((h) => h.name)]));
-  useEffect(() => {
-    // Only the free checks, which read a sign-in and never ask the model: a prompt waits for Check.
-    void api.checkAgents().then(onChange);
-  }, []);
-  if (!lib || !lib.exists) return <p className="note">Create your library first (General).</p>;
-  const auto = snap.selectedHarness ? `Automatic (${harnessName(snap.selectedHarness)})` : "Automatic";
-  // The agent that files and answers: the library's, or the one Automatic picks.
-  const inUse = lib.harness === "auto" ? snap.selectedHarness : lib.harness;
-  return (
-    <>
-      <Group
-        label="Agent that files and answers"
-        note="Avanzel runs your agent inside the library folder only: file tools for Claude Code, the workspace sandbox for Codex, no shell or web for OpenCode. Checking Claude Code or Codex reads their sign-in; other agents are asked one short question."
-      >
-        <div className="grow">
-          <span className="fill">Use</span>
-          <select aria-label="Agent" value={lib.harness} onChange={async (e) => onChange(await api.setLibrary({ harness: e.target.value }))}>
-            <option value="auto">{auto}</option>
-            {installed.map((h) => <option key={h.name} value={h.name}>{harnessName(h.name)}</option>)}
-          </select>
-        </div>
-        {snap.harnesses.map((h) => {
-          const status = h.available ? h.status : null;
-          return (
-            <div className="grow" key={h.name} role="group" aria-label={harnessName(h.name)}>
-              <div className="fill two">
-                <b>{harnessName(h.name)}</b>
-                {/* "Installed" until a check says more; an experimental agent keeps saying so. VoiceOver hears each change. */}
-                <div className="two" role="status">
-                  {(!status || h.experimental) && <small>{h.available ? "Installed" : "Not installed"}{h.experimental ? ", experimental" : ""}</small>}
-                  {status && <CheckStatus name={h.name} status={status} tone={h.name === inUse ? "danger" : "secondary"} />}
-                </div>
-              </div>
-              {h.available && (
-                <>
-                  {/* Busy rather than disabled while it checks, so it keeps the focus. */}
-                  <Button size="small" variant="secondary" busy={status?.kind === "checking"} onClick={async () => onChange(await api.checkAgent(h.name))}>
-                    {checked.has(h.name) || (status && status.kind !== "checking") ? "Check again" : "Check"}
-                  </Button>
-                  <input
-                    type="text"
-                    aria-label={`${harnessName(h.name)} model`}
-                    placeholder="Agent's default model"
-                    value={models[h.name] ?? ""}
-                    onChange={(e) => setModels({ ...models, [h.name]: e.target.value })}
-                    onBlur={async () => onChange(await api.setLibrary({ models: Object.fromEntries(Object.entries(models).filter(([, v]) => v.trim())) }))}
-                  />
-                </>
-              )}
-            </div>
-          );
-        })}
-      </Group>
     </>
   );
 }
@@ -265,7 +165,7 @@ function paneContent(pane: SettingsPane, props: PaneProps): ReactNode {
     case "voice":
       return <Voice {...props} />;
     case "agents":
-      return <Agents {...props} />;
+      return props.snap.library?.exists ? <Agents {...props} /> : <NoLibrary {...props} />;
     case "tasks":
       return <Tasks {...props} />;
     case "privacy":

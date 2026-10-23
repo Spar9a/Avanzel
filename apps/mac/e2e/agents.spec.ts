@@ -1,13 +1,14 @@
-// Settings → Agents says whether each installed agent can work. The library's agent is the fake one: a custom
-// harness with no sign-in command, so its check is one short prompt, which runs only when Check is clicked. Claude
-// Code and Codex are launch()'s stand-ins, which read as signed in when the pane opens.
+// Settings → Agents lists every agent, says whether each installed one can work, lets the person choose which one files,
+// and names the model of the one in use. The library's agent is the fake one: a custom harness with no sign-in command,
+// so its check is one short prompt, which runs only when Check is clicked. Claude Code and Codex are launch()'s
+// stand-ins, which read as signed in when the pane opens.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, writeWav } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { agentCalls, agentPath, alive, call, launch, makeLibrary, openSettings, SIGNED_OUT_CLAUDE, UNREADABLE_CLAUDE, windowFor } from "./helpers.ts";
+import { agentCalls, agentPath, alive, call, launch, makeLibrary, openSettings, SIGNED_OUT_CLAUDE, snap, UNREADABLE_CLAUDE, windowFor } from "./helpers.ts";
 
 /** Opens Settings → Agents and returns the fake agent's row, a group named for its agent. */
 const fakeAgentRow = async (app: ElectronApplication) => (await openSettings(app, "Agents")).getByRole("group", { name: "fake" });
@@ -52,7 +53,7 @@ test("an agent whose reply asks to sign in says how, then what it said", async (
   await app.close();
 });
 
-test("a problem is red only for the agent in use; a failure loses its Error label, and a sign-in command's no is the hint alone", async () => {
+test("a problem is red only for the agent in use; a failure loses its Error label and ends as a sentence, and a sign-in command's no is the hint alone", async () => {
   // The fake agent, the library's, fails as Codex does: "ERROR: the model is not supported with this account".
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), FAKE_AGENT_MODE: "fail-noisy", PATH: agentPath({ claude: SIGNED_OUT_CLAUDE }) });
   const settings = await openSettings(app, "Agents");
@@ -61,9 +62,98 @@ test("a problem is red only for the agent in use; a failure loses its Error labe
   await expect(claude).toHaveAttribute("data-tone", "secondary"); // Claude Code isn't the agent in use
   const fake = settings.getByRole("group", { name: "fake" });
   await fake.getByRole("button", { name: "Check", exact: true }).click();
-  const failure = fake.getByText("The model is not supported with this account");
-  await expect(failure).toHaveText("The model is not supported with this account", { timeout: 20_000 });
+  const failure = fake.getByText("The model is not supported with this account.");
+  await expect(failure).toHaveText("The model is not supported with this account.", { timeout: 20_000 });
   await expect(failure).toHaveAttribute("data-tone", "danger");
+  await app.close();
+});
+
+test("Use Codex makes Codex the agent that files, Use automatic hands the choice back, and the agent in use names its model", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Agents");
+  const fake = settings.getByRole("group", { name: "fake", exact: true });
+  const codex = settings.getByRole("group", { name: "Codex", exact: true });
+  const automatic = settings.getByRole("group", { name: "Choose automatically", exact: true });
+  // The library's own agent is the one chosen, and so the one in use: it names its model, which saves on Return.
+  await expect(fake.getByRole("img", { name: "Chosen" })).toBeVisible();
+  await expect(automatic.getByRole("button", { name: "Use automatic" })).toBeVisible();
+  const model = settings.getByRole("textbox", { name: "fake model" });
+  await model.fill("small");
+  await model.press("Enter");
+  await expect.poll(() => loadSettings(library).models).toEqual({ fake: "small" });
+
+  // Use Codex files with Codex from now on. Its row is chosen, the fake agent's offers to be, and Codex has the model group.
+  await codex.getByRole("button", { name: "Use Codex" }).click();
+  await expect.poll(() => loadSettings(library).harness).toBe("codex");
+  await expect(codex.getByRole("img", { name: "Chosen" })).toBeVisible();
+  await expect(fake.getByRole("img", { name: "Chosen" })).toHaveCount(0);
+  await expect(fake.getByRole("button", { name: "Use fake" })).toBeVisible();
+  await expect(codex.getByRole("button", { name: "Use Codex" })).toHaveCount(0);
+  await expect(settings.getByRole("heading", { name: "Codex", exact: true })).toBeVisible();
+  await expect(settings.getByRole("textbox", { name: "Codex model" })).toHaveValue("");
+  await expect(settings.getByRole("textbox", { name: "fake model" })).toHaveCount(0);
+  expect(loadSettings(library).models).toEqual({ fake: "small" }); // the fake agent's model is kept
+
+  // Use automatic hands the choice back: the last row is chosen, no agent's is, and the agent in use is the one Automatic
+  // picks, which is Claude Code's stand-in.
+  await automatic.getByRole("button", { name: "Use automatic" }).click();
+  await expect.poll(() => loadSettings(library).harness).toBe("auto");
+  await expect(automatic.getByRole("img", { name: "Chosen" })).toBeVisible();
+  await expect(automatic.getByRole("button", { name: "Use automatic" })).toHaveCount(0);
+  await expect(codex.getByRole("img", { name: "Chosen" })).toHaveCount(0);
+  await expect(codex.getByRole("button", { name: "Use Codex" })).toBeVisible();
+  await expect(settings.getByRole("heading", { name: "Claude Code", exact: true })).toBeVisible();
+  await expect(settings.getByRole("textbox", { name: "Claude Code model" })).toBeVisible();
+  await app.close();
+});
+
+test("the model starts from the one saved, saves when the focus leaves the field, and an emptied field drops it", async () => {
+  const library = await makeLibrary();
+  saveSettings(library, { ...loadSettings(library), models: { fake: "tiny", codex: "big" } });
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Agents");
+  const model = settings.getByRole("textbox", { name: "fake model" });
+  await expect(model).toHaveValue("tiny");
+  await expect(model).toHaveAttribute("placeholder", "Your agent's default");
+  await model.fill("small");
+  await model.press("Tab"); // the focus leaves the field, which saves it, with the other agents' models kept
+  await expect.poll(() => loadSettings(library).models).toEqual({ fake: "small", codex: "big" });
+  await model.fill("");
+  await model.press("Tab");
+  await expect.poll(() => loadSettings(library).models).toEqual({ codex: "big" });
+  await expect(model).toHaveAttribute("placeholder", "Your agent's default");
+  await app.close();
+});
+
+test("with no agent installed, every row says so, and Claude Code and Codex offer their install commands", async () => {
+  const library = await makeLibrary();
+  // The library's own agent is Claude Code, which this Mac doesn't have: it stays chosen, and its "Not installed" is a problem.
+  saveSettings(library, { ...loadSettings(library), harness: "claude", harnesses: {} });
+  const emptyBin = mkdtempSync(path.join(tmpdir(), "avz-e2e-bin-"));
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_EXACT_PATH: "1", PATH: `${emptyBin}:/usr/bin:/bin:/usr/sbin:/sbin` });
+  const settings = await openSettings(app, "Agents");
+  const row = (name: string) => settings.getByRole("group", { name, exact: true });
+  for (const name of ["Claude Code", "Codex", "OpenCode", "Cursor Agent", "Gemini CLI"]) {
+    await expect(row(name).getByRole("status")).toHaveText("Not installed");
+    await expect(row(name).getByRole("button", { name: /^(Use|Check)/ })).toHaveCount(0); // nothing to use or check
+  }
+  await expect(row("Claude Code").getByText("Not installed", { exact: true })).toHaveAttribute("data-tone", "danger"); // the agent in use
+  await expect(row("Codex").getByText("Not installed", { exact: true })).toHaveAttribute("data-tone", "secondary");
+  await expect(row("Claude Code").getByRole("img", { name: "Chosen" })).toBeVisible(); // chosen, installed or not
+  await expect(settings.getByRole("img", { name: "Chosen" })).toHaveCount(1);
+  await expect(settings.getByText("Best results", { exact: true })).toHaveCount(1);
+  await expect(settings.getByText("Experimental", { exact: true })).toHaveCount(1); // Gemini CLI's description
+  await snap(settings, "settings-agents-none");
+
+  // Only Claude Code and Codex have an install command. Main copies the one it holds for the agent, and the button says so for 2 s.
+  await expect(settings.getByRole("button", { name: "Copy install command" })).toHaveCount(2);
+  await expect(row("OpenCode").getByRole("button")).toHaveCount(0);
+  await row("Claude Code").getByRole("button", { name: "Copy install command" }).click();
+  await expect(row("Claude Code").getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect.poll(() => call(app, "copiedForTests")).toEqual(["curl -fsSL https://claude.ai/install.sh | bash"]);
+  await expect(row("Codex").getByRole("button", { name: "Copy install command" })).toBeVisible();
+  await expect(row("Claude Code").getByRole("button", { name: "Copy install command" })).toBeVisible({ timeout: 10_000 });
   await app.close();
 });
 

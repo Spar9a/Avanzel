@@ -75,11 +75,44 @@ test("a library that can't be opened is explained in Settings and the menu, and 
   }
 });
 
+test("Agents shows a library's problem as General does, and lists the agents once a folder is chosen", async () => {
+  const library = await makeLibrary();
+  const good = await makeLibrary();
+  rmSync(path.join(library, "tasks"), { recursive: true });
+  chmodSync(library, 0o555); // read-only: the default shadow tasks can't be created
+  try {
+    // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
+    const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
+    const settings = await openSettings(app, "Agents");
+    const problem = settings.getByRole("alert");
+    await expect(problem).toContainText(/Avanzel couldn't open the library/);
+    await expect(settings.getByRole("heading", { name: "Who files your thoughts", exact: true })).toHaveCount(0);
+    // The library opens while the pane is open: the Notice gives way to the list, which starts its own checks.
+    await stubPicker(app, good);
+    await problem.getByRole("button", { name: "Choose a folder…" }).click();
+    await expect(settings.getByRole("heading", { name: "Who files your thoughts", exact: true })).toBeVisible();
+    await expect(settings.getByRole("alert")).toHaveCount(0);
+    await expect(settings.getByRole("group", { name: "fake", exact: true }).getByRole("img", { name: "Chosen" })).toBeVisible();
+    await expect(settings.getByRole("group", { name: "Claude Code", exact: true }).getByRole("status")).toHaveText("Signed in", { timeout: 20_000 });
+    await app.close();
+  } finally {
+    chmodSync(library, 0o755);
+  }
+});
+
 test("Settings without a library offers setup, which comes forward as Settings closes", async () => {
   const app = await launch(firstRun().env); // without a library, setup opens by itself
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
   await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
+  // Agents has no library to list agents for either: the same Notice stands where its groups would be.
+  await settings.getByRole("radio", { name: "Agents", exact: true }).click();
+  await expect(settings.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
+  await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
+  await expect(settings.getByRole("button", { name: "Set up Avanzel…" })).toBeVisible();
+  await expect(settings.getByRole("heading", { name: "Who files your thoughts", exact: true })).toHaveCount(0);
+  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
   const closed = settings.waitForEvent("close");
   await settings.getByRole("button", { name: "Set up Avanzel…" }).click().catch(() => undefined); // closes Settings, before the click returns
   await closed;

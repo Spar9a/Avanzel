@@ -32,8 +32,16 @@
 .settings-meter {
   width: 120px;
 }
+/* An agent's status, which wraps rather than pushing its buttons off the row: a sign-in hint or the agent's own line. */
+.settings-status {
+  max-width: 240px;
+}
+/* The model's field, a short one in its row. */
+.settings-field {
+  width: 200px;
+}
 
-/* The panes not rebuilt yet (Agents, the tasks pane and Privacy), until each is. */
+/* The panes not rebuilt yet (the tasks pane and Privacy), until each is. */
 .glabel { font-size: 12.5px; font-weight: 600; color: var(--text-2); margin: 18px 4px 6px; }
 .group { border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--hair); }
 .grow { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px; border-top: 1px solid var(--hair); }
