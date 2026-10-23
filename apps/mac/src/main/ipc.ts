@@ -42,6 +42,8 @@ export function registerIpc(controller: Controller): void {
   handle("settings:check-agents", () => controller.checkAgents());
   handle("settings:check-agent", (_e, name: string) => controller.checkAgent(name));
   handle("settings:request-permission", (_e, kind: "microphone" | "screen") => controller.requestPermission(kind));
+  // What the page sends is checked where it is used: this takes anything, and shows a menu only for a request that reads.
+  handle("settings:pick", (_e, options: unknown, at: unknown) => controller.pickFromSettings(options, at));
   on("settings:open-library", () => controller.openLibraryFolder());
   on("settings:show-library", () => controller.showLibraryInFinder());
   on("settings:open-setup", () => controller.openSetupFromSettings());

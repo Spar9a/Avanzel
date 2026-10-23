@@ -80,6 +80,7 @@ import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageInfo,
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, withStep, withWritten } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
+import { pickRequest, popupChoice } from "./popup.ts";
 import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
@@ -1433,6 +1434,18 @@ export class Controller {
     app.focus({ steal: true });
     this.settingsWindow.show();
     this.settingsWindow.focus();
+  }
+
+  /**
+   * Choose…, in Settings: a native menu of the page's `options` pops up over the Settings window, at `at`. Resolves with
+   * the value picked; null when the menu closes without one, and without an open Settings window or a request that can
+   * be read.
+   */
+  pickFromSettings(options: unknown, at: unknown): Promise<string | null> {
+    const win = this.settingsWindow;
+    const request = pickRequest(options, at);
+    if (!win || win.isDestroyed() || !request) return Promise.resolve(null);
+    return popupChoice(win, request.options, request.at);
   }
 
   /** Settings' Show in Finder: the library's folder opens in Finder. Nothing without a library. */

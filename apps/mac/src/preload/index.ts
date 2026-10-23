@@ -47,6 +47,7 @@ const bridge: AvanzelBridge = {
     openSetup: () => ipcRenderer.send("settings:open-setup"),
     openPrivacy: (pane) => ipcRenderer.send("settings:open-privacy", pane),
     requestPermission: (kind) => ipcRenderer.invoke("settings:request-permission", kind),
+    pick: (options, at) => ipcRenderer.invoke("settings:pick", options, at),
   },
   quick: {
     submit: (text) => ipcRenderer.invoke("quick:submit", text),

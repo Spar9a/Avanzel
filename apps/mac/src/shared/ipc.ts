@@ -199,6 +199,9 @@ export interface SettingsSnapshot {
   opensInObsidian: boolean;
 }
 
+/** One choice of a native pop-up menu, as Settings' Choose… offers it. */
+export interface PickOption { label: string; value: string; checked: boolean }
+
 /**
  * How to install an agent, when this Mac has none: each vendor's own command for macOS, as its install docs give it
  * (Claude Code's setup page, and OpenAI's Codex CLI page and README; checked on 21 October 2026). Found shows them, and
@@ -513,6 +516,9 @@ export interface AvanzelBridge {
     openSetup(): void;
     openPrivacy(pane: "microphone" | "screen"): void;
     requestPermission(kind: "microphone" | "screen"): Promise<SettingsSnapshot>;
+    /** Choose…: a native menu of `options` pops up at `at` (window points; null: at the pointer). Resolves with the
+        value picked, or null when the menu closes without one. */
+    pick(options: readonly PickOption[], at: { x: number; y: number } | null): Promise<string | null>;
   };
   quick: {
     submit(text: string): Promise<void>;

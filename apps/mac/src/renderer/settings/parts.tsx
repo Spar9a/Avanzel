@@ -1,8 +1,8 @@
-// What Settings' panes share: the props each pane is given, and the Notice a pane shows in place of the library while
-// none is open.
+// What Settings' panes share: the props each pane is given, the Notice a pane shows in place of the library while none
+// is open, and Choose…, which opens a native menu.
 import { Actions, Button, Notice } from "@avanzel/ui";
-import type { ReactNode } from "react";
-import type { SettingsSnapshot } from "../../shared/ipc.ts";
+import { useRef, type ReactNode } from "react";
+import type { PickOption, SettingsSnapshot } from "../../shared/ipc.ts";
 import { asSentence } from "./copy.ts";
 
 const api = window.avanzel.settings;
@@ -41,5 +41,26 @@ export function NoLibrary({ snap, onChange }: PaneProps): ReactNode {
     >
       Setup makes one, or opens the one you have.
     </Notice>
+  );
+}
+
+/**
+ * "Choose…" in a group named `label`; its menu pops up at the group's bottom left (getBoundingClientRect). This stands
+ * in for a pop-up button: the row says the value in words, and Choose… opens a native menu of `options` (the list for a
+ * microphone, a review's day or its agent). `onChoose` gets the value of the item picked, and a menu that closes
+ * without a pick does nothing. The group's name is what VoiceOver says, and what tests find the row's button by, when
+ * several rows each have a Choose….
+ */
+export function ChooseButton({ label, options, onChoose }: { label: string; options: readonly PickOption[]; onChoose(value: string): void }): ReactNode {
+  const group = useRef<HTMLDivElement>(null);
+  const choose = async () => {
+    const box = group.current?.getBoundingClientRect();
+    const value = await api.pick(options, box ? { x: box.left, y: box.bottom } : null);
+    if (value !== null) onChoose(value);
+  };
+  return (
+    <div ref={group} role="group" aria-label={label}>
+      <Button size="small" variant="secondary" onClick={choose}>Choose…</Button>
+    </div>
   );
 }

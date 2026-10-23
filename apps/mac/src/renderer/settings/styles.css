@@ -30,6 +30,8 @@
 }
 
 /* The panes not rebuilt yet (Voice, Agents, the tasks pane and Privacy), until each is. */
+/* Voice's rebuilt Microphone group among its legacy ones: 20 under the group above, as rebuilt groups are 20 apart. */
+.settings-microphone { margin-top: var(--av-space-20); }
 .glabel { font-size: 12.5px; font-weight: 600; color: var(--text-2); margin: 18px 4px 6px; }
 .group { border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--hair); }
 .grow { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px; border-top: 1px solid var(--hair); }

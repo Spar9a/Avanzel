@@ -301,6 +301,32 @@ export async function stubPicker(app: ElectronApplication, dir: string): Promise
 export const pickerAsked = (app: ElectronApplication) => app.evaluate(() => (globalThis as { pickerAsked?: unknown }).pickerAsked ?? null);
 
 /**
+ * From now on, the native menus Settings pops up record their items and pick the one labelled `choice`, or close
+ * without a pick when it is null. Each call starts a new record. The stand-in keeps the order a real menu has on macOS:
+ * a picked item's click runs first, then the menu's close callback. No test opens a real native menu, which would hold
+ * it until it timed out, so every test that clicks a Choose… button calls this first.
+ */
+export async function answerMenus(app: ElectronApplication, choice: string | null): Promise<void> {
+  await app.evaluate(({ Menu }, pick) => {
+    const shown: { label: string; checked: boolean }[][] = [];
+    (globalThis as { shownMenus?: typeof shown }).shownMenus = shown;
+    Menu.prototype.popup = function (this: Electron.Menu, options?: Electron.PopupOptions) {
+      shown.push(this.items.map((item) => ({ label: item.label, checked: item.checked })));
+      this.items.find((item) => item.label === pick)?.click();
+      options?.callback?.();
+    };
+  }, choice);
+}
+
+/**
+ * What answerMenus' stand-in was asked to show since it was set, oldest first. A menu opens after an IPC round trip, so
+ * a test reads this only once `await expect.poll(() => shownMenus(app)).toHaveLength(n)` has passed.
+ */
+export async function shownMenus(app: ElectronApplication): Promise<{ label: string; checked: boolean }[][]> {
+  return app.evaluate(() => (globalThis as { shownMenus?: { label: string; checked: boolean }[][] }).shownMenus ?? []);
+}
+
+/**
  * From now on, what Avanzel would open in this Mac's own apps (a page, the library) is noted for `openedWith`
  * instead, so no test opens anything here.
  */

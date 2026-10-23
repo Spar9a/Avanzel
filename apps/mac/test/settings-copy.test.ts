@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asSentence, libraryLine, PANE_LABELS } from "../src/renderer/settings/copy.ts";
+import { asSentence, libraryLine, microphoneName, microphoneOptions, PANE_LABELS } from "../src/renderer/settings/copy.ts";
 import { SETTINGS_PANES } from "../src/shared/ipc.ts";
 
 describe("settings copy", () => {
@@ -23,5 +23,30 @@ describe("settings copy", () => {
     expect(asSentence("Done.")).toBe("Done.");
     expect(asSentence("Is it open?")).toBe("Is it open?");
     expect(asSentence("Waiting…")).toBe("Waiting…");
+  });
+
+  it("the microphone is named as the menu names it", () => {
+    const unnamed = [{ deviceId: "a", label: "" }, { deviceId: "b", label: "" }];
+    expect(microphoneName(null, unnamed)).toBe("System default");
+    expect(microphoneName("b", unnamed)).toBe("Microphone 2");
+    expect(microphoneName("gone", unnamed)).toBe("Microphone not connected");
+    expect(microphoneName("gone", [])).toBe("Microphone not connected");
+    // A device with a name goes by it, and one without goes by its place in the list.
+    const mixed = [{ deviceId: "a", label: "MacBook Pro Microphone" }, { deviceId: "b", label: "" }];
+    expect(microphoneName("a", mixed)).toBe("MacBook Pro Microphone");
+    expect(microphoneName("b", mixed)).toBe("Microphone 2");
+
+    // The menu: System default first, then each device named the same way, with only the one in use checked.
+    const options = microphoneOptions("b", unnamed);
+    expect(options[0]).toEqual({ label: "System default", value: "", checked: false });
+    expect(options.map((option) => option.label)).toEqual(["System default", "Microphone 1", "Microphone 2"]);
+    expect(options.filter((option) => option.checked).map((option) => option.value)).toEqual(["b"]);
+    expect(microphoneOptions(null, mixed).map((option) => [option.label, option.checked])).toEqual([
+      ["System default", true],
+      ["MacBook Pro Microphone", false],
+      ["Microphone 2", false],
+    ]);
+    // A microphone that isn't connected leaves nothing checked, System default included: the row says so.
+    expect(microphoneOptions("gone", mixed).some((option) => option.checked)).toBe(false);
   });
 });

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { call, launch, makeLibrary, openedWith, openSettings, snap, stubOpening, stubPicker } from "./helpers.ts";
+import { answerMenus, call, launch, makeLibrary, openedWith, openSettings, shownMenus, snap, stubOpening, stubPicker } from "./helpers.ts";
 
 /** What Settings is sent now. */
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
@@ -80,5 +80,43 @@ test("Open in Obsidian shows only for a library Obsidian has opened, and opens i
   const [url = ""] = await openedWith(app);
   expect(url).toMatch(/^obsidian:\/\/open\?path=/);
   expect(realpathSync(decodeURIComponent(url.slice("obsidian://open?path=".length)))).toBe(realpathSync(library));
+  await app.close();
+});
+
+test("the microphone's Choose… lists System default first, and saves the choice", async () => {
+  // The saved microphone is one this Mac has never listed, as when a USB microphone is unplugged.
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, microphoneId: "gone" }));
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
+  const settings = await openSettings(app, "Voice");
+  const choose = settings.getByRole("group", { name: "Microphone" }).getByRole("button", { name: "Choose…" });
+  await expect(settings.getByText("Microphone not connected", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Avanzel listens only while the capsule shows it listening.", { exact: true })).toBeVisible();
+  await choose.scrollIntoViewIfNeeded(); // the group is under Voice's other groups, below the window's fold
+  await snap(settings, "settings-voice-microphone");
+
+  // A menu that closes without a pick saves nothing.
+  await answerMenus(app, null);
+  await choose.click();
+  await expect.poll(() => shownMenus(app)).toHaveLength(1);
+  const [closed] = await shownMenus(app);
+  expect(closed![0]).toEqual({ label: "System default", checked: false });
+  expect(closed!.some((item) => item.checked)).toBe(false); // the microphone in use isn't in the list
+  expect((await snapshot(app)).app.microphoneId).toBe("gone");
+  await expect(settings.getByText("Microphone not connected", { exact: true })).toBeVisible();
+
+  // Picking System default saves it, and the row says so.
+  await answerMenus(app, "System default");
+  await choose.click();
+  await expect.poll(() => shownMenus(app)).toHaveLength(1);
+  await expect.poll(async () => (await snapshot(app)).app.microphoneId).toBe(null);
+  await expect(settings.getByText("System default", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Microphone not connected", { exact: true })).toHaveCount(0);
+
+  // The next menu checks the one in use.
+  await answerMenus(app, null);
+  await choose.click();
+  await expect.poll(() => shownMenus(app)).toHaveLength(1);
+  expect((await shownMenus(app))[0]![0]).toEqual({ label: "System default", checked: true });
   await app.close();
 });

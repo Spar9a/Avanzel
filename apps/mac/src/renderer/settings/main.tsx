@@ -1,6 +1,7 @@
 // The Settings window: a strip to drag it by, the toolbar that moves between its panes, and the pane under its
 // heading. Each pane applies a change at once and draws the snapshot main sends back. The panes not rebuilt on
-// @avanzel/ui yet (Voice, Agents, the tasks pane and Privacy) stay here, with their helpers, until their own tasks.
+// @avanzel/ui yet (Voice, but for its Microphone group, Agents, the tasks pane and Privacy) stay here, with their
+// helpers, until their own tasks.
 import { Button, Row, Segmented, Stack, Text } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { createRoot } from "react-dom/client";
@@ -8,6 +9,7 @@ import { SETTINGS_PANES, isSettingsPane, type AgentStatus, type AvanzelBridge, t
 import { ACTION_NAMES, prettyAccelerator } from "../../main/shortcuts.ts";
 import { PANE_LABELS } from "./copy.ts";
 import { General } from "./panes/General.tsx";
+import { MicrophoneGroup } from "./panes/Voice.tsx";
 import type { PaneProps } from "./parts.tsx";
 import "../common/mac.css";
 import "./styles.css";
@@ -84,10 +86,6 @@ function Group({ label, children, note }: { label?: string; children: ReactNode;
 }
 
 function Voice({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: SettingsSnapshot) => void }) {
-  const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
-  useEffect(() => {
-    navigator.mediaDevices.enumerateDevices().then((all) => setMics(all.filter((d) => d.kind === "audioinput" && d.deviceId !== "default")));
-  }, []);
   const rows = Object.entries(ACTION_NAMES) as [keyof Shortcuts, string][];
   // Each row's shortcut field: a picked "Use …" goes with the others, so the focus moves to the field it changed.
   const fields = useRef<Partial<Record<keyof Shortcuts, HTMLButtonElement | null>>>({});
@@ -146,15 +144,10 @@ function Voice({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: Setti
           )}
         </div>
       </Group>
-      <Group label="Microphone">
-        <div className="grow">
-          <span className="fill">Input</span>
-          <select aria-label="Microphone" value={snap.app.microphoneId ?? ""} onChange={async (e) => onChange(await api.setApp({ microphoneId: e.target.value || null }))}>
-            <option value="">System default</option>
-            {mics.map((m, i) => <option key={m.deviceId} value={m.deviceId}>{m.label || `Microphone ${i + 1}`}</option>)}
-          </select>
-        </div>
-      </Group>
+      {/* The rebuilt group among the legacy ones above it, which leave no space under them. */}
+      <div className="settings-microphone">
+        <MicrophoneGroup snap={snap} onChange={onChange} />
+      </div>
     </>
   );
 }
