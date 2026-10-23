@@ -35,21 +35,25 @@ function deviceName(device: InputDevice, index: number): string {
 
 /**
  * The microphone in use, by name: "System default" for none chosen, the device's name (or "Microphone 2" by its place
- * in the list, when it has none), or "Microphone not connected" for a chosen one the list doesn't hold.
+ * in the list, when it has none), or "Microphone not connected" for a chosen one the list doesn't hold. `devices` is
+ * null until the page has listed them, and a chosen microphone is then only "Microphone": it has no name to give yet,
+ * and can't be called missing before anyone has looked.
  */
-export function microphoneName(id: string | null, devices: readonly InputDevice[]): string {
+export function microphoneName(id: string | null, devices: readonly InputDevice[] | null): string {
   if (id === null) return "System default";
+  if (devices === null) return "Microphone";
   const place = devices.findIndex((device) => device.deviceId === id);
   return place === -1 ? "Microphone not connected" : deviceName(devices[place]!, place);
 }
 
 /**
  * Choose…'s menu for the microphone: "System default" (value ""), then each device, named as microphoneName names it,
- * with the one in use checked. A chosen microphone that isn't connected leaves everything unchecked.
+ * with the one in use checked. A chosen microphone that isn't connected leaves everything unchecked. Before the devices
+ * are listed (`devices` null), the menu holds System default alone.
  */
-export function microphoneOptions(id: string | null, devices: readonly InputDevice[]): PickOption[] {
+export function microphoneOptions(id: string | null, devices: readonly InputDevice[] | null): PickOption[] {
   return [
     { label: "System default", value: "", checked: id === null },
-    ...devices.map((device, place) => ({ label: deviceName(device, place), value: device.deviceId, checked: device.deviceId === id })),
+    ...(devices ?? []).map((device, place) => ({ label: deviceName(device, place), value: device.deviceId, checked: device.deviceId === id })),
   ];
 }

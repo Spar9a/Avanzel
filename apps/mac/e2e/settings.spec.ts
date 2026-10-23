@@ -120,3 +120,40 @@ test("the microphone's Choose… lists System default first, and saves the choic
   expect((await shownMenus(app))[0]![0]).toEqual({ label: "System default", checked: true });
   await app.close();
 });
+
+/** What the next test leaves in the Settings page: the way to answer enumerateDevices, and whether the row ever said "gone". */
+interface DeviceProbe {
+  answer(): void;
+  saidMissing: boolean;
+}
+
+test("the microphone row doesn't call a connected microphone missing while the devices are still being listed", async () => {
+  // The saved microphone is plugged in: the list the page is given, once it comes, names it.
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, microphoneId: "studio" }));
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
+  const settings = await openSettings(app);
+  // From here the page's enumerateDevices answers only when the test says. A recorder notes whether the row ever said
+  // "Microphone not connected": it is told of every change to the page, so even a single frame of it counts.
+  await settings.evaluate(() => {
+    const probe = window as unknown as DeviceProbe;
+    probe.saidMissing = false;
+    new MutationObserver(() => {
+      if (document.body.textContent?.includes("Microphone not connected")) probe.saidMissing = true;
+    }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    navigator.mediaDevices.enumerateDevices = () =>
+      new Promise((resolve) => {
+        probe.answer = () => resolve([{ kind: "audioinput", deviceId: "studio", label: "Studio microphone" }] as MediaDeviceInfo[]);
+      });
+  });
+  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+  // The page has asked and hasn't been answered: the row has no name to show, and doesn't say the microphone is gone.
+  await expect.poll(() => settings.evaluate(() => typeof (window as unknown as DeviceProbe).answer)).toBe("function");
+  await expect(settings.getByText("Avanzel listens only while the capsule shows it listening.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Microphone not connected", { exact: true })).toHaveCount(0);
+  // Answered, the row names it, and it never said otherwise.
+  await settings.evaluate(() => (window as unknown as DeviceProbe).answer());
+  await expect(settings.getByText("Studio microphone", { exact: true })).toBeVisible();
+  expect(await settings.evaluate(() => (window as unknown as DeviceProbe).saidMissing)).toBe(false);
+  await app.close();
+});

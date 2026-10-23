@@ -9,9 +9,10 @@ const api = window.avanzel.settings;
 
 /** Voice's "Microphone" group: the device in use, and Choose…. A choice applies at once. */
 export function MicrophoneGroup({ snap, onChange }: PaneProps): ReactNode {
-  // The audio inputs this Mac lists, once the page has asked. The "default" entry stands for whatever macOS uses, which
-  // System default already is, so it isn't a device of its own.
-  const [devices, setDevices] = useState<InputDevice[]>([]);
+  // The audio inputs this Mac lists, once the page has asked: null until then, so that a chosen microphone isn't called
+  // "not connected" before anyone has looked. The "default" entry stands for whatever macOS uses, which System default
+  // already is, so it isn't a device of its own.
+  const [devices, setDevices] = useState<InputDevice[] | null>(null);
   useEffect(() => {
     void navigator.mediaDevices
       .enumerateDevices()

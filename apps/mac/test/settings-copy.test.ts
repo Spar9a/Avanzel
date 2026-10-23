@@ -49,4 +49,15 @@ describe("settings copy", () => {
     // A microphone that isn't connected leaves nothing checked, System default included: the row says so.
     expect(microphoneOptions("gone", mixed).some((option) => option.checked)).toBe(false);
   });
+
+  it("a chosen microphone isn't called missing before the devices are listed", () => {
+    // The page lists them after it opens. Until then a chosen microphone has no name to give, and isn't known to be gone.
+    expect(microphoneName("b", null)).toBe("Microphone");
+    expect(microphoneName(null, null)).toBe("System default");
+    // The menu holds only System default meanwhile, checked when no microphone is chosen.
+    expect(microphoneOptions("b", null)).toEqual([{ label: "System default", value: "", checked: false }]);
+    expect(microphoneOptions(null, null)).toEqual([{ label: "System default", value: "", checked: true }]);
+    // Once they are listed, a chosen microphone that isn't among them is gone, even from an empty list.
+    expect(microphoneName("b", [])).toBe("Microphone not connected");
+  });
 });
