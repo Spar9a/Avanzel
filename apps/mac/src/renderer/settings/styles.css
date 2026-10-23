@@ -31,6 +31,11 @@
 .settings-shelves {
   padding: var(--av-space-12);
 }
+/* Reviews' intro, a footnote between the heading and the first group: inset as a group's label and note are, 4 in from
+   each side, so its words line up with theirs. */
+.settings-intro {
+  padding: 0 var(--av-space-4);
+}
 /* What leaves this Mac: a paragraph in its group's panel, which isn't a row, so it is padded as a row is. */
 .settings-words {
   padding: var(--av-space-10) var(--av-space-12);

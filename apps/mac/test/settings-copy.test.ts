@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   asSentence,
   DAYS,
+  fileModeLine,
   kindLine,
   lastRunLine,
   libraryLine,
@@ -134,6 +135,21 @@ describe("a scheduled review's copy", () => {
   it("DAYS lists the week from Sunday, by name", () => {
     expect(DAYS.map((day) => day.value)).toEqual(["sun", "mon", "tue", "wed", "thu", "fri", "sat"]);
     expect(DAYS.map((day) => day.label)).toEqual(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]);
+  });
+
+  it("fileModeLine says when Tonight files only while the evening review is on", () => {
+    // On, daily: at its time.
+    expect(fileModeLine({ schedule: "daily 21:00", enabled: true })).toBe(
+      "Right away uses your agent now. Tonight waits for the evening review at 21:00.",
+    );
+    // On, but not daily: its schedule as the Reviews pane words it.
+    expect(fileModeLine({ schedule: "weekly sun 18:00", enabled: true })).toBe(
+      "Right away uses your agent now. Tonight waits for the evening review, Sundays at 18:00.",
+    );
+    // Off, or a library without one: new thoughts stay in the inbox until it runs.
+    const off = "Right away uses your agent now. Tonight keeps new thoughts in the inbox until the evening review runs.";
+    expect(fileModeLine({ schedule: "daily 21:00", enabled: false })).toBe(off);
+    expect(fileModeLine(null)).toBe(off);
   });
 
   it("kindLine says what each kind of review does", () => {

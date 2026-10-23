@@ -55,6 +55,7 @@ const bridge: AvanzelBridge = {
   ask: {
     ask: (question) => ipcRenderer.invoke("ask:ask", question),
     onProgress: (callback) => listen<string>("ask:progress", callback),
+    cancel: () => ipcRenderer.send("ask:cancel"),
     openPage: (name) => ipcRenderer.send("ask:open-page", name),
     close: () => ipcRenderer.send("ask:close"),
   },

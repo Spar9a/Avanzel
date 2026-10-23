@@ -215,9 +215,10 @@ test("voice settings Avanzel can't use are named at the shortcut, and nothing do
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
   await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+  // What happened, where; then why, and what still works meanwhile.
   const alert = settings.getByRole("alert");
-  await expect(alert).toContainText("Avanzel can't use these voice settings.");
-  await expect(alert).toContainText(/Speech model 'parakeet-v9' is not supported/);
+  await expect(alert).toContainText("Avanzel can't use the voice settings in this library's config file.");
+  await expect(alert).toContainText(/Speech model 'parakeet-v9' is not supported; .*\. Typing a thought works meanwhile\.$/);
   await expect(settings.getByRole("button", { name: "Try again" })).toHaveCount(0); // trying again can't help
   expect(hub.requests).toEqual([]);
   await app.close();

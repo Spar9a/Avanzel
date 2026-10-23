@@ -94,13 +94,30 @@ export function scheduleText(every: "daily" | "weekly", day: string, time: strin
   return every === "weekly" ? `weekly ${day} ${time}` : `daily ${time}`;
 }
 
+/** A daily schedule as main sends it, with its time: "daily 21:00". */
+const DAILY = /^daily (\d\d:\d\d)$/;
+
 /** When a review runs, as its row says it: "Every day at 21:00", "Sundays at 18:00". Any other schedule stays as given. */
 export function whenLine(schedule: string): string {
-  const daily = /^daily (\d\d:\d\d)$/.exec(schedule);
+  const daily = DAILY.exec(schedule);
   if (daily) return `Every day at ${daily[1]}`;
   const weekly = /^weekly (\w+) (\d\d:\d\d)$/.exec(schedule);
   const day = DAYS.find((each) => each.value === weekly?.[1]);
   return weekly && day ? `${day.label}s at ${weekly[2]}` : schedule;
+}
+
+/**
+ * The description of General's "File each thought", from the library's evening review (null when it has none). Tonight
+ * says when the review files only while it is on: at its time when it runs daily, or by its schedule as the Reviews pane
+ * words it. While it is off, or missing, new thoughts wait in the inbox until it runs.
+ */
+export function fileModeLine(evening: Pick<TaskInfo, "schedule" | "enabled"> | null): string {
+  const now = "Right away uses your agent now.";
+  if (!evening?.enabled) return `${now} Tonight keeps new thoughts in the inbox until the evening review runs.`;
+  const daily = DAILY.exec(evening.schedule);
+  return daily
+    ? `${now} Tonight waits for the evening review at ${daily[1]}.`
+    : `${now} Tonight waits for the evening review, ${whenLine(evening.schedule)}.`;
 }
 
 /** The local midnight that starts `date`'s day. */

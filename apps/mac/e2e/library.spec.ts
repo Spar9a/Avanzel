@@ -59,8 +59,8 @@ test("a scheduled review's switch, schedule, agent and instructions are edited i
   await expect(weekly.getByText("Sundays at 18:00", { exact: true })).toBeVisible();
   await expect(weekly.getByText("Not run yet.", { exact: true })).toBeVisible();
 
-  // The switch saves at once.
-  await weekly.getByRole("switch", { name: "On" }).click();
+  // The switch says what it turns on (the group names the review), and saves at once.
+  await weekly.getByRole("switch", { name: "Run on schedule", exact: true }).click();
   await expect.poll(() => read(library, "tasks/weekly-review.md")).toContain("enabled: false");
 
   // A time that isn't one is refused, and the file keeps its schedule.
@@ -71,9 +71,10 @@ test("a scheduled review's switch, schedule, agent and instructions are edited i
   await expect(weekly.getByText("Use a time like 21:00.", { exact: true })).toBeVisible();
   expect(read(library, "tasks/weekly-review.md")).toContain("schedule: weekly sun 18:00");
 
-  // The day comes from a menu of the seven days, with the one saved checked.
+  // The day comes from a menu of the seven days, with the one saved checked. Its row's group says the day, so VoiceOver
+  // hears it beside Choose….
   await answerMenus(app, "Monday");
-  await weekly.getByRole("group", { name: "Day", exact: true }).getByRole("button", { name: "Choose…" }).click();
+  await weekly.getByRole("group", { name: "Day: Sunday", exact: true }).getByRole("button", { name: "Choose…" }).click();
   await expect.poll(() => shownMenus(app)).toHaveLength(1);
   expect((await shownMenus(app))[0]).toEqual([
     { label: "Sunday", checked: true },
@@ -85,19 +86,21 @@ test("a scheduled review's switch, schedule, agent and instructions are edited i
     { label: "Saturday", checked: false },
   ]);
   await expect(weekly.getByText("Monday", { exact: true })).toBeVisible();
+  await expect(weekly.getByRole("group", { name: "Day: Monday", exact: true })).toBeVisible();
   // Every day has no day to choose, and Every week brings back the one chosen.
   await weekly.getByRole("radio", { name: "Every day", exact: true }).click();
-  await expect(weekly.getByRole("group", { name: "Day", exact: true })).toHaveCount(0);
+  await expect(weekly.getByRole("group", { name: /^Day: / })).toHaveCount(0);
   await weekly.getByRole("radio", { name: "Every week", exact: true }).click();
   await expect(weekly.getByText("Monday", { exact: true })).toBeVisible();
 
   // A time without its leading zero is one, and the agent comes from a menu that starts with the library's own.
   await time.fill("7:30");
   await answerMenus(app, "Codex");
-  await weekly.getByRole("group", { name: "Agent", exact: true }).getByRole("button", { name: "Choose…" }).click();
+  await weekly.getByRole("group", { name: "Agent: The library's agent", exact: true }).getByRole("button", { name: "Choose…" }).click();
   await expect.poll(() => shownMenus(app)).toHaveLength(1);
   expect((await shownMenus(app))[0]![0]).toEqual({ label: "The library's agent", checked: true });
   await expect(weekly.getByText("Codex", { exact: true })).toBeVisible();
+  await expect(weekly.getByRole("group", { name: "Agent: Codex", exact: true })).toBeVisible();
 
   await weekly.getByRole("textbox", { name: "Instructions" }).fill("Look for stale goals.");
   await weekly.getByRole("button", { name: "Save", exact: true }).click();
@@ -111,7 +114,7 @@ test("a scheduled review's switch, schedule, agent and instructions are edited i
   await expect(weekly.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
   await expect(weekly.getByRole("textbox")).toHaveCount(0);
 
-  // One editor is open at a time, and Close drops what it held: the next Edit starts from the file.
+  // One editor is open at a time, and Cancel drops what it held: the next Edit starts from the file.
   await weekly.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(time).toHaveValue("07:30");
   await time.fill("9:00");
@@ -119,7 +122,7 @@ test("a scheduled review's switch, schedule, agent and instructions are edited i
   await evening.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(evening.getByRole("textbox", { name: "Time", exact: true })).toHaveValue("21:00");
   await expect(weekly.getByRole("textbox")).toHaveCount(0);
-  await evening.getByRole("button", { name: "Close", exact: true }).click();
+  await evening.getByRole("button", { name: "Cancel", exact: true }).click();
   await weekly.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(time).toHaveValue("07:30");
   expect(read(library, "tasks/weekly-review.md")).toContain("schedule: weekly mon 07:30");
@@ -135,7 +138,7 @@ test("a review's editor keeps what was typed when Settings gets a new snapshot",
   await weekly.getByRole("radio", { name: "Every day", exact: true }).click();
   await weekly.getByRole("textbox", { name: "Time", exact: true }).fill("7:30");
   await answerMenus(app, "Codex");
-  await weekly.getByRole("group", { name: "Agent", exact: true }).getByRole("button", { name: "Choose…" }).click();
+  await weekly.getByRole("group", { name: /^Agent: / }).getByRole("button", { name: "Choose…" }).click();
   await expect(weekly.getByText("Codex", { exact: true })).toBeVisible();
   await weekly.getByRole("textbox", { name: "Instructions" }).fill("Look for stale goals.");
   // Another review runs: main sends Settings a snapshot as it starts, and another as it ends.
@@ -148,6 +151,68 @@ test("a review's editor keeps what was typed when Settings gets a new snapshot",
   await expect(weekly.getByText("Codex", { exact: true })).toBeVisible();
   await expect(weekly.getByRole("textbox", { name: "Instructions" })).toHaveValue("Look for stale goals.");
   await expect(weekly.getByText("Sundays at 18:00", { exact: true })).toBeVisible();
+  await app.close();
+});
+
+test("a review's editor keeps what was typed while another pane shows, and Cancel drops it", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  const instructions = weekly.getByRole("textbox", { name: "Instructions" });
+  await weekly.getByRole("button", { name: "Edit", exact: true }).click();
+  // The editor's buttons are one row under it, Cancel and then Save, the primary. The row above has no Close, and Edit,
+  // the way in, has gone with the focus it had: the focus is on the editor's first control.
+  await expect(weekly.getByRole("button", { name: /^(Cancel|Save)$/ })).toHaveText(["Cancel", "Save"]);
+  await expect(weekly.getByRole("button", { name: "Cancel", exact: true })).toHaveAttribute("data-variant", "quiet");
+  await expect(weekly.getByRole("button", { name: "Save", exact: true })).toHaveAttribute("data-variant", "primary");
+  await expect(weekly.getByRole("button", { name: /^(Edit|Close)$/ })).toHaveCount(0);
+  await expect(weekly.getByRole("radio", { name: "Every week", exact: true })).toBeFocused();
+  await instructions.fill("Look for stale goals.");
+
+  // General and back, on the toolbar: the editor is open still, with what was typed.
+  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+  await expect(instructions).toHaveCount(0);
+  await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+  await expect(instructions).toHaveValue("Look for stale goals.");
+  // The arrow keys move along the toolbar and show each pane they pass, and the draft outlasts that too.
+  await settings.getByRole("radio", { name: "Reviews", exact: true }).press("ArrowRight");
+  await expect(settings.getByRole("heading", { name: "Privacy", exact: true })).toBeVisible();
+  await settings.getByRole("radio", { name: "Privacy", exact: true }).press("ArrowLeft");
+  await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
+  await expect(instructions).toHaveValue("Look for stale goals.");
+  expect(read(library, "tasks/weekly-review.md")).not.toContain("Look for stale goals.");
+
+  // Cancel drops the draft and closes the editor, the focus goes back to Edit, and the next Edit starts from the file.
+  await weekly.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(weekly.getByRole("textbox")).toHaveCount(0);
+  const edit = weekly.getByRole("button", { name: "Edit", exact: true });
+  await expect(edit).toBeFocused();
+  await edit.click();
+  await expect(instructions).toBeVisible();
+  await expect(instructions).not.toHaveValue("Look for stale goals.");
+  expect(read(library, "tasks/weekly-review.md")).not.toContain("Look for stale goals.");
+  await app.close();
+});
+
+test("a review's draft goes when another library opens, whose review of the same name it isn't", async () => {
+  const library = await makeLibrary();
+  const other = await makeLibrary();
+  // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
+  const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
+  const settings = await openSettings(app, "Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  await weekly.getByRole("button", { name: "Edit", exact: true }).click();
+  await weekly.getByRole("textbox", { name: "Instructions" }).fill("Look for stale goals.");
+  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await stubPicker(app, other);
+  await settings.getByRole("button", { name: "Change…" }).click();
+  await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.path).toBe(other);
+  // The other library's weekly review has the same id: its editor is closed, so a Save can't write the draft into it.
+  await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+  await expect(weekly.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  await expect(weekly.getByRole("textbox")).toHaveCount(0);
   await app.close();
 });
 
@@ -174,7 +239,7 @@ test("a review's save waits behind a run, and nothing else saves that review ove
   const settings = await openSettings(app, "Reviews");
   const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
   const evening = settings.getByRole("group", { name: "Evening review", exact: true });
-  const on = evening.getByRole("switch", { name: "On" });
+  const on = evening.getByRole("switch", { name: "Run on schedule", exact: true });
   const instructions = evening.getByRole("textbox", { name: "Instructions" });
   const save = evening.getByRole("button", { name: "Save", exact: true });
   const hold = async () => {
@@ -207,6 +272,13 @@ test("a review's save waits behind a run, and nothing else saves that review ove
   await evening.getByRole("button", { name: "Edit", exact: true }).click();
   await instructions.fill("File only what's ready.");
   await save.click();
+  await expect(save).toHaveAttribute("aria-busy", "true");
+  await expect(on).toBeDisabled();
+  // Settings, not the pane, holds the save on its way: leaving the pane and coming back meanwhile, Save is busy still
+  // and the switch waits still, so neither can write the old fields over it.
+  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+  await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
   await expect(save).toHaveAttribute("aria-busy", "true");
   await expect(on).toBeDisabled();
   await call(app, "idleForTests");
@@ -253,7 +325,7 @@ test("saving a review whose file has gone says so plainly", async () => {
   const app = await launch({ AVANZEL_LIBRARY: library });
   const patch = { id: "standup", name: "Standup", schedule: "daily 09:00", agent: "auto", enabled: true, instructions: "Ask about the day." };
   await expect(call(app, "saveTaskFromSettings", patch)).rejects.toThrow("No scheduled review called standup.");
-  // In Settings, the review's Save says so under it, in main's words alone, and the editor keeps what was typed.
+  // In Settings, the review's Save says so under it, in main's words, then what is safe, and the editor keeps what was typed.
   const settings = await openSettings(app, "Reviews");
   const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
   await weekly.getByRole("button", { name: "Edit", exact: true }).click();
@@ -262,10 +334,10 @@ test("saving a review whose file has gone says so plainly", async () => {
   await weekly.getByRole("button", { name: "Save", exact: true }).click();
   const problem = weekly.getByRole("alert");
   await expect(problem.getByText("This review couldn't be saved.", { exact: true })).toBeVisible();
-  await expect(problem.getByText("No scheduled review called weekly-review.", { exact: true })).toBeVisible();
+  await expect(problem.getByText("No scheduled review called weekly-review. It still runs as last saved.", { exact: true })).toBeVisible();
   await expect(weekly.getByRole("textbox", { name: "Instructions" })).toHaveValue("Look for stale goals.");
-  // Close drops the draft, and the failed save with it.
-  await weekly.getByRole("button", { name: "Close", exact: true }).click();
+  // Cancel drops the draft, and the failed save with it.
+  await weekly.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(weekly.getByRole("alert")).toHaveCount(0);
   await app.close();
 });
@@ -331,7 +403,7 @@ test("Agents shows a library's problem as General does, and lists the agents onc
     await expect(settings.getByRole("heading", { name: "Who files your thoughts", exact: true })).toBeVisible();
     await expect(settings.getByRole("alert")).toHaveCount(0);
     await expect(settings.getByRole("group", { name: "fake", exact: true }).getByRole("img", { name: "Chosen" })).toBeVisible();
-    await expect(settings.getByRole("group", { name: "Claude Code", exact: true }).getByRole("status")).toHaveText("Signed in", { timeout: 20_000 });
+    await expect(settings.getByRole("group", { name: "Claude Code", exact: true }).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 20_000 });
     await app.close();
   } finally {
     chmodSync(library, 0o755);

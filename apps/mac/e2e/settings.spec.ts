@@ -1,6 +1,6 @@
 // The Settings window, built from @avanzel/ui: its toolbar, and each pane's controls.
 import { expect, test, type ElectronApplication } from "@playwright/test";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
@@ -65,6 +65,34 @@ test("General shows the library with its shelves, and each of its controls appli
   await app.close();
 });
 
+test("General says when Tonight files only while the evening review is on, and offers to turn it on", async () => {
+  const library = await makeLibrary();
+  // The evening review is off.
+  const evening = path.join(library, "tasks", "evening-review.md");
+  writeFileSync(evening, readFileSync(evening, "utf8").replace("enabled: true", "enabled: false"));
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app);
+  await expect(
+    settings.getByText("Right away uses your agent now. Tonight keeps new thoughts in the inbox until the evening review runs.", { exact: true }),
+  ).toBeVisible();
+  const notice = settings.getByRole("status").filter({ hasText: "The evening review is off, so new thoughts stay in the inbox." });
+  await expect(notice).toHaveCount(0); // Right away files now: nothing waits for the review
+  // Tonight, with the review off: a Notice says where the thoughts stay, that they are safe, and offers its one fix.
+  await settings.getByRole("radio", { name: "Tonight", exact: true }).click();
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("They're safe there.");
+  const turnOn = notice.getByRole("button", { name: "Turn on the evening review", exact: true });
+  await expect(turnOn).toHaveAttribute("data-variant", "primary");
+  await snap(settings, "settings-general-evening-off");
+  await turnOn.click();
+  await expect.poll(() => readFileSync(evening, "utf8")).toContain("enabled: true");
+  await expect(notice).toHaveCount(0);
+  // On, daily: Tonight says when it files.
+  await expect(settings.getByText("Right away uses your agent now. Tonight waits for the evening review at 21:00.", { exact: true })).toBeVisible();
+  expect((await snapshot(app)).app.fileMode).toBe("evening");
+  await app.close();
+});
+
 test("Open in Obsidian shows only for a library Obsidian has opened, and opens it there", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
@@ -89,8 +117,10 @@ test("the microphone's Choose… lists System default first, and saves the choic
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, microphoneId: "gone" }));
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
   const settings = await openSettings(app, "Voice");
-  const choose = settings.getByRole("group", { name: "Microphone" }).getByRole("button", { name: "Choose…" });
+  const choose = settings.getByRole("group", { name: /^Microphone: / }).getByRole("button", { name: "Choose…" });
   await expect(settings.getByText("Microphone not connected", { exact: true })).toBeVisible();
+  // Choose…'s group says the microphone in use, so VoiceOver hears it beside the button.
+  await expect(settings.getByRole("group", { name: "Microphone: Microphone not connected", exact: true })).toBeVisible();
   await expect(settings.getByText("Avanzel listens only while the capsule shows it listening.", { exact: true })).toBeVisible();
   await choose.scrollIntoViewIfNeeded(); // the group is under Voice's other groups, below the window's fold
   await snap(settings, "settings-voice-microphone");
@@ -112,6 +142,7 @@ test("the microphone's Choose… lists System default first, and saves the choic
   await expect.poll(async () => (await snapshot(app)).app.microphoneId).toBe(null);
   await expect(settings.getByText("System default", { exact: true })).toBeVisible();
   await expect(settings.getByText("Microphone not connected", { exact: true })).toHaveCount(0);
+  await expect(settings.getByRole("group", { name: "Microphone: System default", exact: true })).toBeVisible();
 
   // The next menu checks the one in use.
   await answerMenus(app, null);

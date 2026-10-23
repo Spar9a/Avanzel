@@ -26,3 +26,9 @@
   padding-top: var(--av-space-24);
   text-align: center;
 }
+/* A turn's reply, between the spinner and Stop while the agent looks: it takes the line's free width, which puts Stop at
+   its end, and once there is an answer it is the whole line. */
+.ask-reply {
+  flex: 1;
+  min-width: 0;
+}

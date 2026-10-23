@@ -168,6 +168,8 @@ export class Controller {
   private settingsWindow: BrowserWindow | null = null;
   private quickWindow: BrowserWindow | null = null;
   private askWindow: BrowserWindow | null = null;
+  /** Gives up the Ask window's question being answered, as closing that window does: Stop calls it (cancelAsk). */
+  private giveUpAsk: (() => void) | null = null;
   /** First-run setup: its window and session, and Zel's bubble once it has ended (setup.ts). */
   readonly setup: Setup;
   private menuBar!: MenuBar;
@@ -1338,9 +1340,11 @@ export class Controller {
       if (!win || win.isDestroyed()) return;
       win.webContents.send("ask:progress", message === WAITING ? "Waiting for the filing in progress to finish…" : message);
     };
-    // Closing that window gives the question up: its agent run stops, and the library is free for a filing waiting on it.
+    // Closing that window, or Stop in it, gives the question up: its agent run stops, and the library is free for a
+    // filing waiting on it. One question is answered at a time, so Stop gives up the newest one.
     const abort = new AbortController();
     const giveUp = () => abort.abort();
+    this.giveUpAsk = giveUp;
     if (win?.isDestroyed()) giveUp();
     else win?.once("closed", giveUp);
     try {
@@ -1356,7 +1360,13 @@ export class Controller {
       };
     } finally {
       if (win && !win.isDestroyed()) win.removeListener("closed", giveUp);
+      if (this.giveUpAsk === giveUp) this.giveUpAsk = null;
     }
+  }
+
+  /** Stop, in the Ask window: the question being answered is given up, as closing the window gives it up. */
+  cancelAsk(): void {
+    this.giveUpAsk?.();
   }
 
   /**

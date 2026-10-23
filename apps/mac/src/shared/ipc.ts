@@ -526,6 +526,11 @@ export interface AvanzelBridge {
     ask(question: string): Promise<AskResult>;
     /** What the question in progress is doing now, e.g. waiting for a filing to finish, then looking through the library. */
     onProgress(callback: (message: string) => void): () => void;
+    /**
+     * Stop, while a question is answered: it is given up as closing the window gives it up. Its agent stops, and the
+     * library is free for a filing waiting on it; what ask() then sends back is the cancelled run's.
+     */
+    cancel(): void;
     openPage(name: string): void;
     close(): void;
   };

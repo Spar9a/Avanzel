@@ -45,13 +45,19 @@ export function NoLibrary({ snap, onChange }: PaneProps): ReactNode {
 }
 
 /**
- * "Choose…" in a group named `label`; its menu pops up at the group's bottom left (getBoundingClientRect). This stands
- * in for a pop-up button: the row says the value in words, and Choose… opens a native menu of `options` (the list for a
- * microphone, a review's day or its agent). `onChoose` gets the value of the item picked, and a menu that closes
- * without a pick does nothing. The group's name is what VoiceOver says, and what tests find the row's button by, when
- * several rows each have a Choose….
+ * "Choose…" in a group named for its row and the value the row shows, `${label}: ${valueLabel}` ("Day: Sunday"); its
+ * menu pops up at the group's bottom left (getBoundingClientRect). This stands in for a pop-up button: the row says the
+ * value in words, and Choose… opens a native menu of `options` (the list for a microphone, a review's day or its agent).
+ * `onChoose` gets the value of the item picked, and a menu that closes without a pick does nothing. The group's name is
+ * what VoiceOver says, so it hears the value beside the button, and what tests find the row's button by, when several
+ * rows each have a Choose….
  */
-export function ChooseButton({ label, options, onChoose }: { label: string; options: readonly PickOption[]; onChoose(value: string): void }): ReactNode {
+export function ChooseButton({ label, valueLabel, options, onChoose }: {
+  label: string;
+  valueLabel: string;
+  options: readonly PickOption[];
+  onChoose(value: string): void;
+}): ReactNode {
   const group = useRef<HTMLDivElement>(null);
   const choose = async () => {
     const box = group.current?.getBoundingClientRect();
@@ -59,7 +65,7 @@ export function ChooseButton({ label, options, onChoose }: { label: string; opti
     if (value !== null) onChoose(value);
   };
   return (
-    <div ref={group} role="group" aria-label={label}>
+    <div ref={group} role="group" aria-label={`${label}: ${valueLabel}`}>
       <Button size="small" variant="secondary" onClick={choose}>Choose…</Button>
     </div>
   );

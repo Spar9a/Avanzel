@@ -369,19 +369,73 @@ test("a failed answer names the agent that couldn't answer, and a question that 
   await app.close();
 });
 
-test("a failed answer says so in the window", async () => {
+test("a failed answer says so in the window, says the library hasn't changed, and Ask again asks it again", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_MODE: "fail" });
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
-  await ask.getByRole("textbox", { name: "Ask your library" }).fill("What are my goals?");
-  await ask.getByRole("textbox", { name: "Ask your library" }).press("Enter");
-  // The Notice names the agent whose run failed, and says what that agent said last.
+  const field = ask.getByRole("textbox", { name: "Ask your library" });
+  await field.fill("What are my goals?");
+  await field.press("Enter");
+  // The Notice names the agent whose run failed, says what is safe, then what that agent said last, as a sentence.
   const notice = ask.getByRole("alert");
   await expect(notice).toContainText("fake couldn't answer.", { timeout: 60_000 });
-  await expect(notice).toContainText("agent crashed: not logged in");
+  await expect(notice).toContainText("Your library hasn't changed. Agent crashed: not logged in.");
   await expect(ask.getByRole("heading", { name: "What are my goals?", exact: true })).toBeVisible();
+  // Its one fix, the moment's primary.
+  const again = notice.getByRole("button", { name: "Ask again", exact: true });
+  await expect(again).toHaveAttribute("data-variant", "primary");
   await snap(ask, "9-ask-failed");
+  // The agent works now. Ask again asks the same question, as a new turn above the failed one, and the field has the focus.
+  await app.evaluate(() => {
+    process.env.FAKE_AGENT_MODE = "ok";
+  });
+  await again.click();
+  await expect(ask.getByText("Q: What are my goals?")).toBeVisible({ timeout: 60_000 });
+  await expect(ask.getByRole("heading")).toHaveText(["What are my goals?", "What are my goals?"]);
+  await expect(field).toBeFocused();
+  // The failed turn stays, without its fix: only the newest turn offers one.
+  await expect(notice).toContainText("fake couldn't answer.");
+  await expect(ask.getByRole("button", { name: "Ask again" })).toHaveCount(0);
+  await app.close();
+});
+
+test("Stop gives up the question being answered, and the field is free for the next", async () => {
+  const library = await makeLibrary();
+  const record = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-runs-")), "runs.jsonl");
+  const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_DELAY_MS: "60000", FAKE_AGENT_RECORD: record });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  const field = ask.getByRole("textbox", { name: "Ask your library" });
+  await field.fill("What are my goals?");
+  await field.press("Enter");
+  // The turn's status region says the agent has started. Past 10 s the line counts its seconds outside that region, so
+  // VoiceOver isn't read each one.
+  await expect(ask.getByRole("status")).toHaveText("Looking through your library…");
+  const counting = ask.getByText(/^Looking through your library: \d+ s$/);
+  await expect(counting).toBeVisible({ timeout: 20_000 });
+  expect(await counting.evaluate((el) => el.closest('[role="status"],[aria-live]')?.tagName ?? null)).toBeNull();
+  await expect(ask.getByRole("status")).toHaveText("");
+  // The way out: a quiet Stop, which stops the question's agent.
+  await expect.poll(() => exists(path.dirname(record), "runs.jsonl"), { timeout: 30_000 }).toBe(true);
+  const { pid } = JSON.parse(readFileSync(record, "utf8").trim().split("\n")[0]!) as { pid: number };
+  const stop = ask.getByRole("button", { name: "Stop", exact: true });
+  await expect(stop).toHaveAttribute("data-variant", "quiet");
+  await stop.click();
+  await expect(ask.getByRole("status")).toHaveText("Stopped.");
+  await expect(stop).toHaveCount(0);
+  await expect(counting).toHaveCount(0);
+  await expect.poll(() => alive(pid), { timeout: 5_000 }).toBe(false);
+  // The field is free: it has the focus, and the next question is asked at once.
+  await expect(field).toBeEnabled();
+  await expect(field).toBeFocused();
+  await field.fill("What are my ideas?");
+  await field.press("Enter");
+  await expect(ask.getByRole("heading")).toHaveText(["What are my ideas?", "What are my goals?"]);
+  await expect(stop).toBeVisible();
+  // What main sent back for the stopped question took nothing's place: the turn still says "Stopped.", and no failure.
+  await expect(ask.getByText("Stopped.", { exact: true })).toBeVisible();
+  await expect(ask.getByRole("alert")).toHaveCount(0);
   await app.close();
 });
 

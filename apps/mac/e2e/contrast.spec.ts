@@ -209,7 +209,7 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
     // are done, not while a Check button spins.
     if (pane === "Agents") {
       for (const name of ["Claude Code", "Codex"]) {
-        await expect(settings.getByRole("group", { name }).getByRole("status")).toHaveText("Signed in", { timeout: 40_000 });
+        await expect(settings.getByRole("group", { name }).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 40_000 });
       }
     }
     found.push(...(await readable(app, settings, `Settings › ${pane}`, desktops)));

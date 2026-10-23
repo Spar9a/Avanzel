@@ -45,6 +45,8 @@ interface AgentRowProps {
   inUse: boolean;
   /** Its check has had a result, so its button reads "Check again", also while it is checked again. */
   checked: boolean;
+  /** The person has pressed its Check, so VoiceOver hears its status as it changes. */
+  asked: boolean;
   /** Its install command was copied a moment ago. */
   copied: boolean;
   onUse(): void;
@@ -58,7 +60,7 @@ interface AgentRowProps {
  * whose Check it is and tests find the row's buttons by it. The library's own agent is Chosen even when it isn't installed,
  * so its "Not installed" shows as its problem.
  */
-function AgentRow({ agent, chosen, inUse, checked, copied, onUse, onCheck, onCopy }: AgentRowProps): ReactNode {
+function AgentRow({ agent, chosen, inUse, checked, asked, copied, onUse, onCheck, onCopy }: AgentRowProps): ReactNode {
   const { name, available } = agent;
   const label = harnessName(name);
   const checking = available && agent.status?.kind === "checking";
@@ -69,8 +71,9 @@ function AgentRow({ agent, chosen, inUse, checked, copied, onUse, onCheck, onCop
     <GroupRow label={label} description={agent.experimental ? "Experimental" : undefined}>
       <div role="group" aria-label={label}>
         <Row gap={8}>
-          {/* VoiceOver hears each change of it as a check runs and ends. */}
-          <span className="settings-status" role="status">
+          {/* Once the person has pressed Check, VoiceOver hears each change of it as the check runs and ends. The sign-in
+              reads the pane makes by itself as it opens are news nobody asked for, so until then it says nothing. */}
+          <span className="settings-status" role={asked ? "status" : undefined}>
             <Text variant="footnote" tone={tone} as="span">{statusWords(agent, tone)}</Text>
           </span>
           {name === "claude" && <Text variant="caption" tone="accent">Best results</Text>}
@@ -134,6 +137,8 @@ export function Agents({ snap, onChange }: PaneProps): ReactNode {
   const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
   const results = snap.harnesses.filter((h) => h.status && h.status.kind !== "checking" && !checked.has(h.name));
   if (results.length) setChecked(new Set([...checked, ...results.map((h) => h.name)]));
+  // Agents whose Check the person has pressed, the way `checked` keeps those with a result: only their statuses are announced.
+  const [asked, setAsked] = useState<ReadonlySet<string>>(() => new Set());
   // The agent whose install command was copied, for COPIED_MS.
   const [copied, setCopied] = useState<AgentInstall | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -168,9 +173,13 @@ export function Agents({ snap, onChange }: PaneProps): ReactNode {
             chosen={lib.harness === agent.name}
             inUse={agent.name === inUse}
             checked={checked.has(agent.name)}
+            asked={asked.has(agent.name)}
             copied={copied === agent.name}
             onUse={() => void use(agent.name)}
-            onCheck={async () => onChange(await api.checkAgent(agent.name))}
+            onCheck={async () => {
+              setAsked((last) => new Set(last).add(agent.name));
+              onChange(await api.checkAgent(agent.name));
+            }}
             onCopy={copy}
           />
         ))}

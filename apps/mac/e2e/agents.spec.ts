@@ -34,8 +34,11 @@ test("Settings → Agents checks the fake agent with one prompt and shows how lo
   const record = recordFile();
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_RECORD: record });
   const row = await fakeAgentRow(app);
+  // Nobody has asked about this agent yet, so its status isn't announced: it has no live region until Check.
+  await expect(row.getByText("Installed", { exact: true })).toBeVisible();
+  await expect(row.getByRole("status")).toHaveCount(0);
   await row.getByRole("button", { name: "Check", exact: true }).click();
-  await expect(row.getByText(/Replied in \d+\.\d s/)).toBeVisible({ timeout: 20_000 });
+  await expect(row.getByRole("status")).toHaveText(/^Replied in \d+\.\d s$/, { timeout: 20_000 });
   await expect(row.getByRole("button", { name: "Check again" })).toBeEnabled();
   // Opening the pane asked the fake agent nothing; Check asked it once.
   const prompts = readFileSync(record, "utf8").trim().split("\n").map((line) => (JSON.parse(line) as { prompt: string }).prompt);
@@ -173,7 +176,7 @@ test("with no agent installed, every row says so, and Claude Code and Codex offe
   const settings = await openSettings(app, "Agents");
   const row = (name: string) => settings.getByRole("group", { name, exact: true });
   for (const name of ["Claude Code", "Codex", "OpenCode", "Cursor Agent", "Gemini CLI"]) {
-    await expect(row(name).getByRole("status")).toHaveText("Not installed");
+    await expect(row(name).getByText("Not installed", { exact: true })).toBeVisible();
     await expect(row(name).getByRole("button", { name: /^(Use|Check)/ })).toHaveCount(0); // nothing to use or check
   }
   await expect(row("Claude Code").getByText("Not installed", { exact: true })).toHaveAttribute("data-tone", "danger"); // the agent in use
@@ -199,8 +202,10 @@ test("the free checks read launch()'s stand-ins for Claude Code and Codex, and a
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app, "Agents");
   for (const name of ["Claude Code", "Codex"]) {
-    await expect(settings.getByRole("group", { name }).getByRole("status")).toHaveText("Signed in", { timeout: 20_000 });
+    await expect(settings.getByRole("group", { name }).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 20_000 });
   }
+  // Nobody asked for these reads, so VoiceOver isn't told of them: no row's status is a live region.
+  await expect(settings.getByRole("status")).toHaveCount(0);
   // The stand-ins are first on the app's PATH, ahead of what widenedPath adds, so this Mac's own CLIs never ran.
   expect((await agentCalls(app)).sort()).toEqual(["claude auth status", "codex login status"]);
   await app.close();
@@ -209,15 +214,15 @@ test("the free checks read launch()'s stand-ins for Claude Code and Codex, and a
 test("a free check that can't read the sign-in leaves the agent unchecked, and Check then asks its one question", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), PATH: agentPath({ claude: UNREADABLE_CLAUDE }) });
   const settings = await openSettings(app, "Agents");
-  await expect(settings.getByRole("group", { name: "Codex" }).getByRole("status")).toHaveText("Signed in", { timeout: 20_000 });
+  await expect(settings.getByRole("group", { name: "Codex" }).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 20_000 });
   const claude = settings.getByRole("group", { name: "Claude Code" });
   await expect.poll(() => agentCalls(app), { timeout: 20_000 }).toContain("claude auth status");
-  await expect(claude.getByRole("status")).toHaveText("Installed");
+  await expect(claude.getByText("Installed", { exact: true })).toBeVisible();
   await expect(claude.getByRole("button", { name: "Check", exact: true })).toBeVisible();
   expect(await statusOf(app, "claude")).toBeNull();
   expect((await agentCalls(app)).filter((line) => line.startsWith("claude"))).toEqual(["claude auth status"]); // no prompt
   await claude.getByRole("button", { name: "Check", exact: true }).click();
-  await expect(claude.getByText(/^Replied in \d+\.\d s$/)).toBeVisible({ timeout: 20_000 });
+  await expect(claude.getByRole("status")).toHaveText(/^Replied in \d+\.\d s$/, { timeout: 20_000 });
   expect((await agentCalls(app)).filter((line) => line.startsWith("claude -p"))).toHaveLength(1);
   await app.close();
 });

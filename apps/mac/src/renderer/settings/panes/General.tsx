@@ -1,11 +1,12 @@
 // Settings → General: the library, where it is and what it holds, with its six shelves under it; when a thought is
 // filed; and opening at login. Without a library, the Notice that says why stands where the library would be, and the
 // other two groups follow as usual. Each control applies at once.
-import { Button, Group, GroupRow, Row, Segmented, SHELVES, ShelfTag, Stack, Switch, type SegmentedOption } from "@avanzel/ui";
+import { Actions, Button, Group, GroupRow, Notice, Row, Segmented, SHELVES, ShelfTag, Stack, Switch, type SegmentedOption } from "@avanzel/ui";
 import type { ReactNode } from "react";
 import type { FileMode } from "../../../shared/ipc.ts";
-import { libraryLine } from "../copy.ts";
+import { fileModeLine, libraryLine } from "../copy.ts";
 import { NoLibrary, type PaneProps } from "../parts.tsx";
+import type { ReviewEdits } from "./Reviews.tsx";
 
 const api = window.avanzel.settings;
 
@@ -15,8 +16,14 @@ const FILE_MODES: readonly SegmentedOption<FileMode>[] = [
   { value: "evening", label: "Tonight" },
 ];
 
-export function General({ snap, onChange }: PaneProps): ReactNode {
+/**
+ * The General pane. `edits` are the Settings window's (useReviewEdits): turning the evening review on here saves it as
+ * the Reviews pane does, and waits as its switch does while a save of it is on its way.
+ */
+export function General({ snap, onChange, edits }: PaneProps & { edits: ReviewEdits }): ReactNode {
   const lib = snap.library;
+  // The evening review, as the Reviews pane tells it from the others: by its kind. Tonight files only while it is on.
+  const evening = snap.tasks.find((task) => task.kind === "evening-review") ?? null;
   return (
     <Stack gap={20}>
       {lib?.exists ? (
@@ -42,10 +49,25 @@ export function General({ snap, onChange }: PaneProps): ReactNode {
         <NoLibrary snap={snap} onChange={onChange} />
       )}
       <Group label="After you speak">
-        <GroupRow label="File each thought" description="Right away uses your agent now. Tonight waits for the evening review.">
+        <GroupRow label="File each thought" description={fileModeLine(evening)}>
           <Segmented label="When to file" options={FILE_MODES} value={snap.app.fileMode} onChange={async (fileMode) => onChange(await api.setApp({ fileMode }))} />
         </GroupRow>
       </Group>
+      {/* Tonight waits for a review that is off: new thoughts would wait in the inbox until someone runs it. */}
+      {snap.app.fileMode === "evening" && evening && !evening.enabled && (
+        <Notice
+          title="The evening review is off, so new thoughts stay in the inbox."
+          actions={
+            <Actions align="start">
+              <Button size="small" variant="primary" busy={edits.saving.has(evening.id)} onClick={() => void edits.save(evening, { enabled: true })}>
+                Turn on the evening review
+              </Button>
+            </Actions>
+          }
+        >
+          They're safe there.
+        </Notice>
+      )}
       <Group label="Startup">
         <Switch
           label="Open Avanzel when you log in"

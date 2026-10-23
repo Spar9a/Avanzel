@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { ModelStatus, Shortcuts } from "../../../shared/ipc.ts";
 import { toAccelerator } from "../accelerator.ts";
-import { microphoneName, microphoneOptions, SPEECH_MODEL_DESCRIPTION, type InputDevice } from "../copy.ts";
+import { asSentence, microphoneName, microphoneOptions, SPEECH_MODEL_DESCRIPTION, type InputDevice } from "../copy.ts";
 import { ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -22,11 +22,13 @@ export function MicrophoneGroup({ snap, onChange }: PaneProps): ReactNode {
       .then((all) => setDevices(all.filter((device) => device.kind === "audioinput" && device.deviceId !== "default")));
   }, []);
   const id = snap.app.microphoneId;
+  const name = microphoneName(id, devices);
   return (
     <Group label="Microphone">
-      <GroupRow label={microphoneName(id, devices)} description="Avanzel listens only while the capsule shows it listening.">
+      <GroupRow label={name} description="Avanzel listens only while the capsule shows it listening.">
         <ChooseButton
           label="Microphone"
+          valueLabel={name}
           options={microphoneOptions(id, devices)}
           onChoose={async (value) => onChange(await api.setApp({ microphoneId: value || null }))}
         />
@@ -66,13 +68,18 @@ function SpeechControl({ model, onDownload }: { model: ModelStatus; onDownload()
 
 /**
  * The Notice under the Speech group while the model is in an error: a download that didn't finish, with Try again, or
- * voice settings Avanzel can't use, which Try again couldn't help. `primary` says whether Try again is the pane's primary
- * button, which it isn't when a shortcut's Notice has a free shortcut to offer.
+ * voice settings in the library's config file that Avanzel can't use, with why, which Try again couldn't help: they are
+ * fixed in that file. Either way, typing a thought works meanwhile. `primary` says whether Try again is the pane's
+ * primary button, which it isn't when a shortcut's Notice has a free shortcut to offer.
  */
 function SpeechProblem({ model, primary, onDownload }: { model: ModelStatus; primary: boolean; onDownload(): void }): ReactNode {
   if (model.kind !== "error") return null;
   if (model.cause === "settings") {
-    return <Notice tone="error" title="Avanzel can't use these voice settings.">{model.message}</Notice>;
+    return (
+      <Notice tone="error" title="Avanzel can't use the voice settings in this library's config file.">
+        {`${asSentence(model.message)} Typing a thought works meanwhile.`}
+      </Notice>
+    );
   }
   return (
     <Notice

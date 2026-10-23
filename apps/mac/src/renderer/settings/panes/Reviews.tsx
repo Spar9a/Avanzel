@@ -1,12 +1,13 @@
 // Settings → Reviews: each scheduled review in a group of its own, with its switch, when it runs and when it last ran,
 // Run now, and an editor that opens in place under them; then the review files that can't be used, with why. The switch
-// and Run now apply at once, and the editor saves on Save. The pane needs a library: without one the shell draws
-// NoLibrary in its place.
+// and Run now apply at once, and the editor saves on Save. What the editor holds and the saves on their way are kept by
+// the Settings shell (useReviewEdits), so leaving the pane keeps them. The pane needs a library: without one the shell
+// draws NoLibrary in its place.
 import { Actions, Button, Group, GroupRow, Notice, Segmented, Stack, Switch, Text, TextArea, TextField, type SegmentedOption } from "@avanzel/ui";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { harnessName } from "../../../main/jobs.ts";
 import type { HarnessInfo, PickOption, TaskInfo } from "../../../shared/ipc.ts";
-import { DAYS, kindLine, lastRunLine, remoteMessage, scheduleParts, scheduleText, validTime, whenLine } from "../copy.ts";
+import { asSentence, DAYS, kindLine, lastRunLine, remoteMessage, scheduleParts, scheduleText, validTime, whenLine } from "../copy.ts";
 import { ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -26,10 +27,10 @@ const LIBRARY_AGENT = "The library's agent";
 const EVENING_NOTE = "Undo last evening review, in the menu bar menu, takes back its last run.";
 
 /** What a review's save may change; the rest is saved as stored. */
-type Fields = Partial<Pick<TaskInfo, "schedule" | "agent" | "enabled" | "instructions">>;
+export type Fields = Partial<Pick<TaskInfo, "schedule" | "agent" | "enabled" | "instructions">>;
 
 /** What the open editor holds: the review's schedule, agent and instructions when Edit opened it, as changed since. */
-interface Draft {
+export interface Draft {
   every: Every;
   day: string;
   /** As typed: Save takes it once validTime does. */
@@ -40,12 +41,65 @@ interface Draft {
   refused: boolean;
 }
 
+/** The open editor's draft, by its review's id. */
+type Drafts = Readonly<Record<string, Draft>>;
+
 const draftOf = (task: TaskInfo): Draft => ({
   ...scheduleParts(task.schedule),
   agent: task.agent,
   instructions: task.instructions,
   refused: false,
 });
+
+/** `drafts` without review `id`'s. */
+const without = (drafts: Drafts, id: string): Drafts => Object.fromEntries(Object.entries(drafts).filter(([each]) => each !== id));
+
+/**
+ * What Settings keeps of the reviews whichever pane shows: leaving the pane, or moving along the toolbar with the arrow
+ * keys, which shows each pane passed, then keeps what the open editor holds and still knows of a save on its way.
+ */
+export interface ReviewEdits {
+  /** The open editor's draft, by its review's id. One editor is open at a time, so it holds one at most. */
+  drafts: Drafts;
+  setDrafts: Dispatch<SetStateAction<Drafts>>;
+  /**
+   * The reviews with a save on its way. A save waits its turn behind a filing or a run, and carries every field as
+   * Settings last drew them, so a second save of the review meanwhile would write its stale fields over the first. Until
+   * the first is written, nothing else saves that review: its switch and Save wait, and so does General's Turn on.
+   */
+  saving: ReadonlySet<string>;
+  /**
+   * Saves `task` with `fields` changed and the rest as stored, and draws the snapshot main sends back. Whether it saved:
+   * while a save of that review is on its way, it saves nothing. A save main refuses throws main's error.
+   */
+  save(task: TaskInfo, fields: Fields): Promise<boolean>;
+}
+
+/**
+ * The reviews' edits, for the Settings shell to keep (ReviewEdits). A draft is of the library open when it was made: once
+ * another library opens, whose reviews may have the same ids, the drafts are dropped.
+ */
+export function useReviewEdits(library: string | null, onChange: PaneProps["onChange"]): ReviewEdits {
+  const [drafts, setDrafts] = useState<Drafts>({});
+  const [draftsOf, setDraftsOf] = useState(library);
+  if (draftsOf !== library) {
+    setDraftsOf(library);
+    setDrafts({});
+  }
+  const [saving, setSaving] = useState<ReadonlySet<string>>(() => new Set());
+  const save = async (task: TaskInfo, fields: Fields): Promise<boolean> => {
+    const { id, name, schedule, agent, enabled, instructions } = task;
+    if (saving.has(id)) return false;
+    setSaving((last) => new Set(last).add(id));
+    try {
+      onChange(await api.saveTask({ id, name, schedule, agent, enabled, instructions, ...fields }));
+      return true;
+    } finally {
+      setSaving((last) => new Set([...last].filter((each) => each !== id)));
+    }
+  };
+  return { drafts, setDrafts, saving, save };
+}
 
 /** Choose…'s menu for a review's agent: the library's own, then each agent installed, with the review's checked. */
 function agentOptions(agent: string, harnesses: readonly HarnessInfo[]): PickOption[] {
@@ -65,14 +119,17 @@ interface EditorProps {
   /** Changes the draft. `change` makes the next draft from the one then, so a menu's pick keeps what was typed meanwhile. */
   onDraft(change: (draft: Draft) => Draft): void;
   onSave(): void;
+  onCancel(): void;
 }
 
 /**
  * A review's editor, under its row: how often, the day (weekly only), the time and the agent, each a row of the group;
- * then the instructions and Save, each in a box of the window's own. They are given back side by side, so every row
- * stays a direct child of the group's panel.
+ * then the instructions, and Cancel and Save, each in a box of the window's own. They are given back side by side, so
+ * every row stays a direct child of the group's panel.
  */
-function Editor({ draft, harnesses, saving, onDraft, onSave }: EditorProps): ReactNode {
+function Editor({ draft, harnesses, saving, onDraft, onSave, onCancel }: EditorProps): ReactNode {
+  const day = DAYS.find((each) => each.value === draft.day)?.label ?? draft.day;
+  const agent = draft.agent === "auto" ? LIBRARY_AGENT : harnessName(draft.agent);
   return (
     <>
       <GroupRow label="Repeats">
@@ -80,11 +137,12 @@ function Editor({ draft, harnesses, saving, onDraft, onSave }: EditorProps): Rea
       </GroupRow>
       {draft.every === "weekly" && (
         <GroupRow label="Day">
-          <Text as="span">{DAYS.find((day) => day.value === draft.day)?.label ?? draft.day}</Text>
+          <Text as="span">{day}</Text>
           <ChooseButton
             label="Day"
-            options={DAYS.map((day) => ({ ...day, checked: day.value === draft.day }))}
-            onChoose={(day) => onDraft((now) => ({ ...now, day }))}
+            valueLabel={day}
+            options={DAYS.map((each) => ({ ...each, checked: each.value === draft.day }))}
+            onChoose={(value) => onDraft((now) => ({ ...now, day: value }))}
           />
         </GroupRow>
       )}
@@ -94,15 +152,16 @@ function Editor({ draft, harnesses, saving, onDraft, onSave }: EditorProps): Rea
         </div>
       </GroupRow>
       <GroupRow label="Agent">
-        <Text as="span">{draft.agent === "auto" ? LIBRARY_AGENT : harnessName(draft.agent)}</Text>
-        <ChooseButton label="Agent" options={agentOptions(draft.agent, harnesses)} onChoose={(agent) => onDraft((now) => ({ ...now, agent }))} />
+        <Text as="span">{agent}</Text>
+        <ChooseButton label="Agent" valueLabel={agent} options={agentOptions(draft.agent, harnesses)} onChoose={(value) => onDraft((now) => ({ ...now, agent: value }))} />
       </GroupRow>
-      {/* Not rows: a field of several lines, and the editor's Save, each in a box padded as a row is. */}
+      {/* Not rows: a field of several lines, and the editor's buttons, each in a box padded as a row is. */}
       <div className="settings-editor">
         <TextArea label="Instructions" rows={5} value={draft.instructions} onChange={(instructions) => onDraft((now) => ({ ...now, instructions }))} />
       </div>
       <div className="settings-editor">
         <Actions>
+          <Button variant="quiet" onClick={onCancel}>Cancel</Button>
           <Button variant="primary" busy={saving} onClick={onSave}>Save</Button>
         </Actions>
       </div>
@@ -125,16 +184,18 @@ interface ReviewProps {
   onSwitch(enabled: boolean): void;
   onSave(): void;
   onRun(): void;
-  /** Edit or Close. */
-  onEditor(): void;
+  /** Edit: the editor opens, from the review as stored. */
+  onEdit(): void;
+  /** Cancel: the editor closes, and what it held is dropped. */
+  onCancel(): void;
 }
 
 /**
  * One review: a group named for it, so VoiceOver says whose Run now it is and tests find each review's controls by it.
- * Its switch, then when it runs and when it last ran, with Run now and Edit; while it is edited, its editor; and under
- * the group, why its last save failed.
+ * Its switch, then when it runs and when it last ran, with Run now and Edit; while it is edited, its editor in Edit's
+ * place; and under the group, why its last save failed.
  */
-function Review({ task, now, harnesses, draft, saving, failure, onDraft, onSwitch, onSave, onRun, onEditor }: ReviewProps): ReactNode {
+function Review({ task, now, harnesses, draft, saving, failure, onDraft, onSwitch, onSave, onRun, onEdit, onCancel }: ReviewProps): ReactNode {
   const group = useRef<HTMLDivElement>(null);
   const toggle = () => group.current?.querySelector<HTMLElement>('[role="switch"]');
   // The switch is disabled while its save is on its way, and a disabled control drops the keyboard focus. If the switch
@@ -145,12 +206,22 @@ function Review({ task, now, harnesses, draft, saving, failure, onDraft, onSwitc
     refocus.current = false;
     if (document.activeElement === document.body) toggle()?.focus();
   }, [saving]);
+  // Edit goes as the editor opens, and Cancel as it closes: the focus the pressed one had goes on into the editor, to its
+  // first control, or back to Edit.
+  const editing = draft !== null;
+  const handOver = useRef<"editor" | "edit" | null>(null);
+  useEffect(() => {
+    const next = handOver.current;
+    handOver.current = null;
+    if (next === "editor") group.current?.querySelector<HTMLElement>('[role="radiogroup"][aria-label="How often"] [aria-checked="true"]')?.focus();
+    if (next === "edit") Array.from(group.current?.querySelectorAll<HTMLElement>("button") ?? []).find((button) => button.textContent === "Edit")?.focus();
+  }, [editing]);
   return (
     <div ref={group} role="group" aria-label={task.name}>
       <Stack gap={12}>
         <Group label={task.name} note={task.kind === "evening-review" ? EVENING_NOTE : undefined}>
           <Switch
-            label="On"
+            label="Run on schedule"
             description={kindLine(task.kind)}
             checked={task.enabled}
             disabled={saving}
@@ -161,89 +232,111 @@ function Review({ task, now, harnesses, draft, saving, failure, onDraft, onSwitc
           />
           <GroupRow label={whenLine(task.schedule)} description={lastRunLine(task, now)}>
             <Button size="small" variant="secondary" busy={task.running} onClick={onRun}>Run now</Button>
-            <Button size="small" variant="secondary" onClick={onEditor}>{draft ? "Close" : "Edit"}</Button>
+            {!editing && (
+              <Button
+                size="small"
+                variant="secondary"
+                onClick={() => {
+                  handOver.current = "editor";
+                  onEdit();
+                }}
+              >
+                Edit
+              </Button>
+            )}
           </GroupRow>
-          {draft && <Editor draft={draft} harnesses={harnesses} saving={saving} onDraft={onDraft} onSave={onSave} />}
+          {draft && (
+            <Editor
+              draft={draft}
+              harnesses={harnesses}
+              saving={saving}
+              onDraft={onDraft}
+              onSave={onSave}
+              onCancel={() => {
+                handOver.current = "edit";
+                onCancel();
+              }}
+            />
+          )}
         </Group>
-        {failure && <Notice tone="error" title="This review couldn't be saved.">{failure}</Notice>}
+        {failure && <Notice tone="error" title="This review couldn't be saved.">{`${asSentence(failure)} It still runs as last saved.`}</Notice>}
       </Stack>
     </div>
   );
 }
 
-/** The Reviews pane: a footnote on how reviews run, each review, and the files in tasks/ that can't be used. */
-export function Reviews({ snap, onChange }: PaneProps): ReactNode {
-  // The review whose editor is open, by id, and what the editor holds: one at a time. Close, or Edit on another review,
-  // drops the draft, and the next Edit starts again from the review as stored.
-  const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
+/**
+ * The Reviews pane: a footnote on how reviews run, each review, and the files in tasks/ that can't be used. `edits` are
+ * the Settings shell's (useReviewEdits).
+ */
+export function Reviews({ snap, onChange, edits }: PaneProps & { edits: ReviewEdits }): ReactNode {
+  const { drafts, setDrafts, saving } = edits;
   // The review whose last save failed, and why: shown until that review is saved again, or its editor opens or closes.
   const [failure, setFailure] = useState<{ id: string; message: string } | null>(null);
-  // The reviews with a save on its way. A save waits its turn behind a filing or a run, and carries every field as this
-  // pane last drew them, so a second save of the review meanwhile would write its stale fields over the first. Until
-  // the first is written, that review's switch and Save wait too.
-  const [saving, setSaving] = useState<ReadonlySet<string>>(() => new Set());
   const now = new Date();
+  const clearFailure = (id: string) => setFailure((last) => (last?.id === id ? null : last));
+  /** Changes review `id`'s draft, from the one then, while its editor is open. */
+  const changeDraft = (id: string, change: (draft: Draft) => Draft) =>
+    setDrafts((last) => {
+      const draft = last[id];
+      return draft ? { ...last, [id]: change(draft) } : last;
+    });
 
   /** Saves `task` with `fields` changed and the rest as stored. Whether it saved: if not, the failure shows under it. */
   const save = async (task: TaskInfo, fields: Fields): Promise<boolean> => {
-    const { id, name, schedule, agent, enabled, instructions } = task;
-    if (saving.has(id)) return false;
-    setSaving((last) => new Set(last).add(id));
     try {
-      onChange(await api.saveTask({ id, name, schedule, agent, enabled, instructions, ...fields }));
-      setFailure((last) => (last?.id === id ? null : last));
-      return true;
+      const saved = await edits.save(task, fields);
+      if (saved) clearFailure(task.id);
+      return saved;
     } catch (error) {
-      setFailure({ id, message: remoteMessage(error) });
+      setFailure({ id: task.id, message: remoteMessage(error) });
       return false;
-    } finally {
-      setSaving((last) => new Set([...last].filter((each) => each !== id)));
     }
   };
 
   /** Save, in the open editor: a time that isn't one is refused and nothing is saved; a save that works closes it. */
   const saveDraft = async (task: TaskInfo) => {
+    const draft = drafts[task.id];
     if (!draft || saving.has(task.id)) return;
     const time = validTime(draft.time);
     if (!time) {
-      setDraft({ ...draft, refused: true });
+      changeDraft(task.id, (last) => ({ ...last, refused: true }));
       return;
     }
     const saved = await save(task, { schedule: scheduleText(draft.every, draft.day, time), agent: draft.agent, instructions: draft.instructions });
-    if (saved) setEditing((open) => (open === task.id ? null : open));
-  };
-
-  /** Edit opens `task`'s editor from the review as stored, closing any other; Close closes it, and its draft is dropped. */
-  const toggleEditor = (task: TaskInfo) => {
-    setFailure((last) => (last?.id === task.id ? null : last));
-    if (editing === task.id) {
-      setEditing(null);
-      return;
-    }
-    setDraft(draftOf(task));
-    setEditing(task.id);
+    if (saved) setDrafts((last) => without(last, task.id));
   };
 
   return (
     <Stack gap={20}>
-      <Text variant="footnote" tone="secondary">
-        Scheduled reviews run on this Mac with your agent, on your plan. If the Mac is asleep at the time, a review runs once it wakes.
-      </Text>
+      {/* Inset as a group's label and note are, so its words line up with theirs. */}
+      <div className="settings-intro">
+        <Text variant="footnote" tone="secondary">
+          Scheduled reviews run on this Mac with your agent, on your plan. If the Mac is asleep at the time, a review runs once it wakes.
+        </Text>
+      </div>
       {snap.tasks.map((task) => (
         <Review
           key={task.id}
           task={task}
           now={now}
           harnesses={snap.harnesses}
-          draft={editing === task.id ? draft : null}
+          draft={drafts[task.id] ?? null}
           saving={saving.has(task.id)}
           failure={failure?.id === task.id ? failure.message : null}
-          onDraft={(change) => setDraft((last) => last && change(last))}
+          onDraft={(change) => changeDraft(task.id, change)}
           onSwitch={(enabled) => void save(task, { enabled })}
           onSave={() => void saveDraft(task)}
           onRun={async () => onChange(await api.runTask(task.id))}
-          onEditor={() => toggleEditor(task)}
+          // One editor is open at a time: Edit opens this one from the review as stored, and drops any other's draft.
+          onEdit={() => {
+            clearFailure(task.id);
+            setDrafts({ [task.id]: draftOf(task) });
+          }}
+          onCancel={() => {
+            clearFailure(task.id);
+            setDrafts((last) => without(last, task.id));
+          }}
         />
       ))}
       {snap.taskProblems.length > 0 && (

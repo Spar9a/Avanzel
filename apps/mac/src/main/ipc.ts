@@ -52,6 +52,7 @@ export function registerIpc(controller: Controller): void {
   handle("quick:submit", (_e, text: string) => controller.submitQuick(text));
   on("quick:close", () => controller.closeQuick());
   handle("ask:ask", (_e, question: string) => controller.ask(question));
+  on("ask:cancel", () => controller.cancelAsk());
   on("ask:open-page", (_e, name: string) => controller.openPageByName(name));
   on("ask:close", () => controller.closeAsk());
 
