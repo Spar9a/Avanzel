@@ -18,7 +18,7 @@ write. Everything is plain Markdown, so it works in any editor and in Obsidian.
 | `people/` | People the owner mentions: who they are, context, commitments | create, edit |
 | `topics/` | Knowledge and recurring themes; saved answers and syntheses | create, edit |
 | `reviews/` | Health-check reports and evening-review summaries | create |
-| `tasks/` | Shadow tasks: schedules and standing instructions for runs Avanzel starts on its own | read |
+| `tasks/` | Scheduled reviews: schedules and standing instructions for runs Avanzel starts on its own | read |
 | `index.md` | Catalog of every shelf page, one line each. Read it first; keep it current | edit |
 | `log.md` | History of what you did | append only |
 

@@ -32,6 +32,27 @@ test("running the evening review by hand on an empty inbox says so", async () =>
   await app.close();
 });
 
+test("a custom review is skipped, and its notification says so plainly", async () => {
+  const library = await makeLibrary();
+  writeFileSync(path.join(library, "tasks", "standup.md"), "---\nname: Standup\nschedule: daily 09:00\nkind: custom\n---\nAsk about the day.\n");
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "runTask", "standup");
+  await call(app, "idleForTests");
+  expect(await call(app, "notificationsForTests")).toContainEqual({
+    title: "Standup",
+    body: "Avanzel doesn't run custom reviews yet, so this one was skipped.",
+  });
+  await app.close();
+});
+
+test("saving a review whose file has gone says so plainly", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const patch = { id: "standup", name: "Standup", schedule: "daily 09:00", agent: "auto", enabled: true, instructions: "Ask about the day." };
+  await expect(call(app, "saveTaskFromSettings", patch)).rejects.toThrow("No scheduled review called standup.");
+  await app.close();
+});
+
 test("when shadow tasks last ran is kept with the app, not in the library (an old state.json carried over once)", async () => {
   const library = await makeLibrary({ git: true });
   const ran = new Date().toISOString(); // just now: no shadow task comes due at launch, whatever the hour

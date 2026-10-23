@@ -44,11 +44,11 @@ and wakes up on a shortcut.
 | ⌥⇧Space | Type a thought. |
 | ⌥⇧A | Ask your library; the answer links to the pages it used. |
 
-The **evening review** (a shadow task, 21:00 by default) files the day's inbox, writes a summary to
-`reviews/`, and can be taken back with **Undo last evening review** in the menu bar menu. A
-**weekly review** looks over the whole library. Shadow tasks are Markdown files in `tasks/`; edit
-their times and instructions in Settings (a file Avanzel can't read is listed there with what is
-wrong with it).
+The **evening review** (a scheduled review, 21:00 by default) files the day's inbox, writes a
+summary to `reviews/`, and can be taken back with **Undo last evening review** in the menu bar
+menu. A **weekly review** looks over the whole library. Scheduled reviews are Markdown files in
+`tasks/`; edit their times, agents and instructions in Settings → Reviews (a file Avanzel can't
+read is listed there with what is wrong with it).
 
 Good to know:
 
@@ -104,7 +104,7 @@ the library in `~/Avanzel` with the agent you chose; **Change…** picks another
 home folder, a folder macOS makes in it such as Documents, or a disk's root: those are too broad).
 If the folder already holds a library or other files, the button reads **Use this folder** instead:
 a library (a v0.1 one included) keeps its notes as they are, gets the agent you chose saved in its
-settings and any default shadow task it lacks, and other files are kept while Avanzel adds the
+settings and any default scheduled review it lacks, and other files are kept while Avanzel adds the
 shelves, an `AGENTS.md` for your agent and git history that keeps them. Then you press ⌥Space and
 say your first thought, or type it while the model downloads. Then you watch your agent file it,
 ask a question about it, and finish in the menu bar. macOS asks for the microphone at your first

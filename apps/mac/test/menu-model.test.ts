@@ -39,9 +39,9 @@ describe("tray menu", () => {
     expect(head).toEqual({ type: "item", label: "1 note in the inbox", action: "open-inbox" });
   });
 
-  it("titles Recently filed and Shadow tasks with section headers", () => {
+  it("titles Recently filed and Scheduled reviews with section headers", () => {
     const headers = buildMenuModel(input(), now).filter((item) => item.type === "header");
-    expect(headers).toEqual([{ type: "header", label: "Recently filed" }, { type: "header", label: "Shadow tasks" }]);
+    expect(headers).toEqual([{ type: "header", label: "Recently filed" }, { type: "header", label: "Scheduled reviews" }]);
   });
 
   it("keeps sublabels off headers, with or without a library", () => {
@@ -56,7 +56,7 @@ describe("tray menu", () => {
       "2 notes in the inbox", "--",
       "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "--",
       "Recently filed", "Launch the indie game dev podcast", "Маленький сад на балконе", "--",
-      "Shadow tasks", "Evening review", "Weekly review", "--",
+      "Scheduled reviews", "Evening review", "Weekly review", "--",
       "Open library", "Settings…", "Quit Avanzel",
     ]);
     const record = items.find((i) => i.type === "item" && i.label === "Record a thought");

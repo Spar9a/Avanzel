@@ -494,7 +494,7 @@ export class Controller {
     }
   }
 
-  /** The usable shadow tasks; Settings → Shadow tasks says what is wrong with the others. */
+  /** The usable scheduled reviews; Settings → Reviews says what is wrong with the others. */
   private safeTasks(vault: Vault): ShadowTask[] {
     return loadTasksReport(vault).tasks;
   }
@@ -2017,7 +2017,7 @@ export class Controller {
     const schedule = parseSchedule(patch.schedule);
     await this.enqueue(async () => {
       const task = this.safeTasks(vault).find((t) => t.id === patch.id);
-      if (!task) throw new AvanzelError(`No shadow task called ${patch.id}.`);
+      if (!task) throw new AvanzelError(`No scheduled review called ${patch.id}.`);
       saveTask(vault, { ...task, name: patch.name, schedule, agent: patch.agent, enabled: patch.enabled, instructions: patch.instructions });
     });
     this.broadcast();
@@ -2083,7 +2083,7 @@ export class Controller {
           report ? () => this.openPage(path.relative(this.requireVault().root, report)) : undefined,
         );
       } else {
-        this.notify(task.name, "Custom shadow tasks arrive together with Tools & MCP. This one was skipped.");
+        this.notify(task.name, "Avanzel doesn't run custom reviews yet, so this one was skipped.");
       }
     } catch (error) {
       this.notify(`${task.name} didn't run`, errorMessage(error));

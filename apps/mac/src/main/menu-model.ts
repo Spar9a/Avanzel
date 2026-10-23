@@ -96,7 +96,7 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
   }
 
   if (input.tasks.length || input.undoableReview) {
-    items.push({ type: "header", label: "Shadow tasks" });
+    items.push({ type: "header", label: "Scheduled reviews" });
     for (const task of input.tasks) {
       const detail = task.running ? "Running…" : task.enabled && task.at ? formatWhen(task.at, now) : "Off";
       items.push({ type: "item", label: task.name, action: `task:${task.id}`, detail });
