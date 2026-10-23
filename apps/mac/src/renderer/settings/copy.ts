@@ -1,5 +1,5 @@
-// Settings' words that are made from values: the name of each pane on the toolbar, the library's line, a message ended
-// as a sentence, and the microphone's name.
+// Settings' words that panes share or make from values: the name of each pane on the toolbar, the library's line, a
+// message ended as a sentence, the microphone's name, and what the speech model row says.
 import { SHELVES } from "@avanzel/ui";
 import type { PickOption, SettingsPane } from "../../shared/ipc.ts";
 
@@ -57,3 +57,7 @@ export function microphoneOptions(id: string | null, devices: readonly InputDevi
     ...(devices ?? []).map((device, place) => ({ label: deviceName(device, place), value: device.deviceId, checked: device.deviceId === id })),
   ];
 }
+
+/** The speech model row's description: which languages it hears, as a person would want to know, naming no model. */
+export const SPEECH_MODEL_DESCRIPTION =
+  "Turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.";

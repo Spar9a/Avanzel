@@ -1,6 +1,6 @@
 // A shortcut another app holds (AVANZEL_FAKE_TAKEN_SHORTCUTS stands in for those apps): the capsule names it at launch
 // with two free ones to pick, the menu stops showing it, and Settings → Voice offers the same free ones.
-import { expect, test, type ElectronApplication } from "@playwright/test";
+import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -160,28 +160,63 @@ test("Settings → Voice offers the free ones under the taken shortcut's problem
   await app.close();
 });
 
-test("with more than one shortcut problem, only the first Notice's best one is the primary", async () => {
-  // Record a thought and Capture screen with a comment are both taken. With no speech model in the cache, its download
-  // fails at once (launch() points it at a dead port), so its Notice is a third, and its Try again is not the primary either.
-  const app = await launch({
-    AVANZEL_LIBRARY: await makeLibrary(),
-    AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space,Alt+Shift+S",
-    HF_HUB_CACHE: emptyHfCache(), // this Mac's own copy of the model stays out of it
-  });
-  const settings = await openSettings(app, "Voice");
+/**
+ * Settings → Voice of a library whose speech model fails to download at once (an empty cache, so that this Mac's own copy
+ * stays out of it, and launch()'s dead port), with the `taken` shortcuts held by other apps. Its Notices come in the
+ * menu's order: Record a thought's, Capture screen with a comment's, and the speech model's last.
+ */
+async function voiceWithProblems(taken: string): Promise<{ app: ElectronApplication; settings: Page }> {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_TAKEN_SHORTCUTS: taken, HF_HUB_CACHE: emptyHfCache() });
+  return { app, settings: await openSettings(app, "Voice") };
+}
+
+/** The pane's primary buttons: one moment, one primary. */
+const primaries = (settings: Page) => settings.locator('button[data-variant="primary"]');
+
+/** The failed download's Try again. */
+const tryAgain = (settings: Page) =>
+  settings.getByRole("alert").filter({ hasText: "The speech model didn't finish downloading." }).getByRole("button", { name: "Try again" });
+
+// A running Alfred or Raycast is named after ⌥Space, so the titles below match its words, not spell them out.
+const TAKEN_TITLES = [/^⌥Space is used by another app.* Pick another shortcut\.$/, /^⌥⇧S is used by another app.* Pick another shortcut\.$/];
+
+test("with more than one shortcut problem, the best free shortcut of the first Notice is the pane's only primary", async () => {
+  // Record a thought and Capture screen with a comment are both taken, and each has two free shortcuts to offer.
+  const { app, settings } = await voiceWithProblems("Alt+Space,Alt+Shift+S");
   await expect(settings.getByRole("button", { name: /^Use / })).toHaveText(["Use ⌃⌥R", "Use ⌃⇧Space", "Use ⌃⌥C", "Use ⌃⌥S"]);
   await expect(settings.getByRole("button", { name: "Use ⌃⇧Space" })).toHaveAttribute("data-variant", "primary");
   for (const name of ["Use ⌃⌥R", "Use ⌃⌥C", "Use ⌃⌥S"]) {
     await expect(settings.getByRole("button", { name })).toHaveAttribute("data-variant", "secondary");
   }
-  // In the menu's order: Record a thought's Notice, Capture screen with a comment's, then the speech model's.
-  // (A running Alfred or Raycast is named after ⌥Space, so that title is matched, not spelled out.)
-  await expect(settings.getByText(/is used by another app/)).toHaveText([
-    /^⌥Space is used by another app.* Pick another shortcut\.$/,
-    /^⌥⇧S is used by another app.* Pick another shortcut\.$/,
-  ]);
-  const failed = settings.getByRole("alert").filter({ hasText: "The speech model didn't finish downloading." });
-  await expect(failed.getByRole("button", { name: "Try again" })).toHaveAttribute("data-variant", "secondary");
+  await expect(settings.getByText(/is used by another app/)).toHaveText(TAKEN_TITLES);
+  // The failed download's Notice comes last, and its Try again is not a second primary.
+  await expect(tryAgain(settings)).toHaveAttribute("data-variant", "secondary");
+  await expect(primaries(settings)).toHaveCount(1);
+  await app.close();
+});
+
+test("a Notice with no free shortcut to offer leaves the primary to the next one that has some", async () => {
+  // Every shortcut that Record a thought could move to is taken too, so its Notice has no button. Capture screen with a
+  // comment's still has two.
+  const { app, settings } = await voiceWithProblems("Alt+Space,Control+Shift+Space,Control+Alt+R,Control+Alt+D,Alt+Shift+S");
+  await expect(settings.getByText(/is used by another app/)).toHaveText(TAKEN_TITLES);
+  await expect(settings.getByRole("alert").filter({ hasText: "⌥Space is used by another app" }).getByRole("button")).toHaveCount(0);
+  await expect(settings.getByRole("button", { name: /^Use / })).toHaveText(["Use ⌃⌥C", "Use ⌃⌥S"]);
+  // The best of those is the primary, as it would be in the first Notice, and Try again is not a second one.
+  await expect(settings.getByRole("button", { name: "Use ⌃⌥S" })).toHaveAttribute("data-variant", "primary");
+  await expect(settings.getByRole("button", { name: "Use ⌃⌥C" })).toHaveAttribute("data-variant", "secondary");
+  await expect(tryAgain(settings)).toHaveAttribute("data-variant", "secondary");
+  await expect(primaries(settings)).toHaveCount(1);
+  await app.close();
+});
+
+test("with no free shortcut to offer anywhere, a failed download's Try again is the pane's only primary", async () => {
+  // Record a thought is taken, and so is every shortcut it could move to: its Notice has no button.
+  const { app, settings } = await voiceWithProblems("Alt+Space,Control+Shift+Space,Control+Alt+R,Control+Alt+D");
+  await expect(settings.getByText(/⌥Space is used by another app/)).toBeVisible();
+  await expect(settings.getByRole("button", { name: /^Use / })).toHaveCount(0);
+  await expect(tryAgain(settings)).toHaveAttribute("data-variant", "primary");
+  await expect(primaries(settings)).toHaveCount(1);
   await app.close();
 });
 

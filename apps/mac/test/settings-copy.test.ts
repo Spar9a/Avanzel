@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asSentence, libraryLine, microphoneName, microphoneOptions, PANE_LABELS } from "../src/renderer/settings/copy.ts";
+import { asSentence, libraryLine, microphoneName, microphoneOptions, PANE_LABELS, SPEECH_MODEL_DESCRIPTION } from "../src/renderer/settings/copy.ts";
 import { SETTINGS_PANES } from "../src/shared/ipc.ts";
 
 describe("settings copy", () => {
@@ -59,5 +59,13 @@ describe("settings copy", () => {
     expect(microphoneOptions(null, null)).toEqual([{ label: "System default", value: "", checked: true }]);
     // Once they are listed, a chosen microphone that isn't among them is gone, even from an empty list.
     expect(microphoneName("b", [])).toBe("Microphone not connected");
+  });
+
+  it("the speech model row says which languages it hears, and names no model", () => {
+    expect(SPEECH_MODEL_DESCRIPTION).toBe(
+      "Turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.",
+    );
+    // The languages are for the person to know; which model hears them is the app's business.
+    expect(SPEECH_MODEL_DESCRIPTION).not.toMatch(/parakeet|whisper|silero|nemo/i);
   });
 });

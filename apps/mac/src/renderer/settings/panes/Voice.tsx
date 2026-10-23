@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { ModelStatus, Shortcuts } from "../../../shared/ipc.ts";
 import { toAccelerator } from "../accelerator.ts";
-import { microphoneName, microphoneOptions, type InputDevice } from "../copy.ts";
+import { microphoneName, microphoneOptions, SPEECH_MODEL_DESCRIPTION, type InputDevice } from "../copy.ts";
 import { ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -67,7 +67,7 @@ function SpeechControl({ model, onDownload }: { model: ModelStatus; onDownload()
 /**
  * The Notice under the Speech group while the model is in an error: a download that didn't finish, with Try again, or
  * voice settings Avanzel can't use, which Try again couldn't help. `primary` says whether Try again is the pane's primary
- * button, which it isn't when a shortcut's Notice comes first.
+ * button, which it isn't when a shortcut's Notice has a free shortcut to offer.
  */
 function SpeechProblem({ model, primary, onDownload }: { model: ModelStatus; primary: boolean; onDownload(): void }): ReactNode {
   if (model.kind !== "error") return null;
@@ -98,8 +98,12 @@ export function Voice({ snap, onChange }: PaneProps): ReactNode {
   const rows = Object.entries(ACTION_NAMES) as [keyof Shortcuts, string][];
   const problems = rows.flatMap(([key, name]) => {
     const message = snap.shortcutProblems[key];
-    return message ? [{ key, name, message }] : [];
+    // The snapshot lists the best free shortcut first; it goes last here, where a row of buttons keeps its primary.
+    return message ? [{ key, name, message, alternatives: [...(snap.shortcutAlternatives[key] ?? [])].reverse() }] : [];
   });
+  // The pane has one primary button, the fix of the first Notice that has one to offer: the best free shortcut of the
+  // first problem with any, or else Try again. A Notice with nothing to offer leaves it to the next.
+  const primaryKey = problems.find(({ alternatives }) => alternatives.length > 0)?.key;
 
   /** `accelerator` becomes `key`'s shortcut, and the focus goes to that row's Change. */
   const save = async (key: keyof Shortcuts, accelerator: string) => {
@@ -157,44 +161,40 @@ export function Voice({ snap, onChange }: PaneProps): ReactNode {
           </GroupRow>
         ))}
       </Group>
-      {/* One Notice for each shortcut with a problem. The pane has one primary button: the first Notice's best shortcut. */}
-      {problems.map(({ key, name, message }, index) => {
-        // The snapshot lists the best first; the best goes last here, where a row of buttons keeps its primary.
-        const alternatives = [...(snap.shortcutAlternatives[key] ?? [])].reverse();
-        return (
-          <Notice
-            key={key}
-            tone="error"
-            title={message}
-            actions={
-              alternatives.length > 0 ? (
-                <Actions align="start">
-                  {alternatives.map((accelerator, place) => (
-                    <Button
-                      key={accelerator}
-                      size="small"
-                      variant={index === 0 && place === alternatives.length - 1 ? "primary" : "secondary"}
-                      onClick={() => void save(key, accelerator)}
-                    >
-                      {`Use ${prettyAccelerator(accelerator)}`}
-                    </Button>
-                  ))}
-                </Actions>
-              ) : undefined
-            }
-          >
-            {/* Without a library the menu has no such item yet. */}
-            {snap.library?.exists ? `“${name}” is still in the menu bar.` : undefined}
-          </Notice>
-        );
-      })}
+      {/* One Notice for each shortcut with a problem. The primary is the best free shortcut of the one primaryKey names. */}
+      {problems.map(({ key, name, message, alternatives }) => (
+        <Notice
+          key={key}
+          tone="error"
+          title={message}
+          actions={
+            alternatives.length > 0 ? (
+              <Actions align="start">
+                {alternatives.map((accelerator, place) => (
+                  <Button
+                    key={accelerator}
+                    size="small"
+                    variant={key === primaryKey && place === alternatives.length - 1 ? "primary" : "secondary"}
+                    onClick={() => void save(key, accelerator)}
+                  >
+                    {`Use ${prettyAccelerator(accelerator)}`}
+                  </Button>
+                ))}
+              </Actions>
+            ) : undefined
+          }
+        >
+          {/* Without a library the menu has no such item yet. */}
+          {snap.library?.exists ? `“${name}” is still in the menu bar.` : undefined}
+        </Notice>
+      ))}
       <MicrophoneGroup snap={snap} onChange={onChange} />
       <Group label="Speech">
-        <GroupRow label="Speech model" description="Turns your voice into text on this Mac. Nothing is sent anywhere.">
+        <GroupRow label="Speech model" description={SPEECH_MODEL_DESCRIPTION}>
           <SpeechControl model={snap.model} onDownload={download} />
         </GroupRow>
       </Group>
-      <SpeechProblem model={snap.model} primary={problems.length === 0} onDownload={download} />
+      <SpeechProblem model={snap.model} primary={primaryKey === undefined} onDownload={download} />
     </Stack>
   );
 }

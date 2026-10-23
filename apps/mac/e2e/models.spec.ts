@@ -84,6 +84,10 @@ test("Settings → Voice says Ready once both speech models are on this Mac, and
   expect((await modelStatus(app)).kind).toBe("ready");
   const settings = await openSettings(app, "Voice");
   await expect(settings.getByText("Ready", { exact: true })).toBeVisible();
+  // The row says which languages it hears, and names no model.
+  await expect(
+    settings.getByText("Turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.", { exact: true }),
+  ).toBeVisible();
   await expect(settings.getByRole("button", { name: /^Download|^Try again/ })).toHaveCount(0);
   await expect(settings.getByRole("progressbar")).toHaveCount(0);
   await expect(settings.getByRole("alert")).toHaveCount(0);
