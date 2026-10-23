@@ -79,7 +79,13 @@ test("Settings → Privacy says what each permission is for, and Open System Set
   await expect(microphone.getByRole("button")).toHaveCount(0);
   await expect(screen.getByRole("button")).toHaveText(["Open System Settings"]);
   await expect(settings.getByText("After you allow screen recording, quit and reopen Avanzel: macOS applies it only then.", { exact: true })).toBeVisible();
-  await expect(settings.getByText("Your voice never leaves this Mac.", { exact: false })).toBeVisible();
+  // What leaves this Mac names a captured screen too, since a screenshot goes to the agent as well as the words.
+  await expect(
+    settings.getByText(
+      "Your voice never leaves this Mac. Your words, and any screen you capture with a comment, go only to the agent you chose, the same way your code already does.",
+      { exact: true },
+    ),
+  ).toBeVisible();
   await snap(settings, "settings-privacy-screen-denied");
   // With AVANZEL_TEST=1 System Settings stays shut, and openedForTests says which pane it would have opened.
   await screen.getByRole("button", { name: "Open System Settings" }).click();
