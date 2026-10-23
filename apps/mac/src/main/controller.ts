@@ -1521,7 +1521,6 @@ export class Controller {
         : kept
           ? { path: kept, label: tildePath(kept, home), exists: false, isGit: false, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900 }
           : null,
-      defaultLibraryPath: path.join(home, "Avanzel"),
       harnesses: Object.values(all).map((h) => ({
         name: h.name,
         available: h.available(),
@@ -1626,10 +1625,14 @@ export class Controller {
     return this.useLibrary(chosen);
   }
 
+  /**
+   * Makes a library in a new or empty folder and opens it. No window calls it: the e2e tests do, by name, to have a
+   * library without the folder picker. A person chooses a folder with chooseLibrary, or sets one up in setup.
+   */
   async createLibrary(requested: string): Promise<SettingsSnapshot> {
     const target = path.resolve(requested.replace(/^~(?=$|\/)/, homedir()));
     if (!new Vault(target).exists() && existsSync(target) && readdirSync(target).some((n) => n !== ".DS_Store")) {
-      throw new AvanzelError(`${target} already has files in it. Use “Choose existing…” to turn it into a library, or pick an empty folder.`);
+      throw new AvanzelError(`${target} already has files in it. Pick an empty folder.`);
     }
     mkdirSync(target, { recursive: true });
     await Vault.init(target, { git: true });

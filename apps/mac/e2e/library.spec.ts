@@ -1,5 +1,5 @@
 // The library around the captures: shadow tasks, their run state, and libraries that misbehave or aren't there.
-import { expect, test } from "@playwright/test";
+import { expect, test, type ElectronApplication } from "@playwright/test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -15,11 +15,23 @@ import {
   makeLibrary,
   openSettings,
   read,
+  shown,
   shownMenus,
   snap,
   stubPicker,
   windowFor,
 } from "./helpers.ts";
+
+/** Closes the setup window, as its red button does, and waits until it has gone. */
+async function closeSetup(app: ElectronApplication): Promise<void> {
+  await app.evaluate(async ({ BrowserWindow }) => {
+    const open = BrowserWindow.getAllWindows().filter((w) => w.webContents.getURL().includes("/renderer/setup/"));
+    await Promise.all(open.map((w) => new Promise<void>((resolve) => {
+      w.once("closed", () => resolve());
+      w.close();
+    })));
+  });
+}
 
 test("a review file that can't be used is listed with why, and the evening review still runs", async () => {
   const library = await makeLibrary();
@@ -328,6 +340,12 @@ test("Agents shows a library's problem as General does, and lists the agents onc
 
 test("Settings without a library offers setup, which comes forward as Settings closes", async () => {
   const app = await launch(firstRun().env); // without a library, setup opens by itself
+  // Closed first: with setup open from the start, a button that did nothing would still leave it shown.
+  await windowFor(app, "setup");
+  await expect.poll(() => shown(app, "setup")).toBe(true);
+  await closeSetup(app);
+  expect(await shown(app, "setup")).toBe(false);
+  expect(await call(app, "setupStepForTests")).toBeNull();
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
   await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
@@ -346,6 +364,8 @@ test("Settings without a library offers setup, which comes forward as Settings c
   const closed = settings.waitForEvent("close");
   await settings.getByRole("button", { name: "Set up Avanzel…" }).click().catch(() => undefined); // closes Settings, before the click returns
   await closed;
+  // The button opened setup afresh, on Hello.
+  await expect.poll(() => shown(app, "setup")).toBe(true);
   expect(await call(app, "setupStepForTests")).toBe("hello");
   await app.close();
 });

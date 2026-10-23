@@ -93,6 +93,20 @@ test("Settings → Privacy says what each permission is for, and Open System Set
   await app.close();
 });
 
+test("with the microphone denied, Settings → Privacy offers Open System Settings, not Allow…, since macOS asks only once", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_PERMISSIONS: "microphone:denied" });
+  const settings = await openSettings(app, "Privacy");
+  const microphone = settings.getByRole("group", { name: "Microphone", exact: true });
+  // macOS has been asked and refused, and doesn't ask again: Allow… would do nothing. Only System Settings can turn it on.
+  await expect(microphone.getByRole("button")).toHaveText(["Open System Settings"]);
+  await expect(microphone.getByText("Allowed", { exact: true })).toHaveCount(0);
+  await expect(settings.getByRole("button", { name: "Allow…" })).toHaveCount(0);
+  await snap(settings, "settings-privacy-microphone-denied");
+  await microphone.getByRole("button", { name: "Open System Settings" }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Microphone"]);
+  await app.close();
+});
+
 test("Allow… asks macOS for the microphone once, and the row then says Allowed", async () => {
   const app = await launch({
     AVANZEL_LIBRARY: await makeLibrary(),

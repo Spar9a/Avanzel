@@ -184,7 +184,6 @@ export interface SettingsSnapshot {
   library: LibraryInfo | null;
   /** Why the library at `app.libraryPath` couldn't be opened, if it couldn't. */
   libraryProblem: string | null;
-  defaultLibraryPath: string;
   harnesses: HarnessInfo[];
   selectedHarness: string | null;
   model: ModelStatus;
@@ -498,7 +497,6 @@ export interface AvanzelBridge {
     setApp(patch: Partial<AppSettings>): Promise<SettingsSnapshot>;
     setLibrary(patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }): Promise<SettingsSnapshot>;
     chooseLibrary(): Promise<SettingsSnapshot>;
-    createLibrary(path: string): Promise<SettingsSnapshot>;
     downloadModel(): Promise<SettingsSnapshot>;
     saveTask(task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">): Promise<SettingsSnapshot>;
     runTask(id: string): Promise<SettingsSnapshot>;

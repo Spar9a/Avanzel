@@ -249,7 +249,9 @@ Avanzel enforces a few guarantees no matter how the agent behaves:
 
 Audio and transcription never leave your machine. Filing and asking send the capture text and the
 relevant pages to whichever model your agent CLI uses — the same trust you already give it for
-code. Nothing else is uploaded; there is no Avanzel server.
+code. In the Mac app, a screen you capture with a comment goes to your agent too, when it files
+the capture; the Python command line can't capture the screen. Nothing else is uploaded; there is
+no Avanzel server.
 
 ## Troubleshooting
 

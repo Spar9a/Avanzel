@@ -34,7 +34,6 @@ export function registerIpc(controller: Controller): void {
   handle("settings:set-library", (_e, patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }) =>
     controller.setLibrarySettings(patch));
   handle("settings:choose-library", () => controller.chooseLibrary());
-  handle("settings:create-library", (_e, target: string) => controller.createLibrary(target));
   handle("settings:download-model", () => controller.downloadModel());
   handle("settings:save-task", (_e, task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">) =>
     controller.saveTaskFromSettings(task));

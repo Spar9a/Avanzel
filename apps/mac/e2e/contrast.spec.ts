@@ -27,10 +27,9 @@ interface Sample {
 type Bases = (mode: Appearance, page: Page) => Promise<string[]>;
 
 const APPEARANCES: Appearance[] = ["light", "dark"];
-// Primary buttons, the selected sidebar row and the error badge: white on --accent or --danger, as
-// macOS draws them, at 3.4–4.0:1. The fills stay as they are; their labels are held to 3:1 while
-// they are white on exactly that fill, and to 4.5:1 otherwise.
-const ON_FILL = ".btn.primary, .ni.on, .warn";
+// The capsule's legacy primary buttons and error badge (1c rebuilds them): white on its --accent or
+// --danger, at 3.4–3.7:1, held to 3:1 while on exactly that fill.
+const ON_FILL = ".btn.primary, .warn";
 // The capsule floats over any desktop: the lightest and the darkest.
 const desktops: Bases = async () => ["#ffffff", "#000000"];
 // Quick's page is clear, over the popover material macOS draws, which the page can't read: it is read over the window

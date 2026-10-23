@@ -36,7 +36,6 @@ const bridge: AvanzelBridge = {
     setApp: (patch) => ipcRenderer.invoke("settings:set-app", patch),
     setLibrary: (patch) => ipcRenderer.invoke("settings:set-library", patch),
     chooseLibrary: () => ipcRenderer.invoke("settings:choose-library"),
-    createLibrary: (path) => ipcRenderer.invoke("settings:create-library", path),
     downloadModel: () => ipcRenderer.invoke("settings:download-model"),
     saveTask: (task) => ipcRenderer.invoke("settings:save-task", task),
     runTask: (id) => ipcRenderer.invoke("settings:run-task", id),

@@ -4,7 +4,7 @@ import type { OpenDialogOptions } from "electron";
 import type { FileOutcome } from "@avanzel/engine";
 import type { CapsuleMode, FiledPage, NarrationRow, ScreenContext } from "../shared/ipc.ts";
 
-/** The folder picker for the library, in Settings (Choose existing…) and in setup (Change…). */
+/** The folder picker for the library, in Settings (Change… and Choose a folder…) and in setup (Change…). */
 export const LIBRARY_PICKER: OpenDialogOptions = { title: "Choose your library folder", properties: ["openDirectory", "createDirectory"] };
 const HARNESS_NAMES: Record<string, string> = {
   claude: "Claude Code", codex: "Codex", opencode: "OpenCode", "cursor-agent": "Cursor Agent", gemini: "Gemini CLI",

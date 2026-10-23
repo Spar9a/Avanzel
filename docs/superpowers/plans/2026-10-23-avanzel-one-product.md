@@ -165,6 +165,8 @@ Sentence case, verbs first on buttons, no "!", the one-character "…", and they
 | Controller | "No scheduled review called {id}."; a custom one's notification: "Avanzel doesn't run custom reviews yet, so this one was skipped." |
 | `AGENTS.md` template, README | "Shadow tasks" becomes "Scheduled reviews", and "a shadow task" becomes "a scheduled review" |
 
+During execution, rulings changed some of this copy: the speech row names its languages; the primary goes to the first Notice that has a fix; the model field has no placeholder, and its description adds "Leave it empty to use the agent's own default."; and the Privacy sentence names captured screens. The code holds the words as shipped.
+
 Where this copy departs from the mockup, and why:
 - **The shelf tabs have no counts.** `ShelfTag`'s count badge is labelled "{count} new" (`Shelf.tsx:64`), so VoiceOver would say "41 new" for a total. The row's description gives the total (owner item 7).
 - **The shortcut rows use the menu's names.** Settings' rows use `ACTION_NAMES` ("Capture screen with a comment"), so the row and the menu item agree.
