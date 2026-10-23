@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, MODELS, saveSettings } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { call, capsuleKind, closeModelHubs, emptyHfCache, fakeModelHub, hfSnapshot, launch, makeLibrary, shown, snap, windowFor } from "./helpers.ts";
+import { call, capsuleKind, closeModelHubs, emptyHfCache, fakeModelHub, hfSnapshot, launch, makeLibrary, openSettings, shown, snap, windowFor } from "./helpers.ts";
 
 const PARAKEET = "nemo-parakeet-tdt-0.6b-v3";
 const SILERO = "silero-vad";
@@ -38,8 +38,16 @@ test("without a library nothing downloads, and Settings offers the download with
   await call(app, "showSettings"); // without a library, setup opens by itself, not Settings
   const settings = await windowFor(app, "settings");
   await settings.getByRole("radio", { name: "Voice", exact: true }).click();
-  await expect(settings.getByRole("button", { name: "Download (673 MB)" })).toBeVisible();
+  const download = settings.getByRole("button", { name: "Download (673 MB)" });
+  await expect(download).toBeVisible();
+  await expect(download).toHaveAttribute("data-variant", "secondary");
   expect(hub.requests).toEqual([]);
+  // Download starts it, and the row turns to the progress, which the stalled hub holds at 0 of 673 MB.
+  await download.click();
+  await expect.poll(() => modelStatus(app)).toMatchObject({ kind: "downloading", totalBytes: total });
+  await expect(settings.getByRole("progressbar", { name: "Downloading the speech model" })).toBeVisible();
+  await expect(settings.getByText("0 of 673 MB", { exact: true })).toBeVisible();
+  await expect(download).toHaveCount(0);
   await app.close();
 });
 
@@ -64,6 +72,22 @@ test("a cached Parakeet leaves only Silero to fetch", async () => {
   await expect.poll(() => modelStatus(app)).toMatchObject({ kind: "downloading", totalBytes: 2_327_524 });
   expect(hub.requests).not.toEqual([]);
   expect(hub.requests.filter((request) => !request.endsWith("/silero_vad.onnx"))).toEqual([]);
+  await app.close();
+});
+
+test("Settings → Voice says Ready once both speech models are on this Mac, and offers nothing to fetch", async () => {
+  const cache = emptyHfCache();
+  hfSnapshot(cache, PARAKEET);
+  hfSnapshot(cache, SILERO);
+  const hub = await fakeModelHub("stall");
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: cache });
+  expect((await modelStatus(app)).kind).toBe("ready");
+  const settings = await openSettings(app, "Voice");
+  await expect(settings.getByText("Ready", { exact: true })).toBeVisible();
+  await expect(settings.getByRole("button", { name: /^Download|^Try again/ })).toHaveCount(0);
+  await expect(settings.getByRole("progressbar")).toHaveCount(0);
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+  expect(hub.requests).toEqual([]);
   await app.close();
 });
 
@@ -159,7 +183,17 @@ test("a failed download waits quietly, then offers Try again", async () => {
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
   await settings.getByRole("radio", { name: "Voice", exact: true }).click();
-  await expect(settings.getByRole("button", { name: "Try again" })).toBeVisible();
+  const alert = settings.getByRole("alert");
+  await expect(alert).toContainText("The speech model didn't finish downloading.");
+  await expect(alert).toContainText("Typing a thought works meanwhile.");
+  // No shortcut has a problem, so this is the pane's first Notice, and its fix is the primary.
+  const tryAgain = alert.getByRole("button", { name: "Try again" });
+  await expect(tryAgain).toHaveAttribute("data-variant", "primary");
+  await snap(settings, "settings-model-failed");
+  // Try again here fetches it again, as the capsule's does.
+  const retried = hub.requests.length;
+  await tryAgain.click();
+  await expect.poll(() => hub.requests.length).toBeGreaterThan(retried);
   await app.close();
 });
 
@@ -177,7 +211,9 @@ test("voice settings Avanzel can't use are named at the shortcut, and nothing do
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
   await settings.getByRole("radio", { name: "Voice", exact: true }).click();
-  await expect(settings.getByText(/Speech model 'parakeet-v9' is not supported/)).toBeVisible();
+  const alert = settings.getByRole("alert");
+  await expect(alert).toContainText("Avanzel can't use these voice settings.");
+  await expect(alert).toContainText(/Speech model 'parakeet-v9' is not supported/);
   await expect(settings.getByRole("button", { name: "Try again" })).toHaveCount(0); // trying again can't help
   expect(hub.requests).toEqual([]);
   await app.close();

@@ -1,15 +1,13 @@
 // The Settings window: a strip to drag it by, the toolbar that moves between its panes, and the pane under its
 // heading. Each pane applies a change at once and draws the snapshot main sends back. The panes not rebuilt on
-// @avanzel/ui yet (Voice, but for its Microphone group, Agents, the tasks pane and Privacy) stay here, with their
-// helpers, until their own tasks.
-import { Button, Row, Segmented, Stack, Text } from "@avanzel/ui";
-import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+// @avanzel/ui yet (Agents, the tasks pane and Privacy) stay here, with their helpers, until their own tasks.
+import { Button, Segmented, Stack, Text } from "@avanzel/ui";
+import { useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { SETTINGS_PANES, isSettingsPane, type AgentStatus, type AvanzelBridge, type SettingsPane, type SettingsSnapshot, type Shortcuts, type TaskInfo } from "../../shared/ipc.ts";
-import { ACTION_NAMES, prettyAccelerator } from "../../main/shortcuts.ts";
+import { SETTINGS_PANES, isSettingsPane, type AgentStatus, type AvanzelBridge, type SettingsPane, type SettingsSnapshot, type TaskInfo } from "../../shared/ipc.ts";
 import { PANE_LABELS } from "./copy.ts";
 import { General } from "./panes/General.tsx";
-import { MicrophoneGroup } from "./panes/Voice.tsx";
+import { Voice } from "./panes/Voice.tsx";
 import type { PaneProps } from "./parts.tsx";
 import "../common/mac.css";
 import "./styles.css";
@@ -35,119 +33,12 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
   return <input type="checkbox" role="switch" className="sw" aria-label={label} checked={checked} onChange={(e) => onChange(e.target.checked)} />;
 }
 
-const KEY_CODES: Record<string, string> = {
-  Space: "Space", Backquote: "`", Minus: "-", Equal: "=", BracketLeft: "[", BracketRight: "]", Backslash: "\\",
-  Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Slash: "/",
-};
-
-/** A keydown → Electron accelerator ("Alt+Shift+S"), or null while only modifiers are held. */
-function toAccelerator(e: React.KeyboardEvent): string | null {
-  const mods = [e.ctrlKey && "Control", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Command"].filter(Boolean) as string[];
-  const code = e.nativeEvent.code;
-  const key = /^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit\d$/.test(code) ? code.slice(5) : /^F\d{1,2}$/.test(code) ? code : KEY_CODES[code];
-  if (!key) return null;
-  if (!mods.length && !/^F\d/.test(key)) return null;
-  return [...mods, key].join("+");
-}
-
-function ShortcutField({ value, onChange, label, ref }: { value: string; onChange: (v: string) => void; label: string; ref?: Ref<HTMLButtonElement> }) {
-  const [recording, setRecording] = useState(false);
-  return (
-    <button
-      ref={ref}
-      className={`btn keys${recording ? " recording" : ""}`}
-      aria-label={`${label} shortcut`}
-      onClick={() => setRecording(true)}
-      onBlur={() => setRecording(false)}
-      onKeyDown={(e) => {
-        if (!recording) return;
-        e.preventDefault();
-        if (e.key === "Escape") return setRecording(false);
-        const accelerator = toAccelerator(e);
-        if (accelerator) {
-          onChange(accelerator);
-          setRecording(false);
-        }
-      }}
-    >
-      {recording ? "Type the new shortcut…" : prettyAccelerator(value)}
-    </button>
-  );
-}
-
 function Group({ label, children, note }: { label?: string; children: ReactNode; note?: ReactNode }) {
   return (
     <>
       {label && <div className="glabel">{label}</div>}
       <div className="group">{children}</div>
       {note && <p className="note">{note}</p>}
-    </>
-  );
-}
-
-function Voice({ snap, onChange }: { snap: SettingsSnapshot; onChange: (s: SettingsSnapshot) => void }) {
-  const rows = Object.entries(ACTION_NAMES) as [keyof Shortcuts, string][];
-  // Each row's shortcut field: a picked "Use …" goes with the others, so the focus moves to the field it changed.
-  const fields = useRef<Partial<Record<keyof Shortcuts, HTMLButtonElement | null>>>({});
-  const model = snap.model;
-  return (
-    <>
-      <Group
-        label="Shortcuts"
-        note="Press a shortcut once to start and again to stop. While Avanzel listens, Esc cancels the dictation from any app. Edit, while your agent files a note, stops the agent, takes back what it did and files your corrected words instead."
-      >
-        {rows.map(([key, label]) => {
-          const use = async (accelerator: string) => onChange(await api.setApp({ shortcuts: { ...snap.app.shortcuts, [key]: accelerator } }));
-          const pick = async (accelerator: string) => {
-            await use(accelerator);
-            fields.current[key]?.focus();
-          };
-          const alternatives = snap.shortcutAlternatives[key] ?? [];
-          return (
-            <div className="grow" key={key}>
-              <div className="fill two">
-                {label}
-                {snap.shortcutProblems[key] && <span className="problem">{snap.shortcutProblems[key]}</span>}
-                {alternatives.length > 0 && (
-                  <div className="alternatives">
-                    <Row gap={6}>
-                      {alternatives.map((alternative) => (
-                        <Button key={alternative} size="small" variant="secondary" onClick={() => void pick(alternative)}>
-                          {`Use ${prettyAccelerator(alternative)}`}
-                        </Button>
-                      ))}
-                    </Row>
-                  </div>
-                )}
-              </div>
-              <ShortcutField ref={(field) => { fields.current[key] = field; }} label={label} value={snap.app.shortcuts[key]} onChange={use} />
-            </div>
-          );
-        })}
-      </Group>
-      <Group label="Speech model" note="Speech models run on this Mac. Your voice never leaves it.">
-        <div className="grow">
-          <span className="fill two"><b>Parakeet v3</b><small>25 European languages, including English, Russian and Ukrainian</small></span>
-          {model.kind === "ready" && <span className="status-ok">Ready</span>}
-          {model.kind === "missing" && <button className="btn primary" onClick={async () => onChange(await api.downloadModel())}>Download ({Math.round(model.bytes / 1e6)} MB)</button>}
-          {model.kind === "downloading" && (
-            <>
-              <span className="bar" aria-label="Download progress"><i style={{ width: `${model.totalBytes ? (100 * model.receivedBytes) / model.totalBytes : 0}%` }} /></span>
-              <span className="sub">{Math.round(model.receivedBytes / 1e6)} of {Math.round(model.totalBytes / 1e6)} MB</span>
-            </>
-          )}
-          {model.kind === "error" && (
-            <>
-              <span className="status-bad">{model.message}</span>
-              {model.cause === "download" && <button className="btn" onClick={async () => onChange(await api.downloadModel())}>Try again</button>}
-            </>
-          )}
-        </div>
-      </Group>
-      {/* The rebuilt group among the legacy ones above it, which leave no space under them. */}
-      <div className="settings-microphone">
-        <MicrophoneGroup snap={snap} onChange={onChange} />
-      </div>
     </>
   );
 }

@@ -28,30 +28,26 @@
 .settings-shelves {
   padding: var(--av-space-12);
 }
+/* The speech model's progress bar, a short one beside the megabytes it has. */
+.settings-meter {
+  width: 120px;
+}
 
-/* The panes not rebuilt yet (Voice, Agents, the tasks pane and Privacy), until each is. */
-/* Voice's rebuilt Microphone group among its legacy ones: 20 under the group above, as rebuilt groups are 20 apart. */
-.settings-microphone { margin-top: var(--av-space-20); }
+/* The panes not rebuilt yet (Agents, the tasks pane and Privacy), until each is. */
 .glabel { font-size: 12.5px; font-weight: 600; color: var(--text-2); margin: 18px 4px 6px; }
 .group { border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--hair); }
 .grow { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px; border-top: 1px solid var(--hair); }
 .grow:first-child { border-top: 0; }
 .grow > .fill { flex: 1; min-width: 0; }
 .two { display: flex; flex-direction: column; gap: 1px; }
-.two small, .sub { color: var(--text-2); font-size: 12px; }
+.two small { color: var(--text-2); font-size: 12px; }
 .note { margin: 6px 4px 0; font-size: 12px; color: var(--text-2); line-height: 1.45; max-width: 70ch; }
 .problem { color: var(--danger-text); font-size: 12px; }
-.alternatives { padding-top: var(--av-space-6); }
 .sw { appearance: none; width: 30px; height: 18px; border-radius: 9px; background: color-mix(in srgb, var(--text) 18%, transparent); position: relative; flex: none; margin: 0; border: 0; }
 .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: left 120ms; }
 .sw:checked { background: var(--accent); }
 .sw:checked::after { left: 14px; }
-.keys { min-width: 120px; justify-content: center; }
-.keys.recording { box-shadow: 0 0 0 2px var(--accent); }
 .status-ok { color: var(--ok-text); font-size: 12px; }
-.status-bad { color: var(--danger-text); font-size: 12px; }
-.bar { width: 160px; height: 6px; border-radius: 3px; background: var(--seg); overflow: hidden; }
-.bar > i { display: block; height: 100%; background: var(--accent); }
 .task-editor { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px 12px; border-top: 1px solid var(--hair); }
 .task-editor .line { display: flex; gap: 10px; align-items: center; }
 .task-editor .k { width: 92px; flex: none; color: var(--text-2); }
