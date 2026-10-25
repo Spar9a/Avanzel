@@ -702,6 +702,91 @@ test("Stop gives up the question being answered, and the field is free for the n
   await app.close();
 });
 
+test("Stop is heard from the Ask window alone: another window's page gives up no question", async () => {
+  const library = await makeLibrary();
+  const record = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-runs-")), "runs.jsonl");
+  const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_DELAY_MS: "60000", FAKE_AGENT_RECORD: record });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  const field = ask.getByRole("textbox", { name: "Ask your library" });
+  await field.fill("What are my goals?");
+  await field.press("Enter");
+  await expect.poll(() => exists(path.dirname(record), "runs.jsonl"), { timeout: 30_000 }).toBe(true);
+  const { pid } = JSON.parse(readFileSync(record, "utf8").trim().split("\n")[0]!) as { pid: number };
+  const stop = ask.getByRole("button", { name: "Stop", exact: true });
+  await expect(stop).toBeVisible();
+  // Every window has the same bridge, so Settings' page can send ask:cancel. A page's messages reach main in the order they were
+  // sent: the answer to the call after it comes once main has handled the cancel.
+  await call(app, "showSettings");
+  const settings = await windowFor(app, "settings");
+  await settings.evaluate(async () => {
+    window.avanzel.ask.cancel();
+    await window.avanzel.settings.get();
+  });
+  // Had it been heard, the question's agent would be gone by now (the Stop below ends it in well under this time).
+  await settings.waitForTimeout(1_500);
+  expect(alive(pid)).toBe(true);
+  await expect(stop).toBeVisible();
+  await expect(ask.getByRole("status")).not.toHaveText("Stopped.");
+  // The Ask window's own Stop is heard.
+  await stop.click();
+  await expect(ask.getByRole("status")).toHaveText("Stopped.");
+  await expect.poll(() => alive(pid), { timeout: 5_000 }).toBe(false);
+  await app.close();
+});
+
+test("Open Settings in the Ask window leaves a recording and a note being edited as they are", async () => {
+  const library = await makeLibrary();
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Remember to email Mark the hygienic plan",
+    FAKE_AGENT_DELAY_MS: "60000", // the filing is still under way, with Edit on its card
+  });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  // What the Ask window's Open Settings sends, when the library's agent isn't installed: the capsule's own call, for Agents.
+  const openAgents = () => ask.evaluate(() => window.avanzel.capsule.openSettingsFor("open-settings:agents"));
+  const agents = (settings: Page) => settings.getByRole("radio", { name: "Agents", exact: true });
+
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await openAgents();
+  const settings = await windowFor(app, "settings");
+  await expect(agents(settings)).toHaveAttribute("aria-checked", "true");
+  expect(await capsuleKind(app)).toBe("listening"); // the recording goes on
+  await expect(capsule.getByRole("status", { name: "Listening" })).toBeVisible();
+
+  // The words are filed, and Edit opens the box: Open Settings leaves it open, with what is typed in it.
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  await capsule.getByRole("button", { name: "Edit" }).click();
+  await expect.poll(() => capsuleKind(app)).toBe("editing");
+  await capsule.getByRole("textbox").fill("Remember to email Mark the agentic plan");
+  await expect.poll(() => call(app, "draftForTests")).toBe("Remember to email Mark the agentic plan");
+  await settings.getByRole("radio", { name: "General", exact: true }).click(); // so that the second Open Settings has somewhere to go
+  await expect(agents(settings)).toHaveAttribute("aria-checked", "false");
+  await openAgents();
+  await expect(agents(settings)).toHaveAttribute("aria-checked", "true");
+  expect(await capsuleKind(app)).toBe("editing");
+  await expect(capsule.getByRole("textbox")).toHaveValue("Remember to email Mark the agentic plan");
+  await app.close();
+});
+
+test("Open Settings still takes away the capsule's error card and its notice of a taken shortcut, whose button it is", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  await call(app, "setCapsule", { kind: "error", message: "Claude Code isn't installed on this Mac any more.", detail: "Your note is safe in the inbox.", action: "open-settings:agents" });
+  expect(await capsuleKind(app)).toBe("error");
+  await call(app, "openSettingsFor", "open-settings:agents");
+  expect(await capsuleKind(app)).toBe("hidden");
+  await call(app, "setCapsule", { kind: "shortcut-taken", key: "dictate", accelerator: "Alt+Space", holder: null, alternatives: [] });
+  expect(await capsuleKind(app)).toBe("shortcut-taken");
+  await call(app, "openSettingsFor", "open-settings:voice");
+  expect(await capsuleKind(app)).toBe("hidden");
+  await app.close();
+});
+
 test("Esc closes Ask from anywhere in it", async () => {
   const library = await makeLibrary();
   writeFileSync(path.join(library, "goals", "run-a-marathon.md"), "# Run a marathon\n");

@@ -193,7 +193,14 @@ export interface LibraryInfo {
   /** The path with the home folder as "~" (tildePath). */
   label: string;
   exists: boolean;
+  /**
+   * The library has git history Avanzel can add to: it has a .git folder, and this Mac can run git (the engine's gitUsable). On
+   * a Mac whose git is only Apple's stub, a library with a .git folder is not git for Avanzel's purposes: nothing commits,
+   * so nothing can be undone.
+   */
   isGit: boolean;
+  /** config.toml's auto_commit: with it off, no change is a commit, even in a library with git. True when the settings can't be read. */
+  autoCommit: boolean;
   inbox: number;
   shelves: Record<string, number>;
   harness: string;
@@ -210,6 +217,12 @@ export interface SettingsSnapshot {
   harnesses: HarnessInfo[];
   selectedHarness: string | null;
   model: ModelStatus;
+  /**
+   * What turns speech into words, from the library's [voice] settings (the defaults while there is none, or its settings can't
+   * be read): the engine's backend name, "onnx-asr" or "command", and the model it names. The speech row says which languages
+   * it hears from these. A backend the engine doesn't know reads "onnx-asr": its Notice says the settings can't be used.
+   */
+  voice: { backend: "onnx-asr" | "command"; model: string };
   permissions: { microphone: PermissionStatus; screen: PermissionStatus };
   tasks: TaskInfo[];
   taskProblems: TaskFileProblem[];
@@ -546,7 +559,9 @@ export interface AvanzelBridge {
     keepOpen(keep: boolean): void;
     /**
      * An error card's one button, or a notice's Open Settings (see CardAction). The Ask window's Open Settings uses it too,
-     * with "open-settings:agents", when the library's agent isn't installed.
+     * with "open-settings:agents", when the library's agent isn't installed, and setup's does, with "open-settings:voice".
+     * The card it was pressed on goes (an error card, or a taken shortcut's notice); whatever else the capsule shows, a
+     * recording or a note being edited, stays as it is.
      */
     openSettingsFor(action: string): void;
     /** Try again, after the speech models' download failed: it starts over, and the capsule shows its progress. */
@@ -587,7 +602,8 @@ export interface AvanzelBridge {
     relaunch(): void;
     requestPermission(kind: "microphone" | "screen"): Promise<SettingsSnapshot>;
     /** Choose…: a native menu of `options` pops up at `at` (window points; null: at the pointer). Resolves with the
-        value picked, or null when the menu closes without one. */
+        value picked, or null when the menu closes without one. Only the Settings window's own page is answered: sent from any
+        other window, it resolves null and shows no menu. */
     pick(options: readonly PickOption[], at: { x: number; y: number } | null): Promise<string | null>;
   };
   quick: {
@@ -600,7 +616,8 @@ export interface AvanzelBridge {
     onProgress(callback: (message: string) => void): () => void;
     /**
      * Stop, while a question is answered: it is given up as closing the window gives it up. Its agent stops, and the
-     * library is free for a filing waiting on it; what ask() then sends back is the cancelled run's.
+     * library is free for a filing waiting on it; what ask() then sends back is the cancelled run's. Only the Ask window's
+     * own page is heard: sent from any other window, it gives up no question.
      */
     cancel(): void;
     openPage(name: string): void;

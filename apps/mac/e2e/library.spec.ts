@@ -386,6 +386,46 @@ test("a review that is off, whose switch can't be saved, is said to stay off", a
   await app.close();
 });
 
+test("a review's failed save is told under the review only, and is still told after a pane switch", async () => {
+  const library = await makeLibrary();
+  // The weekly review is off.
+  const weeklyFile = path.join(library, "tasks", "weekly-review.md");
+  writeFileSync(weeklyFile, read(library, "tasks/weekly-review.md").replace("enabled: true", "enabled: false"));
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  const on = weekly.getByRole("switch", { name: "Run on schedule", exact: true });
+  const problem = weekly.getByRole("alert");
+  // Nothing can be written in tasks/ now, so turning it on fails, and its file stays as it was.
+  chmodSync(path.join(library, "tasks"), 0o555);
+  try {
+    await on.click();
+    await expect(problem.getByText("This review couldn't be saved.", { exact: true })).toBeVisible();
+    await expect(problem).toContainText(/\. It stays off, as last saved\.$/);
+    // Told once, where the review is: the window's own "That change wasn't saved." is for the changes with no Notice of their own.
+    await expect(settings.getByText("That change wasn't saved.", { exact: true })).toHaveCount(0);
+    await expect(settings.getByRole("alert")).toHaveCount(1);
+
+    // The failure is the window's, not the pane's: another pane and back, and the review still says its save failed.
+    await settings.getByRole("radio", { name: "General", exact: true }).click();
+    await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+    await expect(settings.getByRole("alert")).toHaveCount(0);
+    await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+    await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
+    await expect(problem.getByText("This review couldn't be saved.", { exact: true })).toBeVisible();
+    await expect(problem).toContainText(/\. It stays off, as last saved\.$/);
+    await expect(on).toHaveAttribute("aria-checked", "false");
+    expect(read(library, "tasks/weekly-review.md")).toContain("enabled: false");
+  } finally {
+    chmodSync(path.join(library, "tasks"), 0o755);
+  }
+  // It goes when that review is saved: turned on now that it can be written.
+  await on.click();
+  await expect.poll(() => read(library, "tasks/weekly-review.md")).toContain("enabled: true");
+  await expect(problem).toHaveCount(0);
+  await app.close();
+});
+
 test("when shadow tasks last ran is kept with the app, not in the library (an old state.json carried over once)", async () => {
   const library = await makeLibrary({ git: true });
   const ran = new Date().toISOString(); // just now: no shadow task comes due at launch, whatever the hour
@@ -554,6 +594,53 @@ test("a system folder is refused as a library before any question is asked, and 
   expect(((await call(app, "snapshot")) as SettingsSnapshot).library).toMatchObject({ path: library, exists: true });
   expect(exists("/Applications", ".avanzel")).toBe(false);
   expect(exists("/usr", ".avanzel")).toBe(false);
+  await app.close();
+});
+
+test("Change… on a folder that is too broad says so in Settings, asks nothing, and leaves the library as it was", async () => {
+  const library = await makeLibrary();
+  const good = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
+  const settings = await openSettings(app);
+  // A folder that holds files is asked about first (Turn it into your library?): this box is never answered yes, and its calls are kept.
+  await app.evaluate(({ dialog }) => {
+    const asked: unknown[] = [];
+    Object.assign(globalThis, { confirmsAsked: asked });
+    dialog.showMessageBox = (async (...args: unknown[]) => {
+      asked.push(args);
+      return { response: 1, checkboxChecked: false };
+    }) as typeof dialog.showMessageBox;
+  });
+  await stubPicker(app, "/Applications");
+  await settings.getByRole("button", { name: "Change…" }).click();
+  const problem = settings.getByRole("alert");
+  await expect(problem.getByText("That change wasn't saved.", { exact: true })).toBeVisible();
+  await expect(problem.getByText("/Applications is too broad for a library. Choose or make a folder inside it.", { exact: true })).toBeVisible();
+  await expect(problem).not.toContainText("Error invoking remote method");
+  await snap(settings, "settings-library-too-broad");
+  // No box asked anything, and the library is the one it was.
+  expect(await app.evaluate(() => (globalThis as { confirmsAsked?: unknown[] }).confirmsAsked)).toEqual([]);
+  expect(((await call(app, "snapshot")) as SettingsSnapshot).library).toMatchObject({ path: library, exists: true });
+  await expect(settings.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
+  // A folder that works is the next change, and the Notice goes with it.
+  await stubPicker(app, good);
+  await settings.getByRole("button", { name: "Change…" }).click();
+  await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.path).toBe(good);
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+  await app.close();
+});
+
+test("Choose a folder… for a library that has gone says why a folder is refused, beside the Notice that offered it", async () => {
+  const { env, home } = firstRun();
+  const app = await launch({ ...env, AVANZEL_LIBRARY: path.join(home, "Brain") }); // remembered, and not there any more
+  const settings = await windowFor(app, "settings");
+  await stubPicker(app, "/Applications");
+  await settings.getByRole("alert").getByRole("button", { name: "Choose a folder…", exact: true }).click();
+  const problem = settings.getByRole("alert").filter({ hasText: "That change wasn't saved." });
+  await expect(problem.getByText("/Applications is too broad for a library. Choose or make a folder inside it.", { exact: true })).toBeVisible();
+  // The library that went is still named, with its fix: nothing was chosen.
+  await expect(settings.getByText("Avanzel can't find your library at ~/Brain.", { exact: true })).toBeVisible();
+  await expect(settings.getByRole("button", { name: "Choose a folder…", exact: true })).toBeVisible();
   await app.close();
 });
 

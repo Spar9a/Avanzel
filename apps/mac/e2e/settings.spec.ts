@@ -1,10 +1,11 @@
 // The Settings window, built from @avanzel/ui: its toolbar, and each pane's controls.
-import { expect, test, type ElectronApplication } from "@playwright/test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { agentCalls, answerMenus, call, launch, makeLibrary, openedWith, openSettings, shownMenus, snap, stubOpening, stubPicker } from "./helpers.ts";
+import { agentCalls, answerMenus, call, launch, makeLibrary, openedWith, openSettings, read, shownMenus, snap, stubOpening, stubPicker, windowFor } from "./helpers.ts";
 
 /** What Settings is sent now. */
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
@@ -208,5 +209,287 @@ test("the microphone row doesn't call a connected microphone missing while the d
   await settings.evaluate(() => (window as unknown as DeviceProbe).answer());
   await expect(settings.getByText("Studio microphone", { exact: true })).toBeVisible();
   expect(await settings.evaluate(() => (window as unknown as DeviceProbe).saidMissing)).toBe(false);
+  await app.close();
+});
+
+test("General says only what is true of the library's history: commits, automatic commits turned off, no git, and a Mac that can't run git", async () => {
+  const commits = "Every change is a commit you can undo.";
+  const noGit = "This folder has no git history, so changes can't be undone.";
+  const cases = [
+    { git: true, autoCommit: true, usable: true, line: commits },
+    // config.toml's auto_commit = false: git is there, and no change is a commit.
+    { git: true, autoCommit: false, usable: true, line: "Automatic commits are off in this library's settings, so changes can't be undone from Avanzel." },
+    // Without git there is nothing to turn off: the library keeps its no-git line, whatever the setting says.
+    { git: false, autoCommit: false, usable: true, line: noGit },
+    // A .git folder on a Mac whose only git is Apple's stub (AVANZEL_GIT_USABLE=0 plays that Mac): nothing runs git, so no promise of Undo.
+    { git: true, autoCommit: true, usable: false, line: noGit },
+  ];
+  for (const { git, autoCommit, usable, line } of cases) {
+    const library = await makeLibrary({ git });
+    writeFileSync(path.join(library, "goals", "a.md"), "# A page\n");
+    saveSettings(library, { ...loadSettings(library), autoCommit });
+    const app = await launch({ AVANZEL_LIBRARY: library, ...(usable ? {} : { AVANZEL_GIT_USABLE: "0" }) });
+    const settings = await openSettings(app);
+    await expect(settings.getByText(`1 page on six shelves. ${line}`, { exact: true })).toBeVisible();
+    // The snapshot says it as the line needs it: git that Avanzel can use, and whether the library commits by itself.
+    expect((await snapshot(app)).library).toMatchObject({ isGit: git && usable, autoCommit });
+    await app.close();
+  }
+});
+
+/** The Notice a change main refused is told in: one `alert` in the pane, headed "That change wasn't saved.". */
+const notSaved = (settings: Page) => settings.getByRole("alert").filter({ hasText: "That change wasn't saved." });
+
+test("a change that fails says so, with why, and the next change that works takes it away", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Agents");
+  const model = settings.getByRole("textbox", { name: "fake model", exact: true });
+  const config = path.join(library, ".avanzel", "config.toml");
+  const before = read(library, ".avanzel/config.toml");
+  // Nothing can be written in .avanzel/ now, so the agent's model can't be saved, and the library's settings stay as they were.
+  chmodSync(path.join(library, ".avanzel"), 0o555);
+  try {
+    await model.fill("small-model");
+    await model.press("Enter");
+    const problem = notSaved(settings);
+    await expect(problem).toBeVisible();
+    await expect(settings.getByRole("alert")).toHaveCount(1);
+    // Why, in main's words and not Electron's: a sentence, with no "Error invoking remote method".
+    await expect(problem.getByText(/^EACCES: permission denied, open '.*config\.toml\.[^']*\.tmp'\.$/)).toBeVisible();
+    await expect(problem).not.toContainText("Error invoking remote method");
+    expect(readFileSync(config, "utf8")).toBe(before);
+    await snap(settings, "settings-change-failed");
+    // It has no button of its own: it is told, and goes with the next change that works.
+    await expect(problem.getByRole("button")).toHaveCount(0);
+  } finally {
+    chmodSync(path.join(library, ".avanzel"), 0o755);
+  }
+  await model.press("Enter");
+  await expect.poll(() => readFileSync(config, "utf8")).toContain('fake = "small-model"');
+  await expect(notSaved(settings)).toHaveCount(0);
+
+  // It goes with a pane, too. The button's change is refused the same way, and leaving the pane takes the Notice away.
+  chmodSync(path.join(library, ".avanzel"), 0o555);
+  try {
+    await settings.getByRole("button", { name: "Use automatic" }).click();
+    await expect(notSaved(settings)).toBeVisible();
+    await settings.getByRole("radio", { name: "General", exact: true }).click();
+    await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+    await expect(notSaved(settings)).toHaveCount(0);
+    await settings.getByRole("radio", { name: "Agents", exact: true }).click();
+    await expect(settings.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
+    await expect(notSaved(settings)).toHaveCount(0);
+    expect(loadSettings(library).harness).toBe("fake"); // still the library's own choice
+  } finally {
+    chmodSync(path.join(library, ".avanzel"), 0o755);
+  }
+  await app.close();
+});
+
+test("a change the app can't keep says so wherever it is made, and stays as it was", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
+  const settings = await openSettings(app);
+  // A refusal that nothing catches is an unhandled rejection, which is how a change that failed used to go unheard.
+  const unheard: string[] = [];
+  settings.on("pageerror", (error) => unheard.push(error.message));
+  // The app can't write a file of its own when a folder stands where the temporary file it writes first would go.
+  const blockWriting = (file: string) => mkdirSync(path.join(userData, `${file}.tmp`));
+  const allowWriting = (file: string) => rmSync(path.join(userData, `${file}.tmp`), { recursive: true });
+  const problem = notSaved(settings);
+  const refused = async () => {
+    await expect(problem).toBeVisible();
+    await expect(problem.getByText(/^EISDIR: illegal operation on a directory/)).toBeVisible();
+  };
+  /** Shows `pane` by way of another, which takes the Notice of an earlier refusal away: the next one is then a new one. */
+  const fresh = async (pane: string) => {
+    await settings.getByRole("radio", { name: pane === "Privacy" ? "General" : "Privacy", exact: true }).click();
+    await settings.getByRole("radio", { name: pane, exact: true }).click();
+    await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
+    await expect(problem).toHaveCount(0);
+  };
+  blockWriting("settings.json");
+  blockWriting("run-state.json");
+
+  // General: a switch, and the choice of when to file. Refused, so not kept: the control says so, and so does a snapshot taken now
+  // (Settings is sent a fresh one when it has the focus again), instead of showing a change that never reached the file.
+  const login = settings.getByRole("switch", { name: "Open Avanzel when you log in" });
+  await login.click();
+  await refused();
+  await expect(login).toHaveAttribute("aria-checked", "false");
+  expect((await snapshot(app)).app.launchAtLogin).toBe(false);
+  await fresh("General");
+  await settings.getByRole("radio", { name: "Tonight", exact: true }).click();
+  await refused();
+  await expect(settings.getByRole("radio", { name: "Right away", exact: true })).toHaveAttribute("aria-checked", "true");
+  expect((await snapshot(app)).app.fileMode).toBe("now");
+
+  // Voice: the microphone, and a shortcut.
+  await fresh("Voice");
+  await answerMenus(app, "System default");
+  await settings.getByRole("group", { name: /^Microphone: / }).getByRole("button", { name: "Choose…" }).click();
+  await refused();
+  await fresh("Voice");
+  const row = settings.getByRole("group", { name: "Type a thought", exact: true });
+  await row.getByRole("button", { name: "Change", exact: true }).click();
+  await settings.keyboard.press("Control+Alt+K");
+  await refused();
+  expect((await snapshot(app)).app.shortcuts.type).toBe("Alt+Shift+Space");
+  await expect(row.getByText("⌥⇧Space", { exact: true })).toBeVisible();
+
+  // Reviews: Run now first keeps when the review ran, in run-state.json, so with that file blocked the run doesn't start.
+  await fresh("Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  await weekly.getByRole("button", { name: "Run now" }).click();
+  await refused();
+  await expect(weekly.getByText("Not run yet.", { exact: true })).toBeVisible();
+
+  // Once they can be written, the next change works, and the Notice goes with it, on the pane it is on.
+  allowWriting("run-state.json");
+  await weekly.getByRole("button", { name: "Run now" }).click();
+  await expect(problem).toHaveCount(0);
+  await expect.poll(async () => (await snapshot(app)).tasks.find((task) => task.id === "weekly-review")?.lastRun ?? null).not.toBeNull();
+  await call(app, "idleForTests");
+  allowWriting("settings.json");
+  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await login.click();
+  await expect.poll(async () => (await snapshot(app)).app.launchAtLogin).toBe(true);
+  await expect(login).toHaveAttribute("aria-checked", "true");
+  expect(unheard).toEqual([]);
+  await app.close();
+});
+
+test("a change that is refused after the person has gone to another pane is told on that pane, not lost", async () => {
+  // The evening review is off, and a run of the weekly review holds the library for 6 s: a save waits behind it in the queue.
+  const library = await makeLibrary();
+  const evening = path.join(library, "tasks", "evening-review.md");
+  writeFileSync(evening, readFileSync(evening, "utf8").replace("enabled: true", "enabled: false"));
+  const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_DELAY_MS: "6000", FAKE_AGENT_DELAY_TASK: "review" });
+  const settings = await openSettings(app, "Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  await weekly.getByRole("button", { name: "Run now" }).click();
+  await expect(weekly.getByText("Running now…", { exact: true })).toBeVisible();
+  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await settings.getByRole("radio", { name: "Tonight", exact: true }).click();
+  chmodSync(path.join(library, "tasks"), 0o555);
+  try {
+    // Turn on waits behind the run; the person goes on to Privacy meanwhile, where nothing mentions a review.
+    await settings.getByRole("button", { name: "Turn on the evening review", exact: true }).click();
+    await settings.getByRole("radio", { name: "Privacy", exact: true }).click();
+    await expect(settings.getByRole("heading", { name: "Privacy", exact: true })).toBeVisible();
+    await expect(notSaved(settings)).toHaveCount(0); // not yet: the run still has the library
+    // The run ends, the save is tried and refused, and the Notice is on the pane they are on.
+    await expect(notSaved(settings)).toBeVisible({ timeout: 20_000 });
+    await expect(notSaved(settings).getByText(/^EACCES: permission denied/)).toBeVisible();
+    expect(readFileSync(evening, "utf8")).toContain("enabled: false");
+  } finally {
+    chmodSync(path.join(library, "tasks"), 0o755);
+  }
+  await app.close();
+});
+
+test("a save refused as the person presses another tab is told on that tab, and goes with the next move", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Agents");
+  const model = settings.getByRole("textbox", { name: "fake model", exact: true });
+  chmodSync(path.join(library, ".avanzel"), 0o555);
+  try {
+    // A model typed is saved as its field loses the focus, which pressing a tab does. The press is held, as a person's is: long
+    // enough for the refusal to come in while it lasts, on the pane they are leaving, and before the tab has been shown.
+    await model.fill("small-model");
+    const general = settings.getByRole("radio", { name: "General", exact: true });
+    const at = (await general.boundingBox())!;
+    await settings.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
+    await settings.mouse.down();
+    await expect(notSaved(settings)).toBeVisible();
+    await settings.mouse.up();
+    await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+    // They had not seen it: the switch doesn't take it away, and it is told on the pane they are on.
+    await expect(notSaved(settings)).toBeVisible();
+    await expect(notSaved(settings).getByText(/^EACCES: permission denied/)).toBeVisible();
+    // The next press of a tab does.
+    await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+    await expect(settings.getByRole("heading", { name: "Voice", exact: true })).toBeVisible();
+    await expect(notSaved(settings)).toHaveCount(0);
+  } finally {
+    chmodSync(path.join(library, ".avanzel"), 0o755);
+  }
+  await app.close();
+});
+
+test("a press that leaves its tab shows no pane, and the next move still takes the problem away", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Agents");
+  chmodSync(path.join(library, ".avanzel"), 0o555);
+  try {
+    // Pressed on the Voice tab, and let go over the pane: no click, so no pane.
+    const voice = settings.getByRole("radio", { name: "Voice", exact: true });
+    const at = (await voice.boundingBox())!;
+    await settings.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
+    await settings.mouse.down();
+    await settings.mouse.move(at.x + at.width / 2, at.y + 300);
+    await settings.mouse.up();
+    await expect(settings.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
+    // A refusal is told, and a move by the keyboard takes it away, as it always does.
+    await settings.getByRole("button", { name: "Use automatic" }).click();
+    await expect(notSaved(settings)).toBeVisible();
+    await settings.getByRole("radio", { name: "Agents", exact: true }).press("ArrowRight");
+    await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
+    await expect(notSaved(settings)).toHaveCount(0);
+  } finally {
+    chmodSync(path.join(library, ".avanzel"), 0o755);
+  }
+  await app.close();
+});
+
+test("Turn on the evening review that fails says so in General, and the review stays off", async () => {
+  const library = await makeLibrary();
+  // The evening review is off, and Tonight waits for it.
+  const evening = path.join(library, "tasks", "evening-review.md");
+  writeFileSync(evening, readFileSync(evening, "utf8").replace("enabled: true", "enabled: false"));
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app);
+  await settings.getByRole("radio", { name: "Tonight", exact: true }).click();
+  const notice = settings.getByRole("status").filter({ hasText: "The evening review is off, so new thoughts stay in the inbox." });
+  const turnOn = notice.getByRole("button", { name: "Turn on the evening review", exact: true });
+  // Nothing can be written in tasks/ now, so the review's file can't be saved.
+  chmodSync(path.join(library, "tasks"), 0o555);
+  try {
+    await turnOn.click();
+    const problem = notSaved(settings);
+    await expect(problem).toBeVisible();
+    await expect(problem.getByText(/^EACCES: permission denied/)).toBeVisible();
+    await expect(settings.getByRole("alert")).toHaveCount(1);
+    expect(readFileSync(evening, "utf8")).toContain("enabled: false");
+    await expect(notice).toBeVisible(); // still off, and still offered
+    await expect(turnOn).not.toHaveAttribute("aria-busy", "true"); // the save is over: Turn on can be pressed again
+  } finally {
+    chmodSync(path.join(library, "tasks"), 0o755);
+  }
+  // Pressed again once it can be written: the review is on, and the Notice goes with the change that worked.
+  await turnOn.click();
+  await expect.poll(() => readFileSync(evening, "utf8")).toContain("enabled: true");
+  await expect(notSaved(settings)).toHaveCount(0);
+  await expect(notice).toHaveCount(0);
+  await app.close();
+});
+
+test("Choose… is answered to the Settings window alone, not to another window's page", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app, "Voice");
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await answerMenus(app, "Studio");
+  const options = [{ label: "Studio", value: "studio", checked: false }];
+  // Every window has the same bridge, so the Ask window's page can send settings:pick all the same.
+  const pick = (page: Page) => page.evaluate((list) => window.avanzel.settings.pick(list, null), options);
+  expect(await pick(ask)).toBeNull();
+  expect(await shownMenus(app)).toEqual([]); // main popped up no menu over Settings for it
+  // Settings' own page is answered: the menu shows, and the item picked comes back.
+  expect(await pick(settings)).toBe("studio");
+  expect(await shownMenus(app)).toEqual([[{ label: "Studio", checked: false }]]);
   await app.close();
 });

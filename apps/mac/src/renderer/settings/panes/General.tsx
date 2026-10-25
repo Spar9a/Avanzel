@@ -5,7 +5,7 @@ import { Actions, Button, Group, GroupRow, Notice, Row, Segmented, SHELVES, Shel
 import type { ReactNode } from "react";
 import type { FileMode } from "../../../shared/ipc.ts";
 import { fileModeLine, libraryLine } from "../copy.ts";
-import { NoLibrary, type PaneProps } from "../parts.tsx";
+import { attemptChange, NoLibrary, type PaneProps } from "../parts.tsx";
 import type { ReviewEdits } from "./Reviews.tsx";
 
 const api = window.avanzel.settings;
@@ -18,9 +18,11 @@ const FILE_MODES: readonly SegmentedOption<FileMode>[] = [
 
 /**
  * The General pane. `edits` are the Settings window's (useReviewEdits): turning the evening review on here saves it as
- * the Reviews pane does, and waits as its switch does while a save of it is on its way.
+ * the Reviews pane does, and waits as its switch does while a save of it is on its way. A save main refuses is told by the
+ * window ("That change wasn't saved."), as any change here is; the Reviews pane tells it under the review as well.
  */
-export function General({ snap, onChange, edits }: PaneProps & { edits: ReviewEdits }): ReactNode {
+export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
+  const { snap, onChange, attempt, edits } = props;
   const lib = snap.library;
   // The evening review, as the Reviews pane tells it from the others: by its kind. Tonight files only while it is on.
   const evening = snap.tasks.find((task) => task.kind === "evening-review") ?? null;
@@ -28,13 +30,13 @@ export function General({ snap, onChange, edits }: PaneProps & { edits: ReviewEd
     <Stack gap={20}>
       {lib?.exists ? (
         <Group label="Library">
-          <GroupRow label={lib.label} description={libraryLine(lib.shelves, lib.isGit)}>
+          <GroupRow label={lib.label} description={libraryLine(lib.shelves, lib.isGit, lib.autoCommit)}>
             <Row gap={8}>
               <Button size="small" variant="secondary" onClick={() => api.showLibrary()}>Show in Finder</Button>
               {snap.opensInObsidian && (
                 <Button size="small" variant="secondary" onClick={() => api.openLibrary()}>Open in Obsidian</Button>
               )}
-              <Button size="small" variant="quiet" onClick={async () => onChange(await api.chooseLibrary())}>Change…</Button>
+              <Button size="small" variant="quiet" onClick={() => attemptChange(props, () => api.chooseLibrary())}>Change…</Button>
             </Row>
           </GroupRow>
           {/* The shelves, in the library's panel under its row: a row holds a label and a control, not a line of tabs, so
@@ -46,11 +48,11 @@ export function General({ snap, onChange, edits }: PaneProps & { edits: ReviewEd
           </div>
         </Group>
       ) : (
-        <NoLibrary snap={snap} onChange={onChange} />
+        <NoLibrary snap={snap} onChange={onChange} attempt={attempt} />
       )}
       <Group label="After you speak">
         <GroupRow label="File each thought" description={fileModeLine(evening)}>
-          <Segmented label="When to file" options={FILE_MODES} value={snap.app.fileMode} onChange={async (fileMode) => onChange(await api.setApp({ fileMode }))} />
+          <Segmented label="When to file" options={FILE_MODES} value={snap.app.fileMode} onChange={(fileMode) => attemptChange(props, () => api.setApp({ fileMode }))} />
         </GroupRow>
       </Group>
       {/* Tonight waits for a review that is off: new thoughts would wait in the inbox until someone runs it. */}
@@ -59,7 +61,7 @@ export function General({ snap, onChange, edits }: PaneProps & { edits: ReviewEd
           title="The evening review is off, so new thoughts stay in the inbox."
           actions={
             <Actions align="start">
-              <Button size="small" variant="primary" busy={edits.saving.has(evening.id)} onClick={() => void edits.save(evening, { enabled: true })}>
+              <Button size="small" variant="primary" busy={edits.saving.has(evening.id)} onClick={() => void attempt(() => edits.save(evening, { enabled: true }))}>
                 Turn on the evening review
               </Button>
             </Actions>
@@ -72,7 +74,7 @@ export function General({ snap, onChange, edits }: PaneProps & { edits: ReviewEd
         <Switch
           label="Open Avanzel when you log in"
           checked={snap.app.launchAtLogin}
-          onChange={async (launchAtLogin) => onChange(await api.setApp({ launchAtLogin }))}
+          onChange={(launchAtLogin) => attemptChange(props, () => api.setApp({ launchAtLogin }))}
         />
       </Group>
     </Stack>

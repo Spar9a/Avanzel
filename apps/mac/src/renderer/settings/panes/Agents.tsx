@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { harnessName } from "../../../main/jobs.ts";
 import { AGENT_INSTALLS, isAgentProblem, type AgentInstall, type HarnessInfo } from "../../../shared/ipc.ts";
 import { agentLine, ownLine } from "../../setup/copy.ts";
-import type { PaneProps } from "../parts.tsx";
+import { attemptChange, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
 
@@ -94,20 +94,21 @@ function AgentRow({ agent, chosen, inUse, checked, asked, copied, onUse, onCheck
   );
 }
 
-interface ModelGroupProps {
+interface ModelGroupProps extends Pick<PaneProps, "onChange" | "attempt"> {
   /** The agent in use, by name: "claude". */
   agent: string;
   /** The library's models, by agent name. */
   models: Readonly<Record<string, string>>;
-  onChange: PaneProps["onChange"];
 }
 
 /**
  * The model group of the agent in use: its model, typed, saved when Return is pressed and when the focus leaves the field.
  * A model left empty is not kept, so the agent runs with its own default. The draft is the field's text until then, and
- * the pane keys this by its agent, so another agent's group starts from its own saved model.
+ * the pane keys this by its agent, so another agent's group starts from its own saved model. A save main refuses leaves the
+ * draft as typed, and the window says it wasn't saved: the field is not what the library holds, and pressing Return or
+ * leaving the field tries again.
  */
-function ModelGroup({ agent, models, onChange }: ModelGroupProps): ReactNode {
+function ModelGroup({ agent, models, onChange, attempt }: ModelGroupProps): ReactNode {
   const label = harnessName(agent);
   const saved = models[agent] ?? "";
   const [draft, setDraft] = useState(saved);
@@ -115,7 +116,9 @@ function ModelGroup({ agent, models, onChange }: ModelGroupProps): ReactNode {
     const model = draft.trim();
     if (model === saved) return;
     const next = { ...models, [agent]: model };
-    onChange(await api.setLibrary({ models: Object.fromEntries(Object.entries(next).filter(([, value]) => value.trim())) }));
+    await attemptChange({ onChange, attempt }, () =>
+      api.setLibrary({ models: Object.fromEntries(Object.entries(next).filter(([, value]) => value.trim())) }),
+    );
   };
   return (
     <Group label={label}>
@@ -131,7 +134,8 @@ function ModelGroup({ agent, models, onChange }: ModelGroupProps): ReactNode {
 }
 
 /** The Agents pane: each agent with its check, the choice of which one files, and the model of the one in use. */
-export function Agents({ snap, onChange }: PaneProps): ReactNode {
+export function Agents(props: PaneProps): ReactNode {
+  const { snap, onChange, attempt } = props;
   const lib = snap.library;
   // Agents whose check has had a result: while one is checked again, its button still reads "Check again".
   const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
@@ -144,7 +148,7 @@ export function Agents({ snap, onChange }: PaneProps): ReactNode {
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     // Only the free checks, which read a sign-in and never ask the model: a prompt waits for Check.
-    void api.checkAgents().then(onChange);
+    void attemptChange(props, () => api.checkAgents());
     return () => clearTimeout(timer.current);
   }, []);
   // The shell draws this pane only while a library is open, so this only narrows the type. It stands below every hook.
@@ -152,7 +156,7 @@ export function Agents({ snap, onChange }: PaneProps): ReactNode {
   // The agent that files and answers: the library's, or the one Automatic picks.
   const inUse = lib.harness === "auto" ? snap.selectedHarness : lib.harness;
 
-  const use = async (harness: string) => onChange(await api.setLibrary({ harness }));
+  const use = (harness: string) => attemptChange(props, () => api.setLibrary({ harness }));
   // Main copies the command it holds for the agent named: the page never says what goes on the clipboard.
   const copy = (agent: AgentInstall) => {
     window.avanzel.setup.copy(agent);
@@ -178,7 +182,7 @@ export function Agents({ snap, onChange }: PaneProps): ReactNode {
             onUse={() => void use(agent.name)}
             onCheck={async () => {
               setAsked((last) => new Set(last).add(agent.name));
-              onChange(await api.checkAgent(agent.name));
+              await attemptChange(props, () => api.checkAgent(agent.name));
             }}
             onCopy={copy}
           />
@@ -193,7 +197,7 @@ export function Agents({ snap, onChange }: PaneProps): ReactNode {
           </div>
         </GroupRow>
       </Group>
-      {inUse && <ModelGroup key={inUse} agent={inUse} models={lib.models} onChange={onChange} />}
+      {inUse && <ModelGroup key={inUse} agent={inUse} models={lib.models} onChange={onChange} attempt={attempt} />}
     </Stack>
   );
 }

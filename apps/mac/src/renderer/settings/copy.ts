@@ -1,8 +1,10 @@
 // Settings' words that panes share or make from values: the name of each pane on the toolbar, the library's line, a
 // message ended as a sentence, the microphone's name, what the speech model row says, when Tonight files, and a
-// scheduled review's schedule, last run and kind, with the checks its editor makes and what a failed save says.
+// scheduled review's schedule, last run and kind, with the checks its editor makes and what a failed save says, and what
+// the window says of a change main refused.
 import { SHELVES } from "@avanzel/ui";
-import { noSuchReview, type PickOption, type SettingsPane, type TaskInfo } from "../../shared/ipc.ts";
+import { noSuchReview, type PickOption, type SettingsPane, type SettingsSnapshot, type TaskInfo } from "../../shared/ipc.ts";
+import { ownLine } from "../../shared/problems.ts";
 
 /** Each pane's name on the toolbar, which is also its heading. The scheduled reviews' pane keeps its id, "tasks". */
 export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
@@ -13,11 +15,18 @@ export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
   privacy: "Privacy",
 };
 
-/** The library row's description, from LibraryInfo.shelves (the six shelves count; others don't) and isGit. */
-export function libraryLine(shelves: Readonly<Record<string, number>>, isGit: boolean): string {
+/**
+ * The library row's description, from LibraryInfo.shelves (the six shelves count; others don't), isGit and autoCommit. It
+ * promises Undo only where there is a commit to undo: a library with git, and automatic commits on. With them off (the
+ * library's own settings), it says so. A library without git has no history to speak of, whatever it says of commits.
+ */
+export function libraryLine(shelves: Readonly<Record<string, number>>, isGit: boolean, autoCommit: boolean): string {
   const pages = SHELVES.reduce((sum, shelf) => sum + (shelves[shelf] ?? 0), 0);
   const filled = pages === 0 ? "Your first thought will fill a shelf." : `${pages} ${pages === 1 ? "page" : "pages"} on six shelves.`;
-  const undo = isGit ? "Every change is a commit you can undo." : "This folder has no git history, so changes can't be undone.";
+  if (!isGit) return `${filled} This folder has no git history, so changes can't be undone.`;
+  const undo = autoCommit
+    ? "Every change is a commit you can undo."
+    : "Automatic commits are off in this library's settings, so changes can't be undone from Avanzel.";
   return `${filled} ${undo}`;
 }
 
@@ -59,9 +68,24 @@ export function microphoneOptions(id: string | null, devices: readonly InputDevi
   ];
 }
 
-/** The speech model row's description: which languages it hears, as a person would want to know, naming no model. */
+/** The speech model row's description for the default model: which languages it hears, as a person would want to know, naming no model. */
 export const SPEECH_MODEL_DESCRIPTION =
   "Turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.";
+
+/** The speech models the engine runs that hear English alone (Parakeet v2); the others, the default among them, hear 25 languages. */
+const ENGLISH_ONLY_MODELS: readonly string[] = ["nemo-parakeet-tdt-0.6b-v2"];
+
+/**
+ * The speech model row's description, true of the library's own [voice] settings (SettingsSnapshot.voice): the default model's
+ * languages; English alone for the English-only model; and for a command, only that it is the library's command, since it
+ * can hear any language and send the voice anywhere. A model the engine doesn't run keeps the general line: the Notice
+ * under the row says its settings can't be used. It names no model.
+ */
+export function speechModelLine(voice: SettingsSnapshot["voice"]): string {
+  if (voice.backend === "command") return "Turns your voice into text with the command in this library's settings.";
+  if (ENGLISH_ONLY_MODELS.includes(voice.model)) return "Turns your voice into English text on this Mac. Nothing is sent anywhere.";
+  return SPEECH_MODEL_DESCRIPTION;
+}
 
 /** The days a weekly review runs on, from Sunday: as a schedule writes each one ("sun"), and by its name. */
 export const DAYS: readonly { value: string; label: string }[] = [
@@ -184,4 +208,16 @@ export function kindLine(kind: string): string {
 export function remoteMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, "");
+}
+
+/** The title of the Notice for a change main refused: what happened. */
+export const CHANGE_NOT_SAVED = "That change wasn't saved.";
+
+/**
+ * That Notice's body: why, as main said it, as a sentence. An IPC rejection arrives as "Error invoking remote method
+ * 'settings:set-library': Error: EACCES: …"; the prefix and the error's class go (remoteMessage), and what is left is told as
+ * an agent's line is (ownLine): without an "Error:" label, with a capital and a full stop. An error with nothing to say adds nothing.
+ */
+export function notSavedLine(error: unknown): string {
+  return ownLine(remoteMessage(error));
 }

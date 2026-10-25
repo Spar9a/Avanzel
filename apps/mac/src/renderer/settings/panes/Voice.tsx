@@ -6,13 +6,14 @@ import { ACTION_NAMES, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { ModelStatus, Shortcuts } from "../../../shared/ipc.ts";
 import { downloadFailedProblem } from "../../../shared/problems.ts";
 import { passesThrough, toAccelerator } from "../accelerator.ts";
-import { asSentence, microphoneName, microphoneOptions, SPEECH_MODEL_DESCRIPTION, type InputDevice } from "../copy.ts";
-import { ChooseButton, type PaneProps } from "../parts.tsx";
+import { asSentence, microphoneName, microphoneOptions, speechModelLine, type InputDevice } from "../copy.ts";
+import { attemptChange, ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
 
 /** Voice's "Microphone" group: the device in use, and Choose…. A choice applies at once. */
-export function MicrophoneGroup({ snap, onChange }: PaneProps): ReactNode {
+export function MicrophoneGroup(props: PaneProps): ReactNode {
+  const { snap } = props;
   // The audio inputs this Mac lists, once the page has asked: null until then, so that a chosen microphone isn't called
   // "not connected" before anyone has looked. The "default" entry stands for whatever macOS uses, which System default
   // already is, so it isn't a device of its own.
@@ -31,7 +32,7 @@ export function MicrophoneGroup({ snap, onChange }: PaneProps): ReactNode {
           label="Microphone"
           valueLabel={name}
           options={microphoneOptions(id, devices)}
-          onChoose={async (value) => onChange(await api.setApp({ microphoneId: value || null }))}
+          onChoose={(value) => attemptChange(props, () => api.setApp({ microphoneId: value || null }))}
         />
       </GroupRow>
     </Group>
@@ -101,7 +102,8 @@ function SpeechProblem({ model, primary, onDownload }: { model: ModelStatus; pri
 }
 
 /** The Voice pane: the shortcuts and their problems, MicrophoneGroup, and the speech model. */
-export function Voice({ snap, onChange }: PaneProps): ReactNode {
+export function Voice(props: PaneProps): ReactNode {
+  const { snap, onChange, attempt } = props;
   // The shortcut being recorded, if any: one at a time.
   const [recording, setRecording] = useState<keyof Shortcuts | null>(null);
   // Each shortcut row's group of controls, to put the focus on its Change when a button the person used has gone.
@@ -118,7 +120,7 @@ export function Voice({ snap, onChange }: PaneProps): ReactNode {
 
   /** `accelerator` becomes `key`'s shortcut, and the focus goes to that row's Change. */
   const save = async (key: keyof Shortcuts, accelerator: string) => {
-    onChange(await api.setApp({ shortcuts: { ...snap.app.shortcuts, [key]: accelerator } }));
+    await attemptChange(props, () => api.setApp({ shortcuts: { ...snap.app.shortcuts, [key]: accelerator } }));
     groups.current[key]?.querySelector("button")?.focus();
   };
 
@@ -146,9 +148,9 @@ export function Voice({ snap, onChange }: PaneProps): ReactNode {
       window.removeEventListener("keydown", listen, true);
       window.removeEventListener("blur", stop);
     };
-  }, [recording, snap, onChange]);
+  }, [recording, snap, onChange, attempt]);
 
-  const download = async () => onChange(await api.downloadModel());
+  const download = () => attemptChange(props, () => api.downloadModel());
   return (
     <Stack gap={20}>
       <Group label="Shortcuts" note="They work in every app.">
@@ -202,9 +204,9 @@ export function Voice({ snap, onChange }: PaneProps): ReactNode {
           {snap.library?.exists ? `“${name}” is still in the menu bar.` : undefined}
         </Notice>
       ))}
-      <MicrophoneGroup snap={snap} onChange={onChange} />
+      <MicrophoneGroup {...props} />
       <Group label="Speech">
-        <GroupRow label="Speech model" description={SPEECH_MODEL_DESCRIPTION}>
+        <GroupRow label="Speech model" description={speechModelLine(snap.voice)}>
           <SpeechControl model={snap.model} onDownload={download} />
         </GroupRow>
       </Group>

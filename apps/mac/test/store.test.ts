@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -45,6 +45,25 @@ describe("settings store", () => {
     store.update({ fileMode: "evening", libraryPath: "/tmp/lib" });
     expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ fileMode: "evening", libraryPath: "/tmp/lib" });
     expect(new SettingsStore(file).get().fileMode).toBe("evening");
+  });
+
+  it("keeps the settings it had when a write fails, so what Settings shows is what is kept", () => {
+    const folder = tmp();
+    const file = path.join(folder, "settings.json");
+    const store = new SettingsStore(file);
+    store.update({ fileMode: "evening" });
+    chmodSync(folder, 0o555); // nothing can be written here now
+    try {
+      expect(() => store.update({ launchAtLogin: true, fileMode: "now" })).toThrow(/EACCES/);
+      // The change is refused, and so is its effect: the next snapshot of Settings shows the switch off, as the file has it.
+      expect(store.get()).toMatchObject({ fileMode: "evening", launchAtLogin: false });
+    } finally {
+      chmodSync(folder, 0o755); // so the temp folder can be cleaned up
+    }
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ fileMode: "evening", launchAtLogin: false });
+    // Once it can be written, the same change goes through.
+    store.update({ launchAtLogin: true });
+    expect(new SettingsStore(file).get()).toMatchObject({ fileMode: "evening", launchAtLogin: true });
   });
 });
 

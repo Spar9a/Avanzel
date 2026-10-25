@@ -9,6 +9,7 @@ import {
   Notification,
   powerMonitor,
   shell,
+  type WebContents,
 } from "electron";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
@@ -130,6 +131,7 @@ import {
   createCapsuleWindow,
   createQuickWindow,
   createSettingsWindow,
+  isPageOf,
   placeCapsule,
   placeQuick,
 } from "./windows.ts";
@@ -1751,6 +1753,10 @@ export class Controller {
    * page sent it, says what to do (see CardAction), and the card goes away. `refile:<agent>` files the card's note
    * (`cardCapture`) again with that agent (`fileAgainWith`): the filing the capsule shows replaces the card. A second click
    * on the button finds no note, since that filing has replaced the card, and does nothing.
+   *
+   * Other windows send it too (the Ask window's Open Settings, setup's Open Settings), while the capsule shows something
+   * that isn't a card: a recording, or a note being edited. It hides only the two cards it is the button of, an error card
+   * and a taken shortcut's notice. Anything else the capsule shows is that moment's own, and is left as it is.
    */
   openSettingsFor(action: string): void {
     if (action.startsWith("refile:")) {
@@ -1766,7 +1772,8 @@ export class Controller {
       const pane = /^open-settings:(.*)$/.exec(action)?.[1];
       this.showSettings(isSettingsPane(pane) ? pane : "general");
     }
-    this.setCapsule({ kind: "hidden" });
+    const card = this.capsuleState.kind;
+    if (card === "error" || card === "shortcut-taken") this.setCapsule({ kind: "hidden" });
   }
 
   /**
@@ -1902,9 +1909,12 @@ export class Controller {
     }
   }
 
-  /** Stop, in the Ask window: the question being answered is given up, as closing the window gives it up. */
-  cancelAsk(): void {
-    this.giveUpAsk?.();
+  /**
+   * Stop, in the Ask window: the question being answered is given up, as closing the window gives it up. Only that window's
+   * own page can: `sender` is the page the message came from (`event.sender`), and any other window's gives up nothing.
+   */
+  cancelAsk(sender: WebContents): void {
+    if (isPageOf(sender, this.askWindow)) this.giveUpAsk?.();
   }
 
   /**
@@ -2000,12 +2010,13 @@ export class Controller {
   /**
    * Choose…, in Settings: a native menu of the page's `options` pops up over the Settings window, at `at`. Resolves with
    * the value picked; null when the menu closes without one, and without an open Settings window or a request that can
-   * be read.
+   * be read. Only the Settings window's own page is answered: `sender` is the page the message came from (`event.sender`),
+   * and a menu is not popped up over Settings for any other window's.
    */
-  pickFromSettings(options: unknown, at: unknown): Promise<string | null> {
+  pickFromSettings(sender: WebContents, options: unknown, at: unknown): Promise<string | null> {
     const win = this.settingsWindow;
     const request = pickRequest(options, at);
-    if (!win || win.isDestroyed() || !request) return Promise.resolve(null);
+    if (!win || !isPageOf(sender, win) || !request) return Promise.resolve(null);
     return popupChoice(win, request.options, request.at);
   }
 
@@ -2074,6 +2085,9 @@ export class Controller {
     const kept = this.store.get().libraryPath; // the library to open at launch, which may not have opened
     // A library moved, renamed or unmounted while Avanzel runs is missing: what it held isn't read, so Settings still opens.
     const exists = vault?.exists() ?? false;
+    // What turns speech into words: the library's settings, else the defaults. A backend the engine doesn't know can't be used
+    // either way (the model status says so), and reads as the one it would have been.
+    const { backend, model } = (settings ?? defaultSettings()).voice;
     return {
       app: this.store.get(),
       library: vault
@@ -2081,7 +2095,9 @@ export class Controller {
             path: vault.root,
             label: tildePath(vault.root, home),
             exists,
-            isGit: existsSync(path.join(vault.root, ".git")),
+            // Git Avanzel can add to: a .git folder, on a Mac whose git runs. Where it doesn't (Apple's stub), nothing commits.
+            isGit: existsSync(path.join(vault.root, ".git")) && git.gitUsable(),
+            autoCommit: settings?.autoCommit ?? true,
             inbox: exists ? vault.pending().length : 0,
             shelves: exists ? vault.shelfCounts() : {},
             harness: settings?.harness ?? "auto",
@@ -2089,7 +2105,7 @@ export class Controller {
             timeoutSeconds: settings?.timeoutSeconds ?? 900,
           }
         : kept
-          ? { path: kept, label: tildePath(kept, home), exists: false, isGit: false, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900 }
+          ? { path: kept, label: tildePath(kept, home), exists: false, isGit: false, autoCommit: true, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900 }
           : null,
       harnesses: Object.values(all).map((h) => ({
         name: h.name,
@@ -2100,6 +2116,7 @@ export class Controller {
       })),
       selectedHarness: selected,
       model: this.model,
+      voice: { backend: backend === "command" ? "command" : "onnx-asr", model },
       permissions: { microphone: permissionStatus("microphone"), screen: permissionStatus("screen") },
       libraryProblem: this.libraryProblem,
       tasks: report.tasks.map((task) => this.taskInfo(task, stateRuns, now)),

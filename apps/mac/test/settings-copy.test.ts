@@ -1,6 +1,8 @@
+import { MODELS } from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
 import {
   asSentence,
+  CHANGE_NOT_SAVED,
   DAYS,
   failedSaveLine,
   fileModeLine,
@@ -9,10 +11,12 @@ import {
   libraryLine,
   microphoneName,
   microphoneOptions,
+  notSavedLine,
   PANE_LABELS,
   remoteMessage,
   scheduleParts,
   scheduleText,
+  speechModelLine,
   SPEECH_MODEL_DESCRIPTION,
   validTime,
   whenLine,
@@ -26,11 +30,21 @@ describe("settings copy", () => {
 
   it("libraryLine counts the six shelves' pages and says whether changes can be undone", () => {
     const shelves = { goals: 12, ideas: 41, problems: 9, memories: 18, people: 27, topics: 21 };
-    expect(libraryLine(shelves, true)).toBe("128 pages on six shelves. Every change is a commit you can undo.");
-    expect(libraryLine({ ideas: 1 }, true)).toBe("1 page on six shelves. Every change is a commit you can undo.");
-    expect(libraryLine({}, true)).toBe("Your first thought will fill a shelf. Every change is a commit you can undo.");
+    expect(libraryLine(shelves, true, true)).toBe("128 pages on six shelves. Every change is a commit you can undo.");
+    expect(libraryLine({ ideas: 1 }, true, true)).toBe("1 page on six shelves. Every change is a commit you can undo.");
+    expect(libraryLine({}, true, true)).toBe("Your first thought will fill a shelf. Every change is a commit you can undo.");
     // A folder of the library's own that isn't one of the six shelves doesn't count.
-    expect(libraryLine({ ideas: 2, projects: 5 }, false)).toBe("2 pages on six shelves. This folder has no git history, so changes can't be undone.");
+    expect(libraryLine({ ideas: 2, projects: 5 }, false, true)).toBe("2 pages on six shelves. This folder has no git history, so changes can't be undone.");
+  });
+
+  it("libraryLine says so when the library's settings turn automatic commits off, since then no change is a commit", () => {
+    const off = "Automatic commits are off in this library's settings, so changes can't be undone from Avanzel.";
+    expect(libraryLine({ ideas: 1 }, true, false)).toBe(`1 page on six shelves. ${off}`);
+    expect(libraryLine({}, true, false)).toBe(`Your first thought will fill a shelf. ${off}`);
+    // It is a sentence for a library with git. One without keeps its no-git line, whatever it says of automatic commits.
+    const noGit = "This folder has no git history, so changes can't be undone.";
+    expect(libraryLine({ ideas: 2 }, false, false)).toBe(`2 pages on six shelves. ${noGit}`);
+    expect(libraryLine({ ideas: 2 }, false, true)).toBe(`2 pages on six shelves. ${noGit}`);
   });
 
   it("asSentence ends a line with a full stop once", () => {
@@ -84,6 +98,42 @@ describe("settings copy", () => {
     );
     // The languages are for the person to know; which model hears them is the app's business.
     expect(SPEECH_MODEL_DESCRIPTION).not.toMatch(/parakeet|whisper|silero|nemo/i);
+  });
+
+  it("speechModelLine follows the library's voice settings: the default model, the English-only one, and a command", () => {
+    // The engine's own names: the default model and its English-only sibling are both models it runs.
+    expect(Object.keys(MODELS)).toEqual(expect.arrayContaining(["nemo-parakeet-tdt-0.6b-v3", "nemo-parakeet-tdt-0.6b-v2"]));
+    expect(speechModelLine({ backend: "onnx-asr", model: "nemo-parakeet-tdt-0.6b-v3" })).toBe(SPEECH_MODEL_DESCRIPTION);
+    expect(speechModelLine({ backend: "onnx-asr", model: "nemo-parakeet-tdt-0.6b-v2" })).toBe(
+      "Turns your voice into English text on this Mac. Nothing is sent anywhere.",
+    );
+    // A command is whatever the library's settings run: it promises neither a language nor that nothing leaves the Mac.
+    const command = "Turns your voice into text with the command in this library's settings.";
+    expect(speechModelLine({ backend: "command", model: "" })).toBe(command);
+    expect(speechModelLine({ backend: "command", model: "nemo-parakeet-tdt-0.6b-v2" })).toBe(command);
+    // A model the engine doesn't run is told by the Notice under the row, not by this line, which stays the general one.
+    expect(speechModelLine({ backend: "onnx-asr", model: "parakeet-v9" })).toBe(SPEECH_MODEL_DESCRIPTION);
+    for (const line of [speechModelLine({ backend: "onnx-asr", model: "nemo-parakeet-tdt-0.6b-v2" }), command]) {
+      expect(line).not.toMatch(/parakeet|whisper|silero|nemo|v2/i);
+    }
+  });
+
+  it("a change main refused is told as what happened and why, without Electron's prefix", () => {
+    expect(CHANGE_NOT_SAVED).toBe("That change wasn't saved.");
+    expect(
+      notSavedLine(new Error("Error invoking remote method 'settings:set-library': Error: EACCES: permission denied, open '/lib/.avanzel/config.toml.1.tmp'")),
+    ).toBe("EACCES: permission denied, open '/lib/.avanzel/config.toml.1.tmp'.");
+    // The error's class goes too, and a message that is a sentence already keeps its stop.
+    expect(
+      notSavedLine(
+        new Error("Error invoking remote method 'settings:choose-library': AvanzelError: /Applications is too broad for a library. Choose or make a folder inside it."),
+      ),
+    ).toBe("/Applications is too broad for a library. Choose or make a folder inside it.");
+    // As an agent's line is told: no "Error:" label, a capital, a full stop.
+    expect(notSavedLine(new Error("Error invoking remote method 'settings:run-task': Error: error: the disk is full"))).toBe("The disk is full.");
+    expect(notSavedLine("gone")).toBe("Gone.");
+    // An error with nothing to say adds nothing: the title stands alone.
+    expect(notSavedLine(new Error(""))).toBe("");
   });
 });
 

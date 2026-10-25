@@ -41,8 +41,9 @@ export function registerIpc(controller: Controller): void {
   handle("settings:check-agents", () => controller.checkAgents());
   handle("settings:check-agent", (_e, name: string) => controller.checkAgent(name));
   handle("settings:request-permission", (_e, kind: "microphone" | "screen") => controller.requestPermission(kind));
-  // What the page sends is checked where it is used: this takes anything, and shows a menu only for a request that reads.
-  handle("settings:pick", (_e, options: unknown, at: unknown) => controller.pickFromSettings(options, at));
+  // What the page sends is checked where it is used: this takes anything, and shows a menu only for a request that reads. Every
+  // window has the same bridge, so it also hands over the page that sent it: only the Settings window's own is answered.
+  handle("settings:pick", (e, options: unknown, at: unknown) => controller.pickFromSettings(e.sender, options, at));
   on("settings:open-library", () => controller.openLibraryFolder());
   on("settings:show-library", () => controller.showLibraryInFinder());
   on("settings:open-setup", () => controller.openSetupFromSettings());
@@ -53,7 +54,7 @@ export function registerIpc(controller: Controller): void {
   handle("quick:submit", (_e, text: string) => controller.submitQuick(text));
   on("quick:close", () => controller.closeQuick());
   handle("ask:ask", (_e, question: string) => controller.ask(question));
-  on("ask:cancel", () => controller.cancelAsk());
+  on("ask:cancel", (e) => controller.cancelAsk(e.sender)); // only the Ask window's own page gives up its question
   on("ask:open-page", (_e, name: string) => controller.openPageByName(name));
   on("ask:close", () => controller.closeAsk());
   handle("ask:library-pages", () => controller.libraryPages());

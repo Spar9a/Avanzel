@@ -11,6 +11,8 @@ import { ownLine } from "../src/shared/problems.ts";
 import { call, capsuleKind, closeModelHubs, emptyHfCache, fakeModelHub, hfSnapshot, launch, makeLibrary, openSettings, shown, snap, windowFor } from "./helpers.ts";
 
 const PARAKEET = "nemo-parakeet-tdt-0.6b-v3";
+/** Parakeet's English-only sibling, which the library's config.toml may name. */
+const PARAKEET_ENGLISH = "nemo-parakeet-tdt-0.6b-v2";
 const SILERO = "silero-vad";
 
 /** The pinned sizes of model `id`'s int8 files, added up. */
@@ -93,6 +95,40 @@ test("Settings → Voice says Ready once both speech models are on this Mac, and
   await expect(settings.getByRole("progressbar")).toHaveCount(0);
   await expect(settings.getByRole("alert")).toHaveCount(0);
   expect(hub.requests).toEqual([]);
+  await app.close();
+});
+
+test("Settings → Voice says the speech row hears English alone for a library that uses the English-only model", async () => {
+  const cache = emptyHfCache();
+  hfSnapshot(cache, PARAKEET_ENGLISH);
+  hfSnapshot(cache, SILERO);
+  const library = await makeLibrary();
+  const config = loadSettings(library);
+  saveSettings(library, { ...config, voice: { ...config.voice, model: PARAKEET_ENGLISH } });
+  const app = await launch({ AVANZEL_LIBRARY: library, HF_HUB_CACHE: cache });
+  // The snapshot carries the engine's own names for it, which the row's sentence is chosen from.
+  expect(((await call(app, "snapshot")) as SettingsSnapshot).voice).toEqual({ backend: "onnx-asr", model: PARAKEET_ENGLISH });
+  const settings = await openSettings(app, "Voice");
+  await expect(settings.getByText("Ready", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Turns your voice into English text on this Mac. Nothing is sent anywhere.", { exact: true })).toBeVisible();
+  // It no longer claims the 25 languages the default model hears, and still names no model.
+  await expect(settings.getByText(/25 European languages/)).toHaveCount(0);
+  await expect(settings.getByText(/parakeet|nemo/i)).toHaveCount(0);
+  await snap(settings, "settings-voice-english-only");
+  await app.close();
+});
+
+test("Settings → Voice says the speech row runs the library's command for a library whose voice is one", async () => {
+  const library = await makeLibrary();
+  const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600 };
+  saveSettings(library, { ...loadSettings(library), voice });
+  const app = await launch({ AVANZEL_LIBRARY: library, HF_HUB_CACHE: emptyHfCache() });
+  expect(((await call(app, "snapshot")) as SettingsSnapshot).voice).toEqual({ backend: "command", model: "" });
+  const settings = await openSettings(app, "Voice");
+  await expect(settings.getByText("Ready", { exact: true })).toBeVisible(); // a command needs no models
+  // It says no language, and not that nothing is sent anywhere: a command can do either.
+  await expect(settings.getByText("Turns your voice into text with the command in this library's settings.", { exact: true })).toBeVisible();
+  await expect(settings.getByText(/25 European languages|sent anywhere/)).toHaveCount(0);
   await app.close();
 });
 

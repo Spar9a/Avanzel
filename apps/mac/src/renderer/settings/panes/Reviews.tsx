@@ -1,14 +1,14 @@
 // Settings → Reviews: each scheduled review in a group of its own, with its switch, when it runs and when it last ran,
 // Run now, and an editor that opens in place under them; then the review files that can't be used, with why. The switch
-// and Run now apply at once, and the editor saves on Save. What the editor holds and the saves on their way are kept by
-// the Settings shell (useReviewEdits), so leaving the pane keeps them. The pane needs a library: without one the shell
-// draws NoLibrary in its place.
+// and Run now apply at once, and the editor saves on Save. What the editor holds, the saves on their way and why the last
+// one failed are kept by the Settings shell (useReviewEdits), so leaving the pane keeps them. The pane needs a library:
+// without one the shell draws NoLibrary in its place.
 import { Actions, Button, Group, GroupRow, Notice, Segmented, Stack, Switch, Text, TextArea, TextField, type SegmentedOption } from "@avanzel/ui";
 import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { harnessName } from "../../../main/jobs.ts";
 import type { HarnessInfo, PickOption, TaskInfo } from "../../../shared/ipc.ts";
 import { DAYS, failedSaveLine, kindLine, lastRunLine, remoteMessage, scheduleParts, scheduleText, validTime, whenLine } from "../copy.ts";
-import { ChooseButton, type PaneProps } from "../parts.tsx";
+import { attemptChange, ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
 
@@ -54,9 +54,16 @@ const draftOf = (task: TaskInfo): Draft => ({
 /** `drafts` without review `id`'s. */
 const without = (drafts: Drafts, id: string): Drafts => Object.fromEntries(Object.entries(drafts).filter(([each]) => each !== id));
 
+/** A review's save that main refused: which review, and main's reason (remoteMessage of its error). */
+export interface SaveFailure {
+  id: string;
+  message: string;
+}
+
 /**
  * What Settings keeps of the reviews whichever pane shows: leaving the pane, or moving along the toolbar with the arrow
- * keys, which shows each pane passed, then keeps what the open editor holds and still knows of a save on its way.
+ * keys, which shows each pane passed, then keeps what the open editor holds, what it still knows of a save on its way, and
+ * the save that failed.
  */
 export interface ReviewEdits {
   /** The open editor's draft, by its review's id. One editor is open at a time, so it holds one at most. */
@@ -69,36 +76,53 @@ export interface ReviewEdits {
    */
   saving: ReadonlySet<string>;
   /**
+   * The review whose last save main refused, and why; null when none. It is kept here, with the drafts, and not by the pane:
+   * a person who leaves the pane while a save waits, and comes back to find it failed, still finds the Notice under the
+   * review. It goes when that review is saved, or its editor opens or closes (`clearFailure`), or another library opens.
+   */
+  failure: SaveFailure | null;
+  /** Forgets review `id`'s failure, if it is the one kept: its editor was opened or closed. */
+  clearFailure(id: string): void;
+  /**
    * Saves `task` with `fields` changed and the rest as stored, and draws the snapshot main sends back. Whether it saved:
-   * while a save of that review is on its way, it saves nothing. A save main refuses throws main's error.
+   * while a save of that review is on its way, it saves nothing. A save main refuses is kept as `failure`, and throws main's
+   * error: the Reviews pane tells it under the review; where there is no review to tell it under (General's Turn on), the
+   * caller lets the window tell it (`attempt`).
    */
   save(task: TaskInfo, fields: Fields): Promise<boolean>;
 }
 
 /**
  * The reviews' edits, for the Settings shell to keep (ReviewEdits). A draft is of the library open when it was made: once
- * another library opens, whose reviews may have the same ids, the drafts are dropped.
+ * another library opens, whose reviews may have the same ids, the drafts and the failure are dropped.
  */
 export function useReviewEdits(library: string | null, onChange: PaneProps["onChange"]): ReviewEdits {
   const [drafts, setDrafts] = useState<Drafts>({});
+  const [failure, setFailure] = useState<SaveFailure | null>(null);
   const [draftsOf, setDraftsOf] = useState(library);
   if (draftsOf !== library) {
     setDraftsOf(library);
     setDrafts({});
+    setFailure(null);
   }
   const [saving, setSaving] = useState<ReadonlySet<string>>(() => new Set());
+  const clearFailure = (id: string) => setFailure((last) => (last?.id === id ? null : last));
   const save = async (task: TaskInfo, fields: Fields): Promise<boolean> => {
     const { id, name, schedule, agent, enabled, instructions } = task;
     if (saving.has(id)) return false;
     setSaving((last) => new Set(last).add(id));
     try {
       onChange(await api.saveTask({ id, name, schedule, agent, enabled, instructions, ...fields }));
+      clearFailure(id);
       return true;
+    } catch (error) {
+      setFailure({ id, message: remoteMessage(error) });
+      throw error;
     } finally {
       setSaving((last) => new Set([...last].filter((each) => each !== id)));
     }
   };
-  return { drafts, setDrafts, saving, save };
+  return { drafts, setDrafts, saving, failure, clearFailure, save };
 }
 
 /** Choose…'s menu for a review's agent: the library's own, then each agent installed, with the review's checked. */
@@ -274,12 +298,12 @@ function Review({ task, now, harnesses, draft, saving, failure, onDraft, onSwitc
  * The Reviews pane: a footnote on how reviews run, each review, and the files in tasks/ that can't be used. `edits` are
  * the Settings shell's (useReviewEdits).
  */
-export function Reviews({ snap, onChange, edits }: PaneProps & { edits: ReviewEdits }): ReactNode {
-  const { drafts, setDrafts, saving } = edits;
-  // The review whose last save failed, and why: shown until that review is saved again, or its editor opens or closes.
-  const [failure, setFailure] = useState<{ id: string; message: string } | null>(null);
+export function Reviews(props: PaneProps & { edits: ReviewEdits }): ReactNode {
+  const { snap, edits } = props;
+  // The review whose last save failed, and why, is the window's (ReviewEdits): shown until that review is saved again, or
+  // its editor opens or closes, whichever pane has shown meanwhile.
+  const { drafts, setDrafts, saving, failure, clearFailure } = edits;
   const now = new Date();
-  const clearFailure = (id: string) => setFailure((last) => (last?.id === id ? null : last));
   /** Changes review `id`'s draft, from the one then, while its editor is open. */
   const changeDraft = (id: string, change: (draft: Draft) => Draft) =>
     setDrafts((last) => {
@@ -287,14 +311,15 @@ export function Reviews({ snap, onChange, edits }: PaneProps & { edits: ReviewEd
       return draft ? { ...last, [id]: change(draft) } : last;
     });
 
-  /** Saves `task` with `fields` changed and the rest as stored. Whether it saved: if not, the failure shows under it. */
+  /**
+   * Saves `task` with `fields` changed and the rest as stored. Whether it saved: if not, main's refusal is `edits.failure`,
+   * which the Notice under the review tells. That is where it is told, with what is true of the review as stored, so the
+   * window's own "That change wasn't saved." is not made to tell it twice.
+   */
   const save = async (task: TaskInfo, fields: Fields): Promise<boolean> => {
     try {
-      const saved = await edits.save(task, fields);
-      if (saved) clearFailure(task.id);
-      return saved;
-    } catch (error) {
-      setFailure({ id: task.id, message: remoteMessage(error) });
+      return await edits.save(task, fields);
+    } catch {
       return false;
     }
   };
@@ -337,7 +362,7 @@ export function Reviews({ snap, onChange, edits }: PaneProps & { edits: ReviewEd
           onDraft={(change) => changeDraft(task.id, change)}
           onSwitch={(enabled) => void save(task, { enabled })}
           onSave={(beforeClose) => void saveDraft(task, beforeClose)}
-          onRun={async () => onChange(await api.runTask(task.id))}
+          onRun={() => attemptChange(props, () => api.runTask(task.id))}
           // One editor is open at a time: Edit opens this one from the review as stored, and drops any other's draft.
           onEdit={() => {
             clearFailure(task.id);

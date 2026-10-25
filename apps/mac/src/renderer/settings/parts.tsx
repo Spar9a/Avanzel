@@ -1,5 +1,5 @@
-// What Settings' panes share: the props each pane is given, the Notice a pane shows in place of the library while none
-// is open, and Choose…, which opens a native menu.
+// What Settings' panes share: the props each pane is given, how a change is made, the Notice a pane shows in place of the
+// library while none is open, and Choose…, which opens a native menu.
 import { Actions, Button, Notice } from "@avanzel/ui";
 import { useRef, type ReactNode } from "react";
 import type { PickOption, SettingsSnapshot } from "../../shared/ipc.ts";
@@ -7,10 +7,29 @@ import { asSentence } from "./copy.ts";
 
 const api = window.avanzel.settings;
 
-/** What each pane is given: the window's snapshot, and the way to replace it with the one a change sends back. */
+/** What each pane is given: the window's snapshot, the way to replace it with the one a change sends back, and `attempt`. */
 export interface PaneProps {
   snap: SettingsSnapshot;
+  /** Draws `snapshot`, the one a change that worked sent back. The window forgets the problem an earlier refused change left. */
   onChange(snapshot: SettingsSnapshot): void;
+  /**
+   * Makes a call to main that main may refuse (a rejected promise: a file it can't write, a folder it won't take). A refusal
+   * doesn't go unheard: the window tells it in a Notice, "That change wasn't saved." with why, which goes with the next change
+   * that works or the next pane. Resolves with what the call sent back, or undefined when it was refused.
+   */
+  attempt<T>(run: () => Promise<T>): Promise<T | undefined>;
+}
+
+/**
+ * A change that sends back the snapshot to draw (setApp, setLibrary, …): made through `attempt`, and drawn when it worked. A
+ * change main refuses draws nothing, and the window tells it.
+ */
+export async function attemptChange(
+  { onChange, attempt }: Pick<PaneProps, "onChange" | "attempt">,
+  run: () => Promise<SettingsSnapshot>,
+): Promise<void> {
+  const next = await attempt(run);
+  if (next) onChange(next);
 }
 
 /**
@@ -19,8 +38,9 @@ export interface PaneProps {
  * library, which opens setup at the usual place, not the one that went; else, with no library at all, the no-library one,
  * with Set up Avanzel….
  */
-export function NoLibrary({ snap, onChange }: PaneProps): ReactNode {
-  const choose = async () => onChange(await api.chooseLibrary());
+export function NoLibrary({ snap, onChange, attempt }: PaneProps): ReactNode {
+  // A folder main won't take (the home folder, say) is told in the window's Notice, beside this one, which offers it again.
+  const choose = () => attemptChange({ onChange, attempt }, () => api.chooseLibrary());
   if (snap.libraryProblem) {
     return (
       <Notice

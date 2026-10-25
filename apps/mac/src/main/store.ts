@@ -61,10 +61,15 @@ export class SettingsStore {
     return structuredClone(this.current);
   }
 
+  /**
+   * Applies `patch` and keeps it. When the file can't be written it throws, and the settings stay as they were: a change that
+   * Settings reports as not saved must not take effect meanwhile, nor show as made when Settings is next refreshed.
+   */
   update(patch: Partial<AppSettings>): AppSettings {
     const merged = { ...this.current, ...patch, shortcuts: { ...this.current.shortcuts, ...patch.shortcuts } };
-    this.current = normalizeSettings(merged);
-    writeJsonAtomic(this.file, this.current);
+    const next = normalizeSettings(merged);
+    writeJsonAtomic(this.file, next);
+    this.current = next;
     return this.get();
   }
 

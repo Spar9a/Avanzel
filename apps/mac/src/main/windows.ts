@@ -1,5 +1,5 @@
 // The app's windows. All renderers are sandboxed and talk to main only through the preload bridge.
-import { BrowserWindow, screen } from "electron";
+import { BrowserWindow, screen, type WebContents } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SettingsPane } from "../shared/ipc.ts";
@@ -15,6 +15,15 @@ const webPreferences = {
   nodeIntegration: false,
   spellcheck: false,
 } as const;
+
+/**
+ * Whether `sender`, the page an IPC message came from (`event.sender`), is the page of `win`, an open window of ours. Every
+ * window gets the same preload bridge, so a channel that belongs to one window can be sent from any: a channel that acts on
+ * one window's own state answers only that window.
+ */
+export function isPageOf(sender: WebContents, win: BrowserWindow | null): boolean {
+  return win !== null && !win.isDestroyed() && sender === win.webContents;
+}
 
 export const CAPSULE_SIZE = { width: 480, height: 300 };
 

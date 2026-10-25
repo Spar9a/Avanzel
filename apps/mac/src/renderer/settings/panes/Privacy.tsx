@@ -4,21 +4,20 @@
 import { Button, Group, GroupRow, Row, Stack, Text } from "@avanzel/ui";
 import type { ReactNode } from "react";
 import type { PermissionStatus } from "../../../shared/ipc.ts";
-import type { PaneProps } from "../parts.tsx";
+import { attemptChange, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
 
 /** A permission Avanzel asks macOS for: the microphone, or Screen Recording ("screen", as the bridge names it). */
 type Permission = "microphone" | "screen";
 
-interface PermissionRowProps {
+interface PermissionRowProps extends Pick<PaneProps, "onChange" | "attempt"> {
   kind: Permission;
   /** The row's name, which also names its group of controls. */
   label: string;
   /** What the permission is for. */
   description: string;
   status: PermissionStatus;
-  onChange: PaneProps["onChange"];
 }
 
 /**
@@ -29,14 +28,14 @@ interface PermissionRowProps {
  * is the one fix of a problem. The control is a group named for the row, so VoiceOver says which permission it belongs to,
  * and tests find it by that name.
  */
-function PermissionRow({ kind, label, description, status, onChange }: PermissionRowProps): ReactNode {
+function PermissionRow({ kind, label, description, status, onChange, attempt }: PermissionRowProps): ReactNode {
   return (
     <GroupRow label={label} description={description}>
       <div role="group" aria-label={label}>
         {status === "granted" ? (
           <Text variant="footnote" tone="ok">Allowed</Text>
         ) : kind === "microphone" && status === "not-determined" ? (
-          <Button size="small" variant="secondary" onClick={async () => onChange(await api.requestPermission("microphone"))}>Allow…</Button>
+          <Button size="small" variant="secondary" onClick={() => attemptChange({ onChange, attempt }, () => api.requestPermission("microphone"))}>Allow…</Button>
         ) : (
           <Row gap={8}>
             <Button size="small" variant="secondary" onClick={() => api.openPrivacy(kind)}>Open System Settings</Button>
@@ -49,7 +48,7 @@ function PermissionRow({ kind, label, description, status, onChange }: Permissio
 }
 
 /** The Privacy pane: the permissions, and what leaves this Mac. */
-export function Privacy({ snap, onChange }: PaneProps): ReactNode {
+export function Privacy({ snap, onChange, attempt }: PaneProps): ReactNode {
   return (
     <Stack gap={20}>
       <Group label="Permissions" note="After you allow screen recording, quit and reopen Avanzel: macOS applies it only then.">
@@ -59,6 +58,7 @@ export function Privacy({ snap, onChange }: PaneProps): ReactNode {
           description="Only while the capsule shows it listening."
           status={snap.permissions.microphone}
           onChange={onChange}
+          attempt={attempt}
         />
         <PermissionRow
           kind="screen"
@@ -66,6 +66,7 @@ export function Privacy({ snap, onChange }: PaneProps): ReactNode {
           description="Needed only to capture the screen with a comment."
           status={snap.permissions.screen}
           onChange={onChange}
+          attempt={attempt}
         />
       </Group>
       <Group label="What leaves this Mac">
