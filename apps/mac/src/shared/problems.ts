@@ -13,7 +13,7 @@ export type FailureKind = "limit" | "signin" | "timeout" | "gone" | "missing" | 
 /** What went wrong with an agent's run, ready to be told. */
 export interface AgentFailure {
   kind: FailureKind;
-  /** The agent's display name: "Claude Code". */
+  /** The agent's display name: "Claude Code". "Avanzel" when no agent can be named: the library's settings can't be read, say. */
   agent: string;
   /** What signs the agent in when typed in Terminal: "claude" or "codex"; null for any other agent. */
   command: string | null;

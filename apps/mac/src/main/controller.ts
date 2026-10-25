@@ -187,7 +187,8 @@ export class Controller {
   private capsuleState: CapsuleState = { kind: "hidden" };
   /**
    * The capture of the filing whose failure card the capsule shows, while it shows that card: what the card's Try again and
-   * File it with … button files again (`openSettingsFor`'s `refile:`). Forgotten as the capsule shows anything else.
+   * File it with … button files again (`openSettingsFor`'s `refile:`). It is set with the card (`fail`) and goes with it:
+   * whatever the capsule shows next has none.
    */
   private cardCapture: string | null = null;
   private recording: Recording | null = null;
@@ -379,7 +380,8 @@ export class Controller {
 
   /**
    * The harness that `harness` selects, by name ("claude"): the library's own choice when it names none or says "auto".
-   * Null while none can be selected: there is no library, or the agent it names (or any, on auto) isn't installed.
+   * Null while none can be selected: there is no library, its settings can't be read, or the agent it names (or any, on auto)
+   * isn't installed. What a failure says of that is the error's (`agentFailure`), not this.
    */
   private selectedHarness(harness?: string): string | null {
     try {
@@ -527,10 +529,11 @@ export class Controller {
 
   // ---------------------------------------------------------------- capsule plumbing
 
-  private setCapsule(state: CapsuleState, autoHideMs?: number): void {
+  /** `capture`: the note an error card is about (`cardCapture`), which stays only as long as that card is what the capsule shows. */
+  private setCapsule(state: CapsuleState, autoHideMs?: number, capture?: string): void {
     if (state.kind !== "editing") this.keepEdit(); // whatever replaces the editor (a recording, a typed thought, an error) keeps its edit
     this.capsuleState = state;
-    this.cardCapture = null; // a failure card remembers its note again once it is shown (`filingFailed`)
+    this.cardCapture = capture ?? null;
     if (this.hideTimer) clearTimeout(this.hideTimer);
     this.hideTimer = null;
     const win = this.capsule;
@@ -578,10 +581,11 @@ export class Controller {
 
   /**
    * The capsule's card of what went wrong: `message` says what happened and `detail` what is safe. Its one button does
-   * `action` and says `actionLabel` (Open Settings when it names none).
+   * `action` and says `actionLabel` (Open Settings when it names none). `capture`: the note the card is about, if it is
+   * about one, which the card keeps for as long as it shows.
    */
-  private fail(message: string, detail?: string, action?: ErrorAction, actionLabel?: string): void {
-    this.setCapsule({ kind: "error", message, detail, action, actionLabel });
+  private fail(message: string, detail?: string, action?: ErrorAction, actionLabel?: string, capture?: string): void {
+    this.setCapsule({ kind: "error", message, detail, action, actionLabel }, undefined, capture);
   }
 
   /**
@@ -1046,7 +1050,7 @@ export class Controller {
   private filingFailed(job: FilingJob, error: unknown, outcome?: FileOutcome): void {
     if (this.setup.owns(job)) return this.setup.failed(job, errorLine(errorMessage(error)));
     const harness = this.failedHarness(job, error);
-    const failure = this.agentFailure(job, harness, error, outcome);
+    const failure = this.agentFailure(harness, error, outcome);
     const problem = filingProblem(failure, new Date(), {
       ...(outcome?.savedOriginal ? { where: outcome.savedOriginal } : {}),
       partial: !outcome ? null : outcome.commit ? "commit" : outcome.changes.empty ? null : "uncommitted",
@@ -1054,8 +1058,7 @@ export class Controller {
     });
     if (this.job === job && this.capsuleState.kind === "filing") {
       const fix = this.cardFix(failure, harness);
-      this.fail(problem.title, problem.body, fix?.action, fix?.label);
-      this.cardCapture = job.capturePath; // after the card is shown: showing it forgot the last card's note
+      this.fail(problem.title, problem.body, fix?.action, fix?.label, job.capturePath);
     } else {
       this.notify(problem.title, problem.body);
     }
@@ -1072,18 +1075,19 @@ export class Controller {
   }
 
   /**
-   * What went wrong with `job`'s filing, as the copy tells it: the kind comes from the engine's classification of the run,
-   * or from the error that kept the run from starting.
+   * What went wrong with a filing, as the copy tells it: the kind comes from the engine's classification of the run, or
+   * from the error that kept the run from starting. `harness` is the agent it was for, when one can be named (`failedHarness`).
    */
-  private agentFailure(job: FilingJob, harness: string | null, error: unknown, outcome?: FileOutcome): AgentFailure {
+  private agentFailure(harness: string | null, error: unknown, outcome?: FileOutcome): AgentFailure {
     const failure = outcome?.failure ?? null;
-    // Gone: the library's own agent isn't installed any more. Missing: none is, or there is none to name (no title says
-    // "your agent").
+    // Only the engine says that an agent isn't there: gone, when its error names the library's own agent, and missing when
+    // none is installed. With no agent to name for any other reason (the library's settings can't be read, say) the failure
+    // is Avanzel's own, in the line of its error. No title says "your agent".
     const kind: FailureKind =
-      error instanceof NoAgentError ? (error.agent ? "gone" : "missing") : harness === null ? "missing" : (failure?.kind ?? "other");
+      error instanceof NoAgentError ? (error.agent ? "gone" : "missing") : harness === null ? "other" : (failure?.kind ?? "other");
     return {
       kind,
-      agent: harness ? harnessName(harness) : job.agent,
+      agent: harness ? harnessName(harness) : "Avanzel",
       command: harness === "claude" || harness === "codex" ? harness : null,
       resetsAt: failure?.resetsAt ?? null,
       seconds: this.timeoutSeconds(),
@@ -1093,8 +1097,9 @@ export class Controller {
 
   /**
    * The one button of a failure's card, or null when the card has no fix to offer. A usage limit offers another agent
-   * (`otherAgent`), a sign-in Terminal, a timeout or any other failure the same agent again, and an agent that isn't there
-   * Settings → Agents. A `refile:` button files the card's note again with that agent.
+   * (`otherAgent`), a sign-in Terminal, a timeout or any other failure the same agent again (none when no agent can be
+   * named, as when the library's settings need mending by hand), and an agent that isn't there Settings → Agents. A
+   * `refile:` button files the card's note again with that agent.
    */
   private cardFix(failure: AgentFailure, harness: string | null): { action: CardAction; label: string } | null {
     switch (failure.kind) {
@@ -2318,6 +2323,11 @@ export class Controller {
    */
   openedForTests(): string[] {
     return this.opened;
+  }
+
+  /** The capture of the note the capsule's failure card is about, while it shows one (what its button files again); else null. */
+  cardCaptureForTests(): string | null {
+    return this.cardCapture;
   }
 
   /** The text Copy put on the clipboard, oldest first; recorded only with AVANZEL_TEST=1. */

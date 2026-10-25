@@ -171,6 +171,14 @@ describe("filingProblem: any other failure", () => {
     });
   });
 
+  it("with no agent to name says that Avanzel couldn't file it, and the line of what is wrong", () => {
+    const line = "/Users/ana/Avanzel/.avanzel/config.toml: invalid TOML at line 2, column 17: incomplete key-value declaration";
+    expect(filingProblem(failure({ agent: "Avanzel", command: null, line }), now)).toEqual({
+      title: "Avanzel couldn't file this note.",
+      body: `${line}. ${SAFE}; ${LATER}`,
+    });
+  });
+
   it("with no line to show says only what is safe", () => {
     expect(filingProblem(failure({ line: "" }), now).body).toBe(`${SAFE}; ${LATER}`);
     expect(filingProblem(failure({ line: "Error:" }), now).body).toBe(`${SAFE}; ${LATER}`);

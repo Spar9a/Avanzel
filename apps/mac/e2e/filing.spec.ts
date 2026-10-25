@@ -259,6 +259,7 @@ test("corrected words that can't be saved yet are saved when Avanzel quits, and 
       capsule.getByText("Your corrected words are saved to your inbox when you quit; the original note is still there.", { exact: false }),
     ).toBeVisible();
     await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
+    expect(await cardNote(app)).toBeNull(); // no note for the card to file again
     expect(await call(app, "capsuleStateForTests")).toEqual({
       kind: "error",
       message: "Your corrected words weren't saved yet.",
@@ -436,9 +437,11 @@ async function failedWithClaude(bin: string, options?: { timeoutSeconds?: number
   return opened;
 }
 
-/** The capture the capsule's failure card was shown for, which its button files again. */
-const cardCapture = (app: ElectronApplication) =>
-  app.evaluate(() => (globalThis as unknown as { __avanzel: { cardCapture: string | null } }).__avanzel.cardCapture);
+/** The file name of the note the capsule's failure card is about, which its button files again; null while it shows no such card. */
+async function cardNote(app: ElectronApplication): Promise<string | null> {
+  const capture = (await call(app, "cardCaptureForTests")) as string | null;
+  return capture === null ? null : path.basename(capture);
+}
 
 test("a usage limit names its reset and offers another agent", async () => {
   const { library, app, capsule } = await failedWithClaude(agentStubs({ claude: limitedClaude() }));
@@ -458,8 +461,14 @@ test("a usage limit names its reset and offers another agent", async () => {
   // The note stays in the inbox, the card remembers which note it is about, and offering Codex ran nothing of Codex's.
   const [note] = inbox(library);
   expect(note).toBeDefined();
-  expect(path.basename((await cardCapture(app)) ?? "")).toBe(note);
+  expect(await cardNote(app)).toBe(note);
   expect((await agentCalls(app)).filter((line) => line.startsWith("codex"))).toEqual([]);
+  // The card shown again, as its page reloads, is the same card: the note stays with it. It goes when the card does.
+  await capsule.reload();
+  await expect(capsule.getByRole("alert")).toContainText("Claude Code has hit its usage limit.");
+  expect(await cardNote(app)).toBe(note);
+  await call(app, "dismiss");
+  expect(await cardNote(app)).toBeNull();
   await app.close();
 });
 
@@ -473,6 +482,7 @@ test("a usage limit with no other agent offers no fix", async () => {
   await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: "Claude Code has hit its usage limit.", detail: body });
   expect(inbox(library)).toHaveLength(1);
+  expect(await cardNote(app)).toBe(inbox(library)[0]); // a card with no button still remembers its note
   await app.close();
 });
 
@@ -551,6 +561,30 @@ test("a library whose own agent is gone says so", async () => {
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings");
   await expect(settings.getByRole("radio", { name: "Agents", exact: true })).toHaveAttribute("aria-checked", "true");
+  await app.close();
+});
+
+test("a library whose settings can't be read says so, and not that no agent is installed", async () => {
+  // Claude Code is installed, and the library's own settings file is what is wrong: the card says that, in the file's words.
+  const library = await makeLibrary();
+  writeFileSync(path.join(library, ".avanzel", "config.toml"), 'harness = "claude"\ntimeout_seconds =\n');
+  const app = await launch({ AVANZEL_LIBRARY: library, ...onlyAgentsIn(agentStubs()) });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "submitQuick", "Plant tulips in October"); // typed: recording reads the settings too
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("error");
+  // No agent can be named, so Avanzel couldn't file it; and no agent can be retried, and the file is mended by hand: OK alone.
+  const state = (await call(app, "capsuleStateForTests")) as { message: string; detail: string };
+  expect(state).toEqual({
+    kind: "error",
+    message: "Avanzel couldn't file this note.",
+    detail: expect.stringMatching(/config\.toml: invalid TOML at line 2, column \d+: .+\. Your note is safe in the inbox; the evening review will try again\.$/),
+  });
+  await expect(capsule.getByText(/config\.toml: invalid TOML at line 2/)).toBeVisible();
+  await expect(capsule.getByText("needs an AI agent")).toHaveCount(0);
+  await snap(capsule, "5-error-settings");
+  await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
+  expect(inbox(library)).toHaveLength(1);
+  expect(await cardNote(app)).toBe(inbox(library)[0]);
   await app.close();
 });
 
