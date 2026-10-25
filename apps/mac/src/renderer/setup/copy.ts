@@ -2,8 +2,17 @@
 // recording and how a filing went, as its copy table writes them, and which of those findings is a problem for the
 // person to fix.
 import { SHELVES, type ReceiptPage, type Shelf } from "@avanzel/ui";
-import { NOTE_GONE, type AgentProblem, type AgentStatus, type FiledPage, type ModelStatus, type RecordingProblem } from "../../shared/ipc.ts";
-import { ownLine } from "../../shared/problems.ts";
+import {
+  NOTE_GONE,
+  type AgentProblem,
+  type AgentStatus,
+  type FiledPage,
+  type ModelStatus,
+  type RecordingProblem,
+  type SetupAnswer,
+  type SetupFiling,
+} from "../../shared/ipc.ts";
+import { askProblem, avanzelFailure, filingProblem, ownLine, type AskProblem, type Problem } from "../../shared/problems.ts";
 
 // An agent's own line as a sentence is shared with the main process (its cards and notifications say it too); the windows
 // that import it from here keep doing so.
@@ -160,12 +169,23 @@ export function cancelledLine(agent: string, partial: boolean): string {
 }
 
 /**
- * The body of a failed filing's Notice when signing in isn't the fix: the agent's own line, then that the words are
- * safe. A note gone from the inbox says only that, since the words aren't there to be safe.
+ * A failed filing's Notice in the setup window: what happened, what is safe, and for a sign-in the command to run, as the
+ * capsule tells the same failure (`filingProblem`) except that setup starts neither a wait nor a watch, so it says to try
+ * again (`after: "retry"`). The evening review is promised only while the library's is on (`eveningReview`). A note gone
+ * from the inbox before any run has no failure to tell: it has its own title and line, since its words aren't there to be safe.
  */
-export function failedLine(line: string): string {
-  if (line === NOTE_GONE) return line;
-  return `${ownLine(line)} Your words are safe in the inbox.`.trim();
+export function failedFiling(filing: Extract<SetupFiling, { kind: "failed" }>, now: Date, eveningReview: boolean): Problem {
+  if (filing.failure === null) return { title: `${filing.agent} couldn't file it.`, body: NOTE_GONE };
+  return filingProblem(filing.failure, now, { after: "retry", eveningReview, partial: filing.partial });
+}
+
+/**
+ * A failed answer's Notice on the Ask step: what happened, that the library hasn't changed (or what the run changed), and what
+ * to do, as the Ask window tells it (`askProblem`). A question that never reached an agent has no failure: it is Avanzel's
+ * own, in the line of what went wrong.
+ */
+export function failedAnswer(answer: Extract<SetupAnswer, { kind: "failed" }>, now: Date): AskProblem {
+  return askProblem(answer.failure ?? avanzelFailure(answer.line), answer.changedFiles, now);
 }
 
 /** `count` pages of a `kind`, in words: "1 new page", "2 updated pages". */

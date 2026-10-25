@@ -1,28 +1,28 @@
 // The Ask window's words that are made from values: who answered and in how long, a failed answer as its Notice
 // shows it, and the line while the agent looks.
-import { askingLine, ownLine, SLOW_SECONDS } from "../setup/copy.ts";
+import type { AskResult } from "../../shared/ipc.ts";
+import { askProblem, avanzelFailure, type AskProblem } from "../../shared/problems.ts";
+import { askingLine, SLOW_SECONDS } from "../setup/copy.ts";
 
 /** The line that ends an answer: "Claude Code answered in 13 s", in whole seconds and never "0 s". */
 export function answeredLine(agent: string, seconds: number): string {
   return `${agent} answered in ${Math.max(1, Math.round(seconds))} s`;
 }
 
-/** What is safe when a question fails and its run changed nothing: the library is as it was. */
-const SAFE = "Your library hasn't changed.";
-
 /**
- * A failed answer (AskResult.answer) as its Notice shows it: its first line is the title, what happened ("fake couldn't
- * answer."), and the body says what is safe, then what the agent said last: the other lines, joined by spaces, as setup
- * shows an agent's line (ownLine). A message with one line, when nothing ran, is the title alone. Lines are trimmed,
- * and empty ones skipped. The library is said to be unchanged only when the run left no change in it (AskResult.changed):
- * an agent asked read-only leaves none, but one that doesn't keep to it may.
+ * A failed answer as its Notice shows it, in the words of the copy table's Ask rows (`askProblem`): what happened, that the
+ * library hasn't changed (or how many files the run changed, which are left as they are) and what to do. An agent asked
+ * read-only leaves no change, but one that doesn't keep to it may. A question that never reached an agent has no failure
+ * (AskResult.failure): it is Avanzel's own, in the lines of the message that came back (AskResult.answer), joined by spaces
+ * as setup shows an agent's line, with the empty ones skipped.
  */
-export function failureLines(answer: string, changed: boolean): { title: string; body: string } {
-  const [title = "", ...rest] = answer
+export function failedAnswer(result: AskResult, now: Date): AskProblem {
+  const message = result.answer
     .split("\n")
     .map((line) => line.trim())
-    .filter(Boolean);
-  return { title, body: `${changed ? "" : SAFE} ${ownLine(rest.join(" "))}`.trim() };
+    .filter(Boolean)
+    .join(" ");
+  return askProblem(result.failure ?? avanzelFailure(message), result.changedFiles, now);
 }
 
 /** What the waiting line says while the agent looks, before its seconds count: main's own words for it, too. */

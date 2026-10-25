@@ -22,6 +22,7 @@ import {
   Vault,
   WAITING,
   checkAgent as checkHarness,
+  classifyFailure,
   defaultSettings,
   downloadModels,
   downloadSize,
@@ -52,6 +53,7 @@ import {
   type FileOutcome,
   type FilingStep,
   type Harness,
+  type RunFailure,
   type Settings,
   type ShadowTask,
   type Transcriber,
@@ -62,9 +64,13 @@ import { isSettingsPane, NOTE_GONE, noSuchReview } from "../shared/ipc.ts";
 import {
   correctedWordsProblem,
   filingProblem,
+  takeBackRefused,
+  takeBackRefusedProblem,
+  undoRefused,
   type AgentFailure,
   type FailureKind,
   type FilingProblemOptions,
+  type PartialEdits,
   type Problem,
 } from "../shared/problems.ts";
 import type {
@@ -86,7 +92,7 @@ import type {
   TaskInfo,
 } from "../shared/ipc.ts";
 import { frontContext } from "./front-app.ts";
-import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Correction, type FilingJob, type Recording } from "./jobs.ts";
+import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, withStep, withWritten } from "./narration.ts";
@@ -172,6 +178,11 @@ interface SignInWatch {
   notes: Map<string, Problem>;
   endsAt: number;
   timer: NodeJS.Timeout | null;
+}
+
+/** What a failed filing's run left behind in the library: its edits as their own commit, or outside any history; null when it left none. */
+function leftBehind(outcome: FileOutcome | undefined): PartialEdits {
+  return !outcome ? null : outcome.commit ? "commit" : outcome.changes.empty ? null : "uncommitted";
 }
 
 /**
@@ -1084,17 +1095,19 @@ export class Controller {
    * capsule's card says what happened and what is safe, and offers the one fix (`cardFix`). That is the card of this job's
    * filing or, when a wait's or the watch's filing in the background finds the card of the note's earlier failure still up
    * (`cardCapture`), that card, replaced: left as it is, it would promise what is not so now. With no card of the note, a
-   * notification says the same. Setup's window tells it in its own (`setup.failed`). What the words promise of a usage limit
-   * or a missing sign-in, the app then does (`keepPromise`).
+   * notification says the same. Setup's window tells it in its own, with the failure and what the run left behind
+   * (`setup.failed`): setup starts no wait and no watch, so it says to try again. A note gone from the inbox has no failure to
+   * tell. What the words promise of a usage limit or a missing sign-in, the app then does (`keepPromise`).
    */
   private filingFailed(job: FilingJob, error: unknown, outcome?: FileOutcome): void {
-    if (this.setup.owns(job)) return this.setup.failed(job, errorLine(errorMessage(error)));
-    const harness = this.failedHarness(job, error);
-    const failure = this.agentFailure(harness, error, outcome);
+    const harness = this.failedHarness(job.harness, error);
+    const failure = this.agentFailure(harness, error, outcome?.failure ?? null);
+    const partial = leftBehind(outcome);
+    if (this.setup.owns(job)) return this.setup.failed(job, error === NOTE_GONE ? null : failure, partial);
     const now = new Date();
     const options: FilingProblemOptions = {
       ...(outcome?.savedOriginal ? { where: outcome.savedOriginal } : {}),
-      partial: !outcome ? null : outcome.commit ? "commit" : outcome.changes.empty ? null : "uncommitted",
+      partial,
       eveningReview: this.eveningReviewOn(),
     };
     // A note that the watch filed and that still can't sign in is left to the evening review: no watch follows it.
@@ -1111,32 +1124,32 @@ export class Controller {
   }
 
   /**
-   * The harness a failed `job` was for, by name ("claude"): the one its error names (an agent that is gone), else the job's
-   * own, or on auto the one selected now. Null when there is no agent to name.
+   * The harness a failed run was for, by name ("claude"): the one its error names (an agent that is gone), else `chosen`, the
+   * harness the run was asked to use, or on "auto" the one selected now. Null when there is no agent to name.
    */
-  private failedHarness(job: FilingJob, error: unknown): string | null {
+  private failedHarness(chosen: string, error: unknown): string | null {
     if (error instanceof NoAgentError && error.agent) return error.agent;
-    return job.harness === "auto" ? this.selectedHarness() : job.harness;
+    return chosen === "auto" ? this.selectedHarness() : chosen;
   }
 
   /**
-   * What went wrong with a filing, as the copy tells it: the kind comes from the engine's classification of the run, or
-   * from the error that kept the run from starting. `harness` is the agent it was for, when one can be named (`failedHarness`).
+   * What went wrong with a run of an agent (a filing, or a question), as the copy tells it: the kind comes from the engine's
+   * classification of the run (`run`), or from the error that kept the run from starting. `harness` is the agent it was for,
+   * when one can be named (`failedHarness`).
    */
-  private agentFailure(harness: string | null, error: unknown, outcome?: FileOutcome): AgentFailure {
-    const failure = outcome?.failure ?? null;
+  private agentFailure(harness: string | null, error: unknown, run: RunFailure | null = null): AgentFailure {
     // Only the engine says that an agent isn't there: gone, when its error names the library's own agent, and missing when
     // none is installed. With no agent to name for any other reason (the library's settings can't be read, say) the failure
     // is Avanzel's own, in the line of its error. No title says "your agent".
     const kind: FailureKind =
-      error instanceof NoAgentError ? (error.agent ? "gone" : "missing") : harness === null ? "other" : (failure?.kind ?? "other");
+      error instanceof NoAgentError ? (error.agent ? "gone" : "missing") : harness === null ? "other" : (run?.kind ?? "other");
     return {
       kind,
       agent: harness ? harnessName(harness) : "Avanzel",
       command: harness === "claude" || harness === "codex" ? harness : null,
-      resetsAt: failure?.resetsAt ?? null,
+      resetsAt: run?.resetsAt ?? null,
       seconds: this.timeoutSeconds(),
-      line: failure?.line || errorLine(errorMessage(error)),
+      line: run?.line || errorLine(errorMessage(error)),
     };
   }
 
@@ -1339,7 +1352,7 @@ export class Controller {
    */
   private noteGone(job: FilingJob): void {
     this.forgetWaits((capture) => capture === job.capturePath);
-    if (this.setup.owns(job)) return this.setup.failed(job, NOTE_GONE);
+    if (this.setup.owns(job)) return this.setup.failed(job, null, null);
     if ((this.job === job && this.capsuleState.kind === "filing") || this.cardCapture === job.capturePath) this.setCapsule({ kind: "hidden" });
   }
 
@@ -1508,8 +1521,9 @@ export class Controller {
       }
       if (problem === null) return this.runFiling(next);
       if (this.job === next && this.capsuleState.kind === "filing") {
-        const waiting = existsSync(next.capturePath) ? " The note waits in your inbox for the evening review." : "";
-        this.fail("Couldn't take back the agent's first try", `${problem}${waiting}`);
+        // The card says where the corrected words wait, and promises the evening review only while the library's is on.
+        const refused = takeBackRefusedProblem(existsSync(next.capturePath), this.eveningReviewOn());
+        this.fail(refused.title, refused.body);
       }
     });
   }
@@ -1558,7 +1572,7 @@ export class Controller {
       try {
         const problem = await this.takeBack(job);
         this.saveDraft(job, (words) => this.recapture(job, words));
-        if (problem !== null) this.notify("Couldn't take back the agent's first try", problem);
+        if (problem !== null) this.notify(takeBackRefused.title, takeBackRefused.body);
       } catch (error) {
         // The edit stays in `kept`, so quitting saves it.
         this.notify("Couldn't save your edit yet", `${errorMessage(error)}\nYour corrected words are saved to your inbox when you quit.`);
@@ -1602,15 +1616,21 @@ export class Controller {
     }
   }
 
-  /** Undo the commit a stopped run made (none without git or auto_commit, or when it changed nothing); null, or why it couldn't. */
+  /**
+   * Undo the commit a stopped run made (none without git or auto_commit, or when it changed nothing); null, or why it couldn't.
+   * What the person is told of a refusal is the copy's (`takeBackRefused`); the reason is kept in the log.
+   */
   private async takeBack(job: FilingJob): Promise<string | null> {
     const commit = job.outcome?.commit;
     if (!commit) return null;
+    let why: string | null;
     try {
-      return (await (await this.librarian()).undo([commit])) === 1 ? null : "Git refused to undo it; see the library's history.";
+      why = (await (await this.librarian()).undo([commit])) === 1 ? null : "Git refused to undo it; see the library's history.";
     } catch (error) {
-      return errorMessage(error);
+      why = errorMessage(error);
     }
+    if (why !== null) console.warn("take back", why);
+    return why;
   }
 
   /**
@@ -1667,7 +1687,7 @@ export class Controller {
     if (!job || !commit) return;
     const undone = await this.revertFiling(commit);
     this.setCapsule(
-      undone ? { kind: "saved", text: job.text, note: "Undone. The note is back in your inbox." } : { kind: "error", message: "Couldn't undo", detail: "Git refused the revert; see the library's history." },
+      undone ? { kind: "saved", text: job.text, note: "Undone. The note is back in your inbox." } : { kind: "error", message: undoRefused.title, detail: undoRefused.body },
       undone ? 3500 : undefined,
     );
   }
@@ -1802,16 +1822,18 @@ export class Controller {
     if (win?.isDestroyed()) giveUp();
     else win?.once("closed", giveUp);
     try {
-      const { ok, ran, text, agent, seconds, changed } = await this.answerQuestion(question, abort, progress);
+      const { ok, ran, text, agent, seconds, changedFiles, failure } = await this.answerQuestion(question, abort, progress);
       // A run that failed says whose it was; a message thrown before any run comes back as it is. An answer comes with its
-      // lines and the pages its links name; anything else has none. Either says whether the run changed the library.
+      // lines and the pages its links name; anything else has none. Either says how many files the run changed in the library,
+      // and a question that failed says why (`failure`) when an agent can be told of it.
       return {
         ok,
         answer: ran && !ok ? `${agent} couldn't answer.\n${text}` : text,
         agent,
         seconds,
         ...(ok ? answeredFrom(this.vault?.root ?? null, text) : { paragraphs: [], sources: [] }),
-        changed,
+        changedFiles,
+        failure,
       };
     } finally {
       if (win && !win.isDestroyed()) win.removeListener("closed", giveUp);
@@ -1829,26 +1851,26 @@ export class Controller {
    * `abort` stops the run, and `progress` hears the engine's messages. `ran` says whether the agent's run came to its
    * end: true for an answer, whose `text` is the agent's reply, and for a run that failed, whose `text` is the agent's
    * last lines; false when something threw instead (no library, a question the engine refuses), whose `text` is the
-   * error's message. `changed` says whether the run left a change in the library, a file created, changed or deleted, as
+   * error's message. `changedFiles` counts the files the run left changed in the library, created, modified or deleted, as
    * the engine's diff of it finds: an agent asked read-only leaves none, but one that doesn't keep to it may. Nothing
-   * changes when nothing ran.
+   * changes when nothing ran. `failure` says why a question failed, as the engine classifies the run (`classifyFailure`), or
+   * for an agent that isn't there as `gone` (the library's own) or `missing` (none installed); it is null for an answer, and
+   * for anything else that threw, since no agent failed then.
    */
-  private async answerQuestion(
-    question: string,
-    abort: AbortController,
-    progress: (message: string) => void,
-  ): Promise<{ ok: boolean; ran: boolean; text: string; agent: string; seconds: number; changed: boolean }> {
+  private async answerQuestion(question: string, abort: AbortController, progress: (message: string) => void): Promise<Answered> {
     const agent = this.agentName();
+    const harness = this.selectedHarness(); // the agent the question goes to, named before it is asked
     const started = performance.now();
     const seconds = () => (performance.now() - started) / 1000;
     try {
       const { result, changes } = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal, progress }), abort);
-      const changed = !changes.empty;
-      return result.ok
-        ? { ok: true, ran: true, text: result.output, agent, seconds: seconds(), changed }
-        : { ok: false, ran: true, text: lastLines(result.stderr || result.output), agent, seconds: seconds(), changed };
+      const changedFiles = changes.created.length + changes.modified.length + changes.deleted.length;
+      if (result.ok) return { ok: true, ran: true, text: result.output, agent, seconds: seconds(), changedFiles, failure: null };
+      const text = lastLines(result.stderr || result.output);
+      return { ok: false, ran: true, text, agent, seconds: seconds(), changedFiles, failure: this.agentFailure(harness, text, classifyFailure(result)) };
     } catch (error) {
-      return { ok: false, ran: false, text: errorMessage(error), agent, seconds: seconds(), changed: false };
+      const failure = error instanceof NoAgentError ? this.agentFailure(this.failedHarness("auto", error), error) : null;
+      return { ok: false, ran: false, text: errorMessage(error), agent, seconds: seconds(), changedFiles: 0, failure };
     }
   }
 

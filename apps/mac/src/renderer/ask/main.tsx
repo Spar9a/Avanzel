@@ -1,8 +1,9 @@
 // Ask: a question about the library, answered from the library only. Each turn is the question over its answer, as setup's
 // Ask step shows one: the answer's lines, the pages its [[links]] name (each a button that opens it, beside its shelf),
 // and who answered in how many seconds. While the agent looks, a line says what it is doing, and from 10 s on for how
-// long, beside Stop, which gives the question up. When it couldn't answer, a Notice says so, and that the library hasn't
-// changed when the run changed nothing in it; the newest turn's offers Ask again. The newest turn is on top. One question
+// long, beside Stop, which gives the question up. When it couldn't answer, a Notice says what happened and that the library
+// hasn't changed (or what the run changed); the newest turn's offers the one fix: Ask again, Open Terminal for a sign-in
+// (beside Ask again), or Open Settings when the library's agent isn't installed. The newest turn is on top. One question
 // is answered at a time, and Esc closes the window, which gives up a question that is still being answered.
 import "@avanzel/ui/base.css";
 import { Actions, Button, Notice, Row, ShelfTag, Spinner, Stack, Text, TextField } from "@avanzel/ui";
@@ -10,8 +11,9 @@ import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AskResult, AvanzelBridge } from "../../shared/ipc.ts";
 import { pageName } from "../../shared/wikilinks.ts";
+import { problemBody } from "../common/problem.tsx";
 import { isShelf, sourceTitle } from "../setup/copy.ts";
-import { answeredLine, failureLines, waitingLine } from "./copy.ts";
+import { answeredLine, failedAnswer, waitingLine } from "./copy.ts";
 import "./styles.css";
 
 declare global {
@@ -126,9 +128,8 @@ function Ask() {
                   <Text variant="headline" as="h2">{turn.question}</Text>
                   {turn.outcome !== null && turn.outcome !== "stopped" && !turn.outcome.ok ? (
                     <Failed
-                      answer={turn.outcome.answer}
-                      changed={turn.outcome.changed}
-                      // Only the newest turn offers it: a failure a later question has come after is past. Ask again keeps
+                      result={turn.outcome}
+                      // Only the newest turn offers its fix: a failure a later question has come after is past. Ask again keeps
                       // what is typed in the field, which gets the focus as Ask again goes.
                       onAskAgain={
                         place === 0
@@ -182,25 +183,34 @@ function Reply({ outcome, progress, onStop }: { outcome: Outcome; progress: Prog
 }
 
 /**
- * A failed answer: what happened is the Notice's title; its body says the library hasn't changed, when the run changed
- * nothing in it, then what the agent said last. Given `onAskAgain`, its one fix asks the question again. A Notice is an
- * alert itself, so it sits outside the turn's status region.
+ * A failed answer: what happened is the Notice's title; its body says the library hasn't changed (or what the run changed)
+ * and what to do, with the command to run set as code (failedAnswer). Given `onAskAgain`, it offers the one fix, the moment's
+ * only primary: Ask again; for an agent that isn't signed in, Open Terminal (through setup's channel, which opens it), with Ask
+ * again beside it, secondary; for an agent that isn't there, Open Settings on Agents (through the capsule's, which opens
+ * Settings), since asking again would only fail again. The primary comes last. A Notice is an alert itself, so it sits outside
+ * the turn's status region.
  */
-function Failed({ answer, changed, onAskAgain }: { answer: string; changed: boolean; onAskAgain?: (() => void) | undefined }) {
-  const { title, body } = failureLines(answer, changed);
+function Failed({ result, onAskAgain }: { result: AskResult; onAskAgain?: (() => void) | undefined }) {
+  const problem = failedAnswer(result, new Date());
   return (
     <Notice
       tone="error"
-      title={title}
+      title={problem.title}
       actions={
         onAskAgain && (
           <Actions align="start">
-            <Button size="small" variant="primary" onClick={onAskAgain}>Ask again</Button>
+            {!problem.settings && (
+              <Button size="small" variant={problem.terminal ? "secondary" : "primary"} onClick={onAskAgain}>Ask again</Button>
+            )}
+            {problem.terminal && <Button size="small" variant="primary" onClick={() => window.avanzel.setup.openTerminal()}>Open Terminal</Button>}
+            {problem.settings && (
+              <Button size="small" variant="primary" onClick={() => window.avanzel.capsule.openSettingsFor("open-settings:agents")}>Open Settings</Button>
+            )}
           </Actions>
         )
       }
     >
-      {body}
+      {problemBody(problem)}
     </Notice>
   );
 }

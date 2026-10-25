@@ -1,4 +1,5 @@
 // The contract between the main process and the renderers (capsule, settings, quick-type, ask, setup).
+import type { AgentFailure, PartialEdits } from "./problems.ts";
 
 export interface FiledPage {
   title: string;
@@ -369,12 +370,15 @@ export type SetupFiling =
       kind: "failed";
       words: string;
       agent: string;
-      /** The harness name, "claude". */
-      harness: string;
       /** errorLine of the failure, or NOTE_GONE. */
       line: string;
-      /** That line asks to sign in. */
-      signedOut: boolean;
+      /**
+       * Why it failed, which the window tells in the capsule's words (`filingProblem`, with "try again" where the capsule
+       * promises a wait). Null for NOTE_GONE: the note left the inbox before any run, so no agent failed.
+       */
+      failure: AgentFailure | null;
+      /** What the failed run left behind in the library; null for NOTE_GONE. */
+      partial: PartialEdits;
     };
 
 /** A question on the Ask step, from the moment it is asked. */
@@ -389,8 +393,12 @@ export type SetupAnswer =
     }
   /** The answer's lines (answerSources), and the pages its [[links]] name that are in the library. */
   | { kind: "answered"; question: string; paragraphs: string[]; sources: FiledPage[] }
-  /** The agent couldn't answer: `line` says why (errorLine). */
-  | { kind: "failed"; question: string; agent: string; line: string };
+  /**
+   * The question failed. `failure` says why, which the step tells as the Ask window does (`askProblem`); null when no agent
+   * failed because the question never reached one (no library, settings that can't be read), when `line` (errorLine) says why.
+   * `changedFiles`: how many files the run left changed in the library; 0 when nothing ran.
+   */
+  | { kind: "failed"; question: string; agent: string; line: string; failure: AgentFailure | null; changedFiles: number };
 
 /** Everything the setup window shows, in one snapshot (setup:changed). Later tasks add fields. */
 export interface SetupSnapshot {
@@ -485,10 +493,16 @@ export interface AskResult {
   /** ok: the pages its [[links]] name that are in the library; [] otherwise. */
   sources: FiledPage[];
   /**
-   * Whether the run left a change in the library: a file created, changed or deleted. An agent asked read-only leaves
-   * none, but one that doesn't keep to it may. False when nothing ran.
+   * How many files the run left changed in the library: created, changed or deleted. An agent asked read-only leaves none,
+   * but one that doesn't keep to it may. 0 when nothing ran.
    */
-  changed: boolean;
+  changedFiles: number;
+  /**
+   * Why it failed, as the window tells it (`askProblem`): null for an answer, and for a question that never reached an agent
+   * (no library, settings that can't be read, a question the engine refuses), when `answer` says why. A library whose agent
+   * isn't installed is told by its failure (`gone`, or `missing` when none is).
+   */
+  failure: AgentFailure | null;
 }
 
 /** Preload bridge exposed as `window.avanzel`. */
@@ -510,6 +524,10 @@ export interface AvanzelBridge {
     open(): void;
     dismiss(): void;
     keepOpen(keep: boolean): void;
+    /**
+     * An error card's one button, or a notice's Open Settings (see CardAction). The Ask window's Open Settings uses it too,
+     * with "open-settings:agents", when the library's agent isn't installed.
+     */
     openSettingsFor(action: string): void;
     /** Try again, after the speech models' download failed: it starts over, and the capsule shows its progress. */
     retryDownload(): void;
@@ -580,7 +598,10 @@ export interface AvanzelBridge {
     createLibrary(): Promise<SetupSnapshot>;
     /** Change…, on Found: the folder picker, whose choice becomes libraryPath. Nothing is made yet. */
     chooseFolder(): Promise<SetupSnapshot>;
-    /** Open Terminal, on a signed-out agent's Notice: Terminal opens, for the person to sign the agent in. */
+    /**
+     * Open Terminal, on a signed-out agent's Notice (setup's, and the Ask window's, which has no channel of its own):
+     * Terminal opens, for the person to sign the agent in.
+     */
     openTerminal(): void;
     /** Copy, beside an install command on Found: the command that installs `agent` goes to the clipboard. */
     copy(agent: AgentInstall): void;

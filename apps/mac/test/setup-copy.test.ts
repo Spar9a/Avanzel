@@ -6,7 +6,8 @@ import {
   cancelledLine,
   earsLine,
   ESTIMATE_SECONDS,
-  failedLine,
+  failedAnswer,
+  failedFiling,
   filedHeading,
   isAgentProblem,
   megabytes,
@@ -22,8 +23,8 @@ import {
   TRANSCRIBING,
   workingLine,
 } from "../src/renderer/setup/copy.ts";
-import { NOTE_GONE, type AgentStatus, type FiledPage } from "../src/shared/ipc.ts";
-import { ownLine as sharedOwnLine } from "../src/shared/problems.ts";
+import { NOTE_GONE, type AgentStatus, type FiledPage, type SetupAnswer, type SetupFiling } from "../src/shared/ipc.ts";
+import { ownLine as sharedOwnLine, type AgentFailure } from "../src/shared/problems.ts";
 
 /** A page an agent filed, from its library path without ".md": "ideas/a" is "a" on Ideas. */
 const filed = (rel: string): FiledPage => {
@@ -172,11 +173,143 @@ describe("setup copy", () => {
     // Every weekday by its whole name, not only the first one of the week.
     expect(reviewLabel("weekly thu 07:30")).toBe("Review my inbox every Thursday at 07:30");
   });
+});
 
-  it("a failed filing says what the agent said and that the words are safe, except of a note gone from the inbox", () => {
-    expect(failedLine("Error: usage limit reached")).toBe("Usage limit reached. Your words are safe in the inbox.");
-    expect(failedLine("")).toBe("Your words are safe in the inbox.");
-    // The words aren't in the inbox then, so nothing says they are.
-    expect(failedLine(NOTE_GONE)).toBe("The note isn't in the inbox any more.");
+// A failed filing in the setup window is told as the capsule tells it (filingProblem), except that setup starts no wait and no
+// watch: it says to try again where the capsule says the note will be filed (after: "retry").
+describe("a failed filing in setup", () => {
+  type Failed = Extract<SetupFiling, { kind: "failed" }>;
+  /** Sunday 25 October 2026, 10:00 in this zone, and `hour`:00 `days` later, in epoch ms, as a failure's reset is. */
+  const now = new Date(2026, 9, 25, 10, 0);
+  const at = (days: number, hour: number) => new Date(2026, 9, 25 + days, hour).getTime();
+  const claude: AgentFailure = { kind: "other", agent: "Claude Code", command: "claude", resetsAt: null, seconds: 900, line: "Error: boom" };
+  /** The setup window's failed filing for a failure, as main hands it over. */
+  const failed = (failure: AgentFailure | null, over: Partial<Failed> = {}): Failed => ({
+    kind: "failed",
+    words: "Plant tulips in October",
+    agent: failure?.agent ?? "Claude Code",
+    line: failure ? failure.line : NOTE_GONE,
+    failure,
+    partial: null,
+    ...over,
+  });
+  const SAFE = "Your note is safe in the inbox";
+
+  it("a usage limit with a known reset says when, and to try again then", () => {
+    expect(failedFiling(failed({ ...claude, kind: "limit", resetsAt: at(0, 15) }), now, true)).toEqual({
+      title: "Claude Code has hit its usage limit.",
+      body: `It resets at 15:00. ${SAFE}; try again then.`,
+    });
+    expect(failedFiling(failed({ ...claude, kind: "limit", resetsAt: at(1, 9) }), now, false).body).toBe(`It resets tomorrow at 09:00. ${SAFE}; try again then.`);
+  });
+
+  it("a usage limit with no reset promises the evening review while it is on, and nothing while it is off", () => {
+    const limit = failed({ ...claude, kind: "limit" });
+    expect(failedFiling(limit, now, true)).toEqual({ title: "Claude Code has hit its usage limit.", body: `${SAFE}; the evening review will try again.` });
+    expect(failedFiling(limit, now, false).body).toBe(`${SAFE}.`);
+  });
+
+  it("a sign-in says what to run, then to try again, and what is safe; the command is what the window sets as code", () => {
+    expect(failedFiling(failed({ ...claude, kind: "signin", line: "Error: not logged in" }), now, true)).toEqual({
+      title: "Claude Code isn't signed in on this Mac.",
+      body: `Run claude once in Terminal and sign in, then try again. ${SAFE}.`,
+      command: "claude",
+    });
+    expect(failedFiling(failed({ ...claude, kind: "signin", agent: "Codex", command: "codex" }), now, true)).toEqual({
+      title: "Codex isn't signed in on this Mac.",
+      body: `Run codex login in Terminal, then try again. ${SAFE}.`,
+      command: "codex login",
+    });
+    const other = failedFiling(failed({ ...claude, kind: "signin", agent: "OpenCode", command: null }), now, true);
+    expect(other).toEqual({ title: "OpenCode isn't signed in on this Mac.", body: `Sign in to OpenCode in Terminal, then try again. ${SAFE}.` });
+    expect(other.command).toBeUndefined();
+  });
+
+  it("a sign-in's words don't depend on the evening review: setup asks for a try, not for a wait", () => {
+    const signedOut = failed({ ...claude, kind: "signin" });
+    expect(failedFiling(signedOut, now, false)).toEqual(failedFiling(signedOut, now, true));
+  });
+
+  it("any other failure keeps the agent's line, as a sentence, then what is safe", () => {
+    expect(failedFiling(failed(claude), now, true)).toEqual({
+      title: "Claude Code couldn't file this note.",
+      body: `Boom. ${SAFE}; the evening review will try again.`,
+    });
+    expect(failedFiling(failed({ ...claude, line: "" }), now, false).body).toBe(`${SAFE}.`);
+  });
+
+  it("a timeout, and an agent that isn't there, are told as the capsule tells them", () => {
+    expect(failedFiling(failed({ ...claude, kind: "timeout" }), now, true)).toEqual({
+      title: "Claude Code took longer than 15 min and was stopped.",
+      body: `${SAFE}; the evening review will try again.`,
+    });
+    expect(failedFiling(failed({ ...claude, kind: "gone" }), now, true).title).toBe("Claude Code isn't installed on this Mac any more.");
+    expect(failedFiling(failed({ ...claude, kind: "missing", agent: "Avanzel", command: null }), now, true).title).toBe("Avanzel needs an AI agent to do the filing.");
+  });
+
+  it("partial edits are told after what is safe: kept as a commit, or left outside the history", () => {
+    expect(failedFiling(failed(claude, { partial: "commit" }), now, true).body).toBe(
+      `Boom. ${SAFE}; the evening review will try again. Claude Code's partial edits are kept as their own commit in the library's history.`,
+    );
+    expect(failedFiling(failed({ ...claude, kind: "limit", resetsAt: at(0, 15) }, { partial: "uncommitted" }), now, true).body).toBe(
+      `It resets at 15:00. ${SAFE}; try again then. Its partial edits stay in the library, outside its history, so they can't be undone.`,
+    );
+  });
+
+  it("a note gone from the inbox before any run keeps its own title and line: no agent failed, and the words aren't there to be safe", () => {
+    expect(failedFiling(failed(null, { agent: "Claude Code" }), now, true)).toEqual({ title: "Claude Code couldn't file it.", body: NOTE_GONE });
+    expect(failedFiling(failed(null), now, false)).toEqual({ title: "Claude Code couldn't file it.", body: "The note isn't in the inbox any more." });
+  });
+});
+
+// A failed answer on the Ask step is told as the Ask window tells it (askProblem).
+describe("a failed answer in setup", () => {
+  type Failed = Extract<SetupAnswer, { kind: "failed" }>;
+  const now = new Date(2026, 9, 25, 10, 0);
+  const claude: AgentFailure = { kind: "other", agent: "Claude Code", command: "claude", resetsAt: null, seconds: 900, line: "Error: boom" };
+  const failed = (failure: AgentFailure | null, over: Partial<Failed> = {}): Failed => ({
+    kind: "failed",
+    question: "Where are the bulbs?",
+    agent: "Claude Code",
+    line: failure?.line ?? "",
+    failure,
+    changedFiles: 0,
+    ...over,
+  });
+
+  it("says what happened, that the library hasn't changed, and the agent's line", () => {
+    expect(failedAnswer(failed(claude), now)).toEqual({
+      title: "Claude Code couldn't answer.",
+      body: "Your library hasn't changed. Boom.",
+      terminal: false,
+      settings: false,
+    });
+  });
+
+  it("a usage limit names its reset, and a sign-in what to run", () => {
+    expect(failedAnswer(failed({ ...claude, kind: "limit", resetsAt: new Date(2026, 9, 26, 9).getTime() }), now)).toMatchObject({
+      title: "Claude Code has hit its usage limit.",
+      body: "Your library hasn't changed. It resets tomorrow at 09:00.",
+    });
+    expect(failedAnswer(failed({ ...claude, kind: "signin" }), now)).toMatchObject({
+      title: "Claude Code isn't signed in on this Mac.",
+      body: "Your library hasn't changed. Run claude once in Terminal and sign in, then ask again.",
+      command: "claude",
+      terminal: true,
+    });
+  });
+
+  it("says what a run changed, as the Ask window does", () => {
+    expect(failedAnswer(failed(claude, { changedFiles: 1 }), now).body).toBe("Claude Code changed 1 file while answering; it's left as it is. Boom.");
+    expect(failedAnswer(failed(claude, { changedFiles: 3 }), now).body).toBe("Claude Code changed 3 files while answering; they're left as they are. Boom.");
+  });
+
+  it("an answer that failed before any agent was asked is Avanzel's own, in the line of what went wrong", () => {
+    expect(failedAnswer(failed(null, { line: "Set up your library first: Avanzel Settings → General." }), now)).toEqual({
+      title: "Avanzel couldn't answer.",
+      body: "Your library hasn't changed. Set up your library first: Avanzel Settings → General.",
+      terminal: false,
+      settings: false,
+    });
   });
 });

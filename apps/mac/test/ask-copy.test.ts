@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { answeredLine, failureLines, LOOKING, waitingLine } from "../src/renderer/ask/copy.ts";
+import { answeredLine, failedAnswer, LOOKING, waitingLine } from "../src/renderer/ask/copy.ts";
+import type { AskResult } from "../src/shared/ipc.ts";
+import type { AgentFailure } from "../src/shared/problems.ts";
+
+/** Sunday 25 October 2026, 10:00 in this zone. */
+const now = new Date(2026, 9, 25, 10, 0);
+const claude: AgentFailure = { kind: "other", agent: "Claude Code", command: "claude", resetsAt: null, seconds: 900, line: "Error: boom" };
+/** An answer that failed, as main hands it to the Ask window: a failed run of Claude Code unless `over` says otherwise. */
+const failed = (over: Partial<AskResult> = {}): AskResult => ({
+  ok: false,
+  answer: "Claude Code couldn't answer.\nError: boom",
+  agent: "Claude Code",
+  seconds: 3,
+  paragraphs: [],
+  sources: [],
+  changedFiles: 0,
+  failure: claude,
+  ...over,
+});
 
 describe("ask copy", () => {
   it("answeredLine counts whole seconds and never says 0 s", () => {
@@ -7,38 +25,67 @@ describe("ask copy", () => {
     expect(answeredLine("Claude Code", 12.6)).toBe("Claude Code answered in 13 s");
   });
 
-  it("failureLines splits what happened from what is safe, then what the agent said", () => {
-    // The run changed nothing in the library. The agent's line is as setup shows one: a capital, and a full stop.
-    expect(failureLines("fake couldn't answer.\nagent crashed: not logged in", false)).toEqual({
-      title: "fake couldn't answer.",
-      body: "Your library hasn't changed. Agent crashed: not logged in.",
-    });
-    // Nothing ran: the message alone is the title, and the body says only what is safe.
-    expect(failureLines('Ask a question, e.g. "what are my goals this year?"', false)).toEqual({
-      title: 'Ask a question, e.g. "what are my goals this year?"',
-      body: "Your library hasn't changed.",
-    });
-  });
-
-  it("failureLines says the library hasn't changed only when the run changed nothing in it", () => {
-    // The run left a change, as an agent that doesn't keep to read-only may: the body is the agent's line alone.
-    expect(failureLines("OpenCode couldn't answer.\nagent crashed: not logged in", true)).toEqual({
-      title: "OpenCode couldn't answer.",
-      body: "Agent crashed: not logged in.",
-    });
-    expect(failureLines("OpenCode couldn't answer.", true)).toEqual({ title: "OpenCode couldn't answer.", body: "" });
-  });
-
-  it("failureLines joins the agent's lines with spaces, skips the empty ones, and drops a first Error label", () => {
-    expect(failureLines("Codex couldn't answer.\n  echoed prompt line  \n\nERROR: the model is not supported\n", false)).toEqual({
-      title: "Codex couldn't answer.",
-      body: "Your library hasn't changed. Echoed prompt line ERROR: the model is not supported.",
-    });
-    expect(failureLines("Claude Code couldn't answer.\nError: usage limit reached", false)).toEqual({
+  it("a failed run is told as the Ask rows tell it: what happened, that the library hasn't changed, and the agent's line", () => {
+    expect(failedAnswer(failed(), now)).toEqual({
       title: "Claude Code couldn't answer.",
-      body: "Your library hasn't changed. Usage limit reached.",
+      body: "Your library hasn't changed. Boom.",
+      terminal: false,
+      settings: false,
     });
-    expect(failureLines("", false)).toEqual({ title: "", body: "Your library hasn't changed." });
+  });
+
+  it("a usage limit says when it resets, and the answer can be asked again", () => {
+    expect(failedAnswer(failed({ failure: { ...claude, kind: "limit", resetsAt: new Date(2026, 9, 26, 9).getTime() } }), now)).toEqual({
+      title: "Claude Code has hit its usage limit.",
+      body: "Your library hasn't changed. It resets tomorrow at 09:00.",
+      terminal: false,
+      settings: false,
+    });
+  });
+
+  it("a sign-in names what to run, as code, and offers Terminal", () => {
+    expect(failedAnswer(failed({ failure: { ...claude, kind: "signin" } }), now)).toEqual({
+      title: "Claude Code isn't signed in on this Mac.",
+      body: "Your library hasn't changed. Run claude once in Terminal and sign in, then ask again.",
+      command: "claude",
+      terminal: true,
+      settings: false,
+    });
+  });
+
+  it("an agent that isn't there offers Settings, and says nothing of the library when none is installed", () => {
+    expect(failedAnswer(failed({ failure: { ...claude, kind: "gone" } }), now)).toMatchObject({
+      title: "Claude Code isn't installed on this Mac any more.",
+      body: "Your library hasn't changed. Settings → Agents can choose another agent, or has its install command.",
+      settings: true,
+    });
+    expect(failedAnswer(failed({ failure: { ...claude, kind: "missing", agent: "Avanzel", command: null } }), now)).toMatchObject({
+      title: "Avanzel needs an AI agent to answer.",
+      body: "Claude Code works best, and Settings → Agents has its install command.",
+      settings: true,
+    });
+  });
+
+  it("says what the run changed, by the number of files, and leaves the title be", () => {
+    expect(failedAnswer(failed({ changedFiles: 1 }), now)).toMatchObject({
+      title: "Claude Code couldn't answer.",
+      body: "Claude Code changed 1 file while answering; it's left as it is. Boom.",
+    });
+    expect(failedAnswer(failed({ changedFiles: 3 }), now).body).toBe("Claude Code changed 3 files while answering; they're left as they are. Boom.");
+  });
+
+  it("a question that never reached an agent is Avanzel's own failure, in the message's words", () => {
+    // Nothing ran: no library, settings it can't read, a question the engine refuses. The message alone is the answer, and no agent failed.
+    expect(failedAnswer(failed({ answer: "Set up your library first: Avanzel Settings → General.", failure: null }), now)).toEqual({
+      title: "Avanzel couldn't answer.",
+      body: "Your library hasn't changed. Set up your library first: Avanzel Settings → General.",
+      terminal: false,
+      settings: false,
+    });
+    // A message of several lines is told in one, as setup shows an agent's line.
+    expect(failedAnswer(failed({ answer: "\nThe settings can't be read:\n config.toml: invalid TOML at line 2 \n\n", failure: null }), now).body).toBe(
+      "Your library hasn't changed. The settings can't be read: config.toml: invalid TOML at line 2.",
+    );
   });
 
   it("waitingLine says the agent looks, and counts its whole seconds only from 10 s on", () => {

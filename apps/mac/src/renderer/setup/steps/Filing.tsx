@@ -4,15 +4,17 @@
 // heading says it is all filed, and the card is stamped FILED, the step's one orchestrated moment. Lines say what the
 // filing wrote, over the receipt of its shelf pages, with its proof (the words are kept in raw/, and a snapshot is
 // saved) and Undo (or ⌘Z), which puts everything back, and its first page to open. A cancelled or undone filing says
-// what stayed and offers to file it again; a failed one says why in a Notice with its one fix. The heading sits in a
-// status region, so VoiceOver hears the start and the end, not each second or each step. There is no Back: the filing
-// goes on by itself, even once the window closes.
+// what stayed and offers to file it again; a failed one says why, in the capsule's words, in a Notice with its one fix.
+// The heading sits in a status region, so VoiceOver hears the start and the end, not each second or each step. There is
+// no Back: the filing goes on by itself, even once the window closes.
 import { Actions, Button, Card, Kbd, Notice, Receipt, Row, SHELVES, ShelfTag, Stack, Text, Zel, type Shelf, type ZelMood } from "@avanzel/ui";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { NOTE_GONE, type NarrationRow, type SetupFiling } from "../../../shared/ipc.ts";
+import { undoRefused } from "../../../shared/problems.ts";
 import { pageName } from "../../../shared/wikilinks.ts";
 import { KEPT_LINE, rowLine, SAVED_LINE, SHOWN_ROWS } from "../../common/narration.ts";
-import { cancelledLine, failedLine, filedHeading, othersLine, pagesLine, receiptPages, stampDate, workingLine } from "../copy.ts";
+import { problemBody } from "../../common/problem.tsx";
+import { cancelledLine, failedFiling, filedHeading, othersLine, pagesLine, receiptPages, stampDate, workingLine } from "../copy.ts";
 import { Frame, useNow, type StepProps } from "../frame.tsx";
 
 const api = window.avanzel.setup;
@@ -57,7 +59,7 @@ export function Filing({ snap, go }: StepProps) {
             </Actions>
           </>
         )}
-        {filing.kind === "failed" && <Failure filing={filing} />}
+        {filing.kind === "failed" && <Failure filing={filing} eveningReview={snap.eveningReview?.enabled ?? false} />}
       </Stack>
     </Frame>
   );
@@ -176,7 +178,7 @@ function Outcome({ filing, where, inObsidian }: { filing: Filed; where: string; 
         <Text variant="footnote" tone="secondary">{pagesLine(created, rows.length - created, where) ?? `${filing.agent} noted it in the log.`}</Text>
         {more && <Text variant="footnote" tone="secondary">{more}</Text>}
       </Stack>
-      {filing.undoRefused && <Notice tone="error" title="This one can't be undone automatically.">The library's history keeps both versions.</Notice>}
+      {filing.undoRefused && <Notice tone="error" title={undoRefused.title}>{undoRefused.body}</Notice>}
       {rows.length > 0 && <Receipt pages={rows} />}
       <Stack gap={4}>
         <Text variant="footnote" tone="secondary">{KEPT_LINE}</Text>
@@ -220,42 +222,25 @@ function useUndoKey(on: boolean): void {
 }
 
 /**
- * A failed filing's Notice: an agent asking to sign in says how, with Open Terminal; any other failure gives the agent's
- * own line. Try again files the note again. A note gone from the inbox has nothing to try again: Continue goes on.
+ * A failed filing's Notice, in the capsule's words (failedFiling): what happened, and what is safe. An agent asking to sign in
+ * says how, with the command set as code, and Open Terminal comes beside Try again; any other failure offers Try again alone,
+ * which files the note again. A note gone from the inbox has nothing to try again: Continue goes on.
  */
-function Failure({ filing }: { filing: Failed }) {
-  const tryAgain = <Button size="small" variant="primary" onClick={() => api.fileAgain()}>Try again</Button>;
-  if (filing.signedOut) {
-    return (
-      <Notice
-        tone="error"
-        title={`${filing.agent} isn't signed in on this Mac.`}
-        actions={
-          <Actions align="start">
-            <Button size="small" onClick={() => api.openTerminal()}>Open Terminal</Button>
-            {tryAgain}
-          </Actions>
-        }
-      >
-        {signInBody(filing)}
-      </Notice>
-    );
-  }
+function Failure({ filing, eveningReview }: { filing: Failed; eveningReview: boolean }) {
+  const problem = failedFiling(filing, new Date(), eveningReview);
+  if (filing.line === NOTE_GONE) return <Notice tone="error" title={problem.title}>{problem.body}</Notice>;
   return (
-    <Notice tone="error" title={`${filing.agent} couldn't file it.`} actions={filing.line === NOTE_GONE ? undefined : <Actions align="start">{tryAgain}</Actions>}>
-      {failedLine(filing.line)}
+    <Notice
+      tone="error"
+      title={problem.title}
+      actions={
+        <Actions align="start">
+          {filing.failure?.kind === "signin" && <Button size="small" onClick={() => api.openTerminal()}>Open Terminal</Button>}
+          <Button size="small" variant="primary" onClick={() => api.fileAgain()}>Try again</Button>
+        </Actions>
+      }
+    >
+      {problemBody(problem)}
     </Notice>
   );
-}
-
-/** How to sign the agent in, then file the note again; meanwhile the words wait in the inbox. */
-function signInBody({ harness, agent }: Failed): ReactNode {
-  switch (harness) {
-    case "claude":
-      return <>Run <Text variant="code">claude</Text> once in Terminal and sign in, then try again. Your words are safe in the inbox.</>;
-    case "codex":
-      return <>Run <Text variant="code">codex login</Text> in Terminal, then try again. Your words are safe in the inbox.</>;
-    default:
-      return <>Sign in to {agent} in Terminal, then try again. Your words are safe in the inbox.</>;
-  }
 }

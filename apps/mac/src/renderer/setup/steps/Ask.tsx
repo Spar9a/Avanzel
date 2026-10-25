@@ -9,7 +9,8 @@ import { Button, Card, Notice, Row, ShelfTag, Stack, Text, TextField, Zel, type 
 import { useId, useRef, useState } from "react";
 import type { SetupAnswer } from "../../../shared/ipc.ts";
 import { pageName } from "../../../shared/wikilinks.ts";
-import { askingLine, isShelf, ownLine, sourceTitle } from "../copy.ts";
+import { problemBody } from "../../common/problem.tsx";
+import { askingLine, failedAnswer, isShelf, sourceTitle } from "../copy.ts";
 import { Frame, useNow, type StepProps } from "../frame.tsx";
 
 const api = window.avanzel.setup;
@@ -19,6 +20,7 @@ const TICK_MS = 250;
 
 type Asking = Extract<SetupAnswer, { kind: "asking" }>;
 type Answered = Extract<SetupAnswer, { kind: "answered" }>;
+type Failed = Extract<SetupAnswer, { kind: "failed" }>;
 
 export function Ask({ snap, go }: StepProps) {
   const [question, setQuestion] = useState("");
@@ -92,12 +94,19 @@ export function Ask({ snap, go }: StepProps) {
         {answer?.kind === "asking" && <AskingLine answer={answer} />}
         {/* VoiceOver hears the answer once it is in, not each second before it. */}
         <div role="status">{answer?.kind === "answered" && <Answer answer={answer} />}</div>
-        {answer?.kind === "failed" && (
-          <Notice tone="error" title={`${answer.agent} couldn't answer.`}>{ownLine(answer.line) || undefined}</Notice>
-        )}
+        {answer?.kind === "failed" && <Failure answer={answer} />}
       </Stack>
     </Frame>
   );
+}
+
+/**
+ * A question that failed, as the Ask window tells it (failedAnswer): what happened, that the library hasn't changed (or what the
+ * run changed), and what to do. The step keeps its own ways on: Ask this asks the suggestion again, and Skip goes on.
+ */
+function Failure({ answer }: { answer: Failed }) {
+  const problem = failedAnswer(answer, new Date());
+  return <Notice tone="error" title={problem.title}>{problemBody(problem)}</Notice>;
 }
 
 /**

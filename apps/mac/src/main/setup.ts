@@ -8,7 +8,6 @@ import path from "node:path";
 import {
   Vault,
   WAITING,
-  asksToSignIn,
   errorLine,
   loadSettings,
   selectHarness,
@@ -18,7 +17,7 @@ import {
   type Harness,
   type ShadowTask,
 } from "@avanzel/engine";
-import { AGENT_INSTALLS, agentWorks, isSetupStep } from "../shared/ipc.ts";
+import { AGENT_INSTALLS, agentWorks, isSetupStep, NOTE_GONE } from "../shared/ipc.ts";
 import type {
   AgentInstall,
   AgentStatus,
@@ -39,7 +38,8 @@ import type {
   TaskInfo,
   UpHereSnapshot,
 } from "../shared/ipc.ts";
-import { errorMessage, harnessName, LIBRARY_PICKER, type FilingJob, type Recording } from "./jobs.ts";
+import type { AgentFailure, PartialEdits } from "../shared/problems.ts";
+import { errorMessage, harnessName, LIBRARY_PICKER, type Answered, type FilingJob, type Recording } from "./jobs.ts";
 import { answeredFrom, captureMeta, obsidianUrl } from "./library-info.ts";
 import { permissionStatus, requestMicrophone } from "./permissions.ts";
 import { runningAppNames } from "./running-apps.ts";
@@ -123,12 +123,8 @@ export interface SetupHost {
   takeBack(job: FilingJob): Promise<string | null>;
   /** Git takes back a filing's `commit`, in queue order (`revertFiling`). */
   revert(commit: string): Promise<boolean>;
-  /** The library's agent answers `question`, read-only (`answerQuestion`); `changed`, which setup doesn't show, says whether it left a change. */
-  answer(
-    question: string,
-    abort: AbortController,
-    progress: (message: string) => void,
-  ): Promise<{ ok: boolean; ran: boolean; text: string; agent: string; seconds: number; changed: boolean }>;
+  /** The library's agent answers `question`, read-only (`answerQuestion`); a failed answer carries why (`failure`) and how many files the run changed. */
+  answer(question: string, abort: AbortController, progress: (message: string) => void): Promise<Answered>;
   /** A capture in the library's inbox (the library's `newCapture`); without a library, it throws. */
   newCapture(text: string, options: CaptureOptions): Capture;
 
@@ -1042,11 +1038,16 @@ export class Setup {
     this.host.broadcast();
   }
 
-  /** The setup window's filing failed: the line that says why, and whether it asks to sign in. The capture stays put. */
-  failed(job: FilingJob, line: string): void {
+  /**
+   * The setup window's filing failed. `failure` says why, and the window tells it in the capsule's words, with "try again"
+   * where the capsule promises a wait, since setup starts neither a wait nor a watch; `partial`: what the run left behind in the
+   * library. `failure` is null when the note left the inbox before any run: no agent failed, and the window has a line of its
+   * own for it (NOTE_GONE). The capture stays put.
+   */
+  failed(job: FilingJob, failure: AgentFailure | null, partial: PartialEdits): void {
     const session = this.session;
     if (session?.job !== job) return;
-    session.filing = { kind: "failed", words: job.text, agent: job.agent, harness: this.libraryHarness() ?? "", line, signedOut: asksToSignIn(line) };
+    session.filing = { kind: "failed", words: job.text, agent: job.agent, line: failure ? failure.line : NOTE_GONE, failure, partial };
     this.host.broadcast();
   }
 
@@ -1089,7 +1090,7 @@ export class Setup {
     session.askAbort = null;
     session.answer = result.ok
       ? { kind: "answered", question: asked, ...answeredFrom(this.host.vault()?.root ?? null, result.text) }
-      : { kind: "failed", question: asked, agent: result.agent, line: errorLine(result.text) };
+      : { kind: "failed", question: asked, agent: result.agent, line: errorLine(result.text), failure: result.failure, changedFiles: result.changedFiles };
     this.host.broadcast();
     return this.snapshot();
   }

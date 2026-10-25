@@ -3,7 +3,7 @@ import { expect, test, type ElectronApplication, type Page } from "@playwright/t
 import { chmodSync, existsSync, mkdtempSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Vault, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
+import { Vault, git, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import {
   agentCalls,
   agentStubs,
@@ -17,6 +17,7 @@ import {
   filingCodex,
   gitOut,
   launch,
+  limitedClaude,
   limitedClaudeFor,
   limitedCodexFor,
   makeLibrary,
@@ -29,6 +30,7 @@ import {
   snap,
   speechWav,
   stubPicker,
+  tomorrowAtNine,
   windowFor,
 } from "./helpers.ts";
 
@@ -40,9 +42,10 @@ const archived = (root: string) => filesUnder(root, "raw").filter((rel) => rel.e
 const mentioning = (root: string, words: string) =>
   filesUnder(root, ".").filter((rel) => rel.endsWith(".md") && read(root, rel).includes(words));
 
-/** Dictation filed by a fake agent whose first run gets halfway (goals/half.md) and then hangs. */
-async function dictateToStallingAgent(transcript: string, extra: Record<string, string> = {}) {
+/** Dictation filed by a fake agent whose first run gets halfway (goals/half.md) and then hangs. `prepare` sets the library up first. */
+async function dictateToStallingAgent(transcript: string, extra: Record<string, string> = {}, prepare: (library: string) => void = () => {}) {
   const library = await makeLibrary({ git: true });
+  prepare(library);
   const app = await launch({
     AVANZEL_LIBRARY: library,
     AVANZEL_FAKE_AUDIO: speechWav("hello"),
@@ -156,6 +159,51 @@ test("cancelling an Edit takes back what the stopped run did and files the words
   expect(exists(library, "goals/half.md")).toBe(false);
   expect(read(library, "index.md")).not.toContain("left by a stalled run");
   expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+/**
+ * "misheard words", dictated to a stalling agent and Edited, whose stopped run left a commit that git then can't take back: the page
+ * it started was changed by hand and committed since. Then "corrected words" are filed. Returns the library, the app and its capsule,
+ * and the state of the card that shows. The library's evening review is on unless `eveningReview` is false.
+ */
+async function editWhoseFirstTryStays(eveningReview: boolean) {
+  // The library's tasks are set before the agent runs: the run's guard puts back any change to them made while it works.
+  const { library, app, capsule } = await dictateToStallingAgent("misheard words", {}, (root) => {
+    if (eveningReview) return;
+    const file = path.join(root, "tasks", "evening-review.md");
+    writeFileSync(file, readFileSync(file, "utf8").replace("enabled: true", "enabled: false"));
+  });
+  await capsule.getByRole("button", { name: "Edit" }).click();
+  await expect.poll(() => capsuleKind(app)).toBe("editing");
+  // The stopped run's leftovers are committed once it is over. A change by hand to the page it started is committed after them:
+  // taking the leftovers back would take that change with it.
+  await expect.poll(() => gitOut(library, "log", "--format=%s"), { timeout: 30_000 }).toContain("avanzel: leftovers of");
+  writeFileSync(path.join(library, "goals", "half.md"), "# Half done, by hand\n");
+  expect(await git.commitAll(library, "An edit by hand")).not.toBeNull();
+  await capsule.getByRole("textbox").fill("corrected words");
+  await capsule.getByRole("button", { name: "File" }).click();
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+  return { library, app, capsule, state: await call(app, "capsuleStateForTests") };
+}
+
+const FIRST_TRY = "The agent's first try can't be taken back automatically.";
+const BOTH_VERSIONS = "Usually a later change touched the same lines. The library's history keeps both versions.";
+
+test("an Edit whose first try git won't take back says so, and that the note waits for the evening review", async () => {
+  const { library, app, capsule, state } = await editWhoseFirstTryStays(true);
+  expect(state).toEqual({ kind: "error", message: FIRST_TRY, detail: `${BOTH_VERSIONS} The note waits in your inbox for the evening review.` });
+  await expect(capsule.getByRole("alert")).toContainText(FIRST_TRY);
+  await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]); // nothing to fix
+  // The corrected words wait in the inbox, and the change by hand stays.
+  expect(inboxWords(library)).toEqual([expect.stringContaining("corrected words")]);
+  expect(read(library, "goals/half.md")).toBe("# Half done, by hand\n");
+  await app.close();
+});
+
+test("an Edit whose first try git won't take back promises no evening review while it is off", async () => {
+  const { app, state } = await editWhoseFirstTryStays(false);
+  expect(state).toEqual({ kind: "error", message: FIRST_TRY, detail: `${BOTH_VERSIONS} Your note is safe in the inbox.` });
   await app.close();
 });
 
@@ -396,18 +444,6 @@ test("when a symlinked inbox keeps the agent's rewrite, the capsule says where t
 //
 // Each of these files with Claude Code, whose stand-in `claude` acts as the test made it (filingClaude), on a Mac whose only
 // agents are the stand-ins in the test's folder (onlyAgentsIn): which other agents are installed decides the card.
-
-/** Tomorrow at 09:00 in this zone, in epoch seconds, as Claude Code's rate limit gives its reset. */
-function tomorrowAtNine(): number {
-  const day = new Date();
-  day.setDate(day.getDate() + 1);
-  day.setHours(9, 0, 0, 0);
-  return Math.floor(day.getTime() / 1000);
-}
-
-/** A `claude` that has hit its usage limit, which resets at `resetsAt` (epoch seconds; tomorrow at 09:00 unless given): it prints a stream, as Claude Code does. */
-const limitedClaude = (resetsAt = tomorrowAtNine()) =>
-  filingClaude({ FAKE_AGENT_STREAM: "claude", FAKE_AGENT_MODE: "limit", FAKE_AGENT_RESETS_AT: String(resetsAt) });
 
 /** What `claudeLibrary` takes: the limit of its runs, whether its evening review is on, and more variables to launch with. */
 type ClaudeLibraryOptions = { timeoutSeconds?: number; eveningReview?: boolean; env?: Record<string, string> };

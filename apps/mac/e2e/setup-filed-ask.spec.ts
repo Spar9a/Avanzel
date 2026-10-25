@@ -13,6 +13,7 @@ import {
   launch,
   openedWith,
   recentlyFiled,
+  snap,
   stubOpening,
   throughFound,
   typeFirstThought,
@@ -158,7 +159,8 @@ test("an Undo that git refuses says so, and Undo goes away", async () => {
   await setup.getByRole("button", { name: "Undo", exact: true }).click();
   const notice = setup.getByRole("alert");
   await expect(notice.getByText("This one can't be undone automatically.", { exact: true })).toBeVisible({ timeout: 30_000 });
-  await expect(notice.getByText("The library's history keeps both versions.", { exact: true })).toBeVisible();
+  await expect(notice.getByText("Usually a later change touched the same lines. The library's history keeps both versions.", { exact: true })).toBeVisible();
+  await expect(notice.getByRole("button")).toHaveCount(0); // nothing to fix: Continue is the way on
   // Nothing offers to undo it any more, and the filing stays as it is, the edit by hand included.
   await expect(setup.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
   await expect(setup.getByText(/⌘Z|put everything back/)).toHaveCount(0);
@@ -335,11 +337,12 @@ test("a slow answer shows the time and can be skipped", async () => {
 });
 
 test("an answer that fails says why, and the suggestion asks again", async () => {
-  const { app, setup } = await onAsk(firstRun({ claude: failingAnswers("Error: usage limit reached") }).env);
+  const { app, setup } = await onAsk(firstRun({ claude: failingAnswers("Error: boom") }).env);
   await askThis(setup).click();
   const notice = setup.getByRole("alert");
+  // What happened, that the library hasn't changed, and what the agent said last, as a sentence.
   await expect(notice.getByText("Claude Code couldn't answer.", { exact: true })).toBeVisible({ timeout: 30_000 });
-  await expect(notice.getByText("Usage limit reached.", { exact: true })).toBeVisible();
+  await expect(notice.getByText("Your library hasn't changed. Boom.", { exact: true })).toBeVisible();
   // There is no answer: Skip stays the way on, and Continue doesn't show. Zel is worried beside the failure.
   await expect(setup.getByRole("button", { name: "Skip" })).toBeVisible();
   await expect(setup.getByRole("button", { name: "Continue" })).toHaveCount(0);
@@ -356,6 +359,32 @@ test("an answer that fails says why, and the suggestion asks again", async () =>
   await expect.poll(async () => (await setupSnap(app)).answer, { timeout: 30_000 }).toMatchObject({ kind: "failed", question: "Where are the bulbs?" });
   await expect(setup.getByRole("article")).toContainText("Where are the bulbs?");
   await expect(setup.getByRole("button", { name: "Ask this" })).toHaveCount(0);
+  await app.close();
+});
+
+test("an answer that hits a usage limit says so, and that the library hasn't changed", async () => {
+  const { app, setup } = await onAsk(firstRun({ claude: failingAnswers("Error: usage limit reached") }).env);
+  await askThis(setup).click();
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code has hit its usage limit.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  // The agent named no reset, so none is said.
+  await expect(notice.getByText("Your library hasn't changed.", { exact: true })).toBeVisible();
+  // The step keeps its own buttons: the suggestion asks again, and Skip is the way on.
+  await expect(notice.getByRole("button")).toHaveCount(0);
+  await expect(askThis(setup)).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Skip" })).toBeVisible();
+  expect((await setupSnap(app)).answer).toMatchObject({ kind: "failed", changedFiles: 0, failure: { kind: "limit", agent: "Claude Code", resetsAt: null } });
+  await app.close();
+});
+
+test("an answer that fails for a sign-in names what to run, as code", async () => {
+  const { app, setup } = await onAsk(firstRun({ claude: failingAnswers("Error: not logged in") }).env);
+  await askThis(setup).click();
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code isn't signed in on this Mac.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(notice).toContainText("Your library hasn't changed. Run claude once in Terminal and sign in, then ask again.");
+  await expect(notice.locator("code")).toHaveText("claude");
+  await snap(setup, "setup-ask-failed-signin");
   await app.close();
 });
 

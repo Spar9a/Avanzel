@@ -1,7 +1,7 @@
 // The setup window's Filing step: the first thought is filed in the window, step by step, and what Cancel, a sign-in and
 // another failure do there. Every test launches as a first run (firstRun), taken through Found.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
@@ -13,8 +13,10 @@ import {
   filingClaude,
   firstRun,
   launch,
+  limitedClaude,
   onceMarker,
   shown,
+  snap,
   speechWav,
   throughFound,
   typeFirstThought,
@@ -293,6 +295,14 @@ test("Cancel stops the agent, takes back what it did, and File it again files it
   await app.close();
 });
 
+/** The usage-limit waits the app keeps in its run state, for any library: a filing in setup's window never starts one. */
+async function waitsKept(app: ElectronApplication): Promise<unknown[]> {
+  const file = path.join(await app.evaluate(() => process.env.AVANZEL_USER_DATA ?? ""), "run-state.json");
+  if (!existsSync(file)) return [];
+  const state = JSON.parse(readFileSync(file, "utf8")) as Record<string, { waiting?: unknown[] }>;
+  return Object.values(state).flatMap((library) => library.waiting ?? []);
+}
+
 test("a filing that asks to sign in names it and offers Open Terminal", async () => {
   const { env, home } = firstRun({ claude: failingClaude("Error: not logged in") });
   const app = await launch(env);
@@ -300,27 +310,63 @@ test("a filing that asks to sign in names it and offers Open Terminal", async ()
   await typeFirstThought(setup, "Plant tulips in October");
   const notice = setup.getByRole("alert");
   await expect(notice.getByText("Claude Code isn't signed in on this Mac.", { exact: true })).toBeVisible({ timeout: 30_000 });
-  await expect(notice).toContainText("Run claude once in Terminal and sign in, then try again. Your words are safe in the inbox.");
+  // Setup watches for no sign-in, so it says to try again once signed in, and that the note is safe in the inbox.
+  await expect(notice).toContainText("Run claude once in Terminal and sign in, then try again. Your note is safe in the inbox.");
   await expect(notice.getByText("claude", { exact: true })).toBeVisible(); // the command, set as code
+  await expect(notice.locator("code")).toHaveText("claude");
   const tryAgain = notice.getByRole("button", { name: "Try again", exact: true });
   await expect(tryAgain).toHaveAttribute("data-variant", "primary");
+  await expect(notice.getByRole("button")).toHaveText(["Open Terminal", "Try again"]);
   await expect(setup.getByRole("button", { name: "Continue" })).toHaveAttribute("data-variant", "secondary");
   await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
   await expect(zel(setup)).toHaveAttribute("data-mood", "needs-you");
+  await snap(setup, "setup-filing-signin");
   expect(inbox(path.join(home, "Avanzel"))).toHaveLength(1);
+  expect(await call(app, "signInWatchesForTests")).toEqual([]); // nothing watches for the sign-in, as the words say
   await notice.getByRole("button", { name: "Open Terminal" }).click();
   await expect.poll(() => call(app, "openedForTests")).toEqual(["Terminal"]);
   await app.close();
 });
 
-test("another failure shows its own line", async () => {
-  const { env, home } = firstRun({ claude: failingClaude("Error: usage limit reached") });
+test("a filing that hits a usage limit says when it resets, and that setup waits for nothing", async () => {
+  const { env, home } = firstRun({ claude: limitedClaude() }); // resets tomorrow at 09:00
   const app = await launch(env);
   const setup = await throughFound(app);
   await typeFirstThought(setup, "Plant tulips in October");
   const notice = setup.getByRole("alert");
-  await expect(notice.getByText("Claude Code couldn't file it.", { exact: true })).toBeVisible({ timeout: 30_000 });
-  await expect(notice.getByText("Usage limit reached. Your words are safe in the inbox.", { exact: true })).toBeVisible();
+  await expect(notice.getByText("Claude Code has hit its usage limit.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  // Setup keeps no wait for the reset, so it says to try again then, and that the note is safe in the inbox.
+  await expect(notice.getByText("It resets tomorrow at 09:00. Your note is safe in the inbox; try again then.", { exact: true })).toBeVisible();
+  // Setup's own buttons: Try again alone, the moment's primary, with no other agent to file it with.
+  await expect(notice.getByRole("button")).toHaveText(["Try again"]);
+  await expect(notice.getByRole("button", { name: "Try again", exact: true })).toHaveAttribute("data-variant", "primary");
+  await expect(zel(setup)).toHaveAttribute("data-mood", "needs-you");
+  await snap(setup, "setup-filing-limit");
+  expect(inbox(path.join(home, "Avanzel"))).toHaveLength(1);
+  expect(await waitsKept(app)).toEqual([]);
+  await app.close();
+});
+
+test("a usage limit that names no reset leaves the retry to the evening review", async () => {
+  const { env } = firstRun({ claude: failingClaude("Error: usage limit reached") });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  await typeFirstThought(setup, "Plant tulips in October");
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code has hit its usage limit.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(notice.getByText("Your note is safe in the inbox; the evening review will try again.", { exact: true })).toBeVisible();
+  await expect(notice.getByRole("button")).toHaveText(["Try again"]);
+  await app.close();
+});
+
+test("another failure shows its own line", async () => {
+  const { env, home } = firstRun({ claude: failingClaude("Error: boom") });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  await typeFirstThought(setup, "Plant tulips in October");
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code couldn't file this note.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(notice.getByText("Boom. Your note is safe in the inbox; the evening review will try again.", { exact: true })).toBeVisible();
   await expect(notice.getByRole("button", { name: "Open Terminal" })).toHaveCount(0); // signing in isn't the fix
   expect(inbox(path.join(home, "Avanzel"))).toHaveLength(1);
   // Try again files the same note again: the agent is asked once more.
@@ -328,19 +374,38 @@ test("another failure shows its own line", async () => {
   expect(await filings()).toBe(1);
   await notice.getByRole("button", { name: "Try again", exact: true }).click();
   await expect.poll(filings, { timeout: 30_000 }).toBe(2);
-  await expect(notice.getByText("Claude Code couldn't file it.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(notice.getByText("Claude Code couldn't file this note.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  expect(inbox(path.join(home, "Avanzel"))).toHaveLength(1);
+  await app.close();
+});
+
+test("a failed filing that left edits behind says where they are kept", async () => {
+  // "messy" fails a note that says "unfileable" after rewriting the index: the stopped run's edits are committed on their own.
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch({ ...env, FAKE_AGENT_MODE: "messy" });
+  const setup = await throughFound(app);
+  await typeFirstThought(setup, "This one is unfileable");
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code couldn't file this note.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(
+    notice.getByText(
+      "Agent crashed: cannot file this one. Your note is safe in the inbox; the evening review will try again. Claude Code's partial edits are kept as their own commit in the library's history.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  expect((await setupSnap(app)).filing).toMatchObject({ kind: "failed", partial: "commit", failure: { kind: "other", agent: "Claude Code" } });
   expect(inbox(path.join(home, "Avanzel"))).toHaveLength(1);
   await app.close();
 });
 
 test("a recording started on Filing keeps the capsule through Try again", async () => {
   const words = "Plant tulips in October";
-  const { env } = firstRun({ claude: failingClaude("Error: usage limit reached") });
+  const { env } = firstRun({ claude: failingClaude("Error: boom") });
   const app = await launch({ ...env, AVANZEL_FAKE_AUDIO: speechWav(words), AVANZEL_FAKE_TRANSCRIPT: words });
   const setup = await throughFound(app);
   await typeFirstThought(setup, words);
   const notice = setup.getByRole("alert");
-  await expect(notice.getByText("Claude Code couldn't file it.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(notice.getByText("Claude Code couldn't file this note.", { exact: true })).toBeVisible({ timeout: 30_000 });
   // On Filing the shortcut records as it does anywhere: the capsule listens.
   await pressShortcut(app);
   await expect.poll(() => capsuleKind(app)).toBe("listening");
@@ -349,7 +414,7 @@ test("a recording started on Filing keeps the capsule through Try again", async 
   // the recording goes on, in view.
   await notice.getByRole("button", { name: "Try again", exact: true }).click();
   await expect.poll(filings, { timeout: 30_000 }).toBe(2);
-  await expect(notice.getByText("Claude Code couldn't file it.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(notice.getByText("Claude Code couldn't file this note.", { exact: true })).toBeVisible({ timeout: 30_000 });
   expect(await capsuleKind(app)).toBe("listening");
   await call(app, "cancelRecording");
   await app.close();

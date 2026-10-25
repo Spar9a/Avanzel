@@ -1,21 +1,27 @@
-import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { git, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import {
+  agentStubs,
   alive,
+  answerAs,
   call,
   capsuleKind,
   exists,
   filesUnder,
+  filingClaude,
   launch,
+  limitedClaude,
   makeLibrary,
+  onlyAgentsIn,
   openedWith,
   read,
   recentlyFiled,
   screenshotFixture,
   shown,
+  SIGNED_IN,
   snap,
   speechWav,
   stubOpening,
@@ -268,7 +274,13 @@ test("an Undo git refuses says so on the card, and the edit made since stays", a
   expect(await git.commitAll(library, "An edit by hand")).not.toBeNull();
   await capsule.getByRole("button", { name: "Undo" }).click();
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
-  await expect(capsule.getByText("Couldn't undo")).toBeVisible();
+  // The card says what happened and why, and that the history keeps both versions; there is nothing to fix, so OK alone.
+  const title = "This one can't be undone automatically.";
+  const why = "Usually a later change touched the same lines. The library's history keeps both versions.";
+  await expect(capsule.getByRole("alert")).toContainText(title);
+  await expect(capsule.getByText(why, { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
+  expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: why });
   expect(readFileSync(file, "utf8")).toBe("# Tulips, by hand\n");
   expect(inbox(library)).toEqual([]);
   // The menu's Recently filed is read again all the same: the page is there, under the title the edit gave it.
@@ -354,52 +366,110 @@ test("the newest question comes first", async () => {
 test("a failed answer names the agent that couldn't answer, and a question that can't be asked says only why", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_MODE: "fail" });
-  // The agent ran and failed: its last lines, under the name of the agent whose run it was. There are no lines or pages to
-  // show, and the run changed nothing in the library.
+  // The agent ran and failed: its last lines, under the name of the agent whose run it was, and why, as the engine classifies
+  // it ("not logged in" is a sign-in). There are no lines or pages to show, and the run changed nothing in the library.
   expect(await call(app, "ask", "What are my goals?")).toMatchObject({
     ok: false,
     answer: "fake couldn't answer.\nagent crashed: not logged in",
     agent: "fake",
     paragraphs: [],
     sources: [],
-    changed: false,
+    changedFiles: 0,
+    failure: { kind: "signin", agent: "fake", command: null, resetsAt: null, line: "agent crashed: not logged in" },
   });
-  // Nothing ran: the engine refused the question, and its message comes back as it is. Nothing changed either.
+  // Nothing ran: the engine refused the question, and its message comes back as it is. Nothing changed either, and no agent failed.
   expect(await call(app, "ask", "   ")).toMatchObject({
     ok: false,
     answer: 'Ask a question, e.g. "what are my goals this year?"',
     agent: "fake",
     paragraphs: [],
     sources: [],
-    changed: false,
+    changedFiles: 0,
+    failure: null,
   });
-  // A run that wrote in the library says so, as an agent that doesn't keep to read-only might: this one starts a page,
-  // then runs out of time.
+  // A run that wrote in the library says how many files, as an agent that doesn't keep to read-only might: this one starts a
+  // page, then runs out of time.
   saveSettings(library, { ...loadSettings(library), timeoutSeconds: 2 });
   await app.evaluate(() => {
     process.env.FAKE_AGENT_MODE = "slow-messy";
   });
-  expect(await call(app, "ask", "What changed?")).toMatchObject({ ok: false, answer: expect.stringMatching(/^fake couldn't answer\./), changed: true });
+  expect(await call(app, "ask", "What changed?")).toMatchObject({
+    ok: false,
+    answer: expect.stringMatching(/^fake couldn't answer\./),
+    changedFiles: 1,
+    failure: { kind: "timeout", seconds: 2 },
+  });
   expect(exists(library, "goals/half.md")).toBe(true);
   await app.close();
 });
 
-test("a failed answer says so in the window, says the library hasn't changed, and Ask again asks it again", async () => {
+/** A library that the agent `harness` ("claude") answers, opened on a Mac whose only agents are the stand-ins in `bin`. */
+async function libraryOn(harness: string, bin: string, env: Record<string, string> = {}): Promise<{ library: string; app: ElectronApplication }> {
   const library = await makeLibrary();
-  const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_MODE: "fail" });
+  saveSettings(library, { ...loadSettings(library), harness });
+  return { library, app: await launch({ AVANZEL_LIBRARY: library, ...onlyAgentsIn(bin), ...env }) };
+}
+
+/** Opens the Ask window of `app` and asks `words` in it: the window, and its field. */
+async function askIn(app: ElectronApplication, words: string): Promise<{ ask: Page; field: Locator }> {
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
   const field = ask.getByRole("textbox", { name: "Ask your library" });
-  await field.fill("What are my goals?");
+  await field.fill(words);
   await field.press("Enter");
-  // The Notice names the agent whose run failed, says what is safe, then what that agent said last, as a sentence.
+  return { ask, field };
+}
+
+test("a failed answer says so in the window, says the library hasn't changed, and Ask again asks it again", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_MODE: "fail" });
+  const { ask, field } = await askIn(app, "What are my goals?");
+  // The fake agent's "fail" mode says "not logged in": the Notice reads it as a sign-in. It names the agent whose run failed,
+  // says what is safe, then what to do. fake isn't Claude Code or Codex, so there is no command to run, only to sign in.
+  const notice = ask.getByRole("alert");
+  await expect(notice).toContainText("fake isn't signed in on this Mac.", { timeout: 60_000 });
+  await expect(notice).toContainText("Your library hasn't changed. Sign in to fake in Terminal, then ask again.");
+  await expect(ask.getByRole("heading", { name: "What are my goals?", exact: true })).toBeVisible();
+  // The moment's one primary is the fix, Open Terminal; Ask again is secondary. The primary comes last in the row.
+  const terminal = notice.getByRole("button", { name: "Open Terminal", exact: true });
+  const again = notice.getByRole("button", { name: "Ask again", exact: true });
+  await expect(terminal).toHaveAttribute("data-variant", "primary");
+  await expect(again).toHaveAttribute("data-variant", "secondary");
+  await expect(notice.getByRole("button")).toHaveText(["Ask again", "Open Terminal"]);
+  await expect(notice.locator('button[data-variant="primary"]')).toHaveCount(1);
+  await snap(ask, "9-ask-failed-signin");
+  // Open Terminal opens Terminal (under test it only notes that it would), and leaves the Notice and the question be.
+  expect(await call(app, "openedForTests")).toEqual([]);
+  await terminal.click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["Terminal"]);
+  await expect(notice).toContainText("fake isn't signed in on this Mac.");
+  // The person has signed the agent in. Ask again asks the same question, as a new turn above the failed one, and the field has the focus.
+  await app.evaluate(() => {
+    process.env.FAKE_AGENT_MODE = "ok";
+  });
+  await again.click();
+  await expect(ask.getByText("Q: What are my goals?")).toBeVisible({ timeout: 60_000 });
+  await expect(ask.getByRole("heading")).toHaveText(["What are my goals?", "What are my goals?"]);
+  await expect(field).toBeFocused();
+  // The failed turn stays, without its fixes: only the newest turn offers any.
+  await expect(notice).toContainText("fake isn't signed in on this Mac.");
+  await expect(ask.getByRole("button", { name: "Ask again" })).toHaveCount(0);
+  await expect(ask.getByRole("button", { name: "Open Terminal" })).toHaveCount(0);
+  await app.close();
+});
+
+test("a failed answer's one fix is Ask again, the moment's primary, and the field has the focus after it", async () => {
+  const library = await makeLibrary();
+  // "fail-noisy" echoes the prompt, as Codex does, then fails with a line that is none of a limit, a sign-in or a timeout.
+  const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_MODE: "fail-noisy" });
+  const { ask, field } = await askIn(app, "What are my goals?");
   const notice = ask.getByRole("alert");
   await expect(notice).toContainText("fake couldn't answer.", { timeout: 60_000 });
-  await expect(notice).toContainText("Your library hasn't changed. Agent crashed: not logged in.");
-  await expect(ask.getByRole("heading", { name: "What are my goals?", exact: true })).toBeVisible();
-  // Its one fix, the moment's primary.
+  await expect(notice).toContainText("Your library hasn't changed. The model is not supported with this account.");
+  // Its one fix, the moment's primary, and nothing else to press.
   const again = notice.getByRole("button", { name: "Ask again", exact: true });
   await expect(again).toHaveAttribute("data-variant", "primary");
+  await expect(notice.getByRole("button")).toHaveCount(1);
   await snap(ask, "9-ask-failed");
   // The agent works now. Ask again asks the same question, as a new turn above the failed one, and the field has the focus.
   await app.evaluate(() => {
@@ -412,6 +482,109 @@ test("a failed answer says so in the window, says the library hasn't changed, an
   // The failed turn stays, without its fix: only the newest turn offers one.
   await expect(notice).toContainText("fake couldn't answer.");
   await expect(ask.getByRole("button", { name: "Ask again" })).toHaveCount(0);
+  await app.close();
+});
+
+test("a failed answer from Claude Code names what to run, set as code", async () => {
+  const bin = agentStubs({ claude: filingClaude({ FAKE_AGENT_MODE: "fail" }) }); // "not logged in"
+  const { app } = await libraryOn("claude", bin);
+  const { ask } = await askIn(app, "What are my goals?");
+  const notice = ask.getByRole("alert");
+  await expect(notice).toContainText("Claude Code isn't signed in on this Mac.", { timeout: 60_000 });
+  await expect(notice).toContainText("Your library hasn't changed. Run claude once in Terminal and sign in, then ask again.");
+  await expect(notice.locator("code")).toHaveText("claude"); // the command, and only the command, in code font
+  await expect(notice.getByRole("button", { name: "Open Terminal", exact: true })).toHaveAttribute("data-variant", "primary");
+  await expect(notice.getByRole("button", { name: "Ask again", exact: true })).toHaveAttribute("data-variant", "secondary");
+  await snap(ask, "9-ask-failed-claude");
+  await app.close();
+});
+
+test("a usage limit in the Ask window says when it resets, and that the library hasn't changed", async () => {
+  const bin = agentStubs({ claude: limitedClaude() }); // resets tomorrow at 09:00
+  const { app } = await libraryOn("claude", bin);
+  const { ask } = await askIn(app, "What are my goals?");
+  const notice = ask.getByRole("alert");
+  await expect(notice).toContainText("Claude Code has hit its usage limit.", { timeout: 60_000 });
+  await expect(notice.getByText("Your library hasn't changed. It resets tomorrow at 09:00.", { exact: true })).toBeVisible();
+  // Asking again is the one fix, and no command is shown: there is none to run.
+  await expect(notice.getByRole("button")).toHaveText(["Ask again"]);
+  await expect(notice.getByRole("button", { name: "Ask again" })).toHaveAttribute("data-variant", "primary");
+  await expect(notice.locator("code")).toHaveCount(0);
+  await app.close();
+});
+
+test("a run that changed files says how many, and that they are left as they are", async () => {
+  // A stand-in Claude Code that, asked a question, creates a page, changes one and deletes one, then fails.
+  const bin = agentStubs({
+    claude: `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; exit 0; fi
+case "$2" in "Avanzel task: ask"*) echo "# New" > goals/new.md; echo more >> goals/old.md; rm goals/gone.md; echo 'Error: boom' >&2; exit 1;; esac
+exit 0`,
+  });
+  const library = await makeLibrary();
+  saveSettings(library, { ...loadSettings(library), harness: "claude" });
+  const setUp = () => {
+    writeFileSync(path.join(library, "goals", "old.md"), "# Old\n");
+    writeFileSync(path.join(library, "goals", "gone.md"), "# Gone\n");
+    rmSync(path.join(library, "goals", "new.md"), { force: true });
+  };
+  setUp();
+  const app = await launch({ AVANZEL_LIBRARY: library, ...onlyAgentsIn(bin) });
+  // A file created, one changed and one deleted are three.
+  expect(await call(app, "ask", "What changed?")).toMatchObject({ ok: false, changedFiles: 3, failure: { kind: "other", agent: "Claude Code" } });
+  setUp();
+  const { ask } = await askIn(app, "What changed?");
+  const notice = ask.getByRole("alert");
+  await expect(notice).toContainText("Claude Code couldn't answer.", { timeout: 60_000 });
+  await expect(notice.getByText("Claude Code changed 3 files while answering; they're left as they are. Boom.", { exact: true })).toBeVisible();
+  await expect(notice).not.toContainText("Your library hasn't changed");
+  expect(exists(library, "goals/new.md")).toBe(true); // left as it is
+  expect(exists(library, "goals/gone.md")).toBe(false);
+  await app.close();
+});
+
+test("a question that never reached the agent is Avanzel's own failure, in the words of what is wrong", async () => {
+  // Claude Code is installed, and the library's own settings file is what is wrong: no agent failed, and none is named.
+  const library = await makeLibrary();
+  writeFileSync(path.join(library, ".avanzel", "config.toml"), 'harness = "claude"\ntimeout_seconds =\n');
+  const app = await launch({ AVANZEL_LIBRARY: library, ...onlyAgentsIn(agentStubs()) });
+  const { ask } = await askIn(app, "What are my goals?");
+  const notice = ask.getByRole("alert");
+  await expect(notice).toContainText("Avanzel couldn't answer.", { timeout: 60_000 });
+  await expect(notice.getByText(/^Your library hasn't changed\. .*config\.toml: invalid TOML at line 2, column \d+: .+\.$/)).toBeVisible();
+  await expect(notice).not.toContainText("your agent");
+  await expect(notice.getByRole("button")).toHaveText(["Ask again"]); // mended by hand, then asked again
+  await app.close();
+});
+
+test("when the library's agent is gone, the fix is Open Settings, on Agents", async () => {
+  const bin = mkdtempSync(path.join(tmpdir(), "avz-e2e-bin-"));
+  answerAs(bin, "codex", SIGNED_IN.codex!); // this Mac has Codex, but the library's agent is Claude Code
+  const { app } = await libraryOn("claude", bin);
+  const { ask } = await askIn(app, "What are my goals?");
+  const notice = ask.getByRole("alert");
+  await expect(notice).toContainText("Claude Code isn't installed on this Mac any more.", { timeout: 60_000 });
+  await expect(notice.getByText("Your library hasn't changed. Settings → Agents can choose another agent, or has its install command.", { exact: true })).toBeVisible();
+  // One fix, and it is the primary: Ask again would only fail again until another agent is chosen.
+  await expect(notice.getByRole("button")).toHaveText(["Open Settings"]);
+  const settingsFix = notice.getByRole("button", { name: "Open Settings", exact: true });
+  await expect(settingsFix).toHaveAttribute("data-variant", "primary");
+  await snap(ask, "9-ask-failed-gone");
+  await settingsFix.click();
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("radio", { name: "Agents", exact: true })).toHaveAttribute("aria-checked", "true");
+  await app.close();
+});
+
+test("with no agent installed, the Ask window says Avanzel needs one, and the fix is Open Settings", async () => {
+  const bin = mkdtempSync(path.join(tmpdir(), "avz-e2e-bin-")); // an empty folder: no agent at all
+  const { app } = await libraryOn("auto", bin);
+  const { ask } = await askIn(app, "What are my goals?");
+  const notice = ask.getByRole("alert");
+  await expect(notice).toContainText("Avanzel needs an AI agent to answer.", { timeout: 60_000 });
+  // Nothing ran, so nothing is said of the library.
+  await expect(notice.getByText("Claude Code works best, and Settings → Agents has its install command.", { exact: true })).toBeVisible();
+  await expect(notice.getByRole("button")).toHaveText(["Open Settings"]);
+  await expect(notice.getByRole("button", { name: "Open Settings" })).toHaveAttribute("data-variant", "primary");
   await app.close();
 });
 

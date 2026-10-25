@@ -135,6 +135,24 @@ export function resetReported(dir: string, agent: "claude" | "codex", tag = ""):
 }
 
 /**
+ * Tomorrow at 09:00 in this zone, in epoch seconds, as Claude Code's rate limit gives its reset: a moment no test run can pass,
+ * and one the cards name as "tomorrow at 09:00". A test that waits for the reset to come uses limitedClaudeFor instead.
+ */
+export function tomorrowAtNine(): number {
+  const day = new Date();
+  day.setDate(day.getDate() + 1);
+  day.setHours(9, 0, 0, 0);
+  return Math.floor(day.getTime() / 1000);
+}
+
+/**
+ * A `claude` for agentStubs that has hit its usage limit, which resets at `resetsAt` (epoch seconds; tomorrow at 09:00 unless
+ * given): it prints a stream, as Claude Code does, for a filing and for a question alike.
+ */
+export const limitedClaude = (resetsAt = tomorrowAtNine()) =>
+  filingClaude({ FAKE_AGENT_STREAM: "claude", FAKE_AGENT_MODE: "limit", FAKE_AGENT_RESETS_AT: String(resetsAt) });
+
+/**
  * A `codex` for agentStubs that files: signed in, and any other call runs the engine's fake agent with all of Codex's argv
  * (`exec … -o <file> <prompt>`), which makes it answer as Codex does, in the -o file. `env` steers this stand-in alone, as
  * filingClaude's does.

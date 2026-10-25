@@ -34,6 +34,20 @@ export interface Problem {
 }
 
 /**
+ * What a failed run left behind in the library: its edits are kept as their own commit, or stay with no history to undo them
+ * from; null when it left none.
+ */
+export type PartialEdits = "commit" | "uncommitted" | null;
+
+/**
+ * The failure of something Avanzel couldn't do that no agent failed at: a question it couldn't put (no library, settings it
+ * can't read, a question the engine refuses). `line` is the message that says why. Told as another failure, named Avanzel.
+ */
+export function avanzelFailure(line: string): AgentFailure {
+  return { kind: "other", agent: "Avanzel", command: null, resetsAt: null, seconds: 0, line };
+}
+
+/**
  * A line an agent printed, as a sentence: without the "Error:" label many CLIs put first, with a capital, and with a
  * full stop unless it ends a sentence already. Nothing stays nothing.
  */
@@ -72,6 +86,16 @@ export function duration(seconds: number): string {
   return whole < 60 ? `${Math.max(1, whole)} s` : `${Math.round(whole / 60)} min`;
 }
 
+/**
+ * How a failure's agent is signed in when typed in Terminal, as the sentence that starts the instruction and the command in it
+ * (what a window sets in code font); null for an agent that is signed in by hand.
+ */
+function signInOf(f: AgentFailure): { run: string; command: string } | null {
+  if (f.command === "claude") return { run: "Run claude once in Terminal and sign in", command: "claude" };
+  if (f.command === "codex") return { run: "Run codex login in Terminal", command: "codex login" };
+  return null;
+}
+
 export interface FilingProblemOptions {
   /**
    * Where the engine kept the owner's words aside, as a library path, when it couldn't put them back in the inbox: the
@@ -79,7 +103,7 @@ export interface FilingProblemOptions {
    */
   where?: string;
   /** What the run left behind: its edits are kept as their own commit, or stay in the library with no history to undo them from. */
-  partial?: "commit" | "uncommitted" | null;
+  partial?: PartialEdits;
   /**
    * What the body promises of a note that waits. "wait" (the default): the capsule and the notifications, which promise the
    * wait or the watch. "retry": setup, which starts neither, says to try again.
@@ -113,11 +137,11 @@ export function filingProblem(f: AgentFailure, now: Date, o: FilingProblemOption
     }
     case "signin": {
       const title = `${f.agent} isn't signed in on this Mac.`;
-      const command = f.command === "claude" ? "claude" : f.command === "codex" ? "codex login" : null;
-      if (command === null) {
+      const signIn = signInOf(f);
+      if (signIn === null) {
         return done(title, after === "retry" ? `Sign in to ${f.agent} in Terminal, then try again. ${safe}.` : `Sign in to ${f.agent} in Terminal. ${reassure}`);
       }
-      const run = command === "claude" ? "Run claude once in Terminal and sign in" : "Run codex login in Terminal";
+      const { run, command } = signIn;
       return done(title, after === "retry" ? `${run}, then try again. ${safe}.` : `${run}, and your note will be filed straight away.`, command);
     }
     case "timeout":
@@ -142,4 +166,82 @@ export function correctedWordsProblem(lines: string, originalKept: boolean): Pro
     title: "Your corrected words weren't saved yet.",
     body: `${lines}\nYour corrected words are saved to your inbox when you quit${original}.`,
   };
+}
+
+/**
+ * What the Ask window and setup's Ask step add to a problem: whether the Notice offers Open Terminal (`terminal`: the agent
+ * isn't signed in) and whether its fix is Open Settings, on Agents (`settings`: the library's agent is gone, or none is installed).
+ */
+export interface AskProblem extends Problem {
+  terminal: boolean;
+  settings: boolean;
+}
+
+/** What a run that changed `files` files says, in place of "Your library hasn't changed.": the agent's changes are left as they are. */
+function changedSentence(agent: string, files: number): string {
+  return files === 1 ? `${agent} changed 1 file while answering; it's left as it is.` : `${agent} changed ${files} files while answering; they're left as they are.`;
+}
+
+/**
+ * What a question that failed says, in the words of the copy table's Ask rows: the title says what happened, the body that the
+ * library hasn't changed (or what the run changed, `changedFiles` files, which is left as it is) and then what to do, and the
+ * window offers the fix `terminal` and `settings` name; any other failure, and a usage limit or a timeout, is fixed by asking again.
+ * Nothing ran when no agent is installed, so that row says nothing of the library.
+ */
+export function askProblem(f: AgentFailure, changedFiles: number, now: Date): AskProblem {
+  const safe = changedFiles > 0 ? changedSentence(f.agent, changedFiles) : "Your library hasn't changed.";
+  const done = (title: string, body: string, offers: { command?: string; terminal?: boolean; settings?: boolean } = {}): AskProblem => ({
+    title,
+    body,
+    ...(offers.command ? { command: offers.command } : {}),
+    terminal: offers.terminal ?? false,
+    settings: offers.settings ?? false,
+  });
+
+  switch (f.kind) {
+    case "limit": {
+      // A reset that has passed is no moment to wait for: it reads as one the agent didn't give.
+      const resets = f.resetsAt !== null && f.resetsAt > now.getTime() ? resetPhrase(f.resetsAt, now) : null;
+      return done(`${f.agent} has hit its usage limit.`, resets === null ? safe : `${safe} It resets ${resets}.`);
+    }
+    case "signin": {
+      const title = `${f.agent} isn't signed in on this Mac.`;
+      const signIn = signInOf(f);
+      if (signIn === null) return done(title, `${safe} Sign in to ${f.agent} in Terminal, then ask again.`, { terminal: true });
+      return done(title, `${safe} ${signIn.run}, then ask again.`, { command: signIn.command, terminal: true });
+    }
+    case "timeout":
+      return done(`${f.agent} took longer than ${duration(f.seconds)} and was stopped.`, safe);
+    case "gone":
+      return done(`${f.agent} isn't installed on this Mac any more.`, `${safe} Settings → Agents can choose another agent, or has its install command.`, { settings: true });
+    case "missing":
+      return done("Avanzel needs an AI agent to answer.", "Claude Code works best, and Settings → Agents has its install command.", { settings: true });
+    case "other":
+      return done(`${f.agent} couldn't answer.`, [safe, ownLine(f.line)].filter(Boolean).join(" "));
+  }
+}
+
+/** Why git refused to take a filing back: usually a later change touched the same lines. */
+const HISTORY_KEEPS_BOTH = "Usually a later change touched the same lines. The library's history keeps both versions.";
+
+/** Undo, on the capsule's filed card or in setup, that git refused. There is nothing to fix: the card's OK, or setup's Continue, goes on. */
+export const undoRefused: Problem = {
+  title: "This one can't be undone automatically.",
+  body: HISTORY_KEEPS_BOTH,
+};
+
+/** The same refusal when it is the agent's first try that Edit couldn't take back, before the corrected words were filed. */
+export const takeBackRefused: Problem = {
+  title: "The agent's first try can't be taken back automatically.",
+  body: HISTORY_KEEPS_BOTH,
+};
+
+/**
+ * `takeBackRefused` with where the corrected words are: while the note is in the inbox (`inInbox`) it says so, and that the
+ * evening review will have it only while the library's review is on (`eveningReview`), otherwise only that the note is safe.
+ * A note that is no longer in the inbox (filed meanwhile) is said to be nowhere.
+ */
+export function takeBackRefusedProblem(inInbox: boolean, eveningReview: boolean): Problem {
+  const where = !inInbox ? "" : eveningReview ? " The note waits in your inbox for the evening review." : " Your note is safe in the inbox.";
+  return { title: takeBackRefused.title, body: `${takeBackRefused.body}${where}` };
 }

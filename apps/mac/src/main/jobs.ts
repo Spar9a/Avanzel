@@ -1,8 +1,9 @@
-// What setup (setup.ts) and the controller share: a recording, a filing and its corrected words, the agents' names,
-// the library's folder picker, and how an error reads.
+// What setup (setup.ts) and the controller share: a recording, a filing and its corrected words, how a question ended, the
+// agents' names, the library's folder picker, and how an error reads.
 import type { OpenDialogOptions } from "electron";
 import type { FileOutcome } from "@avanzel/engine";
 import type { CapsuleMode, FiledPage, NarrationRow, ScreenContext } from "../shared/ipc.ts";
+import type { AgentFailure } from "../shared/problems.ts";
 
 /** The folder picker for the library, in Settings (Change… and Choose a folder…) and in setup (Change…). */
 export const LIBRARY_PICKER: OpenDialogOptions = { title: "Choose your library folder", properties: ["openDirectory", "createDirectory"] };
@@ -70,6 +71,27 @@ export interface FilingJob {
   setup?: boolean;
   /** Cancel, in setup, stopped the run: what it did is taken back (`cancelSetupFiling`), not shown. */
   cancelled?: boolean;
+}
+
+/** How a question ended (`answerQuestion`), for the Ask window and for setup's Ask step. */
+export interface Answered {
+  ok: boolean;
+  /**
+   * The agent's run came to its end: true for an answer, whose `text` is the agent's reply, and for a run that failed, whose
+   * `text` is the agent's last lines; false when something threw instead (no library, a question the engine refuses), whose
+   * `text` is the error's message.
+   */
+  ran: boolean;
+  text: string;
+  agent: string;
+  seconds: number;
+  /** How many files the run left changed in the library: created, modified or deleted. 0 when nothing ran. */
+  changedFiles: number;
+  /**
+   * Why it failed. Null for an answer, and for a question that never reached an agent: whatever threw, except an agent that
+   * isn't there, which is `gone` (the library's own) or `missing` (none installed).
+   */
+  failure: AgentFailure | null;
 }
 
 /** Words filed after Edit, on their way to the inbox: only in memory until the refile's `recapture` writes them. */
