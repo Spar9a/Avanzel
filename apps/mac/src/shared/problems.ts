@@ -221,6 +221,20 @@ export function askProblem(f: AgentFailure, changedFiles: number, now: Date): As
   }
 }
 
+/**
+ * A speech-model download that didn't finish, as the capsule and Settings → Voice tell it. `reason` is the engine's: the file
+ * and why, without the address it came from. Typing works meanwhile; `resumable` says part of the download was kept, so Try
+ * again continues where it stopped, and otherwise it downloads the file again. It promises nothing of a recording, since
+ * nothing records meanwhile.
+ */
+export function downloadFailedProblem(reason: string, resumable: boolean): Problem {
+  const tryAgain = resumable ? "continues where it stopped" : "downloads it again";
+  return {
+    title: "The speech model didn't finish downloading.",
+    body: [ownLine(reason), `Typing works meanwhile, and Try again ${tryAgain}.`].filter(Boolean).join(" "),
+  };
+}
+
 /** Why git refused to take a filing back: usually a later change touched the same lines. */
 const HISTORY_KEEPS_BOTH = "Usually a later change touched the same lines. The library's history keeps both versions.";
 

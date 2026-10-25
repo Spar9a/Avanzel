@@ -133,12 +133,12 @@ describe("setup copy", () => {
     const arriving = "My ears are still arriving. Type it instead, or talk to me once they land.";
     expect(earsLine({ kind: "missing", bytes: 672_807_563 })).toBe(arriving);
     expect(earsLine({ kind: "downloading", receivedBytes: 1, totalBytes: 2 })).toBe(arriving);
-    expect(earsLine({ kind: "error", cause: "download", message: "fetch failed" })).toBe(
+    expect(earsLine({ kind: "error", cause: "download", message: "fetch failed", resumable: true })).toBe(
       "The speech model didn't finish downloading, so I can't hear you yet. Type it instead, or try the download again.",
     );
     // Ready: it hears. [voice] settings it can't use: the copy has no line for them.
     expect(earsLine({ kind: "ready", dir: "/models" })).toBeNull();
-    expect(earsLine({ kind: "error", cause: "settings", message: "bad" })).toBeNull();
+    expect(earsLine({ kind: "error", cause: "settings", message: "bad", resumable: false })).toBeNull();
   });
 
   it("the transcribing line stays as it is, and its whole seconds show beside it once the words have taken 10 s", () => {

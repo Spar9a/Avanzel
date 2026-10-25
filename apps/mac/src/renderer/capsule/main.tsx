@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
 import type { AvanzelBridge, CapsuleState, FiledPage } from "../../shared/ipc.ts";
+import { downloadFailedProblem } from "../../shared/problems.ts";
 import { Recorder } from "./recorder.ts";
 import "./styles.css";
 
@@ -204,11 +205,13 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
           </Hud>
         </div>
       );
-    case "model-failed":
+    case "model-failed": {
+      // The same words as Settings → Voice: why, and whether Try again continues where the download stopped.
+      const problem = downloadFailedProblem(state.reason, state.resumable);
       return (
         <div className="slot">
           <CapsuleNotice
-            title="The speech model didn't finish downloading."
+            title={problem.title}
             actions={
               <Actions align="start">
                 <Button size="small" variant="quiet" onClick={() => api.dismiss()}>Hide</Button>
@@ -217,10 +220,11 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
               </Actions>
             }
           >
-            Typing works in the meantime. Settings → Voice shows what went wrong.
+            {problem.body}
           </CapsuleNotice>
         </div>
       );
+    }
     case "shortcut-taken": {
       // The best one is the primary, so it goes last; with none free, Settings → Voice has the way out.
       const uses = state.alternatives

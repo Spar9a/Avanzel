@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { AvanzelError } from "../../src/types.ts";
 import {
+  DownloadError,
   type DownloadProgress,
   downloadModel,
   downloadModelFiles,
@@ -271,16 +272,35 @@ describe("downloadSize", () => {
   });
 });
 
-type Behaviour = { notFound?: string; truncate?: string; short?: string; stall?: string };
+type Behaviour = {
+  notFound?: string;
+  truncate?: string;
+  hangup?: string;
+  short?: string;
+  long?: string;
+  stall?: string;
+  unsatisfiable?: string;
+  ignoreRange?: boolean;
+};
 type Pin = Pick<ModelSpec, "repo" | "revision">;
 type Files = Record<string, Buffer>;
-type Hub = { baseUrl: string; requests: string[]; encodings: Set<string | undefined> };
+type Hub = {
+  baseUrl: string;
+  requests: string[];
+  /** The Range header of every request, in the order of `requests` (do not sort `requests` to read these). */
+  ranges: (string | undefined)[];
+  encodings: Set<string | undefined>;
+};
 
 /**
  * A local stand-in for huggingface.co: serves `/<repo>/resolve/<revision>/<file>` for the `files` of one repo, given
- * as `(pin, files)`, or of several, given as a list of `{ pin, files }`, and records every request. `behaviour` names
- * a file to answer 404, to cut the connection half way, to serve whole but only half as long (`short`), or to stall
- * after the first kilobyte.
+ * as `(pin, files)`, or of several, given as a list of `{ pin, files }`, and records every request and the Range header
+ * it came with (`ranges`). A range from where an earlier try stopped ("bytes=150000-") is answered as Hugging Face
+ * does, with 206 and the bytes from there. `behaviour` names a file to answer 404, to cut the connection half way
+ * (`truncate`: the first response only, so the next try is served whole) or before the first byte (`hangup`), to serve
+ * only half as long (`short`) or with more bytes than the file has (`long`), to stall after the first kilobyte, or to
+ * answer 416 to any range (`unsatisfiable`); `ignoreRange` answers 200 with the whole file whatever is asked, as a
+ * server without ranges does.
  */
 function fakeHub(repos: { pin: Pin; files: Files }[], behaviour?: Behaviour): Promise<Hub>;
 function fakeHub(pin: Pin, files: Files, behaviour?: Behaviour): Promise<Hub>;
@@ -292,10 +312,15 @@ async function fakeHub(
   const repos = Array.isArray(first) ? first : [{ pin: first, files: second as Files }];
   const behaviour = ((Array.isArray(first) ? second : third) as Behaviour | undefined) ?? {};
   const requests: string[] = [];
+  const ranges: (string | undefined)[] = [];
   const encodings = new Set<string | undefined>();
+  const answered = new Map<string, number>(); // the responses sent so far, by address
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     requests.push(`${req.method} ${req.url}`);
+    ranges.push(req.headers.range);
     encodings.add(req.headers["accept-encoding"]);
+    const before = answered.get(req.url!) ?? 0;
+    answered.set(req.url!, before + 1);
     let name = "";
     let body: Buffer | undefined;
     for (const { pin, files } of repos) {
@@ -309,14 +334,28 @@ async function fakeHub(
       res.writeHead(404).end("Entry not found");
       return;
     }
-    const half = body.subarray(0, body.length / 2);
-    const sent = name === behaviour.short ? half : body;
-    res.writeHead(200, { "content-length": sent.length, "content-type": "application/octet-stream" });
-    if (name === behaviour.truncate) {
-      res.write(half);
-      res.destroy();
+    const asked = behaviour.ignoreRange ? null : /^bytes=(\d+)-$/.exec(req.headers.range ?? "");
+    const start = asked ? Number(asked[1]) : 0;
+    if (asked && (name === behaviour.unsatisfiable || start >= body.length)) {
+      res.writeHead(416, { "content-range": `bytes */${body.length}` }).end();
+      return;
+    }
+    const rest = body.subarray(start); // the whole file, or what a range from `start` gets
+    const half = rest.subarray(0, Math.floor(rest.length / 2));
+    const sent = name === behaviour.short ? half : name === behaviour.long ? Buffer.concat([rest, Buffer.alloc(1000, 1)]) : rest;
+    res.writeHead(asked ? 206 : 200, {
+      "content-length": sent.length,
+      "content-type": "application/octet-stream",
+      ...(asked ? { "content-range": `bytes ${start}-${body.length - 1}/${body.length}` } : {}),
+    });
+    if (name === behaviour.truncate && before === 0) {
+      // Dropped once all of it has left, and a moment later, so the client has taken what was sent and keeps all of it.
+      res.write(half, () => setTimeout(() => res.destroy(), 20));
+    } else if (name === behaviour.hangup) {
+      res.flushHeaders();
+      setTimeout(() => res.destroy(), 20);
     } else if (name === behaviour.stall) {
-      res.write(body.subarray(0, 1024)); // then hang until the client gives up
+      res.write(rest.subarray(0, 1024)); // then hang until the client gives up
     } else {
       res.end(sent);
     }
@@ -327,7 +366,7 @@ async function fakeHub(
     server.close();
   });
   const { port } = server.address() as AddressInfo;
-  return { baseUrl: `http://127.0.0.1:${port}`, requests, encodings };
+  return { baseUrl: `http://127.0.0.1:${port}`, requests, ranges, encodings };
 }
 
 /** Parakeet v3's files in both quantizations, with random "weights". */
@@ -510,15 +549,18 @@ describe("downloadModelFiles", () => {
     expect(readdirSync(dir).sort()).toEqual([...INT8].sort()); // no .part leftovers
   });
 
-  it("starts a file over when an earlier attempt left its .part behind", async () => {
+  it("throws away a kept .part that is longer than the file, and fetches the file from zero", async () => {
     const files = v3Files();
     const model = pinnedSpec(files);
-    const { baseUrl } = await fakeHub(model, files);
+    const { baseUrl, requests, ranges } = await fakeHub(model, files);
     const dir = join(tempDir(), V3);
     writeFiles(dir, { "encoder-model.int8.onnx.part": randomBytes(500_000) }); // longer than the file itself
     await downloadModelFiles(model, dir, { baseUrl });
     expect(readdirSync(dir).sort()).toEqual([...INT8].sort());
     expect(readFileSync(join(dir, "encoder-model.int8.onnx")).equals(files["encoder-model.int8.onnx"]!)).toBe(true);
+    // Nothing of it was worth asking the server to continue from: no request carried a Range.
+    expect(requests).toHaveLength(INT8.length);
+    expect(ranges.every((range) => range === undefined)).toBe(true);
   });
 
   it("fails with an AvanzelError when a file is not found", async () => {
@@ -530,7 +572,7 @@ describe("downloadModelFiles", () => {
     await expect(download).rejects.toThrow(/vocab\.txt.*404/);
   });
 
-  it("refuses a file whose SHA-256 doesn't match, leaving nothing behind", async () => {
+  it("refuses a file whose SHA-256 doesn't match, leaving nothing behind and nothing to continue from", async () => {
     const files = v3Files();
     const model = pinnedSpec(files);
     const damaged = Buffer.from(files["encoder-model.int8.onnx"]!);
@@ -540,30 +582,39 @@ describe("downloadModelFiles", () => {
 
     const download = downloadModelFiles(model, dir, { baseUrl });
 
-    await expect(download).rejects.toThrow(AvanzelError);
-    await expect(download).rejects.toThrow(/encoder-model\.int8\.onnx.*try again$/);
+    await expect(download).rejects.toThrow(DownloadError);
+    await expect(download).rejects.toThrow(/encoder-model\.int8\.onnx.*SHA-256/);
+    await expect(download).rejects.toMatchObject({ resumable: false });
     expect(readdirSync(dir)).toEqual([]); // neither the file nor its .part
   });
 
-  it("refuses a short download, leaving nothing behind", async () => {
+  it("keeps what a short download brought, to continue from", async () => {
     const files = v3Files();
     const model = pinnedSpec(files);
     const { baseUrl } = await fakeHub(model, files, { short: "encoder-model.int8.onnx" });
     const dir = join(tempDir(), V3);
 
-    await expect(downloadModelFiles(model, dir, { baseUrl })).rejects.toThrow(
-      /encoder-model\.int8\.onnx.*got 150000 of 300000 bytes; try again$/,
-    );
-    expect(readdirSync(dir)).toEqual([]);
+    const download = downloadModelFiles(model, dir, { baseUrl });
+
+    await expect(download).rejects.toThrow(/encoder-model\.int8\.onnx.*got 150000 of 300000 bytes/);
+    await expect(download).rejects.toMatchObject({ resumable: true });
+    expect(readdirSync(dir)).toEqual(["encoder-model.int8.onnx.part"]);
+    expect(statSync(join(dir, "encoder-model.int8.onnx.part")).size).toBe(150_000);
   });
 
-  it("fails when the connection drops half way and leaves no partial file", async () => {
+  it("fails when the connection drops half way, and keeps what arrived", async () => {
     const files = v3Files();
     const model = pinnedSpec(files);
     const { baseUrl } = await fakeHub(model, files, { truncate: "encoder-model.int8.onnx" });
     const dir = join(tempDir(), V3);
-    await expect(downloadModelFiles(model, dir, { baseUrl })).rejects.toThrow(AvanzelError);
-    expect(readdirSync(dir)).toEqual([]);
+    const download = downloadModelFiles(model, dir, { baseUrl });
+    await expect(download).rejects.toThrow(DownloadError);
+    await expect(download).rejects.toMatchObject({ resumable: true });
+    expect(readdirSync(dir)).toEqual(["encoder-model.int8.onnx.part"]);
+    const kept = statSync(join(dir, "encoder-model.int8.onnx.part")).size;
+    expect(kept).toBeGreaterThan(0);
+    expect(kept).toBeLessThanOrEqual(150_000);
+    expect(readFileSync(join(dir, "encoder-model.int8.onnx.part")).equals(files["encoder-model.int8.onnx"]!.subarray(0, kept))).toBe(true);
   });
 
   it("stops when aborted and leaves no partial file", async () => {
@@ -580,6 +631,231 @@ describe("downloadModelFiles", () => {
       },
     });
     await expect(download).rejects.toMatchObject({ name: "AbortError" });
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("a broken download continues from the kept bytes", async () => {
+    const body = randomBytes(300_000);
+    const model = vadSpec(body);
+    const { baseUrl, requests, ranges } = await fakeHub(model, { "silero_vad.onnx": body }, { truncate: "silero_vad.onnx" });
+    const dir = join(tempDir(), VAD_MODEL);
+
+    await expect(downloadModelFiles(model, dir, { baseUrl })).rejects.toMatchObject({ resumable: true });
+    const kept = statSync(join(dir, "silero_vad.onnx.part")).size; // what arrived before the connection dropped
+    expect(kept).toBeGreaterThan(0);
+    expect(kept).toBeLessThanOrEqual(150_000);
+
+    const events: DownloadProgress[] = [];
+    await downloadModelFiles(model, dir, { baseUrl, onProgress: (p) => events.push({ ...p }) });
+
+    expect(requests).toEqual([getVad(model), getVad(model)]);
+    expect(ranges).toEqual([undefined, `bytes=${kept}-`]); // the second asks for the rest alone
+    expect(readdirSync(dir)).toEqual(["silero_vad.onnx"]);
+    expect(readFileSync(join(dir, "silero_vad.onnx")).equals(body)).toBe(true); // the whole file, which has its SHA-256 checked
+    // The count goes on from the kept bytes, and ends at the whole file.
+    expect(events[0]).toMatchObject({ receivedBytes: kept, totalBytes: 300_000, overallReceived: kept, overallTotal: 300_000 });
+    expect(events.at(-1)).toMatchObject({ receivedBytes: 300_000, overallReceived: 300_000 });
+    const overall = events.map((e) => e.overallReceived);
+    expect(overall).toEqual([...overall].sort((a, b) => a - b));
+  });
+
+  it("a server that ignores Range starts the file again", async () => {
+    const body = randomBytes(300_000);
+    const model = vadSpec(body);
+    const { baseUrl, ranges } = await fakeHub(model, { "silero_vad.onnx": body }, { truncate: "silero_vad.onnx", ignoreRange: true });
+    const dir = join(tempDir(), VAD_MODEL);
+    await expect(downloadModelFiles(model, dir, { baseUrl })).rejects.toMatchObject({ resumable: true });
+    const kept = statSync(join(dir, "silero_vad.onnx.part")).size;
+    expect(kept).toBeGreaterThan(0);
+
+    await downloadModelFiles(model, dir, { baseUrl });
+
+    // It asked to continue, and the answer was the whole file from its first byte: the kept bytes are not in front of it.
+    expect(ranges).toEqual([undefined, `bytes=${kept}-`]);
+    expect(readdirSync(dir)).toEqual(["silero_vad.onnx"]);
+    expect(readFileSync(join(dir, "silero_vad.onnx")).equals(body)).toBe(true);
+  });
+
+  it("a kept part with wrong bytes is thrown away", async () => {
+    const body = randomBytes(300_000);
+    const model = vadSpec(body);
+    const { baseUrl, requests, ranges } = await fakeHub(model, { "silero_vad.onnx": body });
+    const dir = join(tempDir(), VAD_MODEL);
+    writeFiles(dir, { "silero_vad.onnx.part": randomBytes(300_000) }); // the file's length, not its bytes
+
+    await downloadModelFiles(model, dir, { baseUrl });
+
+    // Hashed on this Mac and found wrong, so no request was made for it (a range from its end would be a 416): the one
+    // request is for the whole file.
+    expect(requests).toEqual([getVad(model)]);
+    expect(ranges).toEqual([undefined]);
+    expect(readdirSync(dir)).toEqual(["silero_vad.onnx"]);
+    expect(readFileSync(join(dir, "silero_vad.onnx")).equals(body)).toBe(true);
+  });
+
+  it("a kept part already complete is renamed into place without a request", async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl, requests } = await fakeHub(model, files);
+    const total = INT8.reduce((sum, name) => sum + files[name]!.length, 0);
+    const events: DownloadProgress[] = [];
+    const first = join(tempDir(), V3);
+    writeFiles(first, { "encoder-model.int8.onnx.part": files["encoder-model.int8.onnx"]! }); // every byte of it
+
+    await downloadModelFiles(model, first, { baseUrl, onProgress: (p) => events.push({ ...p }) });
+
+    expect(requests.sort()).toEqual(INT8.filter((name) => name !== "encoder-model.int8.onnx").map(get).sort());
+    expect(readdirSync(first).sort()).toEqual([...INT8].sort());
+    expect(readFileSync(join(first, "encoder-model.int8.onnx")).equals(files["encoder-model.int8.onnx"]!)).toBe(true);
+    expect(events.at(-1)).toMatchObject({ overallReceived: total, overallTotal: total });
+
+    // With every file a complete part, nothing is asked of the server at all, and the count still reaches the end.
+    const second = join(tempDir(), V3);
+    writeFiles(second, Object.fromEntries(INT8.map((name) => [`${name}.part`, files[name]!])));
+    requests.length = 0;
+    events.length = 0;
+    await downloadModelFiles(model, second, { baseUrl, onProgress: (p) => events.push({ ...p }) });
+    expect(requests).toEqual([]);
+    expect(readdirSync(second).sort()).toEqual([...INT8].sort());
+    expect(events.at(-1)).toMatchObject({ overallReceived: total, overallTotal: total });
+  });
+
+  it("a 416 deletes the part and starts again", async () => {
+    const body = randomBytes(300_000);
+    const model = vadSpec(body);
+    const { baseUrl, requests, ranges } = await fakeHub(model, { "silero_vad.onnx": body }, { unsatisfiable: "silero_vad.onnx" });
+    const dir = join(tempDir(), VAD_MODEL);
+    writeFiles(dir, { "silero_vad.onnx.part": body.subarray(0, 1000) });
+
+    await downloadModelFiles(model, dir, { baseUrl });
+
+    expect(requests).toEqual([getVad(model), getVad(model)]);
+    expect(ranges).toEqual(["bytes=1000-", undefined]); // refused, it asks once more, for the whole file and no range
+    expect(readdirSync(dir)).toEqual(["silero_vad.onnx"]);
+    expect(readFileSync(join(dir, "silero_vad.onnx")).equals(body)).toBe(true);
+  });
+
+  it("checks a resumed file whole: kept bytes that were wrong fail its SHA-256, and are not kept again", async () => {
+    const body = randomBytes(300_000);
+    const model = vadSpec(body);
+    const { baseUrl, ranges } = await fakeHub(model, { "silero_vad.onnx": body });
+    const dir = join(tempDir(), VAD_MODEL);
+    writeFiles(dir, { "silero_vad.onnx.part": randomBytes(1000) }); // shorter than the file, so kept and continued
+
+    const download = downloadModelFiles(model, dir, { baseUrl });
+
+    await expect(download).rejects.toThrow(/silero_vad\.onnx.*SHA-256/);
+    await expect(download).rejects.toMatchObject({ resumable: false });
+    expect(ranges).toEqual(["bytes=1000-"]);
+    expect(readdirSync(dir)).toEqual([]);
+
+    // The next try has no part to continue from, and gets the right file.
+    await downloadModelFiles(model, dir, { baseUrl });
+    expect(ranges).toEqual(["bytes=1000-", undefined]);
+    expect(readFileSync(join(dir, "silero_vad.onnx")).equals(body)).toBe(true);
+  });
+
+  it("refuses a response with more bytes than the file has, leaving nothing to continue from", async () => {
+    const body = randomBytes(300_000);
+    const model = vadSpec(body);
+    const { baseUrl } = await fakeHub(model, { "silero_vad.onnx": body }, { long: "silero_vad.onnx" });
+    const dir = join(tempDir(), VAD_MODEL);
+
+    const download = downloadModelFiles(model, dir, { baseUrl });
+
+    await expect(download).rejects.toThrow(/silero_vad\.onnx.*more than the 300000 bytes/);
+    await expect(download).rejects.toMatchObject({ resumable: false });
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("keeps the part an earlier try left when this try fails too", async () => {
+    const body = randomBytes(300_000);
+    const model = vadSpec(body);
+    const { baseUrl } = await fakeHub(model, { "silero_vad.onnx": body }, { notFound: "silero_vad.onnx" });
+    const dir = join(tempDir(), VAD_MODEL);
+    writeFiles(dir, { "silero_vad.onnx.part": body.subarray(0, 1000) });
+
+    await expect(downloadModelFiles(model, dir, { baseUrl })).rejects.toMatchObject({ resumable: true });
+
+    expect(readdirSync(dir)).toEqual(["silero_vad.onnx.part"]);
+    expect(readFileSync(join(dir, "silero_vad.onnx.part")).equals(body.subarray(0, 1000))).toBe(true);
+  });
+
+  it("deletes the .part files of files the plan doesn't fetch, when a download starts", async () => {
+    const files = v3Files();
+    const model = pinnedSpec(files);
+    const { baseUrl, requests, ranges } = await fakeHub(model, files);
+    const dir = join(tempDir(), V3);
+    writeFiles(dir, {
+      "encoder-model.onnx.data.part": randomBytes(100_000), // full precision's, which an int8 download doesn't fetch
+      "something-else.part": "not a file of this model",
+      "vocab.txt": files["vocab.txt"]!, // complete, so a part of it is no use
+      "vocab.txt.part": "left from before it was complete",
+      "notes.txt": "not a part: it stays",
+      "encoder-model.int8.onnx.part": files["encoder-model.int8.onnx"]!.subarray(0, 1000), // the plan fetches this one: it continues
+    });
+
+    await downloadModelFiles(model, dir, { baseUrl });
+
+    expect(readdirSync(dir).sort()).toEqual([...INT8, "notes.txt"].sort());
+    expect(requests).toContain(get("encoder-model.int8.onnx"));
+    expect(requests.some((request) => /onnx\.data|something-else|\/vocab\.txt/.test(request))).toBe(false);
+    expect(ranges.filter(Boolean)).toEqual(["bytes=1000-"]);
+    expect(readFileSync(join(dir, "encoder-model.int8.onnx")).equals(files["encoder-model.int8.onnx"]!)).toBe(true);
+
+    // When there is nothing left to fetch, every part is stale.
+    writeFiles(dir, { "encoder-model.int8.onnx.part": "again" });
+    const asked = requests.length;
+    await downloadModelFiles(model, dir, { baseUrl });
+    expect(readdirSync(dir).sort()).toEqual([...INT8, "notes.txt"].sort());
+    expect(requests).toHaveLength(asked);
+  });
+
+  it("a failure says whether a part was kept, and names no URL", async () => {
+    const body = randomBytes(300_000);
+    const model = vadSpec(body);
+    const fails = async (baseUrl: string): Promise<DownloadError> => {
+      const error = await downloadModelFiles(model, join(tempDir(), VAD_MODEL), { baseUrl }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadError);
+      expect(error).toBeInstanceOf(AvanzelError);
+      return error as DownloadError;
+    };
+    // A port nothing listens on any more.
+    const closed = await new Promise<string>((resolve) => {
+      const server = createServer().listen(0, "127.0.0.1", () => {
+        const { port } = server.address() as AddressInfo;
+        server.close(() => resolve(`http://127.0.0.1:${port}`));
+      });
+    });
+
+    const notFound = await fails((await fakeHub(model, { "silero_vad.onnx": body }, { notFound: "silero_vad.onnx" })).baseUrl);
+    const dropped = await fails((await fakeHub(model, { "silero_vad.onnx": body }, { truncate: "silero_vad.onnx" })).baseUrl);
+    const refused = await fails(closed);
+    const unparsable = await fails("http://127.0.0.1:99999"); // an address fetch repeats in its own message
+
+    expect(notFound.resumable).toBe(false); // a 404 brings nothing to keep
+    expect(notFound.message).toMatch(/silero_vad\.onnx.*404/);
+    expect(dropped.resumable).toBe(true); // half of the file arrived
+    expect(dropped.message).toContain("silero_vad.onnx");
+    expect(refused.resumable).toBe(false); // nothing arrived
+    expect(refused.message).toMatch(/silero_vad\.onnx.*ECONNREFUSED/);
+    expect(unparsable.resumable).toBe(false);
+    for (const { message } of [notFound, dropped, refused, unparsable]) {
+      expect(message).not.toMatch(/https?:/);
+      expect(message).not.toContain("/resolve/");
+      expect(message).not.toContain(model.revision);
+      expect(message).not.toContain("99999");
+    }
+  });
+
+  it("leaves no empty .part when the connection drops before the first byte, and says nothing was kept", async () => {
+    const body = randomBytes(300_000);
+    const model = vadSpec(body);
+    const { baseUrl } = await fakeHub(model, { "silero_vad.onnx": body }, { hangup: "silero_vad.onnx" });
+    const dir = join(tempDir(), VAD_MODEL);
+
+    await expect(downloadModelFiles(model, dir, { baseUrl })).rejects.toMatchObject({ resumable: false });
+
     expect(readdirSync(dir)).toEqual([]);
   });
 
@@ -683,10 +959,11 @@ describe("downloadModelsFiles", () => {
 describe("downloadModel", () => {
   it("asks for the pinned revision of a real model", async () => {
     const pin = { repo: "istupakov/silero-vad-onnx", revision: "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6" };
-    const { baseUrl, requests } = await fakeHub(pin, { "silero_vad.onnx": randomBytes(10_000) }); // not the real bytes
+    const wrong = randomBytes(MODELS[VAD_MODEL]!.digests["silero_vad.onnx"]!.size); // the real length, not the real bytes
+    const { baseUrl, requests } = await fakeHub(pin, { "silero_vad.onnx": wrong });
     const models = tempDir();
 
-    await expect(downloadModel(VAD_MODEL, models, { baseUrl })).rejects.toThrow(/silero_vad\.onnx.*try again$/);
+    await expect(downloadModel(VAD_MODEL, models, { baseUrl })).rejects.toThrow(/silero_vad\.onnx.*SHA-256/);
 
     expect(requests).toEqual([`GET /${pin.repo}/resolve/${pin.revision}/silero_vad.onnx`]);
     expect(readdirSync(join(models, VAD_MODEL))).toEqual([]); // the wrong bytes were not kept
@@ -721,10 +998,11 @@ describe("downloadModels", () => {
 
   it("asks for the pinned revision of each real model, the smaller first", async () => {
     const pin = MODELS[VAD_MODEL]!;
-    const { baseUrl, requests } = await fakeHub(pin, { "silero_vad.onnx": randomBytes(10_000) }); // not the real bytes
+    const wrong = randomBytes(pin.digests["silero_vad.onnx"]!.size); // the real length, not the real bytes
+    const { baseUrl, requests } = await fakeHub(pin, { "silero_vad.onnx": wrong });
     const models = tempDir();
 
-    await expect(downloadModels([V3, VAD_MODEL], models, { baseUrl })).rejects.toThrow(/silero_vad\.onnx.*try again$/);
+    await expect(downloadModels([V3, VAD_MODEL], models, { baseUrl })).rejects.toThrow(/silero_vad\.onnx.*SHA-256/);
 
     // Silero VAD is the smaller download and the one that fails, so none of Parakeet's files was asked for.
     expect(requests).toEqual([`GET /${pin.repo}/resolve/${pin.revision}/silero_vad.onnx`]);

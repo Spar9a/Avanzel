@@ -4,6 +4,7 @@ import { Actions, Button, Group, GroupRow, Kbd, Notice, Progress, Row, Stack, Te
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { ModelStatus, Shortcuts } from "../../../shared/ipc.ts";
+import { downloadFailedProblem } from "../../../shared/problems.ts";
 import { passesThrough, toAccelerator } from "../accelerator.ts";
 import { asSentence, microphoneName, microphoneOptions, SPEECH_MODEL_DESCRIPTION, type InputDevice } from "../copy.ts";
 import { ChooseButton, type PaneProps } from "../parts.tsx";
@@ -67,10 +68,11 @@ function SpeechControl({ model, onDownload }: { model: ModelStatus; onDownload()
 }
 
 /**
- * The Notice under the Speech group while the model is in an error: a download that didn't finish, with Try again, or
- * voice settings in the library's config file that Avanzel can't use, with why, which Try again couldn't help: they are
- * fixed in that file. Either way, typing a thought works meanwhile. `primary` says whether Try again is the pane's
- * primary button, which it isn't when a shortcut's Notice has a free shortcut to offer.
+ * The Notice under the Speech group while the model is in an error: a download that didn't finish, with why and Try
+ * again (which continues where it stopped when part of it was kept), or voice settings in the library's config file that
+ * Avanzel can't use, with why, which Try again couldn't help: they are fixed in that file. Either way, typing works
+ * meanwhile. `primary` says whether Try again is the pane's primary button, which it isn't when a shortcut's Notice has
+ * a free shortcut to offer.
  */
 function SpeechProblem({ model, primary, onDownload }: { model: ModelStatus; primary: boolean; onDownload(): void }): ReactNode {
   if (model.kind !== "error") return null;
@@ -81,17 +83,19 @@ function SpeechProblem({ model, primary, onDownload }: { model: ModelStatus; pri
       </Notice>
     );
   }
+  // The same words as the capsule's card.
+  const problem = downloadFailedProblem(model.message, model.resumable);
   return (
     <Notice
       tone="error"
-      title="The speech model didn't finish downloading."
+      title={problem.title}
       actions={
         <Actions align="start">
           <Button size="small" variant={primary ? "primary" : "secondary"} onClick={onDownload}>Try again</Button>
         </Actions>
       }
     >
-      Typing a thought works meanwhile.
+      {problem.body}
     </Notice>
   );
 }

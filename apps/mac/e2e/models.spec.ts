@@ -2,11 +2,12 @@
 // here. Every test gets an empty Hugging Face cache (this Mac's own copies stay out of it) and a fakeModelHub in place
 // of huggingface.co.
 import { expect, test, type ElectronApplication } from "@playwright/test";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, MODELS, saveSettings } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
+import { ownLine } from "../src/shared/problems.ts";
 import { call, capsuleKind, closeModelHubs, emptyHfCache, fakeModelHub, hfSnapshot, launch, makeLibrary, openSettings, shown, snap, windowFor } from "./helpers.ts";
 
 const PARAKEET = "nemo-parakeet-tdt-0.6b-v3";
@@ -165,17 +166,29 @@ test("the download's card says only that typing works while the size isn't known
   await app.close();
 });
 
-test("a failed download waits quietly, then offers Try again", async () => {
+test("a failed download says why, in the capsule and in Voice", async () => {
   const hub = await fakeModelHub("missing");
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
   await call(app, "snapshot"); // the app has started: the poll's 5 s count from here, not from launch
   await expect.poll(async () => (await modelStatus(app)).kind).toBe("error");
   expect(await capsuleKind(app)).toBe("hidden");
+  // The hub has no such file, so nothing arrived and nothing was kept. The reason names the file and what the server
+  // said, and not where it was asked.
+  const status = await modelStatus(app);
+  expect(status).toMatchObject({ kind: "error", cause: "download", resumable: false });
+  const reason = status.kind === "error" ? status.message : "";
+  expect(reason).toMatch(/silero_vad\.onnx.*404/);
+  expect(reason).not.toMatch(/https?:|127\.0\.0\.1|\/resolve\//);
+  const userData = await app.evaluate(() => process.env.AVANZEL_USER_DATA ?? "");
+  expect(existsSync(path.join(userData, "models", SILERO, "silero_vad.onnx.part"))).toBe(false); // a 404 keeps no part
+  const body = `${ownLine(reason)} Typing works meanwhile, and Try again downloads it again.`;
   const asked = hub.requests.length;
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
   await expect(capsule.getByText("The speech model didn't finish downloading.")).toBeVisible();
+  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
+  await expect(capsule.getByText(/Settings → Voice/)).toHaveCount(0); // the card says why itself; it points nowhere for it
   expect(hub.requests.length).toBe(asked); // the shortcut says what happened; only Try again fetches
   await expect(capsule.getByRole("button")).toHaveText(["Hide", "Type instead", "Try again"]);
   for (const button of await capsule.getByRole("button").all()) await expect(button).toHaveAttribute("data-size", "small");
@@ -184,12 +197,15 @@ test("a failed download waits quietly, then offers Try again", async () => {
   await expect.poll(() => hub.requests.length).toBeGreaterThan(asked);
   await expect.poll(() => capsuleKind(app)).toBe("model-failed");
   await expect(capsule.getByText("The speech model didn't finish downloading.")).toBeVisible();
+  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
   await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+  // Voice says the same: what happened, why (the same reason, with no address in it), what works meanwhile, and what Try again does.
   const alert = settings.getByRole("alert");
   await expect(alert).toContainText("The speech model didn't finish downloading.");
-  await expect(alert).toContainText("Typing a thought works meanwhile.");
+  await expect(alert.getByText(body, { exact: true })).toBeVisible();
+  await expect(alert).not.toContainText(/https?:|127\.0\.0\.1/);
   // No shortcut has a problem, so this is the pane's first Notice, and its fix is the primary.
   const tryAgain = alert.getByRole("button", { name: "Try again" });
   await expect(tryAgain).toHaveAttribute("data-variant", "primary");
@@ -198,6 +214,42 @@ test("a failed download waits quietly, then offers Try again", async () => {
   const retried = hub.requests.length;
   await tryAgain.click();
   await expect.poll(() => hub.requests.length).toBeGreaterThan(retried);
+  await app.close();
+});
+
+test("a download cut half way keeps its part, and Try again continues from it and checks the whole file", async () => {
+  const hub = await fakeModelHub("drop");
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
+  await call(app, "snapshot"); // the app has started: the poll's 5 s count from here, not from launch
+  await expect.poll(async () => (await modelStatus(app)).kind).toBe("error");
+  // The connection dropped half way through Silero VAD, the first file it asked for, and what arrived was kept.
+  expect(await modelStatus(app)).toMatchObject({ kind: "error", cause: "download", resumable: true });
+  expect(hub.requests).toHaveLength(1);
+  const userData = await app.evaluate(() => process.env.AVANZEL_USER_DATA ?? "");
+  const part = path.join(userData, "models", SILERO, "silero_vad.onnx.part");
+  const kept = statSync(part).size;
+  expect(kept).toBeGreaterThan(0);
+  expect(kept).toBeLessThan(pinnedSize(SILERO));
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "toggleDictate");
+  await expect(capsule.getByText(/Typing works meanwhile, and Try again continues where it stopped\.$/)).toBeVisible();
+  await expect(capsule.getByText(/downloads it again/)).toHaveCount(0);
+  await call(app, "showSettings");
+  const settings = await windowFor(app, "settings");
+  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+  await expect(settings.getByRole("alert").getByText(/Try again continues where it stopped\.$/)).toBeVisible();
+
+  // Try again asks for the rest alone ...
+  await capsule.getByRole("button", { name: "Try again" }).click();
+  await expect.poll(() => hub.requests.length).toBe(2);
+  expect(hub.ranges).toEqual([undefined, `bytes=${kept}-`]);
+  // ... and the file as a whole is checked. The hub's bytes are zeros, so it fails its SHA-256: the part goes, and the
+  // next try starts from zero, which the card now says.
+  await expect.poll(() => modelStatus(app)).toMatchObject({ kind: "error", resumable: false });
+  expect(existsSync(part)).toBe(false);
+  await expect(capsule.getByText(/SHA-256.*Try again downloads it again\.$/)).toBeVisible();
+  await expect(capsule.getByText(/continues where it stopped/)).toHaveCount(0);
   await app.close();
 });
 

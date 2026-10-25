@@ -3,6 +3,7 @@ import {
   askProblem,
   avanzelFailure,
   correctedWordsProblem,
+  downloadFailedProblem,
   duration,
   filingProblem,
   ownLine,
@@ -494,6 +495,10 @@ describe("the copy rules, for every problem a filing can have", () => {
   // The corrected words' card is a problem of its own, and tells itself by the same rules, as do the refused undos.
   problems.push(correctedWordsProblem("EACCES: permission denied, open 'inbox/a.md'", true), correctedWordsProblem("EACCES: permission denied", false));
   problems.push(undoRefused, takeBackRefused, ...[true, false].flatMap((inInbox) => [true, false].map((review) => takeBackRefusedProblem(inInbox, review))));
+  // A speech-model download that didn't finish is told by the same rules, with a reason of any shape, and kept part or none.
+  for (const reason of ["Could not download silero_vad.onnx: the server answered HTTP 404 Not Found", "Error: could not download vocab.txt: terminated (other side closed)", ""]) {
+    problems.push(downloadFailedProblem(reason, true), downloadFailedProblem(reason, false));
+  }
   const everyText = (check: (text: string, problem: Problem) => void) => {
     for (const problem of problems) {
       check(problem.title, problem);
@@ -546,6 +551,44 @@ describe("the copy rules, for every problem a filing can have", () => {
     expect(problems.filter((problem) => problem.command).map((problem) => problem.command).sort()).toEqual(
       expect.arrayContaining(["claude", "codex login"]),
     );
+  });
+});
+
+describe("downloadFailedProblem", () => {
+  const REASON = "Could not download silero_vad.onnx: got 1163762 of 2327524 bytes";
+  const TITLE = "The speech model didn't finish downloading.";
+
+  it("says why, and that Try again continues where it stopped, when part of it was kept", () => {
+    expect(downloadFailedProblem(REASON, true)).toEqual({
+      title: TITLE,
+      body: `${REASON}. Typing works meanwhile, and Try again continues where it stopped.`,
+    });
+  });
+
+  it("says that Try again downloads it again when nothing was kept", () => {
+    expect(downloadFailedProblem("Could not download vocab.txt: the server answered HTTP 404 Not Found", false)).toEqual({
+      title: TITLE,
+      body: "Could not download vocab.txt: the server answered HTTP 404 Not Found. Typing works meanwhile, and Try again downloads it again.",
+    });
+  });
+
+  it("tells the reason as a sentence, as an agent's line is told", () => {
+    expect(downloadFailedProblem("Error: terminated (other side closed)", true).body).toBe(
+      "Terminated (other side closed). Typing works meanwhile, and Try again continues where it stopped.",
+    );
+  });
+
+  it("promises to continue only when a part was kept", () => {
+    for (const reason of [REASON, "Could not download vocab.txt: the server answered HTTP 404 Not Found", ""]) {
+      expect(downloadFailedProblem(reason, true).body).toMatch(/Try again continues where it stopped\.$/);
+      expect(downloadFailedProblem(reason, false).body).toMatch(/Try again downloads it again\.$/);
+      expect(downloadFailedProblem(reason, false).body).not.toContain("continues");
+    }
+  });
+
+  it("with no reason says only what is true meanwhile and what Try again does", () => {
+    expect(downloadFailedProblem("", false).body).toBe("Typing works meanwhile, and Try again downloads it again.");
+    expect(downloadFailedProblem("  ", true).body).toBe("Typing works meanwhile, and Try again continues where it stopped.");
   });
 });
 

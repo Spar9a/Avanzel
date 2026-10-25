@@ -240,23 +240,45 @@ const modelHubs = new Set<Server>();
 
 /**
  * A local stand-in for huggingface.co, to pass as AVANZEL_MODELS_URL: it serves `/<repo>/resolve/<revision>/<file>`
- * for the real MODELS and keeps every path asked for in `requests`. "stall" answers 200 with the file's pinned
- * content-length, sends 64 KB and holds the connection, so the download stays in progress; "trickle" does the same,
- * then sends 16 KB more every 100 ms, so its progress keeps moving; "missing" answers 404, so it fails. A spec that
- * uses it runs `test.afterEach(closeModelHubs)`, which closes it when the test ends.
+ * for the real MODELS and keeps every path asked for in `requests`, and the Range header each came with in `ranges`
+ * (in the same order). "stall" answers 200 with the file's pinned content-length, sends 64 KB and holds the
+ * connection, so the download stays in progress; "trickle" does the same, then sends 16 KB more every 100 ms, so its
+ * progress keeps moving; "missing" answers 404, so it fails; "drop" sends half of a file and drops the connection the
+ * first time the file is asked for, and serves it after that, from the byte a range names. What it serves is zeros:
+ * the right length, never the right bytes, so a whole file fails its SHA-256. A spec that uses it runs
+ * `test.afterEach(closeModelHubs)`, which closes it when the test ends.
  */
-export async function fakeModelHub(mode: "stall" | "trickle" | "missing"): Promise<{ url: string; requests: string[] }> {
+export async function fakeModelHub(
+  mode: "stall" | "trickle" | "missing" | "drop",
+): Promise<{ url: string; requests: string[]; ranges: (string | undefined)[] }> {
   const sizes = new Map<string, number>();
   for (const { repo, revision, digests } of Object.values(MODELS)) {
     for (const [name, { size }] of Object.entries(digests)) sizes.set(`/${repo}/resolve/${revision}/${name}`, size);
   }
   const requests: string[] = [];
+  const ranges: (string | undefined)[] = [];
+  const cut = new Set<string>(); // the files "drop" has cut already
   const server = createServer((req, res) => {
     const url = req.url ?? "";
     requests.push(url);
+    ranges.push(req.headers.range);
     const size = sizes.get(url);
     if (mode === "missing" || size === undefined) {
       res.writeHead(404).end("Entry not found");
+      return;
+    }
+    if (mode === "drop") {
+      const range = /^bytes=(\d+)-$/.exec(req.headers.range ?? "");
+      const start = range ? Number(range[1]) : 0;
+      res.writeHead(range ? 206 : 200, {
+        "content-length": size - start,
+        "content-type": "application/octet-stream",
+        ...(range ? { "content-range": `bytes ${start}-${size - 1}/${size}` } : {}),
+      });
+      if (cut.has(url)) return void res.end(Buffer.alloc(size - start));
+      cut.add(url);
+      // Dropped once all of it has left, and a moment later, so the app has taken what was sent and keeps all of it.
+      res.write(Buffer.alloc(Math.floor((size - start) / 2)), () => setTimeout(() => res.destroy(), 50));
       return;
     }
     res.writeHead(200, { "content-length": size, "content-type": "application/octet-stream" });
@@ -274,7 +296,7 @@ export async function fakeModelHub(mode: "stall" | "trickle" | "missing"): Promi
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   modelHubs.add(server);
-  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, requests };
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, requests, ranges };
 }
 
 /** Closes every `fakeModelHub` and the downloads it holds; for `test.afterEach`. */

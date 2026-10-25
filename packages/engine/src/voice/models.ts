@@ -1,8 +1,8 @@
 // Speech model files: what each model needs, where an existing copy is (the app's models directory or a
 // Hugging Face cache snapshot), and downloading whatever is missing from Hugging Face: pinned to a commit and
-// checked against the size and SHA-256 recorded here.
-import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, unlinkSync } from "node:fs";
+// checked against the size and SHA-256 recorded here. A download that stops keeps what arrived and continues from it.
+import { createHash, type Hash } from "node:crypto";
+import { createReadStream, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { open, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -84,6 +84,21 @@ export class MissingModelError extends AvanzelError {
   }
 }
 
+/**
+ * A file of a speech model could not be downloaded. `message` names the file and why, and never the address it came
+ * from. `resumable` says a part of the file was kept, so the next try continues where this one stopped; false when
+ * nothing arrived, or what did was wrong and has been deleted.
+ */
+export class DownloadError extends AvanzelError {
+  override name = "DownloadError";
+  readonly resumable: boolean;
+
+  constructor(message: string, resumable: boolean) {
+    super(message);
+    this.resumable = resumable;
+  }
+}
+
 function spec(id: string): ModelSpec {
   if (!Object.hasOwn(MODELS, id)) throw new AvanzelError(`Unknown speech model '${id}'.`);
   return MODELS[id]!;
@@ -160,6 +175,7 @@ export function missingModels(ids: readonly string[], modelsDir: string, quantiz
 
 export interface DownloadProgress {
   file: string;
+  /** The file's bytes so far. A file that continues from a kept part starts at the bytes kept, not at zero. */
   receivedBytes: number;
   /** The file's pinned size. Never null now; the type keeps null for callers that handle it. */
   totalBytes: number | null;
@@ -172,6 +188,7 @@ export interface DownloadOptions {
   /** "int8" (default) or "" for the full-precision files. */
   quantization?: string;
   onProgress?: (progress: DownloadProgress) => void;
+  /** Aborting rejects with the signal's own error and keeps no `.part`, the one an earlier try left included. */
   signal?: AbortSignal;
   /** Defaults to https://huggingface.co; tests point it at a local server. */
   baseUrl?: string;
@@ -257,6 +274,13 @@ export async function downloadModelFiles(model: ModelSpec, dir: string, options:
  * any download starts, and then the jobs download one after the other, the one with the fewest bytes to fetch first
  * (jobs with as many keep the order given). `onProgress` counts over all jobs, and its `overallTotal` is the same in
  * every event.
+ *
+ * A download that stops keeps its `.part` and the next one continues from it (see `fetchFile`). When a download starts,
+ * the `.part` files in the jobs' directories that it doesn't fetch are deleted: what is left of a file that is complete
+ * or cached by now, or of one the quantization no longer needs.
+ *
+ * Rejects with a `DownloadError` when a file can't be downloaded, which says whether a part of it was kept; with the
+ * signal's own error when `options.signal` aborts, which keeps nothing.
  */
 export async function downloadModelsFiles(
   jobs: readonly { model: ModelSpec; dir: string }[],
@@ -280,6 +304,8 @@ export async function downloadModelsFiles(
     }
   }
 
+  clearStaleParts(plans);
+
   const overallTotal = plans.reduce((sum, plan) => sum + plan.bytes, 0);
   let fetched = 0; // the bytes of the files that are done, of every job so far
   // sort is stable, so jobs with as many bytes to fetch stay in the order given
@@ -302,6 +328,58 @@ function digestOf(model: ModelSpec, name: string): Digest {
   return digest;
 }
 
+/**
+ * Deletes the `.part` files in the directories of `plans` that none of them fetches. The `.part` of a file that is
+ * fetched stays, to be continued. A `.part` that can't be deleted stays too: it is no reason to fail a download, and the
+ * next one clears it.
+ */
+function clearStaleParts(plans: readonly { dir: string; fetch: readonly PinnedFile[] }[]): void {
+  const fetched = new Set(plans.flatMap(({ dir, fetch }) => fetch.map(({ name }) => join(dir, `${name}.part`))));
+  for (const dir of new Set(plans.map((plan) => plan.dir))) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (!entry.name.endsWith(".part") || entry.isDirectory() || fetched.has(path)) continue;
+      try {
+        unlinkSync(path); // a link is removed itself, never what it points to
+      } catch {
+        // see above
+      }
+    }
+  }
+}
+
+/** Feeds the first `length` bytes of the file at `path`, which must be more than none, to `hash`. */
+async function hashInto(hash: Hash, path: string, length: number): Promise<void> {
+  for await (const chunk of createReadStream(path, { end: length - 1, highWaterMark: 1 << 20 })) hash.update(chunk);
+}
+
+/** What arrived, or what was kept, can't be the file: it is deleted, and the next try starts from zero. */
+class WrongBytes extends Error {}
+
+/**
+ * An error's message and its cause's, without any address (`url` is the one asked for, which a message about an address
+ * that can't be parsed repeats): a person reads it, and a download's address is long and says nothing.
+ */
+function reasonOf(error: unknown, url: string): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error instanceof Error && error.cause instanceof Error ? ` (${error.cause.message})` : "";
+  return `${message}${cause}`.replaceAll(url, "the server").replace(/\bhttps?:\/\/[^\s)]+/gi, "the server");
+}
+
+/**
+ * Downloads one pinned file from `url` to `target`, through `<target>.part`, which it renames into place only when it
+ * has the pinned size and SHA-256. The `.part` an earlier try left decides where this one starts:
+ * - longer than the file: it is no part of it, and is deleted;
+ * - as long as the file: it is hashed here, never asked of the server (which would answer a range from its end with a
+ *   416), and renamed into place when it matches, else deleted and fetched from zero;
+ * - shorter: it is kept, and continued with a Range request. A 206 answers it, and the kept bytes are hashed before the
+ *   new ones follow, so the SHA-256 is always of the whole file; a 200 (a server that ignores Range) sends the whole file,
+ *   which replaces the part; a 416 deletes the part and asks again, for the whole file, which it can't answer so.
+ *
+ * A try that fails keeps its `.part` when it may be good, since all that arrived is the file's first bytes: a dropped
+ * connection, a body that ended short, an HTTP error. It deletes the part when it can't be: more bytes than the file
+ * has, or a wrong SHA-256. An abort keeps nothing. The `DownloadError` says which, as `resumable`.
+ */
 async function fetchFile(
   { name, size, sha256 }: PinnedFile,
   url: string,
@@ -309,25 +387,53 @@ async function fetchFile(
   signal: AbortSignal | undefined,
   progress: (receivedBytes: number) => void,
 ): Promise<void> {
-  const failed = (why: string) => new AvanzelError(`Could not download ${name} from ${url}: ${why}`);
   const part = `${target}.part`;
   try {
-    const response = await fetch(url, { headers: HEADERS, signal });
+    let offset = fileSize(part) ?? 0;
+    if (offset > size) {
+      await rm(part, { force: true });
+      offset = 0;
+    } else if (offset > 0 && offset === size) {
+      const hash = createHash("sha256");
+      await hashInto(hash, part, size);
+      if (hash.digest("hex") === sha256) {
+        await rename(part, target);
+        progress(size);
+        return;
+      }
+      await rm(part, { force: true });
+      offset = 0;
+    }
+
+    const get = (from: number) => fetch(url, { headers: from > 0 ? { ...HEADERS, range: `bytes=${from}-` } : HEADERS, signal });
+    let response = await get(offset);
+    if (offset > 0 && response.status === 416) {
+      await response.body?.cancel();
+      await rm(part, { force: true });
+      offset = 0;
+      response = await get(0);
+    }
     if (!response.ok || !response.body) {
       await response.body?.cancel();
-      throw failed(`HTTP ${response.status} ${response.statusText}`.trim());
+      throw new Error(`the server answered HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`);
     }
+
+    // Only a 206 continues the part. Any other answer is the whole file, from its first byte.
     const hash = createHash("sha256");
-    let received = 0;
-    const file = await open(part, "w");
+    if (response.status === 206 && offset > 0) await hashInto(hash, part, offset);
+    else offset = 0;
+    let received = offset;
+    const file = await open(part, offset > 0 ? "a" : "w");
     try {
-      progress(0);
+      progress(received);
       // The digest runs over the chunks on their way into the file, and `pipeline` returns only once the file stream
       // has written every one of them (or failed), so it covers exactly what was written.
       await pipeline(
         response.body,
         async function* (chunks: AsyncIterable<Uint8Array>) {
           for await (const chunk of chunks) {
+            // Not a byte more than the file has goes to the disk, whatever the server keeps sending.
+            if (received + chunk.length > size) throw new WrongBytes(`got more than the ${size} bytes expected`);
             hash.update(chunk);
             received += chunk.length;
             progress(received);
@@ -342,13 +448,18 @@ async function fetchFile(
       await file.close();
     }
     const written = (await stat(part)).size; // what reached the disk, whatever came over the network
-    if (written !== size) throw failed(`got ${written} of ${size} bytes; try again`);
-    if (hash.digest("hex") !== sha256) throw failed("the SHA-256 of what arrived is not the expected one; try again");
+    if (written > size) throw new WrongBytes(`got ${written} bytes, more than the ${size} expected`);
+    if (written < size) throw new Error(`got ${written} of ${size} bytes`);
+    if (hash.digest("hex") !== sha256) throw new WrongBytes("the SHA-256 of what arrived is not the expected one");
     await rename(part, target);
   } catch (error) {
-    await rm(part, { force: true });
-    if (signal?.aborted || error instanceof AvanzelError) throw error;
-    const cause = error instanceof Error && error.cause instanceof Error ? ` (${error.cause.message})` : "";
-    throw failed(`${error instanceof Error ? error.message : String(error)}${cause}`);
+    if (signal?.aborted) {
+      await rm(part, { force: true });
+      throw error;
+    }
+    if (error instanceof WrongBytes) await rm(part, { force: true });
+    const kept = fileSize(part) ?? 0;
+    if (kept === 0) await rm(part, { force: true }); // nothing arrived: not even an empty file is left to be called a part
+    throw new DownloadError(`Could not download ${name}: ${reasonOf(error, url)}`, kept > 0);
   }
 }

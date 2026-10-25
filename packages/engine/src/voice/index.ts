@@ -7,6 +7,7 @@ import { ParakeetTranscriber } from "./parakeet.ts";
 
 export { CommandTranscriber } from "./command.ts";
 export {
+  DownloadError,
   type DownloadOptions,
   type DownloadProgress,
   downloadModel,

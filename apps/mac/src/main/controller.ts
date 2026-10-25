@@ -24,6 +24,7 @@ import {
   checkAgent as checkHarness,
   classifyFailure,
   defaultSettings,
+  DownloadError,
   downloadModels,
   downloadSize,
   ensureDefaultTasks,
@@ -2385,7 +2386,7 @@ export class Controller {
       const [parakeet] = ids; // none for a command
       return { kind: "ready", dir: parakeet ? (locateModel(parakeet, this.modelsDir, voice.quantization) ?? "") : "" };
     } catch (error) {
-      return { kind: "error", cause: "settings", message: errorMessage(error) };
+      return { kind: "error", cause: "settings", message: errorMessage(error), resumable: false };
     }
   }
 
@@ -2405,7 +2406,7 @@ export class Controller {
       missing = missingModels(speechModels(voice), this.modelsDir, voice.quantization);
       bytes = downloadSize(missing, this.modelsDir, voice.quantization);
     } catch (error) {
-      this.model = { kind: "error", cause: "settings", message: errorMessage(error) }; // [voice] settings it can't use: nothing to fetch
+      this.model = { kind: "error", cause: "settings", message: errorMessage(error), resumable: false }; // [voice] settings it can't use: nothing to fetch
       this.broadcast();
       return this.snapshot();
     }
@@ -2436,8 +2437,11 @@ export class Controller {
         this.followDownload({ kind: "hidden" });
       })
       .catch((error) => {
-        this.model = { kind: "error", cause: "download", message: errorMessage(error) };
-        this.followDownload({ kind: "model-failed" });
+        // Its message names the file and why, with no address in it. Only a DownloadError can have kept a part to continue from.
+        const reason = errorMessage(error);
+        const resumable = error instanceof DownloadError && error.resumable;
+        this.model = { kind: "error", cause: "download", message: reason, resumable };
+        this.followDownload({ kind: "model-failed", reason, resumable });
       })
       .finally(() => this.broadcast());
     return this.snapshot();
@@ -2462,12 +2466,12 @@ export class Controller {
   private showModelStatus(): void {
     const model = this.model;
     if (model.kind === "downloading") this.setCapsule({ kind: "preparing", receivedBytes: model.receivedBytes, totalBytes: model.totalBytes }, PREPARING_SHOW_MS);
-    else if (model.kind === "error" && model.cause === "download") this.setCapsule({ kind: "model-failed" });
+    else if (model.kind === "error" && model.cause === "download") this.setCapsule({ kind: "model-failed", reason: model.message, resumable: model.resumable });
     else if (model.kind === "error") this.fail("Avanzel can't use these voice settings", model.message);
     else this.setCapsule({ kind: "hidden" }); // ready: nothing to wait for (missing never gets here: downloadModel() runs first)
   }
 
-  /** Try again, on the capsule's notice of a failed download: the download starts over, and the capsule shows it. */
+  /** Try again, on the capsule's notice of a failed download: it goes on from the part the download kept, if it kept one, and the capsule shows it. */
   retryDownload(): void {
     void this.downloadModel();
     this.showModelStatus();
