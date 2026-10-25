@@ -1,7 +1,7 @@
 // First-run setup (§5): its window, the session it runs from the moment the window opens until it closes, and Zel's
 // bubble under the menu bar icon once setup has ended. What it needs of the rest of the app, it asks the controller
 // for through `SetupHost`; the controller calls its hooks as recordings and filings go on.
-import { app, clipboard, dialog, screen, shell, systemPreferences, type BrowserWindow, type Rectangle } from "electron";
+import { app, clipboard, dialog, screen, systemPreferences, type BrowserWindow, type Rectangle } from "electron";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -58,6 +58,7 @@ import {
 } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, type ShortcutApi } from "./shortcuts.ts";
 import type { FirstRunLog, NoticedShortcuts } from "./store.ts";
+import { openTerminal } from "./terminal.ts";
 import { createSetupWindow, createUpHereWindow, UP_HERE_SIZE } from "./windows.ts";
 
 /** The capsule's notice of a shortcut another app holds. */
@@ -157,8 +158,6 @@ const SETUP_PROGRESS_MS = 1_000;
  * updates rather than one each, and the newest is never more than this far behind.
  */
 const STEP_MS = 250;
-/** Where Open Terminal goes: the person signs an agent in there. */
-const TERMINAL = "/System/Applications/Utilities/Terminal.app";
 
 /** The setup window and what it is doing, from the moment it opens until it closes. */
 interface SetupSession {
@@ -589,8 +588,7 @@ export class Setup {
 
   /** Open Terminal, on a signed-out agent's Notice. With AVANZEL_TEST=1 Terminal stays shut, and openedForTests says so. */
   openTerminal(): void {
-    if (process.env.AVANZEL_TEST === "1") this.host.opened.push("Terminal");
-    else void shell.openPath(TERMINAL);
+    openTerminal(this.host.opened);
   }
 
   /**
@@ -902,7 +900,18 @@ export class Setup {
     session.thought = { kind: "waiting" };
     session.testCapture = null;
     this.enterSetupStep("filing");
-    const job: FilingJob = { capturePath, text: words, transcribedIn, agent: this.host.agentName(), abort: new AbortController(), edited: false, rows: [], written: [], setup: true };
+    const job: FilingJob = {
+      capturePath,
+      text: words,
+      transcribedIn,
+      agent: this.host.agentName(),
+      harness: this.libraryHarness() ?? "auto",
+      abort: new AbortController(),
+      edited: false,
+      rows: [],
+      written: [],
+      setup: true,
+    };
     session.job = job;
     session.filing = { kind: "running", words, agent: job.agent, startedAt: Date.now(), waiting: false, cancelling: false, rows: job.rows, written: job.written };
     this.host.queuedToFile.add(capturePath);

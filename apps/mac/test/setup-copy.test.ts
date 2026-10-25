@@ -23,6 +23,7 @@ import {
   workingLine,
 } from "../src/renderer/setup/copy.ts";
 import { NOTE_GONE, type AgentStatus, type FiledPage } from "../src/shared/ipc.ts";
+import { ownLine as sharedOwnLine } from "../src/shared/problems.ts";
 
 /** A page an agent filed, from its library path without ".md": "ideas/a" is "a" on Ideas. */
 const filed = (rel: string): FiledPage => {
@@ -60,13 +61,8 @@ describe("setup copy", () => {
     expect(agentProblemTitle("Codex", { kind: "failed", detail: "Error: boom" })).toBe("Codex didn't work.");
   });
 
-  it("ownLine", () => {
-    expect(ownLine("Error: usage limit reached")).toBe("Usage limit reached.");
-    expect(ownLine("agent crashed: not logged in")).toBe("Agent crashed: not logged in.");
-    expect(ownLine("Is it on?")).toBe("Is it on?");
-    expect(ownLine("ERROR: the model is not supported with this account")).toBe("The model is not supported with this account.");
-    expect(ownLine("Still starting…")).toBe("Still starting…");
-    expect(ownLine("")).toBe("");
+  it("re-exports ownLine, which the main process shares, for the windows that import it from here", () => {
+    expect(ownLine).toBe(sharedOwnLine); // its cases are problems.test.ts's
   });
 
   it("the working line counts up to the estimate, then only counts", () => {

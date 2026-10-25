@@ -85,10 +85,13 @@ export const UNREADABLE_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo "unk
 
 /**
  * A `claude` for agentStubs that files: signed in, and any other call runs the engine's fake agent with the prompt,
- * which Claude Code's argv puts after -p. The FAKE_AGENT_* variables a test launches with steer it.
+ * which Claude Code's argv puts after -p. The FAKE_AGENT_* variables a test launches with steer it; so do `env`'s, which
+ * steer this stand-in alone (say `{ FAKE_AGENT_MODE: "limit" }`): they go in front of its exec, so the agents of one
+ * launch can each act differently.
  */
-export function filingClaude(): string {
-  return `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else exec '${process.execPath}' '${fakeAgent}' "$2"; fi`;
+export function filingClaude(env: Record<string, string> = {}): string {
+  const steer = Object.entries(env).map(([name, value]) => `${name}='${value}' `).join("");
+  return `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else ${steer}exec '${process.execPath}' '${fakeAgent}' "$2"; fi`;
 }
 
 /**
@@ -114,6 +117,17 @@ export function answerAs(dir: string, name: string, body: string): void {
 
 /** This process's PATH with new agentStubs(answers) first: what launch() gives the app unless the test passes a PATH. */
 export const agentPath = (answers: Record<string, string> = {}) => `${agentStubs(answers)}:${process.env.PATH ?? ""}`;
+
+/**
+ * The launch variables of a Mac whose only agents are the stand-ins in `bin`, a folder of agentStubs' or answerAs' making:
+ * main keeps PATH as it is given (AVANZEL_EXACT_PATH), and only the system folders follow `bin`. A test whose outcome
+ * depends on which agents are installed launches with these, or it finds this Mac's own Claude Code, Codex, OpenCode and
+ * Cursor Agent, and offers or runs them.
+ */
+export const onlyAgentsIn = (bin: string): Record<string, string> => ({
+  AVANZEL_EXACT_PATH: "1",
+  PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+});
 
 /**
  * How the app has called the stand-ins so far, oldest first. They are the first folder on its PATH: with AVANZEL_TEST

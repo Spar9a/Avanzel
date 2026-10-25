@@ -1,10 +1,30 @@
 // Filing with the agent: Edit while it runs, quitting while it runs, and runs that fail.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { chmodSync, mkdtempSync, readFileSync, renameSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Vault } from "../../../packages/engine/src/index.ts";
-import { alive, call, capsuleKind, exists, filesUnder, gitOut, launch, makeLibrary, onceMarker, read, snap, speechWav, windowFor } from "./helpers.ts";
+import { Vault, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
+import {
+  agentCalls,
+  agentStubs,
+  alive,
+  answerAs,
+  call,
+  capsuleKind,
+  exists,
+  filesUnder,
+  filingClaude,
+  gitOut,
+  launch,
+  makeLibrary,
+  onceMarker,
+  onlyAgentsIn,
+  read,
+  SIGNED_IN,
+  snap,
+  speechWav,
+  windowFor,
+} from "./helpers.ts";
 
 const inbox = (root: string) => filesUnder(root, "inbox");
 /** What each capture waiting in the inbox says. */
@@ -232,7 +252,18 @@ test("corrected words that can't be saved yet are saved when Avanzel quits, and 
   try {
     await capsule.getByRole("button", { name: "File" }).click();
     await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
-    await expect(capsule.getByText("Your corrected words are saved to your inbox when you quit", { exact: false })).toBeVisible();
+    // Not an agent's failure: its own title, the error's line and what keeps the words, and OK only, so that nothing
+    // files the misheard capture again.
+    await expect(capsule.getByRole("alert")).toContainText("Your corrected words weren't saved yet.");
+    await expect(
+      capsule.getByText("Your corrected words are saved to your inbox when you quit; the original note is still there.", { exact: false }),
+    ).toBeVisible();
+    await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
+    expect(await call(app, "capsuleStateForTests")).toEqual({
+      kind: "error",
+      message: "Your corrected words weren't saved yet.",
+      detail: expect.stringMatching(/^EACCES: permission denied.*\nYour corrected words are saved to your inbox when you quit; the original note is still there\.$/),
+    });
     await call(app, "idleForTests"); // nothing left to do: the words are only in memory
   } finally {
     chmodSync(inboxDir, 0o755);
@@ -293,6 +324,18 @@ test("a failed filing says its partial edits are kept as their own commit", asyn
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("error");
   await expect(capsule.getByText(/partial edits are kept as their own commit in the library's history/)).toBeVisible();
+  // Any other failure keeps the agent's own line, as a sentence, then what is safe and what the agent left behind. Its one
+  // fix files the note again with the same agent.
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: "fake couldn't file this note.",
+    detail:
+      "Agent crashed: cannot file this one. Your note is safe in the inbox; the evening review will try again. " +
+      "fake's partial edits are kept as their own commit in the library's history.",
+    action: "refile:fake",
+    actionLabel: "Try again",
+  });
+  await expect(capsule.getByRole("button")).toHaveText(["×", "Try again", "OK"]);
   await snap(capsule, "5-error-partial-edits");
   expect(inbox(library)).toHaveLength(1);
   expect(gitOut(library, "log", "-1", "--format=%s")).toMatch(/^avanzel: leftovers of failed filing /);
@@ -326,6 +369,208 @@ test("when a symlinked inbox keeps the agent's rewrite, the capsule says where t
   expect(kept).toMatch(/-my-exact-words\.original\.md$/);
   expect(read(library, `.avanzel/logs/${kept}`)).toContain("My exact words");
   await expect(capsule.getByText(`Your words are kept in .avanzel/logs/${kept}`, { exact: false })).toBeVisible();
-  await expect(capsule.getByText("still in your inbox", { exact: false })).toHaveCount(0);
+  await expect(capsule.getByText("safe in the inbox", { exact: false })).toHaveCount(0);
+  await snap(capsule, "5-error-words-aside");
+  // The blocked line first, then where the words are instead of "safe in the inbox", then what the run left in the
+  // library. This library has no git, so those edits have no history to be undone from.
+  const captureId = kept!.replace(/\.original\.md$/, "");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    kind: "error",
+    message: "fake couldn't file this note.",
+    detail:
+      `The agent changed ${captureId}, and Avanzel does not write it back through a symlink in inbox/. ` +
+      `Your words are kept in .avanzel/logs/${kept}, and the inbox holds the agent's version; the evening review will try again. ` +
+      "Its partial edits stay in the library, outside its history, so they can't be undone.",
+  });
+  await app.close();
+});
+
+// ---- The card a failed filing ends in: what happened, what is safe, and the one fix ----
+//
+// Each of these files with Claude Code, whose stand-in `claude` acts as the test made it (filingClaude), on a Mac whose only
+// agents are the stand-ins in the test's folder (onlyAgentsIn): which other agents are installed decides the card.
+
+/** Tomorrow at 09:00 in this zone, in epoch seconds, as Claude Code's rate limit gives its reset. */
+function tomorrowAtNine(): number {
+  const day = new Date();
+  day.setDate(day.getDate() + 1);
+  day.setHours(9, 0, 0, 0);
+  return Math.floor(day.getTime() / 1000);
+}
+
+/** A `claude` that has hit its usage limit, which resets tomorrow at 09:00: it prints a stream, as Claude Code does. */
+const limitedClaude = () =>
+  filingClaude({ FAKE_AGENT_STREAM: "claude", FAKE_AGENT_MODE: "limit", FAKE_AGENT_RESETS_AT: String(tomorrowAtNine()) });
+
+/**
+ * A library that Claude Code files, opened on a Mac whose only agents are the stand-ins in `bin`. `timeoutSeconds` is the
+ * limit of its runs, and `eveningReview` whether the library's evening review is on.
+ */
+async function claudeLibrary(bin: string, { timeoutSeconds = 30, eveningReview = true }: { timeoutSeconds?: number; eveningReview?: boolean } = {}) {
+  const library = await makeLibrary();
+  saveSettings(library, { ...loadSettings(library), harness: "claude", timeoutSeconds });
+  if (!eveningReview) {
+    const file = path.join(library, "tasks", "evening-review.md");
+    writeFileSync(file, readFileSync(file, "utf8").replace("enabled: true", "enabled: false"));
+  }
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
+    ...onlyAgentsIn(bin),
+  });
+  return { library, app, capsule: await windowFor(app, "capsule") };
+}
+
+/** Records "Plant tulips in October" and files it. */
+async function dictate(app: ElectronApplication): Promise<void> {
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+}
+
+/** `claudeLibrary`, dictated to, and waited for until the capsule shows the card the filing failed with. */
+async function failedWithClaude(bin: string, options?: { timeoutSeconds?: number; eveningReview?: boolean }) {
+  const opened = await claudeLibrary(bin, options);
+  await dictate(opened.app);
+  await expect.poll(() => capsuleKind(opened.app), { timeout: 60_000 }).toBe("error");
+  return opened;
+}
+
+/** The capture the capsule's failure card was shown for, which its button files again. */
+const cardCapture = (app: ElectronApplication) =>
+  app.evaluate(() => (globalThis as unknown as { __avanzel: { cardCapture: string | null } }).__avanzel.cardCapture);
+
+test("a usage limit names its reset and offers another agent", async () => {
+  const { library, app, capsule } = await failedWithClaude(agentStubs({ claude: limitedClaude() }));
+  const body = "It resets tomorrow at 09:00. Your note is safe in the inbox and will be filed then.";
+  await expect(capsule.getByRole("alert")).toContainText("Claude Code has hit its usage limit.");
+  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
+  // The one fix is the best other agent, here Codex's stand-in: the card's button names it. OK stays beside it.
+  await expect(capsule.getByRole("button")).toHaveText(["×", "File it with Codex now", "OK"]);
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: "Claude Code has hit its usage limit.",
+    detail: body,
+    action: "refile:codex",
+    actionLabel: "File it with Codex now",
+  });
+  await snap(capsule, "5-error-limit");
+  // The note stays in the inbox, the card remembers which note it is about, and offering Codex ran nothing of Codex's.
+  const [note] = inbox(library);
+  expect(note).toBeDefined();
+  expect(path.basename((await cardCapture(app)) ?? "")).toBe(note);
+  expect((await agentCalls(app)).filter((line) => line.startsWith("codex"))).toEqual([]);
+  await app.close();
+});
+
+test("a usage limit with no other agent offers no fix", async () => {
+  const bin = mkdtempSync(path.join(tmpdir(), "avz-e2e-bin-"));
+  answerAs(bin, "claude", limitedClaude()); // the only agent on this Mac
+  const { library, app, capsule } = await failedWithClaude(bin);
+  const body = "It resets tomorrow at 09:00. Your note is safe in the inbox and will be filed then.";
+  await expect(capsule.getByRole("alert")).toContainText("Claude Code has hit its usage limit.");
+  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
+  expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: "Claude Code has hit its usage limit.", detail: body });
+  expect(inbox(library)).toHaveLength(1);
+  await app.close();
+});
+
+test("a sign-in failure opens Terminal", async () => {
+  const { library, app, capsule } = await failedWithClaude(agentStubs({ claude: filingClaude({ FAKE_AGENT_MODE: "fail" }) })); // "not logged in"
+  const body = "Run claude once in Terminal and sign in, and your note will be filed straight away.";
+  await expect(capsule.getByRole("alert")).toContainText("Claude Code isn't signed in on this Mac.");
+  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("button")).toHaveText(["×", "Open Terminal", "OK"]);
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: "Claude Code isn't signed in on this Mac.",
+    detail: body,
+    action: "open-terminal",
+    actionLabel: "Open Terminal",
+  });
+  await snap(capsule, "5-error-signin");
+  expect(await call(app, "openedForTests")).toEqual([]);
+  await capsule.getByRole("button", { name: "Open Terminal", exact: true }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["Terminal"]); // Terminal itself stays shut under test
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  expect(inbox(library)).toHaveLength(1);
+  await app.close();
+});
+
+test("a timeout says how long it had", async () => {
+  // The stand-in echoes a long prompt and then never finishes, so the run is stopped at the library's limit.
+  const { app, capsule } = await failedWithClaude(agentStubs({ claude: filingClaude({ FAKE_AGENT_MODE: "slow-noisy" }) }), { timeoutSeconds: 2 });
+  const body = "Your note is safe in the inbox; the evening review will try again.";
+  await expect(capsule.getByRole("alert")).toContainText("Claude Code took longer than 2 s and was stopped.");
+  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("button")).toHaveText(["×", "Try again", "OK"]);
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: "Claude Code took longer than 2 s and was stopped.",
+    detail: body,
+    action: "refile:claude",
+    actionLabel: "Try again",
+  });
+  await app.close();
+});
+
+test("a library whose evening review is off promises no review", async () => {
+  // A plain-text agent's limit names no reset, so the card has no moment to promise. With the evening review off it has no
+  // one to promise either: it says only that the note is safe.
+  const bin = agentStubs({ claude: filingClaude({ FAKE_AGENT_MODE: "limit" }) });
+  const { app, capsule } = await failedWithClaude(bin, { eveningReview: false });
+  await expect(capsule.getByRole("alert")).toContainText("Claude Code has hit its usage limit.");
+  await expect(capsule.getByText("Your note is safe in the inbox.", { exact: true })).toBeVisible();
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: "Claude Code has hit its usage limit.",
+    detail: "Your note is safe in the inbox.",
+    action: "refile:codex",
+    actionLabel: "File it with Codex now",
+  });
+  await app.close();
+});
+
+test("a library whose own agent is gone says so", async () => {
+  const bin = mkdtempSync(path.join(tmpdir(), "avz-e2e-bin-"));
+  answerAs(bin, "codex", SIGNED_IN.codex!); // this Mac has Codex, but the library's agent is Claude Code
+  const { library, app, capsule } = await failedWithClaude(bin);
+  const body = "Your note is safe in the inbox. Settings → Agents can choose another agent, or has its install command.";
+  await expect(capsule.getByRole("alert")).toContainText("Claude Code isn't installed on this Mac any more.");
+  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("button")).toHaveText(["×", "Open Settings", "OK"]);
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: "Claude Code isn't installed on this Mac any more.",
+    detail: body,
+    action: "open-settings:agents",
+    actionLabel: "Open Settings",
+  });
+  expect(inbox(library)).toHaveLength(1);
+  await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("radio", { name: "Agents", exact: true })).toHaveAttribute("aria-checked", "true");
+  await app.close();
+});
+
+test("a failure whose card is gone notifies with the same words", async () => {
+  // The stand-in takes a moment, so the person can close the card before the run fails.
+  const bin = agentStubs({ claude: filingClaude({ FAKE_AGENT_MODE: "fail", FAKE_AGENT_DELAY_MS: "2000" }) });
+  const { library, app } = await claudeLibrary(bin);
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  await call(app, "dismiss");
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  await expect
+    .poll(() => call(app, "notificationsForTests"), { timeout: 30_000 })
+    .toEqual([
+      {
+        title: "Claude Code isn't signed in on this Mac.",
+        body: "Run claude once in Terminal and sign in, and your note will be filed straight away.",
+      },
+    ]);
+  expect(await capsuleKind(app)).toBe("hidden"); // the failure doesn't bring the closed card back
+  expect(inbox(library)).toHaveLength(1);
   await app.close();
 });

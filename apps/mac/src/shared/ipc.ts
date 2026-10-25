@@ -29,6 +29,18 @@ export const isSetupStep = (value: unknown): value is SetupStep => SETUP_STEPS.s
 /** What is at the library's place now. */
 export type LibraryFolder = "missing" | "empty" | "has-files" | "library";
 
+/**
+ * What the one button of the capsule's error card does: opens a pane of System Settings, or Avanzel's Settings on the pane
+ * that fixes the problem; opens Terminal, where an agent signs in; or (`refile:<agent>`, the agent's harness name) files
+ * the note the card is about again with that agent.
+ */
+export type CardAction =
+  | "open-microphone-settings"
+  | "open-screen-settings"
+  | `open-settings:${SettingsPane}`
+  | "open-terminal"
+  | `refile:${string}`;
+
 export type CapsuleState =
   | { kind: "hidden" }
   | { kind: "listening"; mode: CapsuleMode; startedAt: number; fakeMic: boolean; microphoneId: string | null; thumbnail?: string }
@@ -46,8 +58,11 @@ export type CapsuleState =
   | { kind: "editing"; text: string }
   | { kind: "filed"; agent: string; seconds: number; pages: FiledPage[]; canUndo: boolean; message: string }
   | { kind: "saved"; text: string; thumbnail?: string; context?: ScreenContext; note: string; detail?: string }
-  /** `action`: where the card's Open Settings button goes: a pane of System Settings, or Avanzel's Settings on the pane that fixes it. */
-  | { kind: "error"; message: string; detail?: string; action?: "open-microphone-settings" | "open-screen-settings" | `open-settings:${SettingsPane}` }
+  /**
+   * `message` says what happened and `detail` what is safe. `action`: what the card's one button does (see CardAction), and
+   * `actionLabel` what it says; "Open Settings" when it names none.
+   */
+  | { kind: "error"; message: string; detail?: string; action?: CardAction; actionLabel?: string }
   /** The shortcut, while the speech models download: how far along they are, and typing instead. */
   | {
       kind: "preparing";

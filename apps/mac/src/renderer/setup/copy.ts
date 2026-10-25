@@ -3,6 +3,11 @@
 // person to fix.
 import { SHELVES, type ReceiptPage, type Shelf } from "@avanzel/ui";
 import { NOTE_GONE, type AgentProblem, type AgentStatus, type FiledPage, type ModelStatus, type RecordingProblem } from "../../shared/ipc.ts";
+import { ownLine } from "../../shared/problems.ts";
+
+// An agent's own line as a sentence is shared with the main process (its cards and notifications say it too); the windows
+// that import it from here keep doing so.
+export { ownLine };
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] as const;
@@ -55,17 +60,6 @@ export function agentProblemTitle(label: string, problem: AgentProblem): string 
     case "failed":
       return `${label} didn't work.`;
   }
-}
-
-/**
- * A line an agent printed, as a sentence: without the "Error:" label many CLIs put first, with a capital, and with a
- * full stop unless it ends a sentence already. Nothing stays nothing.
- */
-export function ownLine(detail: string): string {
-  const line = detail.trim().replace(/^error\s*:\s*/i, "");
-  if (!line) return "";
-  const sentence = line.charAt(0).toUpperCase() + line.slice(1);
-  return /[.?…]$/.test(sentence) ? sentence : `${sentence}.`;
 }
 
 /**

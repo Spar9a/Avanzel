@@ -81,7 +81,11 @@ test("an agent failure is shown and the note stays in the inbox", async () => {
   await call(app, "toggleDictate");
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("error");
-  await expect(capsule.getByText("couldn't file this note")).toBeVisible();
+  // The fake agent's "fail" mode says "not logged in": the card reads it as a sign-in, which Terminal fixes. fake isn't
+  // Claude Code or Codex, so the card gives no command to run, and the evening review is what files the note.
+  await expect(capsule.getByRole("alert")).toContainText("fake isn't signed in on this Mac.");
+  await expect(capsule.getByText("Sign in to fake in Terminal. Your note is safe in the inbox; the evening review will try again.", { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("button", { name: "Open Terminal", exact: true })).toBeVisible();
   await snap(capsule, "5-error");
   expect(inbox(library)).toHaveLength(1);
   await app.close();

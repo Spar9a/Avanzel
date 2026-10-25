@@ -25,6 +25,11 @@ export interface FilingJob {
   text: string;
   transcribedIn: number | null;
   agent: string;
+  /**
+   * The harness the job files with, by name ("claude"): the one the library's choice selected when the job was made, so a
+   * failure names that agent and its fix files the note with it again. "auto" while none could be selected (none is installed).
+   */
+  harness: string;
   /** Stops this filing's agent run: Edit, or quitting. */
   abort: AbortController;
   /** Edit stopped the run: what it did is taken back (`refile`), not shown. */

@@ -175,7 +175,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
           <div className="row"><span className="warn">!</span>{state.message}</div>
           {state.detail && <p className="detail">{state.detail}</p>}
           <div className="actions">
-            {state.action && <button className="btn" onClick={() => api.openSettingsFor(state.action ?? "")}>Open Settings</button>}
+            {state.action && <button className="btn" onClick={() => api.openSettingsFor(state.action ?? "")}>{state.actionLabel ?? "Open Settings"}</button>}
             <button className="btn primary" onClick={() => api.dismiss()}>OK</button>
           </div>
         </div>

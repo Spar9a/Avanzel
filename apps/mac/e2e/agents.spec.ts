@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, writeWav } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { agentCalls, agentPath, alive, call, launch, makeLibrary, openSettings, SIGNED_OUT_CLAUDE, snap, UNREADABLE_CLAUDE, windowFor } from "./helpers.ts";
+import { agentCalls, agentPath, alive, call, launch, makeLibrary, noAgents, openSettings, SIGNED_OUT_CLAUDE, snap, UNREADABLE_CLAUDE, windowFor } from "./helpers.ts";
 
 /** Opens Settings → Agents and returns the fake agent's row, a group named for its agent. */
 const fakeAgentRow = async (app: ElectronApplication) => (await openSettings(app, "Agents")).getByRole("group", { name: "fake" });
@@ -280,15 +280,22 @@ test("a check stopped for quitting leaves no result, and no check starts while A
 // the window's toolbar.
 const paneRadio = (settings: Page, name: string) => settings.getByRole("radio", { name, exact: true });
 
-test("Open Settings on a failed filing opens Settings → Agents", async () => {
-  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), FAKE_AGENT_MODE: "fail" });
+test("Open Settings on a filing with no agent to run opens Settings → Agents", async () => {
+  // The library picks its agent by itself, and this Mac has none: exactly the system folders and an empty one are on PATH.
+  const library = await makeLibrary();
+  saveSettings(library, { ...loadSettings(library), harness: "auto" });
+  const app = await launch({ AVANZEL_LIBRARY: library, ...noAgents().env });
   await call(app, "openQuick");
   const quick = await windowFor(app, "quick");
   const thought = quick.getByRole("textbox", { name: "Type a thought" });
   await thought.fill("Plant tulips in October");
   await thought.press("Enter");
   const capsule = await windowFor(app, "capsule");
-  await expect(capsule.getByText("couldn't file this note")).toBeVisible({ timeout: 60_000 });
+  await expect(capsule.getByRole("alert")).toContainText("Avanzel needs an AI agent to do the filing.", { timeout: 60_000 });
+  await expect(
+    capsule.getByText("Your note is safe in the inbox. Claude Code works best, and Settings → Agents has its install command.", { exact: true }),
+  ).toBeVisible();
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "error", action: "open-settings:agents", actionLabel: "Open Settings" });
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings"); // a new window: it opens on the pane its address names
   await expect(paneRadio(settings, "Agents")).toHaveAttribute("aria-checked", "true");
