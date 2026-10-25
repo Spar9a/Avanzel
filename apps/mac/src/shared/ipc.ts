@@ -469,6 +469,11 @@ export interface AskResult {
   paragraphs: string[];
   /** ok: the pages its [[links]] name that are in the library; [] otherwise. */
   sources: FiledPage[];
+  /**
+   * Whether the run left a change in the library: a file created, changed or deleted. An agent asked read-only leaves
+   * none, but one that doesn't keep to it may. False when nothing ran.
+   */
+  changed: boolean;
 }
 
 /** Preload bridge exposed as `window.avanzel`. */

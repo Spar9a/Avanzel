@@ -153,13 +153,23 @@ describe("a scheduled review's copy", () => {
     expect(fileModeLine(null)).toBe(off);
   });
 
-  it("failedSaveLine says what is true of a review whose save failed", () => {
-    // Main still lists the review, and refused for another reason: it runs as it was last saved.
-    expect(failedSaveLine("weekly-review", "EACCES: permission denied")).toBe("EACCES: permission denied. It still runs as last saved.");
-    // Main lists no review of that id any more: its file is gone, and it no longer runs.
-    expect(noSuchReview("weekly-review")).toBe("No scheduled review called weekly-review.");
-    expect(failedSaveLine("weekly-review", noSuchReview("weekly-review"))).toBe(
-      "No scheduled review called weekly-review. Its file is gone, so it no longer runs.",
+  it("failedSaveLine says only what is true of the review as stored", () => {
+    const evening = { id: "evening-review", kind: "evening-review", enabled: true };
+    // Main lists no review of that id: its file is missing, or can't be used, and it doesn't run.
+    expect(noSuchReview("evening-review")).toBe("No scheduled review called evening-review.");
+    expect(failedSaveLine(evening, noSuchReview("evening-review"))).toBe(
+      "No scheduled review called evening-review. Its file, tasks/evening-review.md, is missing or can't be used, so it doesn't run.",
+    );
+    // Stored as off, as the switch above the Notice shows: it stays off.
+    expect(failedSaveLine({ ...evening, enabled: false }, "EACCES: permission denied")).toBe("EACCES: permission denied. It stays off, as last saved.");
+    // On, and a kind Avanzel runs: it runs as stored.
+    expect(failedSaveLine(evening, "EACCES: permission denied")).toBe("EACCES: permission denied. It still runs as last saved.");
+    expect(failedSaveLine({ id: "weekly-review", kind: "review", enabled: true }, "EROFS: read-only file system")).toBe(
+      "EROFS: read-only file system. It still runs as last saved.",
+    );
+    // On, but custom: Avanzel doesn't run it, and its file is as it was.
+    expect(failedSaveLine({ id: "standup", kind: "custom", enabled: true }, "EACCES: permission denied")).toBe(
+      "EACCES: permission denied. Its file hasn't changed.",
     );
   });
 

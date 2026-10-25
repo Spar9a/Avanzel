@@ -1,6 +1,6 @@
 // The library around the captures: shadow tasks, their run state, and libraries that misbehave or aren't there.
 import { expect, test, type ElectronApplication } from "@playwright/test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
@@ -193,6 +193,13 @@ test("a review's editor keeps what was typed while another pane shows, and Cance
   await expect(instructions).toBeVisible();
   await expect(instructions).not.toHaveValue("Look for stale goals.");
   expect(read(library, "tasks/weekly-review.md")).not.toContain("Look for stale goals.");
+
+  // A Save that works closes the editor too, and gives the focus back to Edit, as Cancel does.
+  await instructions.fill("Look for stale goals.");
+  await weekly.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => read(library, "tasks/weekly-review.md")).toContain("Look for stale goals.");
+  await expect(weekly.getByRole("textbox")).toHaveCount(0);
+  await expect(edit).toBeFocused();
   await app.close();
 });
 
@@ -326,7 +333,7 @@ test("saving a review whose file has gone says so plainly", async () => {
   const patch = { id: "standup", name: "Standup", schedule: "daily 09:00", agent: "auto", enabled: true, instructions: "Ask about the day." };
   await expect(call(app, "saveTaskFromSettings", patch)).rejects.toThrow("No scheduled review called standup.");
   // In Settings, the review's Save says so under it, in main's words, then what is true of the review now: its file is
-  // gone, so it no longer runs (and never that it still runs). The editor keeps what was typed.
+  // missing or can't be used, so it doesn't run (and never that it still runs). The editor keeps what was typed.
   const settings = await openSettings(app, "Reviews");
   const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
   await weekly.getByRole("button", { name: "Edit", exact: true }).click();
@@ -335,12 +342,43 @@ test("saving a review whose file has gone says so plainly", async () => {
   await weekly.getByRole("button", { name: "Save", exact: true }).click();
   const problem = weekly.getByRole("alert");
   await expect(problem.getByText("This review couldn't be saved.", { exact: true })).toBeVisible();
-  await expect(problem.getByText("No scheduled review called weekly-review. Its file is gone, so it no longer runs.", { exact: true })).toBeVisible();
-  await expect(problem).not.toContainText("It still runs as last saved.");
+  await expect(
+    problem.getByText("No scheduled review called weekly-review. Its file, tasks/weekly-review.md, is missing or can't be used, so it doesn't run.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(problem).not.toContainText("still runs");
   await expect(weekly.getByRole("textbox", { name: "Instructions" })).toHaveValue("Look for stale goals.");
   // Cancel drops the draft, and the failed save with it.
   await weekly.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(weekly.getByRole("alert")).toHaveCount(0);
+  await app.close();
+});
+
+test("a review that is off, whose switch can't be saved, is said to stay off", async () => {
+  const library = await makeLibrary();
+  // The weekly review is off.
+  const weeklyFile = path.join(library, "tasks", "weekly-review.md");
+  writeFileSync(weeklyFile, read(library, "tasks/weekly-review.md").replace("enabled: true", "enabled: false"));
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  const on = weekly.getByRole("switch", { name: "Run on schedule", exact: true });
+  await expect(on).toHaveAttribute("aria-checked", "false");
+  // Nothing can be written in tasks/ now, so turning it on fails, and its file stays as it was.
+  chmodSync(path.join(library, "tasks"), 0o555);
+  try {
+    await on.click();
+    const problem = weekly.getByRole("alert");
+    await expect(problem.getByText("This review couldn't be saved.", { exact: true })).toBeVisible();
+    // The switch above says it is off, and so does the Notice: never that it still runs.
+    await expect(problem).toContainText(/\. It stays off, as last saved\.$/);
+    await expect(problem).not.toContainText("still runs");
+    await expect(on).toHaveAttribute("aria-checked", "false");
+    expect(read(library, "tasks/weekly-review.md")).toContain("enabled: false");
+  } finally {
+    chmodSync(path.join(library, "tasks"), 0o755);
+  }
   await app.close();
 });
 
@@ -385,6 +423,49 @@ test("a library that can't be opened is explained in Settings and the menu, and 
   } finally {
     chmodSync(library, 0o755);
   }
+});
+
+test("a library folder renamed while Avanzel runs is named in Settings, and choosing it where it is brings it back", async () => {
+  const library = await makeLibrary();
+  // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
+  const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
+  await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.exists).toBe(true); // it is open
+  const moved = `${library}-moved`;
+  renameSync(library, moved);
+  await call(app, "showSettings");
+  const settings = await windowFor(app, "settings");
+  // Not a blank window: General says where it can't find the library, and offers to choose it again.
+  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+  const missing = settings.getByRole("alert");
+  await expect(missing.getByText(`Avanzel can't find your library at ${library}.`, { exact: true })).toBeVisible();
+  await expect(missing.getByText("Choose it again once it's back, or choose another folder.", { exact: true })).toBeVisible();
+  const choose = missing.getByRole("button", { name: "Choose a folder…", exact: true });
+  await expect(choose).toHaveAttribute("data-variant", "primary");
+  await expect(settings.getByRole("button", { name: "Set up Avanzel…" })).toHaveCount(0);
+  await snap(settings, "settings-library-missing");
+  // Choosing the folder where it is now brings the Library group back.
+  await stubPicker(app, moved);
+  await choose.click();
+  await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.path).toBe(moved);
+  await expect(settings.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+  await app.close();
+});
+
+test("a library whose .avanzel folder goes while Avanzel runs is named as missing, and setup still opens from Settings", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
+  await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.exists).toBe(true); // it is open
+  rmSync(path.join(library, ".avanzel"), { recursive: true, force: true });
+  await call(app, "showSettings");
+  const settings = await windowFor(app, "settings");
+  const missing = settings.getByRole("alert");
+  await expect(missing.getByText(`Avanzel can't find your library at ${library}.`, { exact: true })).toBeVisible();
+  await expect(missing.getByRole("button", { name: "Choose a folder…", exact: true })).toBeVisible();
+  // Asked for from Settings, setup opens: the library it would stand in for isn't there.
+  await call(app, "openSetupFromSettings");
+  await expect.poll(() => shown(app, "setup")).toBe(true);
+  await app.close();
 });
 
 test("Agents shows a library's problem as General does, and lists the agents once a folder is chosen", async () => {

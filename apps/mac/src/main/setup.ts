@@ -122,12 +122,12 @@ export interface SetupHost {
   takeBack(job: FilingJob): Promise<string | null>;
   /** Git takes back a filing's `commit`, in queue order (`revertFiling`). */
   revert(commit: string): Promise<boolean>;
-  /** The library's agent answers `question`, read-only (`answerQuestion`). */
+  /** The library's agent answers `question`, read-only (`answerQuestion`); `changed`, which setup doesn't show, says whether it left a change. */
   answer(
     question: string,
     abort: AbortController,
     progress: (message: string) => void,
-  ): Promise<{ ok: boolean; ran: boolean; text: string; agent: string; seconds: number }>;
+  ): Promise<{ ok: boolean; ran: boolean; text: string; agent: string; seconds: number; changed: boolean }>;
   /** A capture in the library's inbox (the library's `newCapture`); without a library, it throws. */
   newCapture(text: string, options: CaptureOptions): Capture;
 

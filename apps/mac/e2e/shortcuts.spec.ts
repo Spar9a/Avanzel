@@ -282,6 +282,40 @@ test("Change records the next shortcut; Esc, leaving the row or the window, a ke
   await app.close();
 });
 
+test("Change takes no shortcut without ⌃ or ⌥, which apps use themselves, and lets ⌘ keys go on to the app", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app, "Voice");
+  const row = settings.getByRole("group", { name: "Type a thought", exact: true });
+  const listening = row.getByRole("button", { name: "Type the new shortcut…", exact: true });
+  // What reaches the page past the recorder, by key: each one with ⌘ or ⇧, and whether something kept it from the app.
+  await settings.evaluate(() => {
+    const page = window as unknown as { passed: { code: string; prevented: boolean }[] };
+    page.passed = [];
+    document.addEventListener("keydown", (event) => {
+      if (event.metaKey || event.shiftKey) page.passed.push({ code: event.code, prevented: event.defaultPrevented });
+    });
+  });
+  await row.getByRole("button", { name: "Change", exact: true }).click();
+  await expect(listening).toBeVisible();
+  // ⌘W, ⌘⇧Z and ⇧A would take a key from every app: the recorder keeps listening, and saves nothing.
+  for (const keys of ["Meta+W", "Meta+Shift+Z", "Shift+A"]) {
+    await settings.keyboard.press(keys);
+    await expect(listening).toBeVisible();
+  }
+  expect((await snapshot(app)).app.shortcuts.type).toBe("Alt+Shift+Space");
+  // The ⌘ ones went on to the app as if nothing listened (so ⌘Q would quit); ⇧A was kept from it.
+  const passed = await settings.evaluate(() => (window as unknown as { passed: { code: string; prevented: boolean }[] }).passed);
+  expect(passed.filter(({ code }) => code.startsWith("Key"))).toEqual([
+    { code: "KeyW", prevented: false },
+    { code: "KeyZ", prevented: false },
+  ]);
+  // A whole shortcut, with ⌃ or ⌥, is then recorded.
+  await settings.keyboard.press("Control+Alt+K");
+  await expect.poll(async () => (await snapshot(app)).app.shortcuts.type).toBe("Control+Alt+K");
+  await expect(row.getByText("⌃⌥K", { exact: true })).toBeVisible();
+  await app.close();
+});
+
 test("only one shortcut is recorded at a time, and Change again stops it", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app, "Voice");

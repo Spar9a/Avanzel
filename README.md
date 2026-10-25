@@ -72,7 +72,8 @@ Good to know:
 - **Quitting** while your agent is filing stops the agent; what it had changed is kept as its own
   commit (in a git library) and the note stays in the inbox for the evening review.
 - **Ask** waits for a filing in progress, and says so. A note you dictate while your agent answers
-  waits for the answer, and says so too; closing the Ask window cancels the question.
+  waits for the answer, and says so too. Stop, or closing the Ask window, gives the question up and
+  stops your agent.
 - **Settings → Agents** checks that each agent is signed in. For Claude Code and Codex the checks
   run when the pane opens and when a library is set up; they read only the sign-in and never ask
   the model. Check asks other agents one short question, and Claude Code or Codex too when their

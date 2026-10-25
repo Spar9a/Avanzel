@@ -7,21 +7,22 @@ export function answeredLine(agent: string, seconds: number): string {
   return `${agent} answered in ${Math.max(1, Math.round(seconds))} s`;
 }
 
-/** What Ask says can't have changed when a question fails: the agent answers read-only (`save: false`). */
+/** What is safe when a question fails and its run changed nothing: the library is as it was. */
 const SAFE = "Your library hasn't changed.";
 
 /**
  * A failed answer (AskResult.answer) as its Notice shows it: its first line is the title, what happened ("fake couldn't
  * answer."), and the body says what is safe, then what the agent said last: the other lines, joined by spaces, as setup
  * shows an agent's line (ownLine). A message with one line, when nothing ran, is the title alone. Lines are trimmed,
- * and empty ones skipped.
+ * and empty ones skipped. The library is said to be unchanged only when the run left no change in it (AskResult.changed):
+ * an agent asked read-only leaves none, but one that doesn't keep to it may.
  */
-export function failureLines(answer: string): { title: string; body: string } {
+export function failureLines(answer: string, changed: boolean): { title: string; body: string } {
   const [title = "", ...rest] = answer
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
-  return { title, body: `${SAFE} ${ownLine(rest.join(" "))}`.trim() };
+  return { title, body: `${changed ? "" : SAFE} ${ownLine(rest.join(" "))}`.trim() };
 }
 
 /** What the waiting line says while the agent looks, before its seconds count: main's own words for it, too. */

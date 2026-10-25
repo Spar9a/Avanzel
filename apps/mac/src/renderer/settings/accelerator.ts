@@ -1,4 +1,5 @@
-// Settings' shortcut recorder reads each keydown as an Electron accelerator.
+// Settings' shortcut recorder reads each keydown as an Electron accelerator, and says which keys it lets go on to the app.
+import { leftToApps } from "../../main/shortcuts.ts";
 
 /** The keys that `code` names and an accelerator writes as a word or a mark. Letters, digits and F-keys follow from `code`. */
 const MARKS: ReadonlyMap<string, string> = new Map([
@@ -15,8 +16,9 @@ function keyName(code: string): string | null {
 }
 
 /**
- * A keydown as an Electron accelerator ("Alt+Shift+S"), its modifiers in the order Control, Alt, Shift, Command; null
- * while only modifiers are down, and for a key without a modifier other than F1–F24. Keys come from `code`.
+ * A keydown as an Electron accelerator ("Alt+Shift+S"), its modifiers in the order Control, Alt, Shift, Command. Null
+ * while only modifiers are down, and for a shortcut Avanzel leaves to apps (leftToApps, which main keeps to as well): one
+ * without Control or Alt, other than a bare F1–F24. Keys come from `code`.
  */
 export function toAccelerator(key: Pick<KeyboardEvent, "code" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey">): string | null {
   const name = keyName(key.code);
@@ -24,6 +26,15 @@ export function toAccelerator(key: Pick<KeyboardEvent, "code" | "ctrlKey" | "alt
   const modifiers = [key.ctrlKey && "Control", key.altKey && "Alt", key.shiftKey && "Shift", key.metaKey && "Command"].filter(
     (modifier) => modifier !== false,
   );
-  if (modifiers.length === 0 && !/^F\d/.test(name)) return null;
-  return [...modifiers, name].join("+");
+  const accelerator = [...modifiers, name].join("+");
+  return leftToApps(accelerator) ? null : accelerator;
+}
+
+/**
+ * Whether the recorder lets a keydown go on to the app: one with Command and without Control or Alt, which it never
+ * takes, so the app's own ⌘ keys work while it listens (⌘Q quits, ⌘H hides). It keeps every other key from the page, so
+ * a plain Space or Return doesn't press the focused button.
+ */
+export function passesThrough(key: Pick<KeyboardEvent, "ctrlKey" | "altKey" | "metaKey">): boolean {
+  return key.metaKey && !key.ctrlKey && !key.altKey;
 }

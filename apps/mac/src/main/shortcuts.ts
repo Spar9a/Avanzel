@@ -37,6 +37,25 @@ export function prettyAccelerator(accelerator: string): string {
   return keyCaps(accelerator).join("");
 }
 
+/** F1 to F24, the keys a shortcut may be on their own. */
+const F_KEY = /^F(?:[1-9]|1\d|2[0-4])$/i;
+
+/**
+ * Whether `accelerator` is a shortcut Avanzel leaves to apps: one without Control or Alt (Option), other than a bare
+ * F1–F24. With Command or Shift alone, or no modifier, a global shortcut would take a key every app uses for itself, ⌘W
+ * to close a window, ⌘C to copy, ⇧A to type a capital A. Shift and Command are fine beside Control or Alt. Something
+ * that isn't a shortcut at all, with a modifier macOS doesn't know or no key but a modifier, isn't one: registering it
+ * says so. Settings' recorder (toAccelerator) and registerShortcuts both keep to it.
+ */
+export function leftToApps(accelerator: string): boolean {
+  const parts = accelerator.split("+");
+  const key = parts.pop() ?? "";
+  const mods = parts.map((part) => ALIASES[part.toLowerCase()]);
+  if (mods.some((mod) => mod === undefined) || ALIASES[key.toLowerCase()]) return false;
+  if (mods.includes("Control") || mods.includes("Alt")) return false;
+  return !(mods.length === 0 && F_KEY.test(key));
+}
+
 /** Each modifier as a keydown names it (KeyboardEvent.key). */
 const MODIFIER_KEY: Record<(typeof ORDER)[number], string> = { Control: "Control", Alt: "Alt", Shift: "Shift", Command: "Meta" };
 
@@ -85,8 +104,8 @@ export interface Registration {
   /** What Settings → Voice says of each shortcut that didn't register. */
   problems: Partial<Record<keyof Shortcuts, string>>;
   /**
-   * The actions whose shortcut another app holds, in the order they register: not one macOS doesn't understand, nor
-   * one an earlier action of Avanzel's has.
+   * The actions whose shortcut another app holds, or apps use themselves (leftToApps), in the order they register: not
+   * one macOS doesn't understand, nor one an earlier action of Avanzel's has.
    */
   taken: (keyof Shortcuts)[];
 }
@@ -96,7 +115,9 @@ const sameShortcut = (accelerator: string) => prettyAccelerator(accelerator).toL
 
 /**
  * Registers every action's shortcut. One an earlier action has already is not registered again: it isn't another
- * app's, and gets no free ones. `running` (process names) names the app that probably holds a taken one.
+ * app's, and gets no free ones. `running` (process names) names the app that probably holds a taken one. One Avanzel
+ * leaves to apps (leftToApps), from a hand-edited settings.json or an older recorder, isn't registered at all: it counts
+ * as taken, so its free ones are offered as for a shortcut another app holds.
  */
 export function registerShortcuts(
   shortcuts: Shortcuts,
@@ -111,6 +132,11 @@ export function registerShortcuts(
   for (const key of ["dictate", "capture", "type", "ask"] as const) {
     const accelerator = shortcuts[key];
     if (!accelerator) continue;
+    if (leftToApps(accelerator)) {
+      problems[key] = `${prettyAccelerator(accelerator)} is a shortcut apps use themselves, so Avanzel doesn't take it. Pick one with ⌃ or ⌥.`;
+      taken.push(key);
+      continue;
+    }
     const owner = owners.get(sameShortcut(accelerator));
     if (owner) {
       problems[key] = `${prettyAccelerator(shortcuts[owner])} is already the shortcut for ${ACTION_NAMES[owner]}. Pick another shortcut.`;

@@ -4,7 +4,7 @@ import { Actions, Button, Group, GroupRow, Kbd, Notice, Progress, Row, Stack, Te
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { ModelStatus, Shortcuts } from "../../../shared/ipc.ts";
-import { toAccelerator } from "../accelerator.ts";
+import { passesThrough, toAccelerator } from "../accelerator.ts";
 import { asSentence, microphoneName, microphoneOptions, SPEECH_MODEL_DESCRIPTION, type InputDevice } from "../copy.ts";
 import { ChooseButton, type PaneProps } from "../parts.tsx";
 
@@ -118,17 +118,19 @@ export function Voice({ snap, onChange }: PaneProps): ReactNode {
     groups.current[key]?.querySelector("button")?.focus();
   };
 
-  // While a shortcut is recorded, the next whole shortcut pressed anywhere in the window is saved. Leaving the window
-  // ends it, as does leaving the row (its group's onBlur) and leaving the pane, which unmounts this.
+  // While a shortcut is recorded, the next whole shortcut pressed anywhere in the window is saved: one with ⌃ or ⌥, or a
+  // bare F-key (toAccelerator). Leaving the window ends it, as does leaving the row (its group's onBlur) and leaving the
+  // pane, which unmounts this.
   useEffect(() => {
     if (recording === null) return;
     const listen = (event: KeyboardEvent) => {
       if (event.key === "Tab") return; // the focus may leave the row, which ends the recording
+      if (passesThrough(event)) return; // a ⌘ key it never takes is the app's: ⌘Q still quits while it listens
       event.preventDefault();
       event.stopPropagation();
       if (event.key === "Escape") return setRecording(null);
       const accelerator = toAccelerator(event);
-      if (!accelerator) return; // only modifiers so far, or a key without one: keep listening
+      if (!accelerator) return; // only modifiers so far, or a key apps use themselves: keep listening
       setRecording(null);
       void save(recording, accelerator);
     };

@@ -177,12 +177,13 @@ interface ReviewProps {
   draft: Draft | null;
   /** A save of this review is on its way: the switch and Save wait until it is written. */
   saving: boolean;
-  /** What the Notice under it says when its last save failed (failedSaveLine): why, and what is true of it now. */
+  /** What the Notice under it says when its last save failed (failedSaveLine): why, and what is true of it as stored. */
   failure: string | null;
   onDraft: EditorProps["onDraft"];
   /** The switch: the review saved with it on or off, and everything else as stored. */
   onSwitch(enabled: boolean): void;
-  onSave(): void;
+  /** Save, in the editor: `beforeClose` runs just before a save that worked closes it. */
+  onSave(beforeClose: () => void): void;
   onRun(): void;
   /** Edit: the editor opens, from the review as stored. */
   onEdit(): void;
@@ -206,8 +207,8 @@ function Review({ task, now, harnesses, draft, saving, failure, onDraft, onSwitc
     refocus.current = false;
     if (document.activeElement === document.body) toggle()?.focus();
   }, [saving]);
-  // Edit goes as the editor opens, and Cancel as it closes: the focus the pressed one had goes on into the editor, to its
-  // first control, or back to Edit.
+  // Edit goes as the editor opens, and Cancel, or Save once it has saved, as it closes: the focus the pressed one had goes
+  // on into the editor, to its first control, or back to Edit.
   const editing = draft !== null;
   const handOver = useRef<"editor" | "edit" | null>(null);
   useEffect(() => {
@@ -251,7 +252,11 @@ function Review({ task, now, harnesses, draft, saving, failure, onDraft, onSwitc
               harnesses={harnesses}
               saving={saving}
               onDraft={onDraft}
-              onSave={onSave}
+              onSave={() =>
+                onSave(() => {
+                  handOver.current = "edit";
+                })
+              }
               onCancel={() => {
                 handOver.current = "edit";
                 onCancel();
@@ -294,8 +299,11 @@ export function Reviews({ snap, onChange, edits }: PaneProps & { edits: ReviewEd
     }
   };
 
-  /** Save, in the open editor: a time that isn't one is refused and nothing is saved; a save that works closes it. */
-  const saveDraft = async (task: TaskInfo) => {
+  /**
+   * Save, in the open editor: a time that isn't one is refused and nothing is saved; a save that works closes it, just
+   * after `beforeClose`.
+   */
+  const saveDraft = async (task: TaskInfo, beforeClose: () => void) => {
     const draft = drafts[task.id];
     if (!draft || saving.has(task.id)) return;
     const time = validTime(draft.time);
@@ -304,7 +312,9 @@ export function Reviews({ snap, onChange, edits }: PaneProps & { edits: ReviewEd
       return;
     }
     const saved = await save(task, { schedule: scheduleText(draft.every, draft.day, time), agent: draft.agent, instructions: draft.instructions });
-    if (saved) setDrafts((last) => without(last, task.id));
+    if (!saved) return;
+    beforeClose();
+    setDrafts((last) => without(last, task.id));
   };
 
   return (
@@ -323,10 +333,10 @@ export function Reviews({ snap, onChange, edits }: PaneProps & { edits: ReviewEd
           harnesses={snap.harnesses}
           draft={drafts[task.id] ?? null}
           saving={saving.has(task.id)}
-          failure={failure?.id === task.id ? failedSaveLine(task.id, failure.message) : null}
+          failure={failure?.id === task.id ? failedSaveLine(task, failure.message) : null}
           onDraft={(change) => changeDraft(task.id, change)}
           onSwitch={(enabled) => void save(task, { enabled })}
-          onSave={() => void saveDraft(task)}
+          onSave={(beforeClose) => void saveDraft(task, beforeClose)}
           onRun={async () => onChange(await api.runTask(task.id))}
           // One editor is open at a time: Edit opens this one from the review as stored, and drops any other's draft.
           onEdit={() => {

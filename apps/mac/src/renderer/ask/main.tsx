@@ -1,9 +1,9 @@
 // Ask: a question about the library, answered from the library only. Each turn is the question over its answer, as setup's
 // Ask step shows one: the answer's lines, the pages its [[links]] name (each a button that opens it, beside its shelf),
 // and who answered in how many seconds. While the agent looks, a line says what it is doing, and from 10 s on for how
-// long, beside Stop, which gives the question up. When it couldn't answer, a Notice says so and that the library hasn't
-// changed, and the newest turn's offers Ask again. The newest turn is on top. One question is answered at a time, and Esc
-// closes the window, which gives up a question that is still being answered.
+// long, beside Stop, which gives the question up. When it couldn't answer, a Notice says so, and that the library hasn't
+// changed when the run changed nothing in it; the newest turn's offers Ask again. The newest turn is on top. One question
+// is answered at a time, and Esc closes the window, which gives up a question that is still being answered.
 import "@avanzel/ui/base.css";
 import { Actions, Button, Notice, Row, ShelfTag, Spinner, Stack, Text, TextField } from "@avanzel/ui";
 import { useEffect, useRef, useState } from "react";
@@ -127,6 +127,7 @@ function Ask() {
                   {turn.outcome !== null && turn.outcome !== "stopped" && !turn.outcome.ok ? (
                     <Failed
                       answer={turn.outcome.answer}
+                      changed={turn.outcome.changed}
                       // Only the newest turn offers it: a failure a later question has come after is past. Ask again keeps
                       // what is typed in the field, which gets the focus as Ask again goes.
                       onAskAgain={
@@ -181,12 +182,12 @@ function Reply({ outcome, progress, onStop }: { outcome: Outcome; progress: Prog
 }
 
 /**
- * A failed answer: what happened is the Notice's title; its body says the library hasn't changed, then what the agent
- * said last. Given `onAskAgain`, its one fix asks the question again. A Notice is an alert itself, so it sits outside
- * the turn's status region.
+ * A failed answer: what happened is the Notice's title; its body says the library hasn't changed, when the run changed
+ * nothing in it, then what the agent said last. Given `onAskAgain`, its one fix asks the question again. A Notice is an
+ * alert itself, so it sits outside the turn's status region.
  */
-function Failed({ answer, onAskAgain }: { answer: string; onAskAgain?: (() => void) | undefined }) {
-  const { title, body } = failureLines(answer);
+function Failed({ answer, changed, onAskAgain }: { answer: string; changed: boolean; onAskAgain?: (() => void) | undefined }) {
+  const { title, body } = failureLines(answer, changed);
   return (
     <Notice
       tone="error"

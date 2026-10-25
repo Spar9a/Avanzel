@@ -151,21 +151,30 @@ export function validTime(text: string): string | null {
   return hour < 24 && minute < 60 ? `${twoDigits(hour)}:${twoDigits(minute)}` : null;
 }
 
+/** Whether Avanzel runs reviews of `kind`: the evening review and the weekly review do, a custom one doesn't yet. */
+const runsKind = (kind: string): boolean => kind === "evening-review" || kind === "review";
+
 /**
- * The body of the Notice under review `id` when its save failed: main's reason, then only what is true of the review
- * now. Main refuses with noSuchReview when it lists no such review any more, its file having gone: then it no longer
- * runs. Any other refusal leaves the review as it was, so it runs as it was last saved.
+ * The body of the Notice under a review whose save failed: main's reason, then only what is true of the review as the
+ * snapshot stores it, which the switch above the Notice shows too (`task`; never the editor's draft). Main refuses with
+ * noSuchReview when it lists no such review any more: its file, tasks/{id}.md, is missing or can't be used, so it
+ * doesn't run. Any other refusal leaves that file as it was (saveTask writes a whole new file, then renames it), so the
+ * review stays off when it is off, runs as last saved when it is on and of a kind Avanzel runs, and is otherwise a custom
+ * review Avanzel doesn't run, whose file hasn't changed.
  */
-export function failedSaveLine(id: string, reason: string): string {
-  const gone = reason === noSuchReview(id);
-  return `${asSentence(reason)} ${gone ? "Its file is gone, so it no longer runs." : "It still runs as last saved."}`;
+export function failedSaveLine(task: Pick<TaskInfo, "id" | "enabled" | "kind">, reason: string): string {
+  let now: string;
+  if (reason === noSuchReview(task.id)) now = `Its file, tasks/${task.id}.md, is missing or can't be used, so it doesn't run.`;
+  else if (!task.enabled) now = "It stays off, as last saved.";
+  else if (runsKind(task.kind)) now = "It still runs as last saved.";
+  else now = "Its file hasn't changed.";
+  return `${asSentence(reason)} ${now}`;
 }
 
-/** What a review of `kind` does, under its switch. A kind Avanzel doesn't run is a custom one. */
+/** What a review of `kind` does, under its switch. A kind Avanzel doesn't run (runsKind) is a custom one. */
 export function kindLine(kind: string): string {
-  if (kind === "evening-review") return "Files anything still in the inbox and writes a short summary.";
-  if (kind === "review") return "Looks over the whole library and writes a report in reviews/.";
-  return "Avanzel doesn't run custom reviews yet.";
+  if (!runsKind(kind)) return "Avanzel doesn't run custom reviews yet.";
+  return kind === "evening-review" ? "Files anything still in the inbox and writes a short summary." : "Looks over the whole library and writes a report in reviews/.";
 }
 
 /**

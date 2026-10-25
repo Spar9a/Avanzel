@@ -350,22 +350,33 @@ test("the newest question comes first", async () => {
 test("a failed answer names the agent that couldn't answer, and a question that can't be asked says only why", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_MODE: "fail" });
-  // The agent ran and failed: its last lines, under the name of the agent whose run it was. There are no lines or pages to show.
+  // The agent ran and failed: its last lines, under the name of the agent whose run it was. There are no lines or pages to
+  // show, and the run changed nothing in the library.
   expect(await call(app, "ask", "What are my goals?")).toMatchObject({
     ok: false,
     answer: "fake couldn't answer.\nagent crashed: not logged in",
     agent: "fake",
     paragraphs: [],
     sources: [],
+    changed: false,
   });
-  // Nothing ran: the engine refused the question, and its message comes back as it is.
+  // Nothing ran: the engine refused the question, and its message comes back as it is. Nothing changed either.
   expect(await call(app, "ask", "   ")).toMatchObject({
     ok: false,
     answer: 'Ask a question, e.g. "what are my goals this year?"',
     agent: "fake",
     paragraphs: [],
     sources: [],
+    changed: false,
   });
+  // A run that wrote in the library says so, as an agent that doesn't keep to read-only might: this one starts a page,
+  // then runs out of time.
+  saveSettings(library, { ...loadSettings(library), timeoutSeconds: 2 });
+  await app.evaluate(() => {
+    process.env.FAKE_AGENT_MODE = "slow-messy";
+  });
+  expect(await call(app, "ask", "What changed?")).toMatchObject({ ok: false, answer: expect.stringMatching(/^fake couldn't answer\./), changed: true });
+  expect(exists(library, "goals/half.md")).toBe(true);
   await app.close();
 });
 
@@ -405,6 +416,15 @@ test("Stop gives up the question being answered, and the field is free for the n
   const record = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-runs-")), "runs.jsonl");
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_DELAY_MS: "60000", FAKE_AGENT_RECORD: record });
   await call(app, "openAsk");
+  // Main's answers to the window's questions, counted as each one settles: the window's bridge is frozen, so they are
+  // counted where they are made. The test then knows when the stopped question's answer has come back.
+  await app.evaluate(() => {
+    const controller = (globalThis as unknown as { __avanzel: { ask(question: string): Promise<unknown>; settledForTests: number } }).__avanzel;
+    const ask = controller.ask.bind(controller);
+    controller.settledForTests = 0;
+    controller.ask = (question) => ask(question).finally(() => void (controller.settledForTests += 1));
+  });
+  const settled = () => app.evaluate(() => (globalThis as unknown as { __avanzel: { settledForTests: number } }).__avanzel.settledForTests);
   const ask = await windowFor(app, "ask");
   const field = ask.getByRole("textbox", { name: "Ask your library" });
   await field.fill("What are my goals?");
@@ -426,6 +446,12 @@ test("Stop gives up the question being answered, and the field is free for the n
   await expect(stop).toHaveCount(0);
   await expect(counting).toHaveCount(0);
   await expect.poll(() => alive(pid), { timeout: 5_000 }).toBe(false);
+  // Main's answer to the stopped question has come back, and the window has had it: it took nothing's place. The turn
+  // still says "Stopped.", and nothing says it failed.
+  await expect.poll(settled, { timeout: 10_000 }).toBe(1);
+  await ask.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200))); // the reply, sent as main settled, is in
+  await expect(ask.getByRole("status")).toHaveText("Stopped.");
+  await expect(ask.getByRole("alert")).toHaveCount(0);
   // The field is free: it has the focus, and the next question is asked at once.
   await expect(field).toBeEnabled();
   await expect(field).toBeFocused();
@@ -477,11 +503,14 @@ test("asking while a note is being filed says it is waiting, then answers", asyn
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: 30_000, intervals: [50] }).toBe("filing");
   await question.press("Enter");
-  await expect(ask.getByText("Waiting for the filing in progress to finish…")).toBeVisible();
+  // It waits for whatever Avanzel is doing with the library, which it doesn't name: a filing here, but a review or a
+  // stopped question letting go would hold the library as well.
+  const waiting = ask.getByText("Waiting for Avanzel to finish with your library…", { exact: true });
+  await expect(waiting).toBeVisible();
   await snap(ask, "9-ask-waiting");
   // The filing ends and the question has the library: the row stops saying it waits and says what the agent is doing.
   await expect(ask.getByText("Looking through your library…")).toBeVisible({ timeout: 15_000 });
-  await expect(ask.getByText("Waiting for the filing in progress to finish…")).toBeHidden();
+  await expect(waiting).toBeHidden();
   await expect(ask.getByText("Q: What are my goals?")).toBeVisible({ timeout: 60_000 });
   expect(inbox(library)).toEqual([]); // the filing finished, undisturbed
   expect(archived(library)).toHaveLength(1);

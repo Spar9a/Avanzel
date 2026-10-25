@@ -1335,10 +1335,11 @@ export class Controller {
 
   async ask(question: string): Promise<AskResult> {
     const win = this.askWindow; // the window that asked, even once another one opens
-    // The engine's messages go to the Ask window as they are, except its waiting one: that names no run, and here it is usually a filing.
+    // The engine's messages go to the Ask window as they are, except its waiting one, which names no run: in the window's
+    // words it names none either, for what holds the library may be a filing, a review, or a stopped question letting go.
     const progress = (message: string) => {
       if (!win || win.isDestroyed()) return;
-      win.webContents.send("ask:progress", message === WAITING ? "Waiting for the filing in progress to finish…" : message);
+      win.webContents.send("ask:progress", message === WAITING ? "Waiting for Avanzel to finish with your library…" : message);
     };
     // Closing that window, or Stop in it, gives the question up: its agent run stops, and the library is free for a
     // filing waiting on it. One question is answered at a time, so Stop gives up the newest one.
@@ -1348,15 +1349,16 @@ export class Controller {
     if (win?.isDestroyed()) giveUp();
     else win?.once("closed", giveUp);
     try {
-      const { ok, ran, text, agent, seconds } = await this.answerQuestion(question, abort, progress);
+      const { ok, ran, text, agent, seconds, changed } = await this.answerQuestion(question, abort, progress);
       // A run that failed says whose it was; a message thrown before any run comes back as it is. An answer comes with its
-      // lines and the pages its links name; anything else has none.
+      // lines and the pages its links name; anything else has none. Either says whether the run changed the library.
       return {
         ok,
         answer: ran && !ok ? `${agent} couldn't answer.\n${text}` : text,
         agent,
         seconds,
         ...(ok ? answeredFrom(this.vault?.root ?? null, text) : { paragraphs: [], sources: [] }),
+        changed,
       };
     } finally {
       if (win && !win.isDestroyed()) win.removeListener("closed", giveUp);
@@ -1374,23 +1376,26 @@ export class Controller {
    * `abort` stops the run, and `progress` hears the engine's messages. `ran` says whether the agent's run came to its
    * end: true for an answer, whose `text` is the agent's reply, and for a run that failed, whose `text` is the agent's
    * last lines; false when something threw instead (no library, a question the engine refuses), whose `text` is the
-   * error's message.
+   * error's message. `changed` says whether the run left a change in the library, a file created, changed or deleted, as
+   * the engine's diff of it finds: an agent asked read-only leaves none, but one that doesn't keep to it may. Nothing
+   * changes when nothing ran.
    */
   private async answerQuestion(
     question: string,
     abort: AbortController,
     progress: (message: string) => void,
-  ): Promise<{ ok: boolean; ran: boolean; text: string; agent: string; seconds: number }> {
+  ): Promise<{ ok: boolean; ran: boolean; text: string; agent: string; seconds: number; changed: boolean }> {
     const agent = this.agentName();
     const started = performance.now();
     const seconds = () => (performance.now() - started) / 1000;
     try {
-      const { result } = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal, progress }), abort);
+      const { result, changes } = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal, progress }), abort);
+      const changed = !changes.empty;
       return result.ok
-        ? { ok: true, ran: true, text: result.output, agent, seconds: seconds() }
-        : { ok: false, ran: true, text: lastLines(result.stderr || result.output), agent, seconds: seconds() };
+        ? { ok: true, ran: true, text: result.output, agent, seconds: seconds(), changed }
+        : { ok: false, ran: true, text: lastLines(result.stderr || result.output), agent, seconds: seconds(), changed };
     } catch (error) {
-      return { ok: false, ran: false, text: errorMessage(error), agent, seconds: seconds() };
+      return { ok: false, ran: false, text: errorMessage(error), agent, seconds: seconds(), changed: false };
     }
   }
 
@@ -1466,10 +1471,10 @@ export class Controller {
 
   /**
    * Settings' Set up Avanzel…, offered while there is no library: setup, where a library is made, opens or comes forward,
-   * and Settings closes. Nothing while a library is open.
+   * and Settings closes. Nothing while a library is open and still there; one that went while Avanzel ran doesn't count.
    */
   openSetupFromSettings(): void {
-    if (this.vault) return;
+    if (this.vault?.exists()) return;
     this.setup.show();
     const win = this.settingsWindow;
     if (win && !win.isDestroyed()) win.close();
@@ -1514,16 +1519,18 @@ export class Controller {
     const now = new Date();
     const home = homedir();
     const kept = this.store.get().libraryPath; // the library to open at launch, which may not have opened
+    // A library moved, renamed or unmounted while Avanzel runs is missing: what it held isn't read, so Settings still opens.
+    const exists = vault?.exists() ?? false;
     return {
       app: this.store.get(),
       library: vault
         ? {
             path: vault.root,
             label: tildePath(vault.root, home),
-            exists: vault.exists(),
+            exists,
             isGit: existsSync(path.join(vault.root, ".git")),
-            inbox: vault.pending().length,
-            shelves: vault.shelfCounts(),
+            inbox: exists ? vault.pending().length : 0,
+            shelves: exists ? vault.shelfCounts() : {},
             harness: settings?.harness ?? "auto",
             models: settings?.models ?? {},
             timeoutSeconds: settings?.timeoutSeconds ?? 900,

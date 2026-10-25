@@ -13,8 +13,13 @@ export interface PaneProps {
   onChange(snapshot: SettingsSnapshot): void;
 }
 
-/** The Notice without a library: libraryProblem's, with Choose a folder…, or the no-library one, with Set up Avanzel…. */
+/**
+ * The Notice without a library: libraryProblem's, with Choose a folder…; then, for a library Avanzel has but can't find
+ * (moved, renamed or unmounted, perhaps while it ran), where it was, with Choose a folder…; else, with no library at all,
+ * the no-library one, with Set up Avanzel….
+ */
 export function NoLibrary({ snap, onChange }: PaneProps): ReactNode {
+  const choose = async () => onChange(await api.chooseLibrary());
   if (snap.libraryProblem) {
     return (
       <Notice
@@ -22,11 +27,26 @@ export function NoLibrary({ snap, onChange }: PaneProps): ReactNode {
         title={asSentence(snap.libraryProblem)}
         actions={
           <Actions align="start">
-            <Button size="small" variant="primary" onClick={async () => onChange(await api.chooseLibrary())}>Choose a folder…</Button>
+            <Button size="small" variant="primary" onClick={choose}>Choose a folder…</Button>
           </Actions>
         }
       >
         Choose it again once it's fixed, or choose another folder.
+      </Notice>
+    );
+  }
+  if (snap.library && !snap.library.exists) {
+    return (
+      <Notice
+        tone="error"
+        title={`Avanzel can't find your library at ${snap.library.label}.`}
+        actions={
+          <Actions align="start">
+            <Button size="small" variant="primary" onClick={choose}>Choose a folder…</Button>
+          </Actions>
+        }
+      >
+        Choose it again once it's back, or choose another folder.
       </Notice>
     );
   }

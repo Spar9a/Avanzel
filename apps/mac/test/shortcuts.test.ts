@@ -1,5 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { ALTERNATIVES, freeAlternatives, keyCaps, likelyHolder, prettyAccelerator, reachKey, registerShortcuts, type ShortcutApi } from "../src/main/shortcuts.ts";
+import {
+  ALTERNATIVES,
+  freeAlternatives,
+  keyCaps,
+  leftToApps,
+  likelyHolder,
+  prettyAccelerator,
+  reachKey,
+  registerShortcuts,
+  type ShortcutApi,
+} from "../src/main/shortcuts.ts";
 import { DEFAULT_SETTINGS } from "../src/main/store.ts";
 
 const handlers = () => ({ dictate: vi.fn(), capture: vi.fn(), type: vi.fn(), ask: vi.fn() });
@@ -56,6 +66,26 @@ describe("global shortcuts", () => {
       ask: "⌥Space is already the shortcut for Record a thought. Pick another shortcut.",
     });
     expect(taken).toEqual(["dictate"]);
+  });
+
+  it("a shortcut without ⌃ or ⌥, such as one a hand-edited settings.json holds, isn't registered: apps use it themselves", () => {
+    const { api, registered } = fakeApi();
+    const { problems, taken } = registerShortcuts({ ...DEFAULT_SETTINGS.shortcuts, type: "Command+W" }, handlers(), api);
+    expect(problems).toEqual({ type: "⌘W is a shortcut apps use themselves, so Avanzel doesn't take it. Pick one with ⌃ or ⌥." });
+    expect(taken).toEqual(["type"]); // so its free ones are offered, as for one another app holds
+    expect([...registered]).toEqual(["Alt+Space", "Alt+Shift+S", "Alt+Shift+A"]); // the others are; ⌘W never was
+  });
+
+  it("leftToApps: a shortcut needs Control or Alt, or is a bare F-key", () => {
+    for (const accelerator of ["Command+W", "Command+Shift+Z", "Shift+A", "Cmd+C", "CommandOrControl+Q", "Space", "K", "Shift+F5", "Command+F5"]) {
+      expect(leftToApps(accelerator), accelerator).toBe(true);
+    }
+    for (const accelerator of ["Alt+Space", "Option+Shift+K", "Control+Command+W", "Ctrl+5", "F5", "f12"]) {
+      expect(leftToApps(accelerator), accelerator).toBe(false);
+    }
+    // Something that isn't a shortcut at all isn't one apps use: registering it says macOS doesn't understand it.
+    expect(leftToApps("Hyper+Q")).toBe(false);
+    expect(leftToApps("Alt")).toBe(false);
   });
 
   it("reports shortcuts Electron cannot parse", () => {
