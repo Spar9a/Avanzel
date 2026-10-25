@@ -81,13 +81,14 @@ export interface ReviewEdits {
    * review. It goes when that review is saved, or its editor opens or closes (`clearFailure`), or another library opens.
    */
   failure: SaveFailure | null;
-  /** Forgets review `id`'s failure, if it is the one kept: its editor was opened or closed. */
+  /** Forgets review `id`'s failure, if it is the one kept: its editor was opened or closed, or the window has told it. */
   clearFailure(id: string): void;
   /**
    * Saves `task` with `fields` changed and the rest as stored, and draws the snapshot main sends back. Whether it saved:
    * while a save of that review is on its way, it saves nothing. A save main refuses is kept as `failure`, and throws main's
-   * error: the Reviews pane tells it under the review; where there is no review to tell it under (General's Turn on), the
-   * caller lets the window tell it (`attempt`).
+   * error, for the caller to tell it once. The Reviews pane tells it under the review, which is where `failure` shows it. General's
+   * Turn on, whose review is the evening one, lets the window tell it (`attempt`) and clears `failure`, so that Reviews
+   * doesn't tell it again.
    */
   save(task: TaskInfo, fields: Fields): Promise<boolean>;
 }

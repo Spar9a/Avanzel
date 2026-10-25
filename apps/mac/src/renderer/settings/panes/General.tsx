@@ -19,7 +19,8 @@ const FILE_MODES: readonly SegmentedOption<FileMode>[] = [
 /**
  * The General pane. `edits` are the Settings window's (useReviewEdits): turning the evening review on here saves it as
  * the Reviews pane does, and waits as its switch does while a save of it is on its way. A save main refuses is told by the
- * window ("That change wasn't saved."), as any change here is; the Reviews pane tells it under the review as well.
+ * window ("That change wasn't saved."), as any change here is, and only there: the failure `edits` kept of it, which the
+ * Reviews pane would tell again under the review, is cleared.
  */
 export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
   const { snap, onChange, attempt, edits } = props;
@@ -30,7 +31,7 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
     <Stack gap={20}>
       {lib?.exists ? (
         <Group label="Library">
-          <GroupRow label={lib.label} description={libraryLine(lib.shelves, lib.isGit, lib.autoCommit)}>
+          <GroupRow label={lib.label} description={libraryLine(lib.shelves, lib.isGit, lib.autoCommit, lib.gitUsable)}>
             <Row gap={8}>
               <Button size="small" variant="secondary" onClick={() => api.showLibrary()}>Show in Finder</Button>
               {snap.opensInObsidian && (
@@ -61,7 +62,16 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
           title="The evening review is off, so new thoughts stay in the inbox."
           actions={
             <Actions align="start">
-              <Button size="small" variant="primary" busy={edits.saving.has(evening.id)} onClick={() => void attempt(() => edits.save(evening, { enabled: true }))}>
+              <Button
+                size="small"
+                variant="primary"
+                busy={edits.saving.has(evening.id)}
+                onClick={async () => {
+                  // The window tells a refusal, which `attempt` answers with undefined, and that is the one telling of it: the
+                  // failure `edits` kept would show it a second time under the review on Reviews.
+                  if ((await attempt(() => edits.save(evening, { enabled: true }))) === undefined) edits.clearFailure(evening.id);
+                }}
+              >
                 Turn on the evening review
               </Button>
             </Actions>

@@ -193,12 +193,14 @@ export interface LibraryInfo {
   /** The path with the home folder as "~" (tildePath). */
   label: string;
   exists: boolean;
-  /**
-   * The library has git history Avanzel can add to: it has a .git folder, and this Mac can run git (the engine's gitUsable). On
-   * a Mac whose git is only Apple's stub, a library with a .git folder is not git for Avanzel's purposes: nothing commits,
-   * so nothing can be undone.
-   */
+  /** The library has a .git folder: it has git history, which this Mac may or may not be able to add to (`gitUsable`). */
   isGit: boolean;
+  /**
+   * This Mac can run git (the engine's gitUsable): false without Apple's Command Line Tools, where /usr/bin/git is only a stub
+   * that opens Apple's install dialog. A library with a .git folder then keeps its history, but nothing commits, so nothing
+   * can be undone.
+   */
+  gitUsable: boolean;
   /** config.toml's auto_commit: with it off, no change is a commit, even in a library with git. True when the settings can't be read. */
   autoCommit: boolean;
   inbox: number;

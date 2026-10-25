@@ -2095,8 +2095,10 @@ export class Controller {
             path: vault.root,
             label: tildePath(vault.root, home),
             exists,
-            // Git Avanzel can add to: a .git folder, on a Mac whose git runs. Where it doesn't (Apple's stub), nothing commits.
-            isGit: existsSync(path.join(vault.root, ".git")) && git.gitUsable(),
+            isGit: existsSync(path.join(vault.root, ".git")),
+            // Whether this Mac can run git, found out without running it: where it can't (Apple's stub), nothing commits, however
+            // much history the folder has.
+            gitUsable: git.gitUsable(),
             autoCommit: settings?.autoCommit ?? true,
             inbox: exists ? vault.pending().length : 0,
             shelves: exists ? vault.shelfCounts() : {},
@@ -2105,7 +2107,7 @@ export class Controller {
             timeoutSeconds: settings?.timeoutSeconds ?? 900,
           }
         : kept
-          ? { path: kept, label: tildePath(kept, home), exists: false, isGit: false, autoCommit: true, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900 }
+          ? { path: kept, label: tildePath(kept, home), exists: false, isGit: false, gitUsable: git.gitUsable(), autoCommit: true, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900 }
           : null,
       harnesses: Object.values(all).map((h) => ({
         name: h.name,

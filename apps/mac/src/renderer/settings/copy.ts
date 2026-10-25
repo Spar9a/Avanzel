@@ -4,7 +4,7 @@
 // the window says of a change main refused.
 import { SHELVES } from "@avanzel/ui";
 import { noSuchReview, type PickOption, type SettingsPane, type SettingsSnapshot, type TaskInfo } from "../../shared/ipc.ts";
-import { ownLine } from "../../shared/problems.ts";
+import { NO_GIT_LINE, ownLine } from "../../shared/problems.ts";
 
 /** Each pane's name on the toolbar, which is also its heading. The scheduled reviews' pane keeps its id, "tasks". */
 export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
@@ -16,14 +16,17 @@ export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
 };
 
 /**
- * The library row's description, from LibraryInfo.shelves (the six shelves count; others don't), isGit and autoCommit. It
- * promises Undo only where there is a commit to undo: a library with git, and automatic commits on. With them off (the
- * library's own settings), it says so. A library without git has no history to speak of, whatever it says of commits.
+ * The library row's description, from LibraryInfo.shelves (the six shelves count; others don't), isGit, autoCommit and gitUsable.
+ * It says only what is true of the library. A folder with no .git has no history to speak of. One that has, on a Mac that can't
+ * run git (Apple's stub), has its history, but nothing commits there and nothing can be undone, which is the Mac's doing, not the
+ * library's: it says so in the words setup does (NO_GIT_LINE). Only a library with git, on a Mac that runs it, promises Undo,
+ * and not when the library's own settings turn automatic commits off.
  */
-export function libraryLine(shelves: Readonly<Record<string, number>>, isGit: boolean, autoCommit: boolean): string {
+export function libraryLine(shelves: Readonly<Record<string, number>>, isGit: boolean, autoCommit: boolean, gitUsable: boolean): string {
   const pages = SHELVES.reduce((sum, shelf) => sum + (shelves[shelf] ?? 0), 0);
   const filled = pages === 0 ? "Your first thought will fill a shelf." : `${pages} ${pages === 1 ? "page" : "pages"} on six shelves.`;
   if (!isGit) return `${filled} This folder has no git history, so changes can't be undone.`;
+  if (!gitUsable) return `${filled} ${NO_GIT_LINE}`;
   const undo = autoCommit
     ? "Every change is a commit you can undo."
     : "Automatic commits are off in this library's settings, so changes can't be undone from Avanzel.";
@@ -72,7 +75,11 @@ export function microphoneOptions(id: string | null, devices: readonly InputDevi
 export const SPEECH_MODEL_DESCRIPTION =
   "Turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.";
 
-/** The speech models the engine runs that hear English alone (Parakeet v2); the others, the default among them, hear 25 languages. */
+/**
+ * The speech models the engine runs that hear English alone (Parakeet v2); the others, the default among them, hear 25 languages.
+ * The engine doesn't say which is which, so a model it gains is told with the default's languages until it is listed here:
+ * test/settings-copy.test.ts fails for a model that no one has classified.
+ */
 const ENGLISH_ONLY_MODELS: readonly string[] = ["nemo-parakeet-tdt-0.6b-v2"];
 
 /**
@@ -85,6 +92,15 @@ export function speechModelLine(voice: SettingsSnapshot["voice"]): string {
   if (voice.backend === "command") return "Turns your voice into text with the command in this library's settings.";
   if (ENGLISH_ONLY_MODELS.includes(voice.model)) return "Turns your voice into English text on this Mac. Nothing is sent anywhere.";
   return SPEECH_MODEL_DESCRIPTION;
+}
+
+/**
+ * What Privacy says leaves this Mac: the voice stays unless the library's own settings hand it to a command, which can send it
+ * anywhere, and then the pane says where it goes. The words, and any screen captured with a comment, go to the agent.
+ */
+export function leavesThisMacLine(voice: SettingsSnapshot["voice"]): string {
+  const where = voice.backend === "command" ? "Your voice goes to the command in this library's settings." : "Your voice never leaves this Mac.";
+  return `${where} Your words, and any screen you capture with a comment, go only to the agent you chose, the same way your code already does.`;
 }
 
 /** The days a weekly review runs on, from Sunday: as a schedule writes each one ("sun"), and by its name. */

@@ -89,11 +89,13 @@ function App() {
     setProblem(null);
   }, []);
   // A call to main that may be refused: a refusal is told in the Notice (it would otherwise be an unheard rejection), and the
-  // call resolves undefined. Wherever the person is when it arrives, since a save can outlast the pane it was made on.
+  // call resolves undefined. Wherever the person is when it arrives, since a save can outlast the pane it was made on. Any error
+  // is told so, a bug of the app's own among them, and so it is logged too: the Notice can't tell which it is.
   const attempt = useCallback(async <T,>(run: () => Promise<T>): Promise<T | undefined> => {
     try {
       return await run();
     } catch (error) {
+      console.error("settings", error);
       refusals.current += 1;
       setProblem({ id: refusals.current, line: notSavedLine(error) });
       return undefined;

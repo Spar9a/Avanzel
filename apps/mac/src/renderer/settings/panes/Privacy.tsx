@@ -4,6 +4,7 @@
 import { Button, Group, GroupRow, Row, Stack, Text } from "@avanzel/ui";
 import type { ReactNode } from "react";
 import type { PermissionStatus } from "../../../shared/ipc.ts";
+import { leavesThisMacLine } from "../copy.ts";
 import { attemptChange, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -72,10 +73,7 @@ export function Privacy({ snap, onChange, attempt }: PaneProps): ReactNode {
       <Group label="What leaves this Mac">
         {/* Not a row: a paragraph, in a box of the window's own, padded as a row is. */}
         <div className="settings-words">
-          <Text variant="callout">
-            Your voice never leaves this Mac. Your words, and any screen you capture with a comment, go only to the agent you
-            chose, the same way your code already does.
-          </Text>
+          <Text variant="callout">{leavesThisMacLine(snap.voice)}</Text>
         </div>
       </Group>
     </Stack>

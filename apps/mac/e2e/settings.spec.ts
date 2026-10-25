@@ -214,15 +214,21 @@ test("the microphone row doesn't call a connected microphone missing while the d
 
 test("General says only what is true of the library's history: commits, automatic commits turned off, no git, and a Mac that can't run git", async () => {
   const commits = "Every change is a commit you can undo.";
-  const noGit = "This folder has no git history, so changes can't be undone.";
+  const noHistory = "This folder has no git history, so changes can't be undone.";
+  const noGitHere = "This Mac has no git yet, so changes can't be undone.";
   const cases = [
     { git: true, autoCommit: true, usable: true, line: commits },
     // config.toml's auto_commit = false: git is there, and no change is a commit.
     { git: true, autoCommit: false, usable: true, line: "Automatic commits are off in this library's settings, so changes can't be undone from Avanzel." },
-    // Without git there is nothing to turn off: the library keeps its no-git line, whatever the setting says.
-    { git: false, autoCommit: false, usable: true, line: noGit },
-    // A .git folder on a Mac whose only git is Apple's stub (AVANZEL_GIT_USABLE=0 plays that Mac): nothing runs git, so no promise of Undo.
-    { git: true, autoCommit: true, usable: false, line: noGit },
+    // Without a .git folder there is no history, and nothing to turn off: the folder's own line, whatever the setting says.
+    { git: false, autoCommit: false, usable: true, line: noHistory },
+    // A .git folder on a Mac whose only git is Apple's stub (AVANZEL_GIT_USABLE=0 plays that Mac): the folder has its history, and this
+    // Mac can't run git. No promise of Undo, and no claim that the folder has no history: it says what is true of the Mac.
+    { git: true, autoCommit: true, usable: false, line: noGitHere },
+    // Nothing commits there, whatever the library's settings say of automatic commits.
+    { git: true, autoCommit: false, usable: false, line: noGitHere },
+    // No .git folder, on a Mac without git: still the folder with no history.
+    { git: false, autoCommit: true, usable: false, line: noHistory },
   ];
   for (const { git, autoCommit, usable, line } of cases) {
     const library = await makeLibrary({ git });
@@ -231,8 +237,9 @@ test("General says only what is true of the library's history: commits, automati
     const app = await launch({ AVANZEL_LIBRARY: library, ...(usable ? {} : { AVANZEL_GIT_USABLE: "0" }) });
     const settings = await openSettings(app);
     await expect(settings.getByText(`1 page on six shelves. ${line}`, { exact: true })).toBeVisible();
-    // The snapshot says it as the line needs it: git that Avanzel can use, and whether the library commits by itself.
-    expect((await snapshot(app)).library).toMatchObject({ isGit: git && usable, autoCommit });
+    // The snapshot carries what the line is made from: whether the folder has a .git, whether this Mac can run git, and
+    // whether the library commits by itself.
+    expect((await snapshot(app)).library).toMatchObject({ isGit: git, gitUsable: usable, autoCommit });
     await app.close();
   }
 });
@@ -244,6 +251,12 @@ test("a change that fails says so, with why, and the next change that works take
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Agents");
+  // The Notice tells a refusal, and the console has it too, so that a change that fails for a reason of the app's own, not of the
+  // disk's, isn't only a Notice.
+  const logged: string[] = [];
+  settings.on("console", (message) => {
+    if (message.type() === "error") logged.push(message.text());
+  });
   const model = settings.getByRole("textbox", { name: "fake model", exact: true });
   const config = path.join(library, ".avanzel", "config.toml");
   const before = read(library, ".avanzel/config.toml");
@@ -259,6 +272,7 @@ test("a change that fails says so, with why, and the next change that works take
     await expect(problem.getByText(/^EACCES: permission denied, open '.*config\.toml\.[^']*\.tmp'\.$/)).toBeVisible();
     await expect(problem).not.toContainText("Error invoking remote method");
     expect(readFileSync(config, "utf8")).toBe(before);
+    await expect.poll(() => logged.join("\n")).toMatch(/EACCES: permission denied/);
     await snap(settings, "settings-change-failed");
     // It has no button of its own: it is told, and goes with the next change that works.
     await expect(problem.getByRole("button")).toHaveCount(0);
@@ -383,6 +397,10 @@ test("a change that is refused after the person has gone to another pane is told
     await expect(notSaved(settings)).toBeVisible({ timeout: 20_000 });
     await expect(notSaved(settings).getByText(/^EACCES: permission denied/)).toBeVisible();
     expect(readFileSync(evening, "utf8")).toContain("enabled: false");
+    // Told where they were, and told once: General had gone when it was refused, and the evening review doesn't say it again.
+    await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+    await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
+    await expect(settings.getByRole("alert")).toHaveCount(0);
   } finally {
     chmodSync(path.join(library, "tasks"), 0o755);
   }
@@ -466,6 +484,13 @@ test("Turn on the evening review that fails says so in General, and the review s
     expect(readFileSync(evening, "utf8")).toContain("enabled: false");
     await expect(notice).toBeVisible(); // still off, and still offered
     await expect(turnOn).not.toHaveAttribute("aria-busy", "true"); // the save is over: Turn on can be pressed again
+    // Told once: General's Notice has said it, so the evening review on Reviews doesn't say it again under itself.
+    await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+    await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
+    await expect(settings.getByRole("group", { name: "Evening review", exact: true })).toBeVisible();
+    await expect(settings.getByRole("alert")).toHaveCount(0);
+    await settings.getByRole("radio", { name: "General", exact: true }).click();
+    await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
   } finally {
     chmodSync(path.join(library, "tasks"), 0o755);
   }

@@ -3,6 +3,7 @@
 // says what each permission is for, where it stands, and how to allow it, offers Quit and reopen
 // for the screen (which relaunches nothing under AVANZEL_TEST=1), and follows System Settings.
 import { expect, test } from "@playwright/test";
+import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import { call, capsuleKind, filesUnder, launch, makeLibrary, openSettings, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
 
 const saved = (root: string) => ({
@@ -120,6 +121,24 @@ test("Settings → Privacy says what each permission is for, and Open System Set
   // With AVANZEL_TEST=1 System Settings stays shut, and openedForTests says which pane it would have opened.
   await screen.getByRole("button", { name: "Open System Settings" }).click();
   await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Screen Recording"]);
+  await app.close();
+});
+
+test("Settings → Privacy says the voice goes to the library's command, for a library whose voice is one", async () => {
+  const library = await makeLibrary();
+  const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600 };
+  saveSettings(library, { ...loadSettings(library), voice });
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Privacy");
+  // A command is the library's own and can send the voice anywhere, so the pane says where it goes, and doesn't promise it stays.
+  await expect(
+    settings.getByText(
+      "Your voice goes to the command in this library's settings. Your words, and any screen you capture with a comment, go only to the agent you chose, the same way your code already does.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(settings.getByText(/never leaves this Mac/)).toHaveCount(0);
+  await snap(settings, "settings-privacy-command");
   await app.close();
 });
 

@@ -1,4 +1,4 @@
-import { MODELS } from "@avanzel/engine";
+import { MODELS, VAD_MODEL } from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
 import {
   asSentence,
@@ -8,6 +8,7 @@ import {
   fileModeLine,
   kindLine,
   lastRunLine,
+  leavesThisMacLine,
   libraryLine,
   microphoneName,
   microphoneOptions,
@@ -22,6 +23,7 @@ import {
   whenLine,
 } from "../src/renderer/settings/copy.ts";
 import { noSuchReview, SETTINGS_PANES } from "../src/shared/ipc.ts";
+import { NO_GIT_LINE } from "../src/shared/problems.ts";
 
 describe("settings copy", () => {
   it("the toolbar lists the panes in their order", () => {
@@ -30,21 +32,33 @@ describe("settings copy", () => {
 
   it("libraryLine counts the six shelves' pages and says whether changes can be undone", () => {
     const shelves = { goals: 12, ideas: 41, problems: 9, memories: 18, people: 27, topics: 21 };
-    expect(libraryLine(shelves, true, true)).toBe("128 pages on six shelves. Every change is a commit you can undo.");
-    expect(libraryLine({ ideas: 1 }, true, true)).toBe("1 page on six shelves. Every change is a commit you can undo.");
-    expect(libraryLine({}, true, true)).toBe("Your first thought will fill a shelf. Every change is a commit you can undo.");
+    expect(libraryLine(shelves, true, true, true)).toBe("128 pages on six shelves. Every change is a commit you can undo.");
+    expect(libraryLine({ ideas: 1 }, true, true, true)).toBe("1 page on six shelves. Every change is a commit you can undo.");
+    expect(libraryLine({}, true, true, true)).toBe("Your first thought will fill a shelf. Every change is a commit you can undo.");
     // A folder of the library's own that isn't one of the six shelves doesn't count.
-    expect(libraryLine({ ideas: 2, projects: 5 }, false, true)).toBe("2 pages on six shelves. This folder has no git history, so changes can't be undone.");
+    expect(libraryLine({ ideas: 2, projects: 5 }, false, true, true)).toBe("2 pages on six shelves. This folder has no git history, so changes can't be undone.");
   });
 
   it("libraryLine says so when the library's settings turn automatic commits off, since then no change is a commit", () => {
     const off = "Automatic commits are off in this library's settings, so changes can't be undone from Avanzel.";
-    expect(libraryLine({ ideas: 1 }, true, false)).toBe(`1 page on six shelves. ${off}`);
-    expect(libraryLine({}, true, false)).toBe(`Your first thought will fill a shelf. ${off}`);
+    expect(libraryLine({ ideas: 1 }, true, false, true)).toBe(`1 page on six shelves. ${off}`);
+    expect(libraryLine({}, true, false, true)).toBe(`Your first thought will fill a shelf. ${off}`);
     // It is a sentence for a library with git. One without keeps its no-git line, whatever it says of automatic commits.
     const noGit = "This folder has no git history, so changes can't be undone.";
-    expect(libraryLine({ ideas: 2 }, false, false)).toBe(`2 pages on six shelves. ${noGit}`);
-    expect(libraryLine({ ideas: 2 }, false, true)).toBe(`2 pages on six shelves. ${noGit}`);
+    expect(libraryLine({ ideas: 2 }, false, false, true)).toBe(`2 pages on six shelves. ${noGit}`);
+    expect(libraryLine({ ideas: 2 }, false, true, true)).toBe(`2 pages on six shelves. ${noGit}`);
+  });
+
+  it("libraryLine tells a Mac that can't run git from a folder that has no history", () => {
+    // A .git folder on a Mac whose only git is Apple's stub: the history is there, and this Mac can neither add to it nor undo from it.
+    expect(NO_GIT_LINE).toBe("This Mac has no git yet, so changes can't be undone.");
+    expect(libraryLine({ ideas: 1 }, true, true, false)).toBe("1 page on six shelves. This Mac has no git yet, so changes can't be undone.");
+    // Whatever the library's settings say of automatic commits: nothing commits on such a Mac, so that line doesn't come into it.
+    expect(libraryLine({}, true, false, false)).toBe("Your first thought will fill a shelf. This Mac has no git yet, so changes can't be undone.");
+    // A folder with no .git has no history to speak of, on a Mac that can run git or not: it keeps its own line.
+    const noHistory = "This folder has no git history, so changes can't be undone.";
+    expect(libraryLine({ ideas: 2 }, false, true, false)).toBe(`2 pages on six shelves. ${noHistory}`);
+    expect(libraryLine({ ideas: 2 }, false, false, false)).toBe(`2 pages on six shelves. ${noHistory}`);
   });
 
   it("asSentence ends a line with a full stop once", () => {
@@ -116,6 +130,33 @@ describe("settings copy", () => {
     for (const line of [speechModelLine({ backend: "onnx-asr", model: "nemo-parakeet-tdt-0.6b-v2" }), command]) {
       expect(line).not.toMatch(/parakeet|whisper|silero|nemo|v2/i);
     }
+  });
+
+  it("every speech model the engine has is classified as English-only or not, so a new one can't get the wrong languages", () => {
+    // What each model hears: the engine has no such field, so this is where it is decided. A model added to the engine's MODELS
+    // fails the first expectation until it is put here, and would otherwise be told with the default's 25 languages.
+    const hears: Record<string, "english" | "25 languages"> = {
+      "nemo-parakeet-tdt-0.6b-v3": "25 languages",
+      "nemo-parakeet-tdt-0.6b-v2": "english",
+    };
+    const speech = Object.keys(MODELS).filter((id) => id !== VAD_MODEL);
+    expect(Object.keys(hears).sort()).toEqual(speech.sort());
+    for (const model of speech) {
+      const line = speechModelLine({ backend: "onnx-asr", model });
+      if (hears[model] === "english") expect(line, model).toBe("Turns your voice into English text on this Mac. Nothing is sent anywhere.");
+      else expect(line, model).toBe(SPEECH_MODEL_DESCRIPTION);
+    }
+  });
+
+  it("leavesThisMacLine says the voice stays on this Mac, unless the library's settings hand it to a command", () => {
+    const words = "Your words, and any screen you capture with a comment, go only to the agent you chose, the same way your code already does.";
+    // The default model and the English-only one run here: nothing of the voice goes anywhere.
+    for (const model of ["nemo-parakeet-tdt-0.6b-v3", "nemo-parakeet-tdt-0.6b-v2"]) {
+      expect(leavesThisMacLine({ backend: "onnx-asr", model })).toBe(`Your voice never leaves this Mac. ${words}`);
+    }
+    // A command is the library's own, and can send the voice anywhere: Privacy says where it goes, and doesn't promise it stays.
+    expect(leavesThisMacLine({ backend: "command", model: "" })).toBe(`Your voice goes to the command in this library's settings. ${words}`);
+    expect(leavesThisMacLine({ backend: "command", model: "" })).not.toMatch(/never leaves/);
   });
 
   it("a change main refused is told as what happened and why, without Electron's prefix", () => {
