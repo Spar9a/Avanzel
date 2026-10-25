@@ -44,6 +44,12 @@ export interface FilingJob {
   detail?: string;
   /** Its run waits for the library (another run has it); the filing card says so until the run starts. */
   waiting?: boolean;
+  /**
+   * Filed in the background, with no card (`fileInBackground`): by the wait for a usage limit's reset, which was due at `until`
+   * (epoch ms), or by the watch of a missing sign-in. What goes wrong with such a filing is checked against this, so that a
+   * note can't be filed again by itself without end (`keepPromise`).
+   */
+  background?: { by: "wait"; until: number } | { by: "watch" };
   outcome?: FileOutcome;
   pages?: FiledPage[];
   /**

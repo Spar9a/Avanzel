@@ -87,7 +87,18 @@ import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissi
 import { pickRequest, popupChoice } from "./popup.ts";
 import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
-import { dueTasks, markChecked, markRan, type RunState } from "./schedule.ts";
+import {
+  dueTasks,
+  markChecked,
+  markRan,
+  resetMarginMs,
+  signInPollMs,
+  signInWatchMs,
+  splitWaits,
+  timerDelay,
+  withWait,
+  type RunState,
+} from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
 import { tildePath } from "./setup-model.ts";
@@ -145,6 +156,13 @@ type TakenShortcut = Extract<CapsuleState, { kind: "shortcut-taken" }>;
 
 /** What an error card's one button does: where its Open Settings goes, or the fix a failed filing offers. */
 type ErrorAction = Extract<CapsuleState, { kind: "error" }>["action"];
+
+/** The watch of one agent's sign-in (`watchSignIn`): the notes that wait for it, when it gives up, and its next look. */
+interface SignInWatch {
+  captures: Set<string>;
+  endsAt: number;
+  timer: NodeJS.Timeout | null;
+}
 
 /** The callback the shortcut stand-in holds for each accelerator it registered: what pressShortcutForTests presses. */
 const fakeShortcuts = new Map<string, () => void>();
@@ -227,6 +245,10 @@ export class Controller {
   private readonly agentChecks = new Map<string, AgentStatus>();
   /** The agent checks going on, each by the controller that stops it when Avanzel quits. */
   private readonly runningChecks = new Set<AbortController>();
+  /** When the open library's next usage-limit wait comes due (`armWaits`). */
+  private waitTimer: NodeJS.Timeout | null = null;
+  /** The sign-in watches going on, by the agent each one watches (`watchSignIn`). */
+  private readonly signInWatches = new Map<string, SignInWatch>();
   /** The agents whose sign-in is being read again because the setup window has the focus again (`rereadSignIns`). */
   private readonly rereading = new Set<string>();
   /** Avanzel is quitting, busy or not (`stopAgentChecks`): no agent check starts any more. */
@@ -314,6 +336,7 @@ export class Controller {
 
   /** What goes wrong opening it is kept in `libraryProblem`, which the menu and Settings show. */
   private openLibrary(libraryPath: string | null): void {
+    this.dropLibraryTimers(); // a wait or a watch is for the library that closes; the next one's waits are armed again by whoever opens it
     this.vault = null;
     this.recent = [];
     this.dropTranscriber();
@@ -993,13 +1016,7 @@ export class Controller {
   private async runFiling(job: FilingJob): Promise<void> {
     this.queuedToFile.delete(job.capturePath); // its turn: should it not file the capture, a review may
     if (job.abort.signal.aborted) return; // Edit, or Cancel in setup, stopped it before its turn came
-    if (!existsSync(job.capturePath)) {
-      // Already filed meanwhile (e.g. by another Avanzel on this library); nothing left to do. The setup window, which
-      // is waiting on this filing, says the note has gone.
-      if (this.setup.owns(job)) return this.setup.failed(job, NOTE_GONE);
-      if (this.job === job && this.capsuleState.kind === "filing") this.setCapsule({ kind: "hidden" });
-      return;
-    }
+    if (!existsSync(job.capturePath)) return this.noteGone(job); // already filed meanwhile (e.g. by another Avanzel on this library)
     const started = performance.now();
     let outcome: FileOutcome | undefined;
     const progress = (message: string) => this.filingProgress(job, message);
@@ -1018,13 +1035,15 @@ export class Controller {
     // Edit takes back what this run did (`refile`), and so does Cancel in setup (`cancelSetupFiling`).
     if (job.edited || job.cancelled || this.quitting) return;
     const seconds = (performance.now() - started) / 1000;
-    // No outcome at all: the capture left the inbox while the run waited for the library. Setup says so, in its window
-    // or its notification; the capsule's card would say the note is still in the inbox, so it keeps its own words.
-    if (!outcome && job.setup) return this.filingFailed(job, NOTE_GONE);
-    if (!outcome || !outcome.ok) return this.filingFailed(job, outcome?.error || outcome?.message || "The agent stopped without filing.", outcome);
+    // No outcome at all: the capture left the inbox while the run waited for the library, and another Avanzel filed it. Setup
+    // says so, in its window or its notification; for anything else there is nothing left to do, as when the note was gone
+    // before the run's turn. The agent didn't stop without filing: its card would say that, and that the note is in the inbox.
+    if (!outcome) return job.setup ? this.filingFailed(job, NOTE_GONE) : this.noteGone(job);
+    if (!outcome.ok) return this.filingFailed(job, outcome.error || outcome.message || "The agent stopped without filing.", outcome);
     const vault = this.requireVault();
     job.pages = filedPages(vault.root, outcome.changes);
     this.recent = [...job.pages, ...this.recent.filter((p) => !job.pages?.some((q) => q.path === p.path))].slice(0, 3);
+    this.forgetWaits((capture) => capture === job.capturePath); // filed: no wait for it can bring it back, were the filing undone
     // Setup's thought is filed, which counts whether its window is still there to show it or has closed (§5.4).
     if (job.setup) this.firstRun.filed(new Date());
     if (this.setup.owns(job)) {
@@ -1035,6 +1054,9 @@ export class Controller {
         8000,
       );
     } else {
+      // Filed with no card of its own (a wait's or the sign-in watch's filing, or its card has gone). A card that still
+      // tells of this note's failure, and promised this, has nothing more to say.
+      if (this.cardCapture === job.capturePath) this.setCapsule({ kind: "hidden" });
       const first = job.pages[0];
       this.notify(`Filed by ${job.agent}`, first ? `${first.title} (${first.shelf})${job.pages.length > 1 ? ` and ${job.pages.length - 1} more` : ""}` : outcome.message, () => first && this.openPage(first.path));
     }
@@ -1045,17 +1067,20 @@ export class Controller {
    * `job`'s filing failed. `error` is what the run threw, or for a run that came back without filing the line that says why,
    * and `outcome` is then the run's own, with the engine's classification of the failure and what the run left behind. The
    * capsule's card says what happened and what is safe, and offers the one fix (`cardFix`); a capsule that no longer shows
-   * this job gets a notification with the same words. Setup's window tells it in its own (`setup.failed`).
+   * this job gets a notification with the same words. Setup's window tells it in its own (`setup.failed`). What the words
+   * promise of a usage limit or a missing sign-in, the app then does (`keepPromise`).
    */
   private filingFailed(job: FilingJob, error: unknown, outcome?: FileOutcome): void {
     if (this.setup.owns(job)) return this.setup.failed(job, errorLine(errorMessage(error)));
     const harness = this.failedHarness(job, error);
     const failure = this.agentFailure(harness, error, outcome);
-    const problem = filingProblem(failure, new Date(), {
+    const now = new Date();
+    const problem = filingProblem(failure, now, {
       ...(outcome?.savedOriginal ? { where: outcome.savedOriginal } : {}),
       partial: !outcome ? null : outcome.commit ? "commit" : outcome.changes.empty ? null : "uncommitted",
       eveningReview: this.eveningReviewOn(),
     });
+    this.keepPromise(job, failure, harness, now);
     if (this.job === job && this.capsuleState.kind === "filing") {
       const fix = this.cardFix(failure, harness);
       this.fail(problem.title, problem.body, fix?.action, fix?.label, job.capturePath);
@@ -1164,6 +1189,205 @@ export class Controller {
     } catch {
       return defaultSettings().timeoutSeconds;
     }
+  }
+
+  // ---------------------------------------------------------------- notes that wait for a limit or a sign-in
+
+  /**
+   * What the words of a failed filing promise, the app does. A usage limit whose reset is still to come is a wait for it
+   * (`addWait`): the words say the note "will be filed then". A sign-in that Claude Code or Codex asks for is a watch of the
+   * agent's free sign-in check (`watchSignIn`): the note "will be filed straight away". Only a note that waits in the open
+   * library's inbox is waited for. Any other failure promises only the evening review, and keeps no wait. Neither goes round
+   * without end: a reset that has passed arms no wait, a note that a wait filed and the limit stopped again waits only for a
+   * later reset, and a note that the watch filed and that still can't sign in starts no new watch.
+   */
+  private keepPromise(job: FilingJob, failure: AgentFailure, harness: string | null, now: Date): void {
+    if (harness === null || !this.vault?.pending().includes(job.capturePath)) return;
+    try {
+      if (failure.kind === "limit" && failure.resetsAt !== null && failure.resetsAt > now.getTime()) {
+        const until = failure.resetsAt + resetMarginMs();
+        if (job.background?.by !== "wait" || until > job.background.until) this.addWait(job.capturePath, harness, until);
+      } else if (failure.kind === "signin" && failure.command !== null && job.background?.by !== "watch") {
+        this.watchSignIn(harness, job.capturePath);
+      }
+    } catch (error) {
+      console.error("what a failed filing promised", error); // the words stay; the evening review still has the note
+    }
+  }
+
+  /** Keeps a wait with the open library for `capture`'s note, to be filed with `agent` at `until` (epoch ms), and sets its timer. */
+  private addWait(capture: string, agent: string, until: number): void {
+    const vault = this.vault;
+    if (!vault) return;
+    const state = this.readRunState(vault);
+    this.writeRunState(vault, { ...state, waiting: withWait(state.waiting, { capture, agent, until }) });
+    this.armWaits();
+  }
+
+  /**
+   * Starts the open library's usage-limit waits over from what its run state keeps. The notes whose wait has come due are
+   * filed now (`fileInBackground`) if they still wait in the inbox, and are done with either way; one timer is set for the
+   * next to come due. It runs when a wait is added or forgotten, when Avanzel starts (`tick`) or opens another library
+   * (`useLibrary`), and when its timer fires. That timer is set for at most what a timer can hold, and finds nothing due
+   * if it fires early, so it sets itself again. `tick` runs it every minute and when the Mac wakes too, as a timer set
+   * before the Mac slept is late by the sleep.
+   */
+  private armWaits(): void {
+    if (this.waitTimer) clearTimeout(this.waitTimer);
+    this.waitTimer = null;
+    const vault = this.vault;
+    if (!vault || this.quitting || this.checksStopped) return;
+    const state = this.readRunState(vault);
+    const now = Date.now();
+    const { due, later } = splitWaits(state.waiting, now);
+    if (due.length) {
+      // Done with before they are filed: waits that could not be saved as done would file their notes again, every minute.
+      try {
+        this.writeRunState(vault, { ...state, waiting: later });
+      } catch (error) {
+        console.error("usage-limit waits", error);
+        return;
+      }
+      const inbox = new Set(vault.pending());
+      for (const wait of due) {
+        if (inbox.has(wait.capture)) this.fileInBackground(wait.capture, wait.agent, { by: "wait", until: wait.until });
+      }
+    }
+    if (later.length) this.waitTimer = setTimeout(() => this.armWaits(), timerDelay(Math.min(...later.map((wait) => wait.until)), now));
+  }
+
+  /**
+   * The notes `filed` picks are filed, and need no wait. Their waits go, so that a note put back in the inbox (Undo) isn't
+   * filed again by a wait that was made before.
+   */
+  private forgetWaits(filed: (capture: string) => boolean): void {
+    const vault = this.vault;
+    if (!vault) return;
+    try {
+      const state = this.readRunState(vault);
+      const waiting = state.waiting.filter((wait) => !filed(wait.capture));
+      if (waiting.length === state.waiting.length) return;
+      this.writeRunState(vault, { ...state, waiting });
+      this.armWaits();
+    } catch (error) {
+      console.error("usage-limit waits", error);
+    }
+  }
+
+  /**
+   * Files the note at `capturePath` with `harness` (an agent's name), in the background: no card of its own, and a notification
+   * says how it went, as for any filing whose card is gone. `background` says what asked, which `keepPromise` checks if it fails.
+   * The note joins `queuedToFile`, so the evening review leaves it to this filing. At its turn it is filed only if it still
+   * waits in the open library's inbox: not if it was filed meanwhile, or another library has opened.
+   */
+  private fileInBackground(capturePath: string, harness: string, background: NonNullable<FilingJob["background"]>): void {
+    const job: FilingJob = {
+      capturePath,
+      text: "",
+      transcribedIn: null,
+      agent: harnessName(harness),
+      harness,
+      abort: new AbortController(),
+      edited: false,
+      rows: [],
+      written: [],
+      background,
+    };
+    this.queuedToFile.add(capturePath);
+    void this.enqueue(async () => {
+      if (this.vault?.pending().includes(capturePath)) return this.runFiling(job);
+      this.queuedToFile.delete(capturePath);
+      this.noteGone(job);
+    });
+  }
+
+  /**
+   * `job`'s note isn't in the inbox, so there is nothing to file: it was filed meanwhile, say by another Avanzel on this
+   * library, and its waits are done with. The setup window, which waits on its first thought, says the note has gone. The
+   * card of its filing goes, and so does one that told of its failure and said it would be filed.
+   */
+  private noteGone(job: FilingJob): void {
+    this.forgetWaits((capture) => capture === job.capturePath);
+    if (this.setup.owns(job)) return this.setup.failed(job, NOTE_GONE);
+    if ((this.job === job && this.capsuleState.kind === "filing") || this.cardCapture === job.capturePath) this.setCapsule({ kind: "hidden" });
+  }
+
+  /**
+   * `agent` (Claude Code or Codex, by harness name) isn't signed in, and the failed filing of `capture`'s note said it would be
+   * filed straight away once it is. Its free sign-in check is read every `signInPollMs()` for `signInWatchMs()`, and the first
+   * time it reads signed in the notes that wait are filed again, in the background, and the watch ends. Notes that wait on one
+   * agent share one watch, which each new note keeps going for another full length. After that length the note is the evening
+   * review's. The watch lives in memory: it ends with Avanzel, and with the library its notes are in.
+   */
+  private watchSignIn(agent: string, capture: string): void {
+    const endsAt = Date.now() + signInWatchMs();
+    const running = this.signInWatches.get(agent);
+    if (running) {
+      running.captures.add(capture);
+      running.endsAt = endsAt;
+      return;
+    }
+    const watch: SignInWatch = { captures: new Set([capture]), endsAt, timer: null };
+    this.signInWatches.set(agent, watch);
+    this.scheduleSignInLook(agent, watch);
+  }
+
+  private scheduleSignInLook(agent: string, watch: SignInWatch): void {
+    watch.timer = setTimeout(() => void this.lookAtSignIn(agent, watch), signInPollMs());
+  }
+
+  /** One look of `watch` at `agent`'s sign-in, and then the end of the watch, or the next look. */
+  private async lookAtSignIn(agent: string, watch: SignInWatch): Promise<void> {
+    watch.timer = null;
+    const harness = this.harnessNamed(agent);
+    const check = harness && !this.quitting && !this.checksStopped ? await this.freeSignInCheck(harness) : null;
+    if (this.signInWatches.get(agent) !== watch) return; // it ended while the check ran: another library opened, or Avanzel is quitting
+    const inbox = new Set(this.vault?.pending());
+    watch.captures = new Set([...watch.captures].filter((capture) => inbox.has(capture))); // a note filed meanwhile waits for nothing
+    if (check?.ok) {
+      this.endSignInWatch(agent);
+      const status = statusOf(check);
+      if (status && this.agentChecks.has(agent)) {
+        this.agentChecks.set(agent, status); // what Settings → Agents showed of it, "Not signed in" say, is not so any more
+        this.broadcast();
+      }
+      for (const capture of watch.captures) this.fileInBackground(capture, agent, { by: "watch" });
+      return;
+    }
+    if (!watch.captures.size || Date.now() >= watch.endsAt || this.quitting || this.checksStopped) return this.endSignInWatch(agent);
+    this.scheduleSignInLook(agent, watch);
+  }
+
+  /**
+   * What `harness`'s own sign-in command says, which is free: it never asks the model (`prompt: false`), as a check that may
+   * does. It is read here and not through `runAgentCheck`, which records every finding in `agentChecks` for Settings and
+   * setup, and leaves an older finding standing when a read learns nothing: the watch needs this read's own answer, and
+   * leaves what Settings shows as it is while the agent is signed out. Null when Avanzel is quitting, or the command couldn't run.
+   */
+  private async freeSignInCheck(harness: Harness): Promise<AgentCheck | null> {
+    const abort = new AbortController();
+    this.runningChecks.add(abort);
+    try {
+      const check = await checkHarness(harness, this.checkDir(), { signal: abort.signal, prompt: false });
+      return abort.signal.aborted ? null : check;
+    } catch {
+      return null; // say there is no folder to run it in; the next look tries again
+    } finally {
+      this.runningChecks.delete(abort);
+    }
+  }
+
+  private endSignInWatch(agent: string): void {
+    const timer = this.signInWatches.get(agent)?.timer;
+    if (timer) clearTimeout(timer);
+    this.signInWatches.delete(agent);
+  }
+
+  /** The open library closes, or Avanzel quits: its waits' timer and the sign-in watches of its notes end. Its waits are kept. */
+  private dropLibraryTimers(): void {
+    if (this.waitTimer) clearTimeout(this.waitTimer);
+    this.waitTimer = null;
+    for (const agent of [...this.signInWatches.keys()]) this.endSignInWatch(agent);
   }
 
   /**
@@ -1842,6 +2066,7 @@ export class Controller {
   private async useLibrary(target: string, fromSetup = false): Promise<SettingsSnapshot> {
     this.store.update({ libraryPath: target });
     this.openLibrary(target);
+    this.armWaits(); // its notes that a usage limit stopped, and whose reset has come meanwhile, are filed now
     try {
       rememberVault(target);
     } catch (error) {
@@ -2025,6 +2250,7 @@ export class Controller {
    */
   stopAgentChecks(): void {
     this.checksStopped = true;
+    this.dropLibraryTimers();
     for (const abort of this.runningChecks) abort.abort();
     if (!this.checkScratch) return;
     try {
@@ -2195,6 +2421,10 @@ export class Controller {
   private tick(): void {
     const vault = this.vault;
     if (!vault) return this.refreshMenu();
+    // First, so that a note a limit stopped is filed by its own wait, with the agent that was stopped, ahead of a review that
+    // comes due with it. A timer set before the Mac slept is late by the sleep, so this looks at the clock again, every minute
+    // and on waking.
+    this.armWaits();
     const tasks = this.safeTasks(vault);
     const state = this.readRunState(vault);
     const now = new Date();
@@ -2264,6 +2494,8 @@ export class Controller {
           this.notify(task.name, nothingFiled(left.size));
           return;
         }
+        const filedIds = new Set(result.outcomes.filter((o) => o.ok).map((o) => o.captureId));
+        this.forgetWaits((capture) => filedIds.has(path.basename(capture, path.extname(capture)))); // as a filing does (`runFiling`)
         this.lastEveningCommits = result.commits;
         const failed = result.outcomes.filter((o) => !o.ok);
         const filed = result.outcomes.length - failed.length;
@@ -2356,6 +2588,11 @@ export class Controller {
   /** The capture of the note the capsule's failure card is about, while it shows one (what its button files again); else null. */
   cardCaptureForTests(): string | null {
     return this.cardCapture;
+  }
+
+  /** The agents whose sign-in is being watched for a failed filing (`watchSignIn`), and how many notes wait for each. */
+  signInWatchesForTests(): { agent: string; notes: number }[] {
+    return [...this.signInWatches].map(([agent, watch]) => ({ agent, notes: watch.captures.size }));
   }
 
   /** The text Copy put on the clipboard, oldest first; recorded only with AVANZEL_TEST=1. */

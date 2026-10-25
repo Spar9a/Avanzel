@@ -97,6 +97,19 @@ export function filingClaude(env: Record<string, string> = {}): string {
 }
 
 /**
+ * A `claude` for agentStubs that isn't signed in: its sign-in command says so and exits 1, as Claude Code's does, and any
+ * other call fails asking to sign in ("not logged in"). A test signs it in, as the person would in Terminal, with
+ * answerAs(dir, "claude", filingClaude()). `env` steers this stand-in alone, as filingClaude's does. With `readable` false
+ * its sign-in command says nothing a check understands, as an older Claude Code's may (UNREADABLE_CLAUDE), so only a
+ * question put to the model could tell whether it is signed in.
+ */
+export function signedOutClaude(env: Record<string, string> = {}, { readable = true } = {}): string {
+  const failing = steering({ FAKE_AGENT_MODE: "fail", ...env });
+  const status = readable ? `echo '{"loggedIn": false}'` : `echo "unknown command: auth"`;
+  return `if [ "$1 $2" = "auth status" ]; then ${status}; exit 1; else ${failing}exec '${process.execPath}' '${fakeAgent}' "$2"; fi`;
+}
+
+/**
  * A `codex` for agentStubs that files: signed in, and any other call runs the engine's fake agent with all of Codex's argv
  * (`exec … -o <file> <prompt>`), which makes it answer as Codex does, in the -o file. `env` steers this stand-in alone, as
  * filingClaude's does.

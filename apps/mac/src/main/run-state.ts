@@ -1,5 +1,6 @@
-// When each shadow task was last checked for being due, and last ran: per library, in the app's own
-// data folder. It is about this Mac, not the library, so it never shows up in the library's history.
+// When each shadow task was last checked for being due, and last ran, and which notes wait for a usage limit to reset
+// (`RunState`): per library, in the app's own data folder. It is about this Mac, not the library, so it never shows up in
+// the library's history. A wait kept here survives a restart, and waits for its library to open again.
 import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { normalizeRunState, type RunState } from "./schedule.ts";
