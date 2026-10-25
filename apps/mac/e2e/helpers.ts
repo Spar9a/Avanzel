@@ -1,7 +1,7 @@
 import { _electron as electron, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { MODELS, Vault, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -109,6 +109,31 @@ export function signedOutClaude(env: Record<string, string> = {}, { readable = t
   return `if [ "$1 $2" = "auth status" ]; then ${status}; exit 1; else ${failing}exec '${process.execPath}' '${fakeAgent}' "$2"; fi`;
 }
 
+/** Shell that keeps in `file` the epoch second `seconds` after its first run, and leaves it as it is on the runs after. */
+const resetAfter = (file: string, seconds: number) => `[ -s '${file}' ] || echo $(( $(date +%s) + ${seconds} )) > '${file}';`;
+
+/**
+ * A `claude` for agentStubs that has hit its usage limit, which resets `seconds` after the stand-in is first run. It works the
+ * reset out when it runs, not when the test is written, so a launch or a failure that is slow under load can't land after the
+ * reset; it keeps it in claude.reset beside it (`resetReported` reads it), and every later run says the same. A `tag` keeps it
+ * in another file, for a test whose limit resets again. It prints a stream, as Claude Code does.
+ */
+export function limitedClaudeFor(dir: string, seconds: number, tag = ""): string {
+  const reset = path.join(dir, `claude.reset${tag}`);
+  return `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else ${resetAfter(reset, seconds)} FAKE_AGENT_STREAM='claude' FAKE_AGENT_MODE='limit' FAKE_AGENT_RESETS_AT="$(cat '${reset}')" exec '${process.execPath}' '${fakeAgent}' "$2"; fi`;
+}
+
+/** A `codex` for agentStubs that has hit its usage limit, as `limitedClaudeFor`'s `claude` has: its message ends in the reset, as Claude Code's does. */
+export function limitedCodexFor(dir: string, seconds: number, tag = ""): string {
+  const reset = path.join(dir, `codex.reset${tag}`);
+  return `if [ "$1 $2" = "login status" ]; then echo "Logged in using ChatGPT" >&2; else ${resetAfter(reset, seconds)} echo "Usage limit reached|$(cat '${reset}')" >&2; exit 1; fi`;
+}
+
+/** The reset, in epoch seconds, that the stand-in `agent` of `limitedClaudeFor` or `limitedCodexFor` in `dir` gave; it must have been run. */
+export function resetReported(dir: string, agent: "claude" | "codex", tag = ""): number {
+  return Number(readFileSync(path.join(dir, `${agent}.reset${tag}`), "utf8").trim());
+}
+
 /**
  * A `codex` for agentStubs that files: signed in, and any other call runs the engine's fake agent with all of Codex's argv
  * (`exec … -o <file> <prompt>`), which makes it answer as Codex does, in the -o file. `env` steers this stand-in alone, as
@@ -135,8 +160,13 @@ export function agentStubs(answers: Record<string, string> = {}): string {
  */
 export function answerAs(dir: string, name: string, body: string): void {
   const file = path.join(dir, name);
-  writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' "${name} $*" >> '${path.join(dir, "calls.log")}'\n${body}\n`);
-  chmodSync(file, 0o755);
+  // Written beside it and renamed over it, so that a call which comes while a test changes the stand-in finds the old one or the
+  // new one, never half a script, or a script that can't be run yet. The renamed file is a new one, and macOS checks a new
+  // executable the first time it runs it (about 0.4 s): the first call after a change pays that.
+  const partial = path.join(dir, `.${name}.${process.pid}.tmp`);
+  writeFileSync(partial, `#!/bin/sh\nprintf '%s\\n' "${name} $*" >> '${path.join(dir, "calls.log")}'\n${body}\n`);
+  chmodSync(partial, 0o755);
+  renameSync(partial, file);
 }
 
 /** This process's PATH with new agentStubs(answers) first: what launch() gives the app unless the test passes a PATH. */

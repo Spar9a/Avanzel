@@ -17,10 +17,13 @@ import {
   filingCodex,
   gitOut,
   launch,
+  limitedClaudeFor,
+  limitedCodexFor,
   makeLibrary,
   onceMarker,
   onlyAgentsIn,
   read,
+  resetReported,
   SIGNED_IN,
   signedOutClaude,
   snap,
@@ -751,16 +754,15 @@ test("a card left up while another library opens files nothing in it", async () 
 // The cards promise it ("will be filed then", "will be filed straight away"), so the app does it. A usage limit's reset is a
 // wait, kept with the library so that a restart doesn't lose it; a missing sign-in is a watch of the agent's free sign-in
 // check, kept in memory. Either one files the note in the background: no card of its own, and a notification says how it
-// went. The tests shorten what takes minutes: the time after a reset before filing (AVANZEL_RESET_MARGIN_MS), and the
-// sign-in watch's poll and length (AVANZEL_SIGNIN_POLL_MS, AVANZEL_SIGNIN_WATCH_MS). Each one launches on a Mac whose only
-// agents are the stand-ins in its own folder (`claudeLibrary`), and a limit's reset is set after the launch (`limitedFor`).
+// went. A card that still shows the note when a background filing ends is updated, not left promising what is not so. The
+// tests shorten what takes minutes: the time after a reset before filing (AVANZEL_RESET_MARGIN_MS), and the sign-in watch's
+// poll and length (AVANZEL_SIGNIN_POLL_MS, AVANZEL_SIGNIN_WATCH_MS). Each one launches on a Mac whose only agents are the
+// stand-ins in its own folder (`claudeLibrary`), and a limit's reset is worked out by the stand-in when it first hits the
+// limit (`limitedClaudeFor`), so that a slow launch or failure can't land after it.
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 /** Waits until `epochMs` has passed. */
 const sleepUntil = (epochMs: number) => sleep(Math.max(0, epochMs - Date.now()));
-
-/** When an agent says its limit resets `seconds` from now or a little more, in epoch seconds, as Claude Code's rate limit gives it. */
-const resetsIn = (seconds: number) => Math.ceil(Date.now() / 1000) + seconds;
 
 /** The launch variable that makes a wait file at the reset itself, not a minute after. */
 const AT_THE_RESET = { AVANZEL_RESET_MARGIN_MS: "0" };
@@ -771,22 +773,16 @@ const watches = (app: ElectronApplication) => call(app, "signInWatchesForTests")
 /** How many times the stand-in `claude` was asked for its sign-in, which is all the watch asks of it. */
 const signInReads = (calls: readonly string[]) => calls.filter((line) => line === "claude auth status").length;
 
-/** A `codex` that has hit its usage limit, which resets at `resetsAt` (epoch seconds): its message ends in the reset, as Claude Code's does. */
-const limitedCodex = (resetsAt: number) =>
-  `if [ "$1 $2" = "login status" ]; then echo "Logged in using ChatGPT" >&2; else echo "Usage limit reached|${resetsAt}" >&2; exit 1; fi`;
-
 /**
- * `claudeLibrary` with a Claude Code that hits its usage limit, resetting `seconds` from now or a little more, dictated to;
- * it waits for the card of the failure. The limit is set only now, after the app has launched, so that the reset is that far
- * from the failure and not from the launch. `resetsAt` is what the stand-in reports, in epoch seconds.
+ * `claudeLibrary` with a Claude Code that hits its usage limit, which resets `seconds` after its first run (`limitedClaudeFor`),
+ * dictated to; it waits for the card of the failure. `resetsAt` is the reset the stand-in gave, in epoch seconds.
  */
 async function limitedFor(bin: string, seconds: number, options?: ClaudeLibraryOptions) {
   const opened = await claudeLibrary(bin, options);
-  const resetsAt = resetsIn(seconds);
-  answerAs(bin, "claude", limitedClaude(resetsAt));
+  answerAs(bin, "claude", limitedClaudeFor(bin, seconds));
   await dictate(opened.app);
   await expect.poll(() => capsuleKind(opened.app), { timeout: 60_000 }).toBe("error");
-  return { ...opened, resetsAt };
+  return { ...opened, resetsAt: resetReported(bin, "claude") };
 }
 
 /** Dictates another note, and waits until the claude run it started (the `runs`th) has failed and its card shows. */
@@ -832,14 +828,16 @@ test("a note stopped by a usage limit is filed after the reset", async () => {
 test("two notes waiting for one reset are each filed once", async () => {
   const bin = agentStubs();
   const { library, app } = await claudeLibrary(bin, { env: AT_THE_RESET });
-  const resetsAt = resetsIn(9);
-  answerAs(bin, "claude", limitedClaude(resetsAt));
+  answerAs(bin, "claude", limitedClaudeFor(bin, 9)); // the second note meets the reset the first one did
   await failAnother(app, 1);
   await failAnother(app, 2);
+  const resetsAt = resetReported(bin, "claude");
   expect(inbox(library)).toHaveLength(2);
-  expect(await waitsOf(app, library)).toEqual(
-    inbox(library).map((note) => ({ capture: path.join(library, "inbox", note), agent: "claude", until: resetsAt * 1000 })),
-  );
+  // A wait for each note, both for that reset; in the order the notes failed in, which their names (the same second, a "-2") needn't follow.
+  const waits = inbox(library).map((note) => ({ capture: path.join(library, "inbox", note), agent: "claude", until: resetsAt * 1000 }));
+  const kept = await waitsOf(app, library);
+  expect(kept).toHaveLength(2);
+  expect(kept).toEqual(expect.arrayContaining(waits));
 
   answerAs(bin, "claude", filingClaude());
   await expect.poll(() => inbox(library), { timeout: 25_000 }).toEqual([]);
@@ -856,10 +854,10 @@ test("a wait survives a restart", async () => {
   const bin = agentStubs();
   const first = await claudeLibrary(bin, { env: AT_THE_RESET });
   const userData = await first.app.evaluate(() => process.env.AVANZEL_USER_DATA ?? "");
-  const resetsAt = resetsIn(7);
-  answerAs(bin, "claude", limitedClaude(resetsAt));
+  answerAs(bin, "claude", limitedClaudeFor(bin, 7));
   await dictate(first.app);
   await expect.poll(() => capsuleKind(first.app), { timeout: 60_000 }).toBe("error");
+  const resetsAt = resetReported(bin, "claude");
   await first.app.close();
   expect(inbox(first.library)).toHaveLength(1);
 
@@ -915,31 +913,61 @@ test("a reset already past arms no wait", async () => {
 });
 
 test("a limit still reported after its reset files the note once more, and no more", async () => {
-  const bin = agentStubs();
+  const bin = agentStubs({ codex: filingCodex() });
   // Claude Code stays at its limit and keeps saying that it reset at the same time.
-  const { library, app } = await limitedFor(bin, 5, { env: AT_THE_RESET });
+  const { library, app, capsule } = await limitedFor(bin, 5, { env: AT_THE_RESET });
   await expect.poll(async () => filingRuns(await agentCalls(app), "claude"), { timeout: 20_000 }).toBe(2); // the wait's run
-  // That reset has passed, so there is nothing new to wait for: the notification says so, and the evening review has the note.
-  await expect
-    .poll(() => call(app, "notificationsForTests"), { timeout: 20_000 })
-    .toEqual([{ title: "Claude Code has hit its usage limit.", body: "Your note is safe in the inbox; the evening review will try again." }]);
+  // That reset has passed, so there is nothing new to wait for. The card that promised the filing, which still shows the note,
+  // says so in its place and offers the fix as any failure does: there is no notification besides.
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 20_000 }).toEqual({
+    kind: "error",
+    message: "Claude Code has hit its usage limit.",
+    detail: "Your note is safe in the inbox; the evening review will try again.",
+    action: "refile:codex",
+    actionLabel: "File it with Codex now",
+  });
+  expect(await call(app, "notificationsForTests")).toEqual([]);
   expect(await waitsOf(app, library)).toEqual([]);
   await sleep(2_500);
   expect(filingRuns(await agentCalls(app), "claude")).toBe(2); // and no more
+  expect(inbox(library)).toHaveLength(1);
+  // The card is a real one: its button files the note.
+  await capsule.getByRole("button", { name: "File it with Codex now", exact: true }).click();
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  await expect(capsule.getByText("Filed by Codex")).toBeVisible();
+  expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("a limit still reported after its reset tells a note whose card is gone by notification", async () => {
+  const bin = agentStubs();
+  const { library, app } = await limitedFor(bin, 5, { env: AT_THE_RESET });
+  await call(app, "dismiss"); // the person closes the card that promised the filing
+  await expect.poll(async () => filingRuns(await agentCalls(app), "claude"), { timeout: 20_000 }).toBe(2); // the wait's run
+  await expect
+    .poll(() => call(app, "notificationsForTests"), { timeout: 20_000 })
+    .toEqual([{ title: "Claude Code has hit its usage limit.", body: "Your note is safe in the inbox; the evening review will try again." }]);
+  expect(await capsuleKind(app)).toBe("hidden"); // nothing is put up for a note whose card was closed
   expect(inbox(library)).toHaveLength(1);
   await app.close();
 });
 
 test("a note that meets the limit again waits for the next reset", async () => {
   const bin = agentStubs();
-  const { library, app, resetsAt } = await limitedFor(bin, 5, { env: AT_THE_RESET });
-  const next = resetsAt + 5;
-  answerAs(bin, "claude", limitedClaude(next)); // by the first reset the limit has not lifted, and it now says it lifts later
+  const { library, app } = await limitedFor(bin, 5, { env: AT_THE_RESET });
+  answerAs(bin, "claude", limitedClaudeFor(bin, 5, "-next")); // by the first reset the limit has not lifted: it lifts 5 s after it is hit again
   await expect.poll(async () => filingRuns(await agentCalls(app), "claude"), { timeout: 20_000 }).toBe(2); // the first wait's run
-  // That run hit the limit again, with a later reset: a wait of its own.
+  const next = resetReported(bin, "claude", "-next");
+  // That run hit the limit again, with a later reset: a wait of its own. The card that was up, which still shows the note,
+  // says so (there is no notification besides).
   const [note] = inbox(library);
   await expect.poll(() => waitsOf(app, library)).toEqual([{ capture: path.join(library, "inbox", note!), agent: "claude", until: next * 1000 }]);
-  expect(await notified(app, "Claude Code has hit its usage limit.")).toEqual([expect.objectContaining({ body: expect.stringContaining("will be filed then.") })]);
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    kind: "error",
+    message: "Claude Code has hit its usage limit.",
+    detail: expect.stringMatching(/^It resets (at|tomorrow at) \d\d:\d\d\. Your note is safe in the inbox and will be filed then\.$/),
+  });
+  expect(await call(app, "notificationsForTests")).toEqual([]);
 
   answerAs(bin, "claude", filingClaude());
   await expect.poll(() => inbox(library), { timeout: 20_000 }).toEqual([]);
@@ -952,18 +980,19 @@ test("a note that meets the limit again waits for the next reset", async () => {
 
 test("a wait files the note with the agent that was stopped, not the library's", async () => {
   // Claude Code, the library's agent, is at its limit until tomorrow. Codex is at its limit too, but only for a few seconds.
-  const bin = agentStubs({ claude: limitedClaude(), codex: filingCodex() });
+  const tomorrow = tomorrowAtNine();
+  const bin = agentStubs({ claude: limitedClaude(tomorrow), codex: filingCodex() });
   const { library, app, capsule } = await claudeLibrary(bin, { env: AT_THE_RESET });
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("error");
   const [note] = inbox(library);
-  const resetsAt = resetsIn(6);
-  answerAs(bin, "codex", limitedCodex(resetsAt));
+  answerAs(bin, "codex", limitedCodexFor(bin, 6));
   await capsule.getByRole("button", { name: "File it with Codex now", exact: true }).click();
   await expect(capsule.getByRole("alert")).toContainText("Codex has hit its usage limit.");
   const capture = path.join(library, "inbox", note!);
+  const resetsAt = resetReported(bin, "codex");
   expect(await waitsOf(app, library)).toEqual([
-    { capture, agent: "claude", until: tomorrowAtNine() * 1000 },
+    { capture, agent: "claude", until: tomorrow * 1000 },
     { capture, agent: "codex", until: resetsAt * 1000 },
   ]);
 
@@ -979,19 +1008,49 @@ test("a wait files the note with the agent that was stopped, not the library's",
   await app.close();
 });
 
-test("a note the evening review files has no wait left", async () => {
+test("a note the evening review files has no wait left, and its card goes", async () => {
   const bin = agentStubs();
   const { library, app } = await claudeLibrary(bin);
   answerAs(bin, "claude", limitedClaude()); // until tomorrow: the wait is a long one
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("error");
   expect(await waitsOf(app, library)).toHaveLength(1);
+  expect(await cardNote(app)).toBe(inbox(library)[0]);
   // The evening review files the note, with Claude Code working again. Were it put back in the inbox (Undo), the wait must not file it.
+  // The card, which promised that the note would be filed, has nothing more to say.
   answerAs(bin, "claude", filingClaude());
   await call(app, "runTask", "evening-review");
   await call(app, "idleForTests");
   expect(inbox(library)).toEqual([]);
   expect(await waitsOf(app, library)).toEqual([]);
+  expect(await capsuleKind(app)).toBe("hidden");
+  expect(await cardNote(app)).toBeNull();
+  await app.close();
+});
+
+test("a wait that comes due while the note's editor is open files nothing", async () => {
+  // Claude Code is at its limit for a few seconds. The person files the note with Codex at once, and opens the editor on it.
+  const bin = agentStubs({ codex: filingCodex({ FAKE_AGENT_DELAY_MS: "3000" }) });
+  const { library, app, capsule, resetsAt } = await limitedFor(bin, 6, { env: AT_THE_RESET });
+  await capsule.getByRole("button", { name: "File it with Codex now", exact: true }).click();
+  await capsule.getByRole("button", { name: "Edit" }).click();
+  await expect.poll(() => capsuleKind(app)).toBe("editing");
+  answerAs(bin, "claude", filingClaude()); // Claude Code works again by the reset
+
+  // The reset comes with the editor open: the words are the person's to file, not the wait's.
+  await sleepUntil(resetsAt * 1000 + 2_000);
+  await call(app, "idleForTests");
+  expect(filingRuns(await agentCalls(app), "claude")).toBe(1);
+  expect(inbox(library)).toHaveLength(1);
+  expect(await notified(app, "Filed by Claude Code")).toEqual([]);
+  expect(await capsuleKind(app)).toBe("editing");
+  expect(await waitsOf(app, library)).toEqual([]); // the wait ended
+
+  // The person's own edit still files the note, with Codex, as it would have.
+  await capsule.getByRole("textbox").press("Escape");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  await expect(capsule.getByText("Filed by Codex")).toBeVisible();
+  expect(inbox(library)).toEqual([]);
   await app.close();
 });
 
@@ -1060,12 +1119,24 @@ test("a note stopped by a sign-in is filed once Claude Code is signed in", async
   await app.close();
 });
 
-test("the sign-in watch ends after its length", async () => {
+/** What the card of a note says once no watch will file it: the words for an agent whose sign-in is to be mended by hand, with Terminal still offered. */
+const UNWATCHED_CARD = {
+  kind: "error",
+  message: "Claude Code isn't signed in on this Mac.",
+  detail: "Sign in to Claude Code in Terminal. Your note is safe in the inbox; the evening review will try again.",
+  action: "open-terminal",
+  actionLabel: "Open Terminal",
+};
+
+test("the sign-in watch ends after its length, and its card stops promising the filing", async () => {
   const bin = agentStubs({ claude: signedOutClaude() });
   const { library, app } = await failedWithClaude(bin, { env: { AVANZEL_SIGNIN_POLL_MS: "300", AVANZEL_SIGNIN_WATCH_MS: "1500" } });
   await expect.poll(() => watches(app), { timeout: 15_000 }).toEqual([]); // it gives up
   const reads = signInReads(await agentCalls(app));
   expect(reads).toBeGreaterThan(1); // it looked more than once
+  // The card, which said the note would be filed straight away, still shows it: now it says only that it is safe, and keeps its button.
+  expect(await call(app, "capsuleStateForTests")).toEqual(UNWATCHED_CARD);
+  expect(await cardNote(app)).toBe(inbox(library)[0]);
 
   // Signed in at last, too late: it no longer looks, and the note waits for the evening review.
   answerAs(bin, "claude", filingClaude());
@@ -1107,20 +1178,52 @@ test("notes waiting on one agent's sign-in share one watch", async () => {
   await app.close();
 });
 
-test("a note the watch refiled that can't sign in again starts no new watch", async () => {
+test("a note the watch refiled that can't sign in again starts no new watch, and its card says so", async () => {
   // Claude Code's sign-in command says it is signed in, but its runs say they aren't: the watch files the note once more,
-  // finds the same thing, and leaves it to the evening review.
+  // finds the same thing, and leaves it to the evening review. The card that promised "straight away", which still shows the
+  // note, says that in its place; there is no notification besides.
   const bin = agentStubs({ claude: filingClaude({ FAKE_AGENT_MODE: "fail" }) });
   const { library, app } = await failedWithClaude(bin, { env: { AVANZEL_SIGNIN_POLL_MS: "300" } });
   await expect.poll(async () => filingRuns(await agentCalls(app), "claude"), { timeout: 15_000 }).toBe(2); // the watch's run
-  await expect
-    .poll(() => call(app, "notificationsForTests"), { timeout: 15_000 })
-    .toEqual([
-      { title: "Claude Code isn't signed in on this Mac.", body: "Run claude once in Terminal and sign in, and your note will be filed straight away." },
-    ]);
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 15_000 }).toEqual(UNWATCHED_CARD);
+  expect(await call(app, "notificationsForTests")).toEqual([]);
   expect(await watches(app)).toEqual([]);
   await sleep(1_500); // a new watch would look again in 300 ms, and file the note once more
   expect(filingRuns(await agentCalls(app), "claude")).toBe(2);
+  expect(inbox(library)).toHaveLength(1);
+  await app.close();
+});
+
+test("a note the watch refiled that can't sign in again tells a card that is gone by notification, and promises no review if it is off", async () => {
+  const bin = agentStubs({ claude: filingClaude({ FAKE_AGENT_MODE: "fail" }) });
+  // The library's evening review is off, so the words end at "safe in the inbox". The watch looks after 1.5 s; the card is closed before.
+  const { library, app } = await failedWithClaude(bin, { eveningReview: false, env: { AVANZEL_SIGNIN_POLL_MS: "1500" } });
+  await call(app, "dismiss");
+  await expect.poll(async () => filingRuns(await agentCalls(app), "claude"), { timeout: 15_000 }).toBe(2); // the watch's run
+  await expect
+    .poll(() => call(app, "notificationsForTests"), { timeout: 15_000 })
+    .toEqual([{ title: "Claude Code isn't signed in on this Mac.", body: "Sign in to Claude Code in Terminal. Your note is safe in the inbox." }]);
+  expect(await capsuleKind(app)).toBe("hidden");
+  expect(await watches(app)).toEqual([]);
+  expect(inbox(library)).toHaveLength(1);
+  await app.close();
+});
+
+test("opening another library ends the sign-in watch, and its card stops promising the filing", async () => {
+  // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
+  const env = { XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")), AVANZEL_SIGNIN_POLL_MS: "500" };
+  const bin = agentStubs({ claude: signedOutClaude() });
+  const { library, app } = await failedWithClaude(bin, { env });
+  expect(await watches(app)).toEqual([{ agent: "claude", notes: 1 }]);
+  const other = await makeLibrary();
+  await stubPicker(app, other);
+  await call(app, "chooseLibrary");
+  expect(await watches(app)).toEqual([]); // its note is in a library that is closed now
+  expect(await call(app, "capsuleStateForTests")).toEqual(UNWATCHED_CARD);
+  // Signed in at last: nothing files that note from here.
+  answerAs(bin, "claude", filingClaude());
+  await sleep(1_500);
+  expect(filingRuns(await agentCalls(app), "claude")).toBe(1);
   expect(inbox(library)).toHaveLength(1);
   await app.close();
 });
