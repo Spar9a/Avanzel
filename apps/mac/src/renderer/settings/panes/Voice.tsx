@@ -1,7 +1,7 @@
 // Settings → Voice: the shortcuts, with a Notice for each one that has a problem; the microphone Avanzel listens with;
 // and the speech model that turns what it hears into text. Each control applies at once.
 import { Actions, Button, Group, GroupRow, Kbd, Notice, Progress, Row, Stack, Text } from "@avanzel/ui";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { ModelStatus, Shortcuts } from "../../../shared/ipc.ts";
 import { passesThrough, toAccelerator } from "../accelerator.ts";
@@ -120,8 +120,9 @@ export function Voice({ snap, onChange }: PaneProps): ReactNode {
 
   // While a shortcut is recorded, the next whole shortcut pressed anywhere in the window is saved: one with ⌃ or ⌥, or a
   // bare F-key (toAccelerator). Leaving the window ends it, as does leaving the row (its group's onBlur) and leaving the
-  // pane, which unmounts this.
-  useEffect(() => {
+  // pane, which unmounts this. A layout effect, so the listening stops in the same commit that ends the recording or
+  // takes the pane away: a key pressed on the next pane, even at once, is never taken for this one.
+  useLayoutEffect(() => {
     if (recording === null) return;
     const listen = (event: KeyboardEvent) => {
       if (event.key === "Tab") return; // the focus may leave the row, which ends the recording
