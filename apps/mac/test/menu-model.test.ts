@@ -144,6 +144,21 @@ describe("tray menu", () => {
     expect(labels(rest)).toEqual(["--", "Quit Avanzel"]);
   });
 
+  it("names a library that isn't there any more, and opens Settings, where it is chosen again or set up anew", () => {
+    const [head, ...rest] = buildMenuModel(input({ libraryReady: false, missingLibrary: "~/Avanzel" }), now);
+    expect(head).toEqual({ type: "item", label: "Set up Avanzel…", action: "settings", sublabel: "Can't find your library at ~/Avanzel." });
+    expect(labels(rest)).toEqual(["--", "Quit Avanzel"]);
+    // The place is named as the person knows it, wherever it is.
+    expect(buildMenuModel(input({ libraryReady: false, missingLibrary: "/Volumes/Backup/Brain" }), now)[0]).toMatchObject({
+      action: "settings",
+      sublabel: "Can't find your library at /Volumes/Backup/Brain.",
+    });
+    // A library that is there but couldn't be opened says why instead; with neither, setup makes one.
+    const problem = "Avanzel couldn't open the library at /Users/me/Brain: EACCES";
+    expect(buildMenuModel(input({ libraryReady: false, problem, missingLibrary: "~/Brain" }), now)[0]).toMatchObject({ action: "settings", sublabel: problem });
+    expect(buildMenuModel(input({ libraryReady: false, missingLibrary: null }), now)[0]).toMatchObject({ action: "setup" });
+  });
+
   it("puts an item's detail in parentheses, since macOS menus don't line up tabs", () => {
     expect(menuLabel({ label: "Weekly review", detail: "Sun 18:00" })).toBe("Weekly review (Sun 18:00)");
     expect(menuLabel({ label: "Open library" })).toBe("Open library");

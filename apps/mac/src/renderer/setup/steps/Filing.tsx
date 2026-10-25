@@ -51,7 +51,9 @@ export function Filing({ snap, go }: StepProps) {
         {(filing.kind === "cancelled" || filing.kind === "undone") && (
           <>
             <Text variant="callout">
-              {filing.kind === "cancelled" ? cancelledLine(filing.agent, filing.partial) : "Everything is back as it was, and your words are in the inbox."}
+              {filing.kind === "cancelled"
+                ? cancelledLine(filing.agent, filing.partial, filing.leftovers)
+                : "Everything is back as it was, and your words are in the inbox."}
             </Text>
             <Actions align="start">
               {/* Focus lands here, where Cancel or Undo was. */}

@@ -2,6 +2,7 @@
 // bubble under the menu bar icon once setup has ended. What it needs of the rest of the app, it asks the controller
 // for through `SetupHost`; the controller calls its hooks as recordings and filings go on.
 import { app, clipboard, dialog, screen, systemPreferences, type BrowserWindow, type Rectangle } from "electron";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -9,6 +10,7 @@ import {
   Vault,
   WAITING,
   errorLine,
+  git,
   loadSettings,
   selectHarness,
   type Capture,
@@ -46,6 +48,7 @@ import { runningAppNames } from "./running-apps.ts";
 import type { RunState } from "./schedule.ts";
 import {
   bestAgent,
+  defaultLibraryPath,
   flightTarget,
   libraryAgent,
   libraryFolder,
@@ -53,6 +56,7 @@ import {
   suggestQuestion,
   tildePath,
   tooBroad,
+  unrecordedEdits,
   upHerePlace,
   type Box,
 } from "./setup-model.ts";
@@ -134,6 +138,8 @@ export interface SetupHost {
   readonly noticed: NoticedShortcuts;
   readonly opened: string[];
   readonly copied: string[];
+  /** What Install git would have run, with AVANZEL_TEST=1 only (`installGit`). */
+  readonly spawned: string[];
 }
 
 /** How often setup looks for an installed agent while this Mac has none: Found says it notices one. */
@@ -251,11 +257,12 @@ export class Setup {
   }
 
   /**
-   * Brings the setup window forward, or opens a new one, which starts a new session on Hello once it has drawn. While
-   * the window is open, Avanzel shows its Dock icon, so a window gone behind Terminal, say, can be found again; setup's
-   * end hides it (`end`).
+   * Brings the setup window forward, or opens a new one, which starts a new session on Hello once it has drawn. A new
+   * session makes or uses the library at `place`, where Found starts; without one, at the library stored in the settings,
+   * else ~/Avanzel. A window already open keeps the place it has. While the window is open, Avanzel shows its Dock icon, so
+   * a window gone behind Terminal, say, can be found again; setup's end hides it (`end`).
    */
-  show(): void {
+  show(place?: string): void {
     if (this.session && !this.session.window.isDestroyed()) {
       app.focus({ steal: true });
       this.session.window.show();
@@ -272,12 +279,16 @@ export class Setup {
       win.focus();
     });
     win.on("closed", () => this.end(win));
-    // Back from Terminal, say, where the person may have signed an agent in: Found notices.
-    win.on("focus", () => this.host.rereadSignIns());
+    // Back from Terminal, say, where the person may have signed an agent in, or from Apple's installer, where they may have
+    // installed git: Found notices.
+    win.on("focus", () => {
+      this.host.rereadSignIns();
+      this.rereadGit();
+    });
     this.session = {
       window: win,
       step: "hello",
-      libraryPath: this.setupLibraryPath(),
+      libraryPath: place ?? this.setupLibraryPath(),
       begun: false,
       installed: [],
       pollTimer: null,
@@ -324,9 +335,20 @@ export class Setup {
     this.session = null;
   }
 
-  /** Where a new session makes or uses the library: the stored libraryPath, else ~/Avanzel. */
+  /** Where a new session makes or uses the library unless `show` is given a place: the stored libraryPath, else ~/Avanzel. */
   private setupLibraryPath(): string {
-    return this.host.settings().libraryPath ?? path.join(homedir(), "Avanzel");
+    return this.host.settings().libraryPath ?? defaultLibraryPath(homedir());
+  }
+
+  /**
+   * The window has the focus again. While this Mac has no usable git, it is looked for afresh (the engine keeps its answer
+   * for the process): the person may have installed the Command Line Tools meanwhile, and Found then drops its line about
+   * git and its Install git.
+   */
+  private rereadGit(): void {
+    if (git.gitUsable()) return;
+    git.resetGitUsable();
+    if (git.gitUsable()) this.host.broadcast();
   }
 
   /**
@@ -349,6 +371,7 @@ export class Setup {
       libraryLabel: tildePath(libraryPath, homedir()),
       folder,
       tooBroad: tooBroad(libraryPath, homedir()),
+      gitUsable: git.gitUsable(),
       libraryReady: !!vault,
       model: this.host.model(),
       shortcut: this.host.settings().shortcuts.dictate,
@@ -552,7 +575,8 @@ export class Setup {
       if (this.host.vault()?.root !== target) {
         const folder = libraryFolder(target);
         if (folder === "missing" || folder === "empty") mkdirSync(target, { recursive: true });
-        if (folder !== "library") await Vault.init(target, { git: true });
+        // Without a usable git (none, or only Apple's stub, which opens an install dialog when run) no git runs at all.
+        if (folder !== "library") await Vault.init(target, { git: git.gitUsable() });
         await this.host.useLibrary(target, true);
         if (!this.host.vault()) throw new Error(this.host.libraryProblem() ?? `There is no Avanzel library at ${target}.`);
       }
@@ -597,6 +621,23 @@ export class Setup {
     const { command } = AGENT_INSTALLS[agent as AgentInstall];
     if (process.env.AVANZEL_TEST === "1") this.host.copied.push(command);
     else clipboard.writeText(command);
+  }
+
+  /**
+   * Install git, on Found while this Mac has no usable git: macOS opens Apple's dialog to install the Command Line Tools
+   * (`xcode-select --install`, which only asks for them). The window notices the install once it has the focus again
+   * (`rereadGit`). Nothing without a window or with git usable already: only what Found offers is done. With AVANZEL_TEST=1
+   * nothing runs, and spawnedForTests says what would have.
+   */
+  installGit(): void {
+    if (!this.session || git.gitUsable()) return;
+    if (process.env.AVANZEL_TEST === "1") {
+      this.host.spawned.push("xcode-select --install");
+      return;
+    }
+    const child = spawn("/usr/bin/xcode-select", ["--install"], { stdio: "ignore" });
+    child.on("error", (error) => console.error("xcode-select --install", error));
+    child.unref();
   }
 
   /**
@@ -918,7 +959,8 @@ export class Setup {
   /**
    * Cancel, while the first thought is filed: its run stops at once, and once that run is over (queue order), what it did
    * is taken back. Then the filing is cancelled, its words back in the inbox; `partial` says that what the run did stays
-   * as its own commit, because taking it back failed.
+   * as its own commit, because taking it back failed, and `leftovers` how many files it changed that no commit holds (a
+   * library without git, or with automatic commits off), which stay as they are.
    */
   cancelSetupFiling(): void {
     const session = this.session;
@@ -931,7 +973,7 @@ export class Setup {
     void this.host.enqueue(async () => {
       const problem = await this.host.takeBack(job);
       if (this.session !== session || session.job !== job) return; // the window has closed: there is nothing to tell
-      session.filing = { kind: "cancelled", words: job.text, agent: job.agent, partial: problem !== null };
+      session.filing = { kind: "cancelled", words: job.text, agent: job.agent, partial: problem !== null, leftovers: unrecordedEdits(job.outcome) };
       this.host.broadcast();
     });
   }

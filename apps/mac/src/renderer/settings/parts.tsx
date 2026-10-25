@@ -15,8 +15,9 @@ export interface PaneProps {
 
 /**
  * The Notice without a library: libraryProblem's, with Choose a folder…; then, for a library Avanzel has but can't find
- * (moved, renamed or unmounted, perhaps while it ran), where it was, with Choose a folder…; else, with no library at all,
- * the no-library one, with Set up Avanzel….
+ * (moved, renamed or unmounted, at launch or while it ran), where it was, with Choose a folder…, its fix, and Set up a new
+ * library, which opens setup at the usual place, not the one that went; else, with no library at all, the no-library one,
+ * with Set up Avanzel….
  */
 export function NoLibrary({ snap, onChange }: PaneProps): ReactNode {
   const choose = async () => onChange(await api.chooseLibrary());
@@ -42,6 +43,8 @@ export function NoLibrary({ snap, onChange }: PaneProps): ReactNode {
         title={`Avanzel can't find your library at ${snap.library.label}.`}
         actions={
           <Actions align="start">
+            {/* Choosing it again is the fix and the primary; a new library is the other way, so it is a secondary. */}
+            <Button size="small" onClick={() => api.openSetup()}>Set up a new library</Button>
             <Button size="small" variant="primary" onClick={choose}>Choose a folder…</Button>
           </Actions>
         }

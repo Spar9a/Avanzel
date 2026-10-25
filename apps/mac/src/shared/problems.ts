@@ -259,3 +259,19 @@ export function takeBackRefusedProblem(inInbox: boolean, eveningReview: boolean)
   const where = !inInbox ? "" : eveningReview ? " The note waits in your inbox for the evening review." : " Your note is safe in the inbox.";
   return { title: takeBackRefused.title, body: `${takeBackRefused.body}${where}` };
 }
+
+/**
+ * What a library made without git costs, said wherever the app is about to make one: setup's Found under a new library or a
+ * folder with files, and Settings' question about turning a folder with files into the library. This Mac has no usable git
+ * (the engine's gitUsable) until Apple's Command Line Tools are installed.
+ */
+export const NO_GIT_LINE = "This Mac has no git yet, so changes can't be undone.";
+
+/**
+ * Why a place can't be a library (setup-model's tooBroad): the shelves, an AGENTS.md and git history would go over everything
+ * in the home folder, a folder macOS makes in it, a disk's root or one of the system's own folders. `label` names the place as
+ * a row does, "~/Documents". Setup's Found says it under the library's row, and Settings' Change… refuses with it.
+ */
+export function tooBroadLine(label: string): string {
+  return `${label} is too broad for a library. Choose or make a folder inside it.`;
+}

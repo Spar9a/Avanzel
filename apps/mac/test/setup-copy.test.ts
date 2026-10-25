@@ -14,12 +14,14 @@ import {
   othersLine,
   ownLine,
   pagesLine,
+  placeLine,
   receiptPages,
   recordingProblem,
   reviewLabel,
   slowSeconds,
   sourceTitle,
   stampDate,
+  tooBroadLine,
   TRANSCRIBING,
   workingLine,
 } from "../src/renderer/setup/copy.ts";
@@ -123,10 +125,43 @@ describe("setup copy", () => {
   });
 
   it("a cancelled filing says what stayed, and names the agent whose partial edits did", () => {
-    expect(cancelledLine("Claude Code", false)).toBe("Your words are back in the inbox, untouched, and nothing else changed.");
-    expect(cancelledLine("Claude Code", true)).toBe(
+    expect(cancelledLine("Claude Code", false, 0)).toBe("Your words are back in the inbox, untouched, and nothing else changed.");
+    expect(cancelledLine("Claude Code", true, 0)).toBe(
       "Your words are back in the inbox, untouched. Claude Code's partial edits are kept as their own commit in the library's history.",
     );
+  });
+
+  it("a cancelled filing that changed files nothing recorded (no git, or automatic commits off) says they stay as they are", () => {
+    const stay = "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them.";
+    expect(cancelledLine("Claude Code", false, 2)).toBe(stay);
+    expect(cancelledLine("Codex", false, 1)).toBe(stay); // one file reads the same: it doesn't count them
+    // Edits that were committed are told as before, and a run that changed nothing keeps its line.
+    expect(cancelledLine("Claude Code", true, 2)).toBe(cancelledLine("Claude Code", true, 0));
+    expect(cancelledLine("Claude Code", false, 0)).not.toBe(stay);
+  });
+
+  it("Found's line under the library's place says this Mac has no git yet, in a new library and in a folder with files", () => {
+    const withGit = {
+      new: "A new library: Markdown files with git history.",
+      files: "This folder has files already. I'll add the shelves, an AGENTS.md for your agent, and git history that keeps them.",
+      library: "This folder is already an Avanzel library.",
+    };
+    expect(placeLine("missing", true)).toBe(withGit.new);
+    expect(placeLine("empty", true)).toBe(withGit.new);
+    expect(placeLine("has-files", true)).toBe(withGit.files);
+    expect(placeLine("library", true)).toBe(withGit.library);
+    expect(placeLine("missing", false)).toBe("A new library: Markdown files. This Mac has no git yet, so changes can't be undone.");
+    expect(placeLine("empty", false)).toBe("A new library: Markdown files. This Mac has no git yet, so changes can't be undone.");
+    expect(placeLine("has-files", false)).toBe(
+      "This folder has files already. I'll add the shelves and an AGENTS.md for your agent. This Mac has no git yet, so changes can't be undone.",
+    );
+    // A library made already has its history, or has none, as it was made: its line says nothing of git.
+    expect(placeLine("library", false)).toBe(withGit.library);
+  });
+
+  it("the too-broad line names the place as the row does", () => {
+    expect(tooBroadLine("~/Documents")).toBe("~/Documents is too broad for a library. Choose or make a folder inside it.");
+    expect(tooBroadLine("/Applications")).toBe("/Applications is too broad for a library. Choose or make a folder inside it.");
   });
 
   it("the first-thought step says why it can't hear yet, without promising to keep a recording", () => {

@@ -14,6 +14,8 @@ export interface MenuInput {
   libraryReady: boolean;
   /** Why the library couldn't be opened, if that is why it isn't ready. */
   problem?: string | null;
+  /** The remembered library's place as the person knows it ("~/Avanzel"), if that is why it isn't ready: it isn't there any more. */
+  missingLibrary?: string | null;
   inbox: number;
   recent: FiledPage[];
   tasks: MenuTask[];
@@ -64,9 +66,10 @@ export function menuLabel(item: { label: string; detail?: string }): string {
 
 export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
   if (!input.libraryReady) {
-    // A library that couldn't be opened is explained, and fixed, in Settings; otherwise setup makes one.
+    // A library that couldn't be opened, or isn't there any more, is explained, and fixed, in Settings; otherwise setup makes one.
+    const trouble = input.problem || (input.missingLibrary ? `Can't find your library at ${input.missingLibrary}.` : "");
     return [
-      { type: "item", label: "Set up Avanzel…", action: input.problem ? "settings" : "setup", sublabel: input.problem || "Choose a folder for your library to start." },
+      { type: "item", label: "Set up Avanzel…", action: trouble ? "settings" : "setup", sublabel: trouble || "Choose a folder for your library to start." },
       SEP,
       { type: "item", label: "Quit Avanzel", action: "quit", accelerator: "Cmd+Q" },
     ];

@@ -3,24 +3,18 @@
 // can fix, so its Notice says how at once. Use {agent} picks another, and asks it its one short question when nothing
 // has said yet whether it works. A chosen agent that doesn't work says how to fix it, and a sign-in done in Terminal
 // shows once the window has the focus again. With no agent at all, Found says how to install one and setup notices
-// when it arrives. Change… picks another place.
+// when it arrives. Change… picks another place. On a Mac without git (only Apple's stub, which opens an install dialog), the
+// row says changes can't be undone, and Install git asks macOS for the tools; the row follows once the window has the
+// focus again.
 // Looks good (Use this folder, when the folder holds files or a library already) makes the library there with the
 // chosen agent. Zel waits on the stage, looking at the step, and is worried while a problem there needs the person.
 import { Actions, Button, Group, GroupRow, Icon, Notice, Row, Stack, Text, Zel } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AGENT_INSTALLS, agentWorks, type AgentInstall, type LibraryFolder, type SetupAgent, type SetupSnapshot } from "../../../shared/ipc.ts";
-import { agentLine, agentProblemTitle, isAgentProblem, ownLine, tooBroadLine, type AgentProblem } from "../copy.ts";
+import { AGENT_INSTALLS, agentWorks, type AgentInstall, type SetupAgent, type SetupSnapshot } from "../../../shared/ipc.ts";
+import { agentLine, agentProblemTitle, isAgentProblem, ownLine, placeLine, tooBroadLine, type AgentProblem } from "../copy.ts";
 import { Frame, reveal, type StepProps } from "../frame.tsx";
 
 const api = window.avanzel.setup;
-
-/** What is at the library's place, as the row under it says. */
-const LIBRARY_LINE: Record<LibraryFolder, string> = {
-  missing: "A new library: Markdown files with git history.",
-  empty: "A new library: Markdown files with git history.",
-  "has-files": "This folder has files already. I'll add the shelves, an AGENTS.md for your agent, and git history that keeps them.",
-  library: "This folder is already an Avanzel library.",
-};
 
 /** The agents whose harness keeps them inside the library folder (harness.ts: Claude Code's file tools, OpenCode's opencode.json). */
 const CONFINED = new Set(["claude", "opencode"]);
@@ -70,6 +64,9 @@ export function Found({ snap, go }: StepProps) {
     );
   };
   const chooseFolder = idle(() => void api.chooseFolder());
+  // The row's line says this Mac has no git when it is a new library or a folder with files (not a library made already, and
+  // not a place too broad, which says that instead). Install git goes with that line.
+  const noGit = !place.gitUsable && !place.tooBroad && place.folder !== "library";
   return (
     <Frame
       model={snap.model}
@@ -100,11 +97,18 @@ export function Found({ snap, go }: StepProps) {
       <Stack gap={12}>
         <Text variant="heading">Here's what I found.</Text>
         <Group label="Your library">
-          <GroupRow label={place.libraryLabel} description={place.tooBroad ? tooBroadLine(place.libraryLabel) : LIBRARY_LINE[place.folder]}>
+          <GroupRow label={place.libraryLabel} description={place.tooBroad ? tooBroadLine(place.libraryLabel) : placeLine(place.folder, place.gitUsable)}>
             {/* While the problem shows, its own Change… is the way out: no screen has two buttons of one name. */}
             {!problem && <Button size="small" onClick={chooseFolder}>Change…</Button>}
           </GroupRow>
         </Group>
+        {noGit && (
+          // Under the line that says it, a secondary: the footer's Looks good stays the moment's primary, since a library
+          // without git is made all the same.
+          <Actions align="start">
+            <Button size="small" onClick={idle(() => api.installGit())}>Install git</Button>
+          </Actions>
+        )}
         {problem && (
           <div ref={noticeRef}>
             <Notice

@@ -370,8 +370,14 @@ export type SetupFiling =
       words: string;
       /** Whose run was stopped: the copy names it when its partial edits stay. */
       agent: string;
-      /** What the stopped run did stays, as its own commit. */
+      /** What the stopped run did stays, as its own commit, because taking it back failed. */
       partial: boolean;
+      /**
+       * How many files the stopped run changed that nothing recorded, in a library without git or with automatic commits off:
+       * there is no commit to take them back from, so they stay as they are. 0 when it changed nothing, and when it was
+       * taken back.
+       */
+      leftovers: number;
     }
   | {
       kind: "failed";
@@ -416,9 +422,16 @@ export interface SetupSnapshot {
   folder: LibraryFolder;
   /**
    * libraryPath is too broad to be a library (setup-model's tooBroad): the home folder, a folder macOS makes in it such
-   * as Documents, a disk's root. Found says so, and nothing is made there.
+   * as Documents, a disk's root, one of the system's own folders such as /Applications. Found says so, and nothing is made
+   * there.
    */
   tooBroad: boolean;
+  /**
+   * This Mac can run git (the engine's gitUsable): false without Apple's Command Line Tools, where /usr/bin/git is only a
+   * stub that opens Apple's install dialog. Found then says changes can't be undone, and offers Install git. Setup looks
+   * again each time its window gets the focus, so it notices the install.
+   */
+  gitUsable: boolean;
   /** A library is open. */
   libraryReady: boolean;
   model: ModelStatus;
@@ -622,6 +635,11 @@ export interface AvanzelBridge {
     openTerminal(): void;
     /** Copy, beside an install command on Found: the command that installs `agent` goes to the clipboard. */
     copy(agent: AgentInstall): void;
+    /**
+     * Install git, on Found while this Mac has no usable git (SetupSnapshot.gitUsable): macOS opens Apple's dialog to install
+     * the Command Line Tools (`xcode-select --install`). Setup notices once the window has the focus again.
+     */
+    installGit(): void;
     /**
      * Use {shortcut}, on the first-thought step's Notice of a taken or silent shortcut: `accelerator`, one of those it
      * offers, becomes Record a thought's shortcut, and the step listens for a press of it afresh; setup:changed follows.

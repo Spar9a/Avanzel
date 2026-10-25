@@ -71,6 +71,7 @@ export function registerIpc(controller: Controller): void {
   on("setup:open-terminal", () => controller.setup.openTerminal());
   on("setup:reach-for-shortcut", () => controller.setup.reachForShortcut());
   on("setup:copy", (_e, agent: unknown) => controller.setup.copyInstall(agent));
+  on("setup:install-git", () => controller.setup.installGit());
   on("setup:cancel-filing", () => controller.setup.cancelSetupFiling());
   on("setup:file-again", () => controller.setup.fileSetupAgain());
   on("setup:undo", () => void controller.setup.undoSetupFiling());

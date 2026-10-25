@@ -1,5 +1,6 @@
 // Version the library with git so every agent edit is reviewable and undoable.
 
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { AvanzelError } from "../types.ts";
@@ -12,8 +13,68 @@ const SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false"];
 const FALLBACK_IDENTITY = ["-c", "user.name=Avanzel", "-c", "user.email=avanzel@localhost"];
 const SHA = /^[0-9a-f]{4,64}$/i;
 
+// The `git` every Mac has in /usr/bin is a stub. Without Apple's Command Line Tools (or Xcode), running it, or `xcrun`, opens
+// Apple's install dialog instead of doing anything. So whether git works is found out without ever running it.
+const APPLE_GIT = "/usr/bin/git";
+const XCODE_SELECT = "/usr/bin/xcode-select";
+
+/** What `gitUsable` asks about. A test that can't change this Mac passes its own answers. */
+export interface GitSeams {
+  /** Where `bin` is on PATH, or null (proc's `which`). */
+  which?: (bin: string) => string | null;
+  /** The developer directory `xcode-select -p` prints, or null when that command fails (it exits 2 without the tools). */
+  xcodeSelect?: () => string | null;
+}
+
+/** What `gitUsable()` found, for the process; null until it has looked. */
+let usable: boolean | null = null;
+
+/**
+ * Whether git can be run on this Mac, found out without running `git` or `xcrun`, either of which opens Apple's install
+ * dialog when the tools are missing:
+ * - no `git` on PATH: no;
+ * - a `git` anywhere but /usr/bin/git: yes;
+ * - /usr/bin/git, Apple's stub on a Mac: yes only if `xcode-select -p` exits 0 and names a developer directory that has
+ *   usr/bin/git, since the stub hands over to that one. (Elsewhere /usr/bin/git is a real git.)
+ *
+ * Under AVANZEL_TEST=1, AVANZEL_GIT_USABLE=0 says no: the tests' stand-in for a Mac without the tools, whichever this Mac has.
+ * Called without `seams`, the answer is kept for the process (`resetGitUsable` clears it); with them it asks afresh, and
+ * keeps nothing.
+ */
+export function gitUsable(seams?: GitSeams): boolean {
+  if (seams) return detect(seams);
+  usable ??= detect({});
+  return usable;
+}
+
+/** Forget what `gitUsable()` found, so the next call looks again: after the tools were installed, say, or for a test. */
+export function resetGitUsable(): void {
+  usable = null;
+}
+
+function detect({ which: find = which, xcodeSelect = developerDir }: GitSeams): boolean {
+  if (process.env.AVANZEL_TEST === "1" && process.env.AVANZEL_GIT_USABLE === "0") return false;
+  const found = find("git");
+  if (found === null) return false;
+  if (found !== APPLE_GIT || process.platform !== "darwin") return true;
+  const developer = xcodeSelect();
+  return developer !== null && existsSync(join(developer, "usr", "bin", "git"));
+}
+
+/** `xcode-select -p`: the directory the stub hands over to, or null when there is none. It only asks; `--install` is what installs. */
+function developerDir(): string | null {
+  const asked = spawnSync(XCODE_SELECT, ["-p"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 });
+  const directory = asked.status === 0 ? asked.stdout.trim() : "";
+  return directory === "" ? null : directory;
+}
+
+/**
+ * Whether git can be run (`gitUsable`). `commitAll`, `revert`, `revertKeeping` and `subject` ask first and do nothing when it
+ * can't, so on a Mac with only Apple's stub a library that has `.git` makes no commits (and its filings offer no Undo). A
+ * caller of `initRepo`, which runs git, asks first too: `Vault.init` does.
+ */
 export function available(): boolean {
-  return which("git") !== null;
+  return gitUsable();
 }
 
 export function isRepo(root: string): boolean {

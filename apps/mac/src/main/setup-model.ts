@@ -4,7 +4,7 @@
 // are.
 import { existsSync, opendirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
-import { loadSettings, Vault } from "@avanzel/engine";
+import { loadSettings, Vault, type FileOutcome } from "@avanzel/engine";
 import { agentWorks, isAgentProblem, type FiledPage, type LibraryFolder, type SetupAgent } from "../shared/ipc.ts";
 import { WIKILINK } from "../shared/wikilinks.ts";
 
@@ -18,6 +18,22 @@ export function tildePath(target: string, home: string): string {
 const HOME_FOLDERS: ReadonlySet<string> = new Set(
   ["Desktop", "Documents", "Downloads", "Library", "Movies", "Music", "Pictures", "Public", "Applications"].map((name) => name.toLowerCase()),
 );
+
+/**
+ * The folders macOS and Unix keep for themselves: the apps, every account, the system and its tools, and the temporary
+ * folders. Each is too broad as the folder it is, not by what lies inside it or by a name that starts like its own, so a
+ * folder in one of them (/Applications/Avanzel, /Users/Shared/Avanzel) is a place like any other, and so is ~/Library-notes.
+ */
+const SYSTEM_FOLDERS: readonly string[] = [
+  "/Applications", "/Library", "/System", "/Users", "/Users/Shared",
+  "/private", "/usr", "/opt", "/bin", "/sbin", "/etc", "/var", "/tmp", "/cores",
+];
+
+/**
+ * The volume macOS keeps the Mac's own folders on: /System/Volumes/Data/Users/me is /Users/me, and /System/Volumes/Data/Applications
+ * is /Applications, though the disk gives each a path of its own (a firmlink, not a link a path can be followed through).
+ */
+const DATA_VOLUME = "/System/Volumes/Data";
 
 /**
  * `place` as the disk has it: a leading `~` read as `home`, made absolute, and its links followed as far as it exists,
@@ -40,18 +56,49 @@ function onDisk(place: string, home: string): string {
   }
 }
 
+/** `place` as the startup disk's root shows it, when it is on the data volume (/System/Volumes/Data/Users/me is /Users/me); else null. */
+function atTheRoot(place: string): string | null {
+  const lower = place.toLowerCase();
+  const data = DATA_VOLUME.toLowerCase();
+  if (lower === data) return "/";
+  return lower.startsWith(`${data}/`) ? place.slice(DATA_VOLUME.length) : null;
+}
+
 /**
  * Whether `target` is too broad to be a library: the home folder `home`, one of the folders macOS makes in it
- * (Documents, Desktop…), the disk's root, or another disk's (/Volumes/Backup). Making a library there would put the
- * shelves, an AGENTS.md and git history over everything in it, so setup refuses. Places are compared as they are on
- * disk (`onDisk`), so no link or alias of one of them gets through, and names whatever their case.
+ * (Documents, Desktop…), the disk's root, another disk's (/Volumes/Backup), or one of the system's own folders
+ * (SYSTEM_FOLDERS: /Applications, /Users, /usr, /tmp…). Making a library there would put the shelves, an AGENTS.md and git
+ * history over everything in it, so setup and Settings refuse. Places are compared as they are on disk (`onDisk`), so no
+ * link or alias of one of them gets through (/tmp is /private/tmp), and names whatever their case. A place on the data
+ * volume is refused exactly when the same place at the root is: /System/Volumes/Data/Users/me is the home folder.
  */
 export function tooBroad(target: string, home: string): boolean {
   const place = onDisk(target, home);
+  const atRoot = atTheRoot(place);
+  if (atRoot !== null) return tooBroad(atRoot, home);
   const parent = path.dirname(place);
   const own = onDisk(home, home);
   if (place === parent || place === own || parent === "/Volumes" || place === "/Volumes") return true;
+  const lower = place.toLowerCase();
+  if (SYSTEM_FOLDERS.some((folder) => onDisk(folder, home).toLowerCase() === lower)) return true;
   return parent === own && HOME_FOLDERS.has(path.basename(place).toLowerCase());
+}
+
+/** Where setup suggests the library when none is remembered, and where it starts over when the remembered one is gone. */
+export function defaultLibraryPath(home: string): string {
+  return path.join(home, "Avanzel");
+}
+
+/**
+ * How many files a stopped filing run changed that no commit holds: the run left none (the library has no git, or has
+ * automatic commits off, or the commit failed), so nothing can take its edits back and they stay as they are. 0 when it
+ * changed nothing, when it left a commit (taking that back is the filing's `partial`), and when there was no run (`outcome`
+ * is undefined: Cancel came before its turn).
+ */
+export function unrecordedEdits(outcome: Pick<FileOutcome, "commit" | "changes"> | undefined): number {
+  if (!outcome || outcome.commit) return 0;
+  const { created, modified, deleted } = outcome.changes;
+  return created.length + modified.length + deleted.length;
 }
 
 /**

@@ -7,16 +7,17 @@ import {
   type AgentProblem,
   type AgentStatus,
   type FiledPage,
+  type LibraryFolder,
   type ModelStatus,
   type RecordingProblem,
   type SetupAnswer,
   type SetupFiling,
 } from "../../shared/ipc.ts";
-import { askProblem, avanzelFailure, filingProblem, ownLine, type AskProblem, type Problem } from "../../shared/problems.ts";
+import { askProblem, avanzelFailure, filingProblem, NO_GIT_LINE, ownLine, tooBroadLine, type AskProblem, type Problem } from "../../shared/problems.ts";
 
-// An agent's own line as a sentence is shared with the main process (its cards and notifications say it too); the windows
-// that import it from here keep doing so.
-export { ownLine };
+// An agent's own line as a sentence, and the line under a place too broad for a library, are shared with the main process (its
+// cards, notifications and refusals say them too); the windows that import them from here keep doing so.
+export { ownLine, tooBroadLine };
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] as const;
@@ -31,9 +32,23 @@ export function stampDate(day: Date): string {
   return `${day.getDate()} ${MONTHS[day.getMonth()]?.slice(0, 3)} ${day.getFullYear()}`;
 }
 
-/** Found's line under a place too broad for a library (tooBroad), named as the row names it: "~/Documents". */
-export function tooBroadLine(label: string): string {
-  return `${label} is too broad for a library. Choose or make a folder inside it.`;
+/**
+ * Found's line under the library's place, for what is there (`folder`) and whether this Mac has a usable git. A new library
+ * and a folder with files say what the library will be made of: with git, its history; without, that changes can't be undone
+ * (Install git is the way out). A library made already says nothing of git: it has its history, or has none, as it was made.
+ */
+export function placeLine(folder: LibraryFolder, gitUsable: boolean): string {
+  switch (folder) {
+    case "missing":
+    case "empty":
+      return gitUsable ? "A new library: Markdown files with git history." : `A new library: Markdown files. ${NO_GIT_LINE}`;
+    case "has-files":
+      return gitUsable
+        ? "This folder has files already. I'll add the shelves, an AGENTS.md for your agent, and git history that keeps them."
+        : `This folder has files already. I'll add the shelves and an AGENTS.md for your agent. ${NO_GIT_LINE}`;
+    case "library":
+      return "This folder is already an Avanzel library.";
+  }
 }
 
 /** An agent's row on Found, under its name: "Installed" until a check says more, then what it found. */
@@ -161,11 +176,15 @@ export function filedHeading(agent: string, seconds: number): string {
   return `All filed. ${agent} took ${Math.max(1, Math.round(seconds))} s.`;
 }
 
-/** What a cancelled filing says of the words and the library: `partial` when the stopped run's edits stay. */
-export function cancelledLine(agent: string, partial: boolean): string {
-  return partial
-    ? `Your words are back in the inbox, untouched. ${agent}'s partial edits are kept as their own commit in the library's history.`
-    : "Your words are back in the inbox, untouched, and nothing else changed.";
+/**
+ * What a cancelled filing says of the words and the library. `partial`: the stopped run's edits stay, as their own commit,
+ * because taking them back failed. `leftovers`: how many files the run changed that nothing recorded (a library without git,
+ * or with automatic commits off), which stay as they are; it doesn't say how many. A run that changed nothing says so.
+ */
+export function cancelledLine(agent: string, partial: boolean, leftovers: number): string {
+  if (partial) return `Your words are back in the inbox, untouched. ${agent}'s partial edits are kept as their own commit in the library's history.`;
+  if (leftovers > 0) return "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them.";
+  return "Your words are back in the inbox, untouched, and nothing else changed.";
 }
 
 /**

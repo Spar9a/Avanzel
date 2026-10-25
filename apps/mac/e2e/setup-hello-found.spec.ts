@@ -221,6 +221,8 @@ test("Here's what I found reads Claude Code's and Codex's sign-in, asks no agent
   await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
   await expect(setup.getByText("~/Avanzel", { exact: true })).toBeVisible();
   await expect(setup.getByText("A new library: Markdown files with git history.")).toBeVisible();
+  expect((await setupSnap(app)).gitUsable).toBe(true);
+  await expect(setup.getByRole("button", { name: "Install git" })).toHaveCount(0); // this Mac has git: nothing to install
   await expect(setup.getByText("Best results")).toBeVisible();
   await expect(setup.getByText(LIMITS)).toBeVisible();
   await expect(setup.getByRole("button", { name: "Use Codex" })).toBeVisible();
@@ -527,6 +529,103 @@ test("Looks good makes the library at ~/Avanzel with Claude Code, and moves on",
   expect((await settingsSnap(app)).library?.path).toBe(library);
   const menu = (await call(app, "menuForTests")) as MenuItemModel[];
   expect(menu.some((item) => item.type === "item" && item.label === "Record a thought")).toBe(true);
+  await app.close();
+});
+
+// A Mac without Apple's Command Line Tools has only a stub at /usr/bin/git, which opens Apple's install dialog when it is run.
+// AVANZEL_GIT_USABLE=0 plays that Mac: the app is told no git is usable, whatever this Mac has. Nothing ever runs git to find out.
+const NO_GIT = "This Mac has no git yet, so changes can't be undone.";
+
+test("on a Mac without git, Found says so, Install git asks macOS for it, and Looks good makes the library without git", async () => {
+  const { env, home } = firstRun();
+  const app = await launch({ ...env, AVANZEL_GIT_USABLE: "0" });
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText(`A new library: Markdown files. ${NO_GIT}`, { exact: true })).toBeVisible();
+  await expect(setup.getByText("A new library: Markdown files with git history.")).toHaveCount(0);
+  expect((await setupSnap(app)).gitUsable).toBe(false);
+  // Install git is a secondary: the footer's Looks good stays the moment's primary, since a library without git is made all the same.
+  const install = setup.getByRole("button", { name: "Install git" });
+  await expect(install).toHaveAttribute("data-variant", "secondary");
+  await expect.poll(async () => (await setupSnap(app)).agent, { timeout: 20_000 }).toBe("claude");
+  await expect(setup.getByRole("button", { name: "Looks good" })).toHaveAttribute("data-variant", "primary");
+  expect(await sideways(setup)).toBe(0);
+  await snap(setup, "setup-found-no-git");
+  // It asks macOS to install the tools: the test run records that, and runs nothing.
+  expect(await call(app, "spawnedForTests")).toEqual([]);
+  await install.click();
+  await expect.poll(() => call(app, "spawnedForTests")).toEqual(["xcode-select --install"]);
+  expect(await call(app, "openedForTests")).toEqual([]);
+  // Looks good makes the library all the same: no repository, and nothing that would have run git.
+  await setup.getByRole("button", { name: "Looks good" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  const library = path.join(home, "Avanzel");
+  expect(existsSync(path.join(library, ".avanzel", "config.toml"))).toBe(true);
+  expect(loadSettings(library).harness).toBe("claude");
+  expect(existsSync(path.join(library, ".git"))).toBe(false);
+  expect((await settingsSnap(app)).library).toMatchObject({ path: library, isGit: false });
+  await app.close();
+});
+
+test("a folder with files, on a Mac without git, says so too, and Use this folder keeps them and makes no repository", async () => {
+  const { env, home } = firstRun();
+  const library = path.join(home, "Avanzel");
+  const notes = "# Notes\n\nPlant tulips in October.\n";
+  mkdirSync(library);
+  writeFileSync(path.join(library, "notes.md"), notes);
+  const app = await launch({ ...env, AVANZEL_GIT_USABLE: "0" });
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(
+    setup.getByText(`This folder has files already. I'll add the shelves and an AGENTS.md for your agent. ${NO_GIT}`, { exact: true }),
+  ).toBeVisible();
+  await expect(setup.getByText(HAS_FILES)).toHaveCount(0);
+  await expect(setup.getByRole("button", { name: "Install git" })).toHaveAttribute("data-variant", "secondary");
+  await setup.getByRole("button", { name: "Use this folder" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  expect(readFileSync(path.join(library, "notes.md"), "utf8")).toBe(notes);
+  expect(existsSync(path.join(library, ".avanzel", "config.toml"))).toBe(true);
+  expect(existsSync(path.join(library, ".git"))).toBe(false);
+  await app.close();
+});
+
+test("a library made already says nothing of git, on a Mac that has none, and offers nothing to install", async () => {
+  const { env, home } = firstRun();
+  await Vault.init(path.join(home, "Avanzel"), { git: false });
+  const app = await launch({ ...env, AVANZEL_GIT_USABLE: "0" });
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("This folder is already an Avanzel library.")).toBeVisible();
+  expect((await setupSnap(app)).gitUsable).toBe(false);
+  await expect(setup.getByText(NO_GIT)).toHaveCount(0);
+  await expect(setup.getByRole("button", { name: "Install git" })).toHaveCount(0);
+  await app.close();
+});
+
+test("Found notices git once the window has the focus again after the install, and the library then keeps its history", async () => {
+  const { env, home } = firstRun();
+  const app = await launch({ ...env, AVANZEL_GIT_USABLE: "0" });
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText(`A new library: Markdown files. ${NO_GIT}`, { exact: true })).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Install git" })).toBeVisible();
+  // Everything Set me up started has ended (the agents' sign-ins are read, the model download has failed), so nothing else
+  // sends the window a new snapshot: only the focus can tell it git is there.
+  await expect(setup.getByText("Signed in", { exact: true })).toHaveCount(2, { timeout: 20_000 });
+  await expect(setup.getByText("The speech model didn't finish downloading.")).toBeVisible();
+  // The person installed the tools from Apple's dialog (here: the test override is dropped, and this Mac's own git is read)
+  // and comes back: the window has the focus again, and git is looked for afresh.
+  await app.evaluate(({ BrowserWindow }) => {
+    delete process.env.AVANZEL_GIT_USABLE;
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"))?.emit("focus");
+  });
+  await expect(setup.getByText("A new library: Markdown files with git history.", { exact: true })).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Install git" })).toHaveCount(0);
+  expect((await setupSnap(app)).gitUsable).toBe(true);
+  await expect.poll(async () => (await setupSnap(app)).agent, { timeout: 20_000 }).toBe("claude");
+  await setup.getByRole("button", { name: "Looks good" }).click();
+  await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+  expect(gitOut(path.join(home, "Avanzel"), "log", "--format=%s")).toContain("avanzel: new library");
   await app.close();
 });
 

@@ -236,6 +236,12 @@ test("setup's channels act only on what its window offers, and take anything wit
     await window.avanzel.setup.get(); // main answers in order: the copies before it have been handled
   });
   expect(await call(app, "copiedForTests")).toEqual([CODEX_INSTALL]);
+  // Install git is offered only while this Mac has no usable git: with one, asking for it runs nothing.
+  await setup.evaluate(async () => {
+    window.avanzel.setup.installGit();
+    await window.avanzel.setup.get();
+  });
+  expect(await call(app, "spawnedForTests")).toEqual([]);
   // Only a shortcut the first-thought step offers is set from it: none is offered until the nudge shows its two.
   const shortcut = async () => (await settingsSnap(app)).app.shortcuts.dictate;
   await setup.evaluate(() => window.avanzel.setup.useShortcut("Command+Q"));
@@ -292,6 +298,47 @@ test("Cancel stops the agent, takes back what it did, and File it again files it
   await again.click();
   await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
   expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("Cancel in a library without git leaves the stopped run's edits as they are, and says nothing recorded them", async () => {
+  // AVANZEL_GIT_USABLE=0 plays a Mac with no usable git: Looks good makes the library without a repository, so the run's edits
+  // have no commit to be taken back from. "slow-messy" writes a page, then never finishes.
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch({ ...env, AVANZEL_GIT_USABLE: "0", FAKE_AGENT_MODE: "slow-messy" });
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  expect(exists(library, ".git")).toBe(false);
+  await typeFirstThought(setup, "Plant tulips in October");
+  await expect.poll(() => exists(library, "goals/half.md"), { timeout: 30_000 }).toBe(true);
+  await setup.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(setup.getByRole("heading", { name: "Cancelled." })).toBeVisible({ timeout: 30_000 });
+  await expect(
+    setup.getByText("Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them.", { exact: true }),
+  ).toBeVisible();
+  await expect(setup.getByText("nothing else changed", { exact: false })).toHaveCount(0);
+  expect((await setupSnap(app)).filing).toMatchObject({ kind: "cancelled", partial: false, leftovers: 1 });
+  // What the run wrote stays, as the line says; the words are in the inbox, and File it again is still the way on.
+  expect(exists(library, "goals/half.md")).toBe(true);
+  expect(inbox(library)).toHaveLength(1);
+  await expect(setup.getByRole("button", { name: "File it again" })).toHaveAttribute("data-variant", "primary");
+  await app.close();
+});
+
+test("Cancel in a library without git, before the run changed anything, keeps the line that nothing else changed", async () => {
+  // "slow-noisy" talks, then never finishes: it writes nothing.
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch({ ...env, AVANZEL_GIT_USABLE: "0", FAKE_AGENT_MODE: "slow-noisy" });
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  await typeFirstThought(setup, "Plant tulips in October");
+  await expect(setup.getByText(/^Claude Code is working: \d+ s( of about 15)?$/)).toBeVisible();
+  await setup.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(setup.getByRole("heading", { name: "Cancelled." })).toBeVisible({ timeout: 30_000 });
+  await expect(setup.getByText("Your words are back in the inbox, untouched, and nothing else changed.", { exact: true })).toBeVisible();
+  expect((await setupSnap(app)).filing).toMatchObject({ kind: "cancelled", partial: false, leftovers: 0 });
+  expect(exists(library, "goals/half.md")).toBe(false);
+  expect(inbox(library)).toHaveLength(1);
   await app.close();
 });
 

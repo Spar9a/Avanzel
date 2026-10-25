@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadSettings, saveSettings, Vault } from "@avanzel/engine";
+import { Changes, loadSettings, saveSettings, Vault } from "@avanzel/engine";
 import {
   answerSources,
   bestAgent,
@@ -13,6 +13,7 @@ import {
   suggestQuestion,
   tildePath,
   tooBroad,
+  unrecordedEdits,
   upHerePlace,
 } from "../src/main/setup-model.ts";
 import { agentWorks, type AgentStatus, type FiledPage, type SetupAgent } from "../src/shared/ipc.ts";
@@ -66,6 +67,58 @@ describe("setup model", () => {
     expect(fine.filter((place) => tooBroad(place, home))).toEqual([]);
   });
 
+  it("tooBroad refuses the folders macOS and Unix keep for themselves, each as a folder", () => {
+    const home = "/Users/a";
+    const system = ["/Applications", "/Library", "/System", "/Users", "/Users/Shared", "/private", "/usr", "/opt", "/bin", "/sbin", "/etc",
+      "/var", "/tmp", "/cores"];
+    expect(system.filter((place) => !tooBroad(place, home))).toEqual([]);
+    expect(system.filter((place) => !tooBroad(`${place}/`, home))).toEqual([]);
+    expect(system.filter((place) => !tooBroad(place.toLowerCase(), home))).toEqual([]); // names whatever their case
+    expect(system.filter((place) => !tooBroad(place.replace(/^\/(.)/, (_, first: string) => `/${first.toUpperCase()}`), home))).toEqual([]);
+    // Not by name prefix, nor by what lies inside: a folder in one of them is a library's place like any other, and so is one
+    // whose name only starts like theirs.
+    const fine = ["/Applications/Avanzel", "/Library/Avanzel", "/Users/Shared/Avanzel", "/usr/local/Avanzel", "/opt/Avanzel",
+      "/private/tmp/Avanzel", "/tmp/Avanzel", "/var/Avanzel", "/Users/ab", "/Applications2", "/Libraryx", "/System2/Avanzel", "/usr2", "/optional"];
+    expect(fine.filter((place) => tooBroad(place, home))).toEqual([]);
+  });
+
+  it.runIf(existsSync("/private/tmp") && existsSync("/private/var"))("tooBroad compares the system's folders as they are on disk: /tmp is /private/tmp and /var is /private/var", () => {
+    const home = tmp();
+    expect(realpathSync("/tmp")).toBe("/private/tmp");
+    for (const place of ["/tmp", "/private/tmp", "/var", "/private/var", "/etc", "/private/etc"]) expect(tooBroad(place, home), place).toBe(true);
+    // The system's temporary folder is where this test made `home` (/var/folders/…/T/…): a place like any other.
+    expect(tooBroad(home, "/Users/a")).toBe(false);
+    expect(tooBroad(path.join(home, "Avanzel"), "/Users/a")).toBe(false);
+  });
+
+  it.runIf(existsSync("/System/Volumes/Data"))("tooBroad takes a folder on the data volume for the one at the root: exactly when that one is refused", () => {
+    const home = "/Users/a";
+    const data = "/System/Volumes/Data";
+    // The system's own folders, reached through the data volume.
+    for (const place of ["/Applications", "/Library", "/Users", "/Users/Shared", "/private/tmp", "/opt", "/"]) {
+      expect(tooBroad(path.join(data, place), home), place).toBe(true);
+    }
+    // The home folder and the folders macOS makes in it: /System/Volumes/Data/Users/<me> is the home folder, whatever its case.
+    for (const place of ["/Users/a", "/Users/a/", "/Users/a/Documents", "/Users/a/documents", "/Users/a/Library", "/Users/a/Applications"]) {
+      expect(tooBroad(path.join(data, place), home), place).toBe(true);
+    }
+    // A folder in them is a place like any other, as it is at the root.
+    for (const place of ["/Applications/Avanzel", "/Users/a/Avanzel", "/Users/a/Library-notes", "/Users/a/Applications/notes", "/Users/ab", "/Users/ab/Documents"]) {
+      expect(tooBroad(path.join(data, place), home), place).toBe(false);
+    }
+    // The home folder of the person running this, found there too.
+    const mine = realpathSync(homedir());
+    expect(tooBroad(path.join(data, mine), homedir())).toBe(true);
+    expect(tooBroad(path.join(data, mine, "Documents"), homedir())).toBe(true);
+    expect(tooBroad(path.join(data, mine, "Avanzel"), homedir())).toBe(false);
+  });
+
+  it("tooBroad doesn't refuse ~/Library-notes or ~/Applications/notes, whose names only resemble a folder macOS makes", () => {
+    const home = tmp();
+    expect(["~/Library-notes", "~/Applications/notes", "~/Documents2", "~/Documents/Avanzel", "~/Library/Avanzel"].filter((place) => tooBroad(place, home))).toEqual([]);
+    expect(["~/Library", "~/Applications", "~/Documents"].filter((place) => !tooBroad(place, home))).toEqual([]);
+  });
+
   it.runIf(existsSync("/Volumes/Macintosh HD"))("tooBroad knows this Mac's /Volumes/Macintosh HD is its startup disk", () => {
     const home = tmp();
     expect(tooBroad("/Volumes/Macintosh HD", home)).toBe(true);
@@ -87,6 +140,14 @@ describe("setup model", () => {
     expect([missing, empty, onlyDsStore, notes, file, library].map((target) => libraryFolder(target))).toEqual([
       "missing", "empty", "empty", "has-files", "has-files", "library",
     ]);
+  });
+
+  it("unrecordedEdits counts the files a stopped run changed that no commit holds", () => {
+    const changes = new Changes(["goals/half.md", "ideas/new.md"], ["index.md"], ["log.md"]);
+    expect(unrecordedEdits({ commit: null, changes })).toBe(4); // no git, or automatic commits off: nothing can take them back
+    expect(unrecordedEdits({ commit: null, changes: new Changes([], [], []) })).toBe(0); // it changed nothing
+    expect(unrecordedEdits({ commit: "9f2c1d0e", changes })).toBe(0); // a commit holds them: taking it back is `partial`'s
+    expect(unrecordedEdits(undefined)).toBe(0); // Cancel came before the run had its turn
   });
 
   it("libraryAgent reads the agent a library files with, and nothing from a config that doesn't load", async () => {

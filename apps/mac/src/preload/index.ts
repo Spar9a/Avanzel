@@ -70,6 +70,7 @@ const bridge: AvanzelBridge = {
     chooseFolder: () => ipcRenderer.invoke("setup:choose-folder"),
     openTerminal: () => ipcRenderer.send("setup:open-terminal"),
     copy: (agent) => ipcRenderer.send("setup:copy", agent),
+    installGit: () => ipcRenderer.send("setup:install-git"),
     useShortcut: (accelerator) => ipcRenderer.invoke("setup:use-shortcut", accelerator),
     reachForShortcut: () => ipcRenderer.send("setup:reach-for-shortcut"),
     typeThought: (words) => ipcRenderer.invoke("setup:type-thought", words),

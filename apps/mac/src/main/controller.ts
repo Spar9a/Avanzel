@@ -31,6 +31,7 @@ import {
   ensureDefaultTasks,
   errorLine,
   formatSchedule,
+  git,
   harnesses as listHarnesses,
   installHook,
   lastDue,
@@ -66,9 +67,11 @@ import { isSettingsPane, NOTE_GONE, noSuchReview } from "../shared/ipc.ts";
 import {
   correctedWordsProblem,
   filingProblem,
+  NO_GIT_LINE,
   ownLine,
   takeBackRefused,
   takeBackRefusedProblem,
+  tooBroadLine,
   undoRefused,
   type AgentFailure,
   type FailureKind,
@@ -117,7 +120,7 @@ import {
 } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
-import { tildePath } from "./setup-model.ts";
+import { defaultLibraryPath, tildePath, tooBroad } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
@@ -265,6 +268,11 @@ export class Controller {
   private transcriberKey = "";
   private model: ModelStatus = { kind: "missing", bytes: 0 };
   private libraryProblem: string | null = null;
+  /**
+   * The remembered library's place when it isn't there, as `openLibrary` found it: moved, renamed or unmounted since it was
+   * chosen. Settings names it, and so does the menu (`showHome` opens Settings, not setup); null otherwise.
+   */
+  private libraryMissing: string | null = null;
   private readonly runState: RunStateStore;
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
   /** The notice of each shortcut another app holds, with its free alternatives, in the order they register. */
@@ -302,6 +310,8 @@ export class Controller {
    */
   private readonly opened: string[] = [];
   private readonly copied: string[] = [];
+  /** What Install git would have run ("xcode-select --install"): with AVANZEL_TEST=1, for the e2e tests only. */
+  private readonly spawned: string[] = [];
   /** Quit and reopen was asked (`relaunch`), and the quit it began may still be waiting for a filing to stop. */
   private relaunching = false;
   /** How many times Quit and reopen was asked while AVANZEL_TEST=1, which relaunches nothing: for the e2e tests only. */
@@ -370,16 +380,23 @@ export class Controller {
     this.saveUnwritten();
   }
 
-  /** What goes wrong opening it is kept in `libraryProblem`, which the menu and Settings show. */
+  /**
+   * What goes wrong opening it is kept in `libraryProblem`, which the menu and Settings show. A remembered library that isn't
+   * there is no problem of opening it: its place is kept in `libraryMissing`, which they name too.
+   */
   private openLibrary(libraryPath: string | null): void {
     this.dropLibraryTimers(); // a wait or a watch is for the library that closes; the next one's waits are armed again by whoever opens it
     this.vault = null;
     this.recent = [];
     this.dropTranscriber();
     this.libraryProblem = null;
+    this.libraryMissing = null;
     if (!libraryPath) return;
     const vault = new Vault(libraryPath);
-    if (!vault.exists()) return;
+    if (!vault.exists()) {
+      this.libraryMissing = libraryPath;
+      return;
+    }
     try {
       ensureDefaultTasks(vault);
       this.recent = recentFromLog(vault.root);
@@ -557,6 +574,7 @@ export class Controller {
     return {
       libraryReady: !!vault,
       problem: this.libraryProblem,
+      missingLibrary: this.libraryMissing === null ? null : tildePath(this.libraryMissing, homedir()),
       inbox: vault ? vault.pending().length : 0,
       recent: this.recent,
       tasks: tasks.map((t) => ({
@@ -1998,12 +2016,15 @@ export class Controller {
   }
 
   /**
-   * Settings' Set up Avanzel…, offered while there is no library: setup, where a library is made, opens or comes forward,
-   * and Settings closes. Nothing while a library is open and still there; one that went while Avanzel ran doesn't count.
+   * Settings' Set up Avanzel… and Set up a new library, offered while there is no library: setup, where a library is made,
+   * opens or comes forward, and Settings closes. Nothing while a library is open and still there; one that went while Avanzel
+   * ran doesn't count. When the remembered library is gone, setup starts over at ~/Avanzel, the usual place, not at the place
+   * that went: that is for choosing again, which is what Choose a folder… is for.
    */
   openSetupFromSettings(): void {
     if (this.vault?.exists()) return;
-    this.setup.show();
+    const gone = this.libraryMissing !== null || this.vault !== null; // missing at launch, or gone while Avanzel ran
+    this.setup.show(gone ? defaultLibraryPath(homedir()) : undefined);
     const win = this.settingsWindow;
     if (win && !win.isDestroyed()) win.close();
   }
@@ -2156,6 +2177,9 @@ export class Controller {
     const result = parent ? await dialog.showOpenDialog(parent, LIBRARY_PICKER) : await dialog.showOpenDialog(LIBRARY_PICKER);
     const chosen = result.filePaths[0];
     if (result.canceled || !chosen) return this.snapshot();
+    // The home folder, a system folder or a disk's root is no place for a library, whatever is there already: refused before
+    // anything is asked or made, and the library stays as it was.
+    if (tooBroad(chosen, homedir())) throw new AvanzelError(tooBroadLine(tildePath(chosen, homedir())));
     if (!new Vault(chosen).exists()) {
       const entries = readdirSync(chosen).filter((name) => name !== ".DS_Store");
       if (entries.length) {
@@ -2165,7 +2189,10 @@ export class Controller {
           defaultId: 1,
           cancelId: 1,
           message: `Turn “${path.basename(chosen)}” into your Avanzel library?`,
-          detail: "It already has files. Avanzel will add its shelves, an AGENTS.md for your agent, and git history that includes the existing files.",
+          // Only what the app does: on a Mac without a usable git it makes no history, and says so.
+          detail: git.gitUsable()
+            ? "It already has files. Avanzel will add its shelves, an AGENTS.md for your agent, and git history that includes the existing files."
+            : `It already has files. Avanzel will add its shelves and an AGENTS.md for your agent. ${NO_GIT_LINE}`,
         });
         if (confirm.response !== 0) return this.snapshot();
       }
@@ -2214,11 +2241,11 @@ export class Controller {
   /**
    * Avanzel's own window, for whatever asks for one: the shortcut, Quick or Ask before there is a library, or opening
    * Avanzel again. Setup while it is open, even once a step has made the library, so Settings never opens beside it.
-   * Otherwise setup while there is no library, unless one failed to open (`libraryProblem`): Settings says why, and
-   * fixes it. With a library, Settings.
+   * Otherwise setup while there is no library, unless one failed to open (`libraryProblem`) or is remembered and gone
+   * (`libraryMissing`): Settings says which, and fixes it. With a library, Settings.
    */
   showHome(): void {
-    if (this.setup.isOpen() || (!this.vault && this.libraryProblem === null)) return this.setup.show();
+    if (this.setup.isOpen() || (!this.vault && this.libraryProblem === null && this.libraryMissing === null)) return this.setup.show();
     this.showSettings();
   }
 
@@ -2296,6 +2323,7 @@ export class Controller {
       noticed: this.noticed,
       opened: this.opened,
       copied: this.copied,
+      spawned: this.spawned,
     };
   }
 
@@ -2735,6 +2763,11 @@ export class Controller {
   /** The text Copy put on the clipboard, oldest first; recorded only with AVANZEL_TEST=1. */
   copiedForTests(): string[] {
     return this.copied;
+  }
+
+  /** What Install git would have run, oldest first ("xcode-select --install"); recorded only with AVANZEL_TEST=1, which runs nothing. */
+  spawnedForTests(): string[] {
+    return this.spawned;
   }
 
   /**

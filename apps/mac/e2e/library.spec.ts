@@ -1,16 +1,19 @@
 // The library around the captures: shadow tasks, their run state, and libraries that misbehave or aren't there.
 import { expect, test, type ElectronApplication } from "@playwright/test";
 import { chmodSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import {
+  agentPath,
   answerMenus,
   call,
   capsuleKind,
   exists,
   filesUnder,
   firstRun,
+  gitOut,
   launch,
   makeLibrary,
   openSettings,
@@ -21,6 +24,7 @@ import {
   stubPicker,
   windowFor,
 } from "./helpers.ts";
+import { callsTo, settingsSnap, setupSnap, windowsTitled } from "./setup-helpers.ts";
 
 /** Closes the setup window, as its red button does, and waits until it has gone. */
 async function closeSetup(app: ElectronApplication): Promise<void> {
@@ -454,7 +458,8 @@ test("a library folder renamed while Avanzel runs is named in Settings, and choo
 
 test("a library whose .avanzel folder goes while Avanzel runs is named as missing, and setup still opens from Settings", async () => {
   const library = await makeLibrary();
-  const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
+  // Setup then suggests ~/Avanzel, so the test has a home of its own: it never looks into this Mac's.
+  const app = await launch({ ...firstRun().env, AVANZEL_LIBRARY: library });
   await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.exists).toBe(true); // it is open
   rmSync(path.join(library, ".avanzel"), { recursive: true, force: true });
   await call(app, "showSettings");
@@ -466,6 +471,165 @@ test("a library whose .avanzel folder goes while Avanzel runs is named as missin
   await call(app, "openSetupFromSettings");
   await expect.poll(() => shown(app, "setup")).toBe(true);
   await app.close();
+});
+
+test("a remembered library that is missing at launch is named in Settings, and setup is not the first thing a person sees", async () => {
+  const { env, home } = firstRun();
+  const gone = path.join(home, "Brain"); // remembered, and not there any more: moved, renamed or unmounted since
+  const app = await launch({ ...env, AVANZEL_LIBRARY: gone });
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+  // Settings, not setup: this is no first run, and a window that starts over says nothing of the library that went.
+  expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
+  expect(await shown(app, "setup")).toBe(false);
+  const missing = settings.getByRole("alert");
+  await expect(missing.getByText("Avanzel can't find your library at ~/Brain.", { exact: true })).toBeVisible();
+  await expect(missing.getByText("Choose it again once it's back, or choose another folder.", { exact: true })).toBeVisible();
+  await expect(missing.getByRole("button", { name: "Choose a folder…", exact: true })).toHaveAttribute("data-variant", "primary");
+  const setUpNew = missing.getByRole("button", { name: "Set up a new library", exact: true });
+  await expect(setUpNew).toHaveAttribute("data-variant", "secondary");
+  await snap(settings, "settings-library-missing-at-launch");
+  // The menu's top item says the same, and opens Settings.
+  const [top] = (await call(app, "menuForTests")) as MenuItemModel[];
+  expect(top).toEqual({ type: "item", label: "Set up Avanzel…", action: "settings", sublabel: "Can't find your library at ~/Brain." });
+  // So do opening Avanzel again, and the shortcuts and the menu items that need a library: none starts setup over.
+  await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
+  await call(app, "openQuick");
+  await call(app, "menuAction", "settings");
+  expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
+  expect(await windowsTitled(app, "Avanzel Settings")).toBe(1);
+  // Set up a new library opens setup, and Settings closes. Setup suggests ~/Avanzel, not the place that went missing.
+  const closed = settings.waitForEvent("close");
+  await setUpNew.click().catch(() => undefined); // closes Settings, before the click returns
+  await closed;
+  await expect.poll(() => shown(app, "setup")).toBe(true);
+  expect(await call(app, "setupStepForTests")).toBe("hello");
+  expect(await setupSnap(app)).toMatchObject({ libraryPath: path.join(home, "Avanzel"), libraryLabel: "~/Avanzel", folder: "missing", libraryReady: false });
+  const setup = await windowFor(app, "setup");
+  await setup.getByRole("button", { name: "Set me up" }).click();
+  await expect(setup.getByText("~/Avanzel", { exact: true })).toBeVisible();
+  await expect(setup.getByText("~/Brain", { exact: true })).toHaveCount(0);
+  // The library that went is still the one remembered, until a new one is made: nothing was forgotten or made by asking.
+  expect((await settingsSnap(app)).app.libraryPath).toBe(gone);
+  await app.close();
+});
+
+test("a remembered library that is missing at launch can be chosen again where it is, and then Settings shows it", async () => {
+  const { env, home } = firstRun();
+  const moved = await makeLibrary();
+  const app = await launch({ ...env, AVANZEL_LIBRARY: path.join(home, "Brain") });
+  const settings = await windowFor(app, "settings");
+  await stubPicker(app, moved);
+  await settings.getByRole("alert").getByRole("button", { name: "Choose a folder…", exact: true }).click();
+  await expect.poll(async () => (await settingsSnap(app)).library?.path).toBe(moved);
+  await expect(settings.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+  // Back in use, the menu is the library's own.
+  const [top] = (await call(app, "menuForTests")) as MenuItemModel[];
+  expect(top).toMatchObject({ action: "open-inbox" });
+  expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
+  await app.close();
+});
+
+test("a system folder is refused as a library before any question is asked, and the library stays as it was", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
+  await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.exists).toBe(true); // it is open
+  // A folder that holds files is asked about first (Turn it into your library?): this box is never answered yes, so nothing is
+  // made, whatever the app does, and its calls are kept.
+  await app.evaluate(({ dialog }) => {
+    const asked: unknown[] = [];
+    Object.assign(globalThis, { confirmsAsked: asked });
+    dialog.showMessageBox = (async (...args: unknown[]) => {
+      asked.push(args);
+      return { response: 1, checkboxChecked: false };
+    }) as typeof dialog.showMessageBox;
+  });
+  const refused = ["/Applications", "/usr", "/tmp", path.join("/System/Volumes/Data", homedir())];
+  for (const place of refused) {
+    await stubPicker(app, place);
+    await expect(call(app, "chooseLibrary")).rejects.toThrow(`${place} is too broad for a library. Choose or make a folder inside it.`);
+  }
+  expect(await app.evaluate(() => (globalThis as { confirmsAsked?: unknown[] }).confirmsAsked)).toEqual([]);
+  expect(((await call(app, "snapshot")) as SettingsSnapshot).library).toMatchObject({ path: library, exists: true });
+  expect(exists("/Applications", ".avanzel")).toBe(false);
+  expect(exists("/usr", ".avanzel")).toBe(false);
+  await app.close();
+});
+
+test("Change… on a folder with files asks first, and promises git history only where this Mac has git", async () => {
+  for (const git of [true, false]) {
+    const library = await makeLibrary();
+    const folder = mkdtempSync(path.join(tmpdir(), "avz-e2e-notes-"));
+    writeFileSync(path.join(folder, "notes.md"), "# Notes\n");
+    const app = await launch({
+      AVANZEL_LIBRARY: library,
+      XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")),
+      ...(git ? {} : { AVANZEL_GIT_USABLE: "0" }),
+    });
+    // The question is a native box: this one keeps what it is asked, and answers Cancel.
+    await app.evaluate(({ dialog }) => {
+      const asked: { message?: string; detail?: string }[] = [];
+      Object.assign(globalThis, { confirmsAsked: asked });
+      dialog.showMessageBox = (async (options: { message?: string; detail?: string }) => {
+        asked.push(options);
+        return { response: 1, checkboxChecked: false };
+      }) as unknown as typeof dialog.showMessageBox;
+    });
+    await stubPicker(app, folder);
+    await call(app, "chooseLibrary");
+    const [asked, ...more] = await app.evaluate(() => (globalThis as { confirmsAsked?: { message?: string; detail?: string }[] }).confirmsAsked ?? []);
+    expect(more).toEqual([]);
+    expect(asked?.message).toBe(`Turn “${path.basename(folder)}” into your Avanzel library?`);
+    expect(asked?.detail).toBe(
+      git
+        ? "It already has files. Avanzel will add its shelves, an AGENTS.md for your agent, and git history that includes the existing files."
+        : "It already has files. Avanzel will add its shelves and an AGENTS.md for your agent. This Mac has no git yet, so changes can't be undone.",
+    );
+    expect(exists(folder, ".avanzel")).toBe(false); // Cancel: nothing was made
+    expect(((await call(app, "snapshot")) as SettingsSnapshot).library?.path).toBe(library);
+    await app.close();
+  }
+});
+
+test("a folder chosen in Settings becomes a library without a repository on a Mac with no git, and nothing runs git", async () => {
+  const library = await makeLibrary();
+  const folder = mkdtempSync(path.join(tmpdir(), "avz-e2e-new-"));
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")),
+    AVANZEL_GIT_USABLE: "0", // a Mac whose only git is Apple's stub, which opens an install dialog when it runs
+  });
+  await stubPicker(app, folder);
+  await call(app, "chooseLibrary");
+  await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.path).toBe(folder);
+  expect(exists(folder, ".avanzel/config.toml")).toBe(true);
+  expect(exists(folder, ".git")).toBe(false);
+  expect(((await call(app, "snapshot")) as SettingsSnapshot).library).toMatchObject({ isGit: false });
+  await app.close();
+});
+
+test("a library that has .git, on a Mac with no usable git, files a thought with no commit and no Undo, and runs no git", async () => {
+  // Two launches of one library: a git that notes every call stands first on PATH (and does nothing, exiting 1). Where git is
+  // usable, filing calls it, which shows the note works. Where this Mac has none (AVANZEL_GIT_USABLE=0), nothing calls it.
+  for (const usable of [true, false]) {
+    const library = await makeLibrary({ git: true }); // made here, by the engine, with this Mac's own git
+    const history = gitOut(library, "log", "--format=%H");
+    const app = await launch({
+      AVANZEL_LIBRARY: library,
+      PATH: agentPath({ git: "exit 1" }),
+      ...(usable ? {} : { AVANZEL_GIT_USABLE: "0" }),
+    });
+    await call(app, "submitQuick", "Plant tulips in October");
+    await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+    expect(filesUnder(library, "ideas")).toHaveLength(1); // filed all the same
+    expect(gitOut(library, "log", "--format=%H")).toBe(history); // by the fake git or none, no commit was made
+    expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", canUndo: false }); // nothing to undo it from
+    const calls = await callsTo(app, "git");
+    if (usable) expect(calls.length).toBeGreaterThan(0);
+    else expect(calls).toEqual([]);
+    await app.close();
+  }
 });
 
 test("Agents shows a library's problem as General does, and lists the agents once a folder is chosen", async () => {

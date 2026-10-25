@@ -87,6 +87,16 @@ Good to know:
   is kept without its recording). Links an agent plants under `inbox/`, `raw/` or `reviews/` are
   removed after its run. To keep the library elsewhere (another disk, a synced folder), move the
   whole library folder and choose it in Settings.
+- **A library that is missing at launch** (moved, renamed or unmounted since you chose it) opens
+  Settings, not setup: General says where Avanzel can't find it, and offers **Choose a folder…**
+  (again, where it is now) or **Set up a new library**, which opens setup at `~/Avanzel`, not at the
+  place that went. The menu bar's first item says the same.
+- **A Mac without git** (no Apple Command Line Tools: `/usr/bin/git` is then only a stub that opens
+  Apple's install dialog when it runs, so Avanzel asks `xcode-select -p` and never runs it to find
+  out) gets no git history. Setup says changes can't be undone and offers **Install git**; the
+  library is made without a repository, a library that has `.git` makes no commits and offers no
+  Undo, and setup notices the install once its window has the focus again. Cancelling the first
+  filing there says the stopped run's edits stay as they are, because nothing recorded them.
 - **Setup** keeps the times of its milestones in `first-run.json` in Avanzel's own folder, on this
   Mac only.
 
@@ -102,7 +112,8 @@ On first launch, a setup window walks you through six short steps with no visit 
 **Set me up** starts downloading both speech models (Parakeet and the Silero VAD, 673 MB together;
 an existing Hugging Face cache copy is reused) and reads your agents' sign-in. **Looks good** makes
 the library in `~/Avanzel` with the agent you chose; **Change…** picks another folder (not your
-home folder, a folder macOS makes in it such as Documents, or a disk's root: those are too broad).
+home folder, a folder macOS makes in it such as Documents, a system folder such as `/Applications`
+or `/usr`, or a disk's root: those are too broad; Settings' **Change…** refuses them too).
 If the folder already holds a library or other files, the button reads **Use this folder** instead:
 a library (a v0.1 one included) keeps its notes as they are, gets the agent you chose saved in its
 settings and any default scheduled review it lacks, and other files are kept while Avanzel adds the

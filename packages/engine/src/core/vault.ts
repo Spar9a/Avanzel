@@ -152,7 +152,8 @@ export class Vault {
     }
     if (!existsSync(join(vault.metaDir, CONFIG_NAME))) saveSettings(vault.root, defaultSettings());
     ensureDefaultTasks(vault);
-    if (git && gitops.available() && !gitops.isRepo(vault.root)) {
+    // Without a usable git (none, or only Apple's stub, which would open an install dialog), no git runs at all.
+    if (git && gitops.gitUsable() && !gitops.isRepo(vault.root)) {
       await gitops.initRepo(vault.root);
       await gitops.commitAll(vault.root, "avanzel: new library");
     }
