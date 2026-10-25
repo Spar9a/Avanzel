@@ -83,6 +83,9 @@ export const SIGNED_OUT_CODEX = `if [ "$1 $2" = "login status" ]; then echo "Not
 /** A `claude` whose sign-in command prints nothing a check understands, as an older Claude Code may. */
 export const UNREADABLE_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo "unknown command: auth"; exit 1; else echo ready; fi`;
 
+/** `env` as the assignments that go in front of a stand-in's exec, so they steer that stand-in alone. */
+const steering = (env: Record<string, string>) => Object.entries(env).map(([name, value]) => `${name}='${value}' `).join("");
+
 /**
  * A `claude` for agentStubs that files: signed in, and any other call runs the engine's fake agent with the prompt,
  * which Claude Code's argv puts after -p. The FAKE_AGENT_* variables a test launches with steer it; so do `env`'s, which
@@ -90,8 +93,16 @@ export const UNREADABLE_CLAUDE = `if [ "$1 $2" = "auth status" ]; then echo "unk
  * launch can each act differently.
  */
 export function filingClaude(env: Record<string, string> = {}): string {
-  const steer = Object.entries(env).map(([name, value]) => `${name}='${value}' `).join("");
-  return `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else ${steer}exec '${process.execPath}' '${fakeAgent}' "$2"; fi`;
+  return `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else ${steering(env)}exec '${process.execPath}' '${fakeAgent}' "$2"; fi`;
+}
+
+/**
+ * A `codex` for agentStubs that files: signed in, and any other call runs the engine's fake agent with all of Codex's argv
+ * (`exec … -o <file> <prompt>`), which makes it answer as Codex does, in the -o file. `env` steers this stand-in alone, as
+ * filingClaude's does.
+ */
+export function filingCodex(env: Record<string, string> = {}): string {
+  return `if [ "$1 $2" = "login status" ]; then echo "Logged in using ChatGPT" >&2; else ${steering(env)}exec '${process.execPath}' '${fakeAgent}' "$@"; fi`;
 }
 
 /**

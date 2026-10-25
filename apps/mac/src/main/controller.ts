@@ -1128,6 +1128,29 @@ export class Controller {
     return BUILTIN_ORDER.find(usable) ?? null;
   }
 
+  /**
+   * The failure card's button, Try again or File it with … now: the card's note, `capturePath`, is filed again with `harness`
+   * (an agent's name) as any note is, and the capsule shows the filing. Its words, and how long they took to transcribe, are
+   * the failed job's, which is still `this.job` while its card shows. A note that no longer waits in the open library's inbox
+   * was filed meanwhile (by the evening review, another Avanzel or the person) or belongs to another library: there is
+   * nothing to file, and the card just goes.
+   */
+  private fileAgainWith(capturePath: string, harness: string): void {
+    const failed = this.job;
+    if (failed?.capturePath !== capturePath || !this.vault?.pending().includes(capturePath)) return this.setCapsule({ kind: "hidden" });
+    this.beginFiling({
+      capturePath,
+      text: failed.text,
+      transcribedIn: failed.transcribedIn,
+      agent: harnessName(harness),
+      harness,
+      abort: new AbortController(),
+      edited: false,
+      rows: [],
+      written: [],
+    });
+  }
+
   /** Whether the library's evening review is on: what a failed note's "the evening review will try again" relies on. */
   private eveningReviewOn(): boolean {
     const vault = this.vault;
@@ -1398,11 +1421,16 @@ export class Controller {
 
   /**
    * A button on the capsule's card is clicked (an error card's one button, or a notice's Open Settings): `action`, as the
-   * page sent it, says what to do (see CardAction), and the card goes away. Except for `refile:<agent>`, which is to file the
-   * card's note (`cardCapture`) again with that agent: nothing does that yet, so the card stays.
+   * page sent it, says what to do (see CardAction), and the card goes away. `refile:<agent>` files the card's note
+   * (`cardCapture`) again with that agent (`fileAgainWith`): the filing the capsule shows replaces the card. A second click
+   * on the button finds no note, since that filing has replaced the card, and does nothing.
    */
   openSettingsFor(action: string): void {
-    if (action.startsWith("refile:")) return;
+    if (action.startsWith("refile:")) {
+      const capture = this.cardCapture; // before the filing replaces the card, and the card's note with it
+      if (capture !== null) this.fileAgainWith(capture, action.slice("refile:".length));
+      return;
+    }
     if (action === "open-microphone-settings") void this.openPrivacy("microphone");
     else if (action === "open-screen-settings") void this.openPrivacy("screen");
     else if (action === "open-terminal") openTerminal(this.opened);

@@ -14,6 +14,7 @@ import {
   exists,
   filesUnder,
   filingClaude,
+  filingCodex,
   gitOut,
   launch,
   makeLibrary,
@@ -23,6 +24,7 @@ import {
   SIGNED_IN,
   snap,
   speechWav,
+  stubPicker,
   windowFor,
 } from "./helpers.ts";
 
@@ -403,11 +405,14 @@ function tomorrowAtNine(): number {
 const limitedClaude = () =>
   filingClaude({ FAKE_AGENT_STREAM: "claude", FAKE_AGENT_MODE: "limit", FAKE_AGENT_RESETS_AT: String(tomorrowAtNine()) });
 
+/** What `claudeLibrary` takes: the limit of its runs, whether its evening review is on, and more variables to launch with. */
+type ClaudeLibraryOptions = { timeoutSeconds?: number; eveningReview?: boolean; env?: Record<string, string> };
+
 /**
  * A library that Claude Code files, opened on a Mac whose only agents are the stand-ins in `bin`. `timeoutSeconds` is the
- * limit of its runs, and `eveningReview` whether the library's evening review is on.
+ * limit of its runs, `eveningReview` whether the library's evening review is on, and `env` more variables for the app.
  */
-async function claudeLibrary(bin: string, { timeoutSeconds = 30, eveningReview = true }: { timeoutSeconds?: number; eveningReview?: boolean } = {}) {
+async function claudeLibrary(bin: string, { timeoutSeconds = 30, eveningReview = true, env = {} }: ClaudeLibraryOptions = {}) {
   const library = await makeLibrary();
   saveSettings(library, { ...loadSettings(library), harness: "claude", timeoutSeconds });
   if (!eveningReview) {
@@ -419,6 +424,7 @@ async function claudeLibrary(bin: string, { timeoutSeconds = 30, eveningReview =
     AVANZEL_FAKE_AUDIO: speechWav("hello"),
     AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
     ...onlyAgentsIn(bin),
+    ...env,
   });
   return { library, app, capsule: await windowFor(app, "capsule") };
 }
@@ -430,7 +436,7 @@ async function dictate(app: ElectronApplication): Promise<void> {
 }
 
 /** `claudeLibrary`, dictated to, and waited for until the capsule shows the card the filing failed with. */
-async function failedWithClaude(bin: string, options?: { timeoutSeconds?: number; eveningReview?: boolean }) {
+async function failedWithClaude(bin: string, options?: ClaudeLibraryOptions) {
   const opened = await claudeLibrary(bin, options);
   await dictate(opened.app);
   await expect.poll(() => capsuleKind(opened.app), { timeout: 60_000 }).toBe("error");
@@ -606,5 +612,104 @@ test("a failure whose card is gone notifies with the same words", async () => {
     ]);
   expect(await capsuleKind(app)).toBe("hidden"); // the failure doesn't bring the closed card back
   expect(inbox(library)).toHaveLength(1);
+  await app.close();
+});
+
+// ---- The card's one button files the note again ----
+//
+// File it with … now and Try again file the note the card is about at once, as any note is filed: the capsule shows the
+// filing, and the agent is the one the button names.
+
+/** How many filing runs `agent`'s stand-in was asked for in `calls` (agentCalls): Claude Code's are `claude -p …`, Codex's `codex exec …`. */
+const filingRuns = (calls: readonly string[], agent: "claude" | "codex") =>
+  calls.filter((line) => line.startsWith(agent === "claude" ? "claude -p " : "codex exec ")).length;
+
+test("File it with Codex now files the note with Codex", async () => {
+  // Claude Code is at its limit. The Codex stand-in takes a moment, so the filing can be seen before it ends.
+  const bin = agentStubs({ claude: limitedClaude(), codex: filingCodex({ FAKE_AGENT_DELAY_MS: "2000" }) });
+  const { library, app, capsule } = await failedWithClaude(bin);
+  const [note] = inbox(library);
+  expect(filingRuns(await agentCalls(app), "claude")).toBe(1); // the run that hit the limit
+
+  await capsule.getByRole("button", { name: "File it with Codex now", exact: true }).click();
+  // The note is filed as any is: the capsule shows the filing, with Codex, the note's words and how it was captured.
+  await expect.poll(() => capsuleKind(app)).toBe("filing");
+  await expect(capsule.getByText("Filing with Codex…")).toBeVisible();
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    kind: "filing",
+    agent: "Codex",
+    text: "Plant tulips in October",
+    transcribedIn: expect.any(Number), // a spoken note, as it was
+  });
+  // A second click on the button, which can reach main before the page has drawn that filing, files nothing more.
+  await call(app, "openSettingsFor", "refile:codex");
+  expect(await capsuleKind(app)).toBe("filing");
+
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  await expect(capsule.getByText("Filed by Codex")).toBeVisible();
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", agent: "Codex" });
+  // The note left the inbox for the archive, and Codex wrote its page.
+  expect(inbox(library)).toEqual([]);
+  expect(archived(library).map((file) => path.basename(file))).toEqual([note]);
+  expect(filesUnder(library, "ideas")).toEqual([`idea-${path.basename(note!, ".md")}.md`]);
+  // Codex was asked once, though the button was pressed twice, and Claude Code was not asked again.
+  const calls = await agentCalls(app);
+  expect(filingRuns(calls, "codex")).toBe(1);
+  expect(filingRuns(calls, "claude")).toBe(1);
+  await app.close();
+});
+
+test("Try again files the note with the same agent", async () => {
+  // Claude Code's first run hangs and is stopped at the library's 2 s; its next run files. Codex is installed too.
+  const bin = agentStubs({ claude: filingClaude({ FAKE_AGENT_MODE: "slow-once", FAKE_AGENT_ONCE: onceMarker() }) });
+  const { library, app, capsule } = await failedWithClaude(bin, { timeoutSeconds: 2 });
+  await expect(capsule.getByRole("alert")).toContainText("Claude Code took longer than 2 s and was stopped.");
+  const [note] = inbox(library);
+
+  await capsule.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  await expect(capsule.getByText("Filed by Claude Code")).toBeVisible();
+  expect(inbox(library)).toEqual([]);
+  expect(filesUnder(library, "ideas")).toEqual([`idea-${path.basename(note!, ".md")}.md`]);
+  const calls = await agentCalls(app);
+  expect(filingRuns(calls, "claude")).toBe(2); // the run that was stopped, and this one
+  expect(filingRuns(calls, "codex")).toBe(0);
+  await app.close();
+});
+
+test("a note filed meanwhile isn't filed twice", async () => {
+  const bin = agentStubs({ claude: limitedClaude(), codex: filingCodex() });
+  const { library, app, capsule } = await failedWithClaude(bin);
+  // The evening review, or another Avanzel, files the note while its card is up: it is in the archive now.
+  const [note] = inbox(library);
+  renameSync(path.join(library, "inbox", note!), path.join(library, "raw", note!));
+
+  await capsule.getByRole("button", { name: "File it with Codex now", exact: true }).click();
+  await expect.poll(() => capsuleKind(app)).toBe("hidden"); // the card closes
+  await call(app, "idleForTests"); // and nothing waits in the queue to run
+  const calls = await agentCalls(app);
+  expect(filingRuns(calls, "codex")).toBe(0);
+  expect(filingRuns(calls, "claude")).toBe(1);
+  expect(filesUnder(library, "ideas")).toEqual([]);
+  await app.close();
+});
+
+test("a card left up while another library opens files nothing in it", async () => {
+  // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
+  const env = { XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) };
+  const bin = agentStubs({ claude: limitedClaude(), codex: filingCodex() });
+  const { library, app, capsule } = await failedWithClaude(bin, { env });
+  const other = await makeLibrary();
+  await stubPicker(app, other);
+  await call(app, "chooseLibrary");
+
+  // The card is still up, for a note that waits in the first library's inbox and isn't in the new library's.
+  await expect(capsule.getByRole("alert")).toContainText("Claude Code has hit its usage limit.");
+  await capsule.getByRole("button", { name: "File it with Codex now", exact: true }).click();
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  await call(app, "idleForTests");
+  expect(filingRuns(await agentCalls(app), "codex")).toBe(0);
+  expect(inbox(library)).toHaveLength(1);
+  expect(archived(other)).toEqual([]);
   await app.close();
 });
