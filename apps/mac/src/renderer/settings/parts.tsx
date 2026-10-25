@@ -14,21 +14,24 @@ export interface PaneProps {
   onChange(snapshot: SettingsSnapshot): void;
   /**
    * Makes a call to main that main may refuse (a rejected promise: a file it can't write, a folder it won't take). A refusal
-   * doesn't go unheard: the window tells it in a Notice, "That change wasn't saved." with why, which goes with the next change
-   * that works or the next pane. Resolves with what the call sent back, or undefined when it was refused.
+   * doesn't go unheard: the window tells it in a Notice, which goes with the next change that works or the next pane. A call
+   * that saves a setting is told as "That change wasn't saved.", with why and what the setting keeps. Any other call, a check or
+   * a run, saves nothing: it gives its own `title`, what didn't happen, and the Notice tells only why. Resolves with what the
+   * call sent back, or undefined when it was refused.
    */
-  attempt<T>(run: () => Promise<T>): Promise<T | undefined>;
+  attempt<T>(run: () => Promise<T>, title?: string): Promise<T | undefined>;
 }
 
 /**
  * A change that sends back the snapshot to draw (setApp, setLibrary, …): made through `attempt`, and drawn when it worked. A
- * change main refuses draws nothing, and the window tells it.
+ * change main refuses draws nothing, and the window tells it. `title` is for a call that saves no setting (see `attempt`).
  */
 export async function attemptChange(
   { onChange, attempt }: Pick<PaneProps, "onChange" | "attempt">,
   run: () => Promise<SettingsSnapshot>,
+  title?: string,
 ): Promise<void> {
-  const next = await attempt(run);
+  const next = await attempt(run, title);
   if (next) onChange(next);
 }
 

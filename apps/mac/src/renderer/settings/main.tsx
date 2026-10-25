@@ -1,13 +1,14 @@
-// The Settings window: a strip to drag it by, the toolbar that moves between its panes, and the pane under its
-// heading. Each pane applies a change at once and draws the snapshot main sends back; a change main refuses is told in a
-// Notice under the heading (`attempt`). The window keeps the reviews' open editor, their saves on the way and the failure
-// of the last one, which outlast the pane.
+// The Settings window: a strip to drag it by, the toolbar that moves between its panes, the Notice for a call main refused,
+// and the pane under its heading. Each pane applies a change at once and draws the snapshot main sends back; a call main
+// refuses is told in a Notice in a row of its own above the pane (`attempt`), which stays in view however far the pane is
+// scrolled. The window keeps the reviews' open editor, their saves on the way and the failure of the last one, which outlast
+// the pane.
 import "@avanzel/ui/base.css";
 import { Notice, Segmented, Stack, Text } from "@avanzel/ui";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { SETTINGS_PANES, isSettingsPane, type AvanzelBridge, type SettingsPane, type SettingsSnapshot } from "../../shared/ipc.ts";
-import { CHANGE_NOT_SAVED, notSavedLine, PANE_LABELS } from "./copy.ts";
+import { PANE_LABELS, refusedCall } from "./copy.ts";
 import { Agents } from "./panes/Agents.tsx";
 import { General } from "./panes/General.tsx";
 import { Privacy } from "./panes/Privacy.tsx";
@@ -52,35 +53,30 @@ function paneContent(pane: SettingsPane, props: PaneProps, edits: ReviewEdits): 
   }
 }
 
-/** A change main refused, as the Notice tells it. `id` is new for each, so a second refusal is told afresh, in the same words too. */
+/** A call main refused, as the Notice tells it. `id` is new for each, so a second refusal is told afresh, in the same words too. */
 interface Problem {
   id: number;
+  title: string;
   line: string;
 }
 
 /**
- * The Notice for a change main refused: "That change wasn't saved.", and why. It has no button: it is told, and goes with the
- * next change that works or the next pane. A pane can be long and the control that failed far below its heading, so the Notice
- * scrolls into view as it appears.
+ * The Notice for a call main refused (`refusedCall`): what happened, and why. It has no button: it is told, and goes with the
+ * next change that works or the next pane. It stands outside the pane, which scrolls: a pane can be long and the control that
+ * failed far down it, and a Notice in the pane would be out of sight or, brought into sight, would take the control out of it.
  */
-function NotSaved({ line }: { line: string }): ReactNode {
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    box.current?.scrollIntoView({ block: "nearest" });
-  }, []);
+function Refused({ title, line }: { title: string; line: string }): ReactNode {
   return (
-    <div ref={box}>
-      <Notice tone="error" title={CHANGE_NOT_SAVED}>
-        {line}
-      </Notice>
-    </div>
+    <Notice tone="error" title={title}>
+      {line}
+    </Notice>
   );
 }
 
 function App() {
   const [snap, setSnap] = useState<SettingsSnapshot | null>(null);
   const [pane, setPane] = useState<SettingsPane>(startingPane);
-  // The last change main refused, until a change works or another pane shows.
+  // The last call main refused, until a change works or another pane shows.
   const [problem, setProblem] = useState<Problem | null>(null);
   const refusals = useRef(0);
   // What a pane draws when its change worked: the snapshot main sent back. That change ends the problem a refused one left.
@@ -90,14 +86,16 @@ function App() {
   }, []);
   // A call to main that may be refused: a refusal is told in the Notice (it would otherwise be an unheard rejection), and the
   // call resolves undefined. Wherever the person is when it arrives, since a save can outlast the pane it was made on. Any error
-  // is told so, a bug of the app's own among them, and so it is logged too: the Notice can't tell which it is.
-  const attempt = useCallback(async <T,>(run: () => Promise<T>): Promise<T | undefined> => {
+  // is told so, a bug of the app's own among them, and so it is logged too: the Notice can't tell which it is. A call that saves
+  // no setting passes its own `title` (a review that didn't start, an agent that couldn't be checked).
+  const attempt = useCallback(async <T,>(run: () => Promise<T>, title?: string): Promise<T | undefined> => {
     try {
       return await run();
     } catch (error) {
       console.error("settings", error);
       refusals.current += 1;
-      setProblem({ id: refusals.current, line: notSavedLine(error) });
+      const told = refusedCall(error, title);
+      setProblem({ id: refusals.current, title: told.title, line: told.body });
       return undefined;
     }
   }, []);
@@ -144,12 +142,19 @@ function App() {
       >
         <Segmented label="Section" options={PANES} value={pane} onChange={showPane} />
       </div>
+      {/* The problem's row is always here, with no height while there is none, so the pane keeps its place in the window's rows. */}
+      <div className="settings-problem">
+        {problem && (
+          <div className="settings-problem-box">
+            <Refused key={problem.id} title={problem.title} line={problem.line} />
+          </div>
+        )}
+      </div>
       {/* Keyed by its pane: a pane starts at its top, and the one left is unmounted, which ends whatever it had going,
           but for the reviews' edits, which the window keeps. */}
       <main key={pane} className="settings-pane">
         <Stack gap={20}>
           <Text variant="heading">{PANE_LABELS[pane]}</Text>
-          {problem && <NotSaved key={problem.id} line={problem.line} />}
           <div>{paneContent(pane, { snap, onChange: draw, attempt }, edits)}</div>
         </Stack>
       </main>

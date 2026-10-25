@@ -20,7 +20,10 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   let controller: Controller | null = null;
+  // The safe stop before quitting: begun by the first quit that finds an agent run, an edit or queued work to stop (`stopping`),
+  // and over once it has ended and quits for good (`stopped`).
   let stopping = false;
+  let stopped = false;
   // Opening Avanzel again (Spotlight, Finder) brings its own window forward: setup while it is open or there is no
   // library, else Settings.
   app.on("second-instance", () => controller?.showHome());
@@ -30,12 +33,18 @@ if (!app.requestSingleInstanceLock()) {
   // An agent still running when Avanzel quits is stopped first, and its run's bookkeeping finished:
   // otherwise it would go on editing the library unguarded, and its edits would never be undoable.
   // An agent check is stopped too, but never waited for; stopForQuit stops them when it runs.
+  // Every quit asked while that stop waits (the menu's Quit, ⌘Q, Quit and reopen) waits with it: the first quit's choice stands,
+  // and the quit the stop ends with is the one that goes through.
   app.on("before-quit", (event) => {
-    if (stopping || !controller) return;
+    if (stopped || !controller) return;
+    if (stopping) return event.preventDefault();
     if (!controller.busy()) return controller.stopAgentChecks();
     stopping = true;
     event.preventDefault();
-    void controller.stopForQuit().finally(() => app.quit());
+    void controller.stopForQuit().finally(() => {
+      stopped = true;
+      app.quit();
+    });
   });
 
   app.whenReady().then(async () => {

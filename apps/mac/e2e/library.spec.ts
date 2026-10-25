@@ -402,6 +402,9 @@ test("a review's failed save is told under the review only, and is still told af
     await on.click();
     await expect(problem.getByText("This review couldn't be saved.", { exact: true })).toBeVisible();
     await expect(problem).toContainText(/\. It stays off, as last saved\.$/);
+    // Why, in plain words: not the system's code, nor the temporary file it names.
+    await expect(problem).toContainText("Avanzel can't write to the library's settings. It stays off, as last saved.");
+    await expect(problem).not.toContainText(/EACCES|\.tmp/);
     // Told once, where the review is: the window's own "That change wasn't saved." is for the changes with no Notice of their own.
     await expect(settings.getByText("That change wasn't saved.", { exact: true })).toHaveCount(0);
     await expect(settings.getByRole("alert")).toHaveCount(1);
@@ -615,7 +618,10 @@ test("Change… on a folder that is too broad says so in Settings, asks nothing,
   await settings.getByRole("button", { name: "Change…" }).click();
   const problem = settings.getByRole("alert");
   await expect(problem.getByText("That change wasn't saved.", { exact: true })).toBeVisible();
-  await expect(problem.getByText("/Applications is too broad for a library. Choose or make a folder inside it.", { exact: true })).toBeVisible();
+  // Why, and what is safe: the library is the one it was.
+  await expect(
+    problem.getByText("/Applications is too broad for a library. Choose or make a folder inside it. The setting keeps its old value.", { exact: true }),
+  ).toBeVisible();
   await expect(problem).not.toContainText("Error invoking remote method");
   await snap(settings, "settings-library-too-broad");
   // No box asked anything, and the library is the one it was.
@@ -637,7 +643,9 @@ test("Choose a folder… for a library that has gone says why a folder is refuse
   await stubPicker(app, "/Applications");
   await settings.getByRole("alert").getByRole("button", { name: "Choose a folder…", exact: true }).click();
   const problem = settings.getByRole("alert").filter({ hasText: "That change wasn't saved." });
-  await expect(problem.getByText("/Applications is too broad for a library. Choose or make a folder inside it.", { exact: true })).toBeVisible();
+  await expect(
+    problem.getByText("/Applications is too broad for a library. Choose or make a folder inside it. The setting keeps its old value.", { exact: true }),
+  ).toBeVisible();
   // The library that went is still named, with its fix: nothing was chosen.
   await expect(settings.getByText("Avanzel can't find your library at ~/Brain.", { exact: true })).toBeVisible();
   await expect(settings.getByRole("button", { name: "Choose a folder…", exact: true })).toBeVisible();

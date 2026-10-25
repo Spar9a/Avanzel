@@ -3,9 +3,10 @@
 // looks up at it, thinks while the agent looks and is worried by a failure. The suggestion shows in words beside Ask
 // this, which asks it; any other question is typed in Ask your library, and Return asks it. While the agent looks, a
 // line counts its seconds and Skip gives the question up. Then the answer, over the pages its [[links]] name, each of
-// which opens. Skip is the quiet way on until there is an answer, then Continue; there is no Back. An Undo that lands
-// here (Continue pressed as it began) takes the suggestion with it, and the step says so.
-import { Button, Card, Notice, Row, ShelfTag, Stack, Text, TextField, Zel, type ZelMood } from "@avanzel/ui";
+// which opens. A question that fails is told in a Notice with the Ask window's fix: Ask again, Open Terminal for a sign-in, or
+// Open Settings when the library's agent isn't there. Skip is the quiet way on until there is an answer, then Continue;
+// there is no Back. An Undo that lands here (Continue pressed as it began) takes the suggestion with it, and the step says so.
+import { Actions, Button, Card, Notice, Row, ShelfTag, Stack, Text, TextField, Zel, type ZelMood } from "@avanzel/ui";
 import { useId, useRef, useState } from "react";
 import type { SetupAnswer } from "../../../shared/ipc.ts";
 import { pageName } from "../../../shared/wikilinks.ts";
@@ -94,7 +95,17 @@ export function Ask({ snap, go }: StepProps) {
         {answer?.kind === "asking" && <AskingLine answer={answer} />}
         {/* VoiceOver hears the answer once it is in, not each second before it. */}
         <div role="status">{answer?.kind === "answered" && <Answer answer={answer} />}</div>
-        {answer?.kind === "failed" && <Failure answer={answer} />}
+        {answer?.kind === "failed" && (
+          <Failure
+            answer={answer}
+            // The question that failed was emptied from the box when it was asked, so only this button can ask it again; what is
+            // typed meanwhile stays, and the focus goes to the box.
+            onAskAgain={() => {
+              ask(answer.question);
+              field.current?.focus();
+            }}
+          />
+        )}
       </Stack>
     </Frame>
   );
@@ -102,11 +113,31 @@ export function Ask({ snap, go }: StepProps) {
 
 /**
  * A question that failed, as the Ask window tells it (failedAnswer): what happened, that the library hasn't changed (or what the
- * run changed), and what to do. The step keeps its own ways on: Ask this asks the suggestion again, and Skip goes on.
+ * run changed), and what to do; and its one fix, the moment's primary, which comes last: Ask again; for an agent that isn't signed
+ * in, Open Terminal, with Ask again beside it, secondary; for an agent that isn't there, Open Settings on Agents, since asking
+ * again would only fail again. The step keeps its own ways on: Ask this asks the suggestion, and Skip goes on.
  */
-function Failure({ answer }: { answer: Failed }) {
+function Failure({ answer, onAskAgain }: { answer: Failed; onAskAgain(): void }) {
   const problem = failedAnswer(answer, new Date());
-  return <Notice tone="error" title={problem.title}>{problemBody(problem)}</Notice>;
+  return (
+    <Notice
+      tone="error"
+      title={problem.title}
+      actions={
+        <Actions align="start">
+          {!problem.settings && (
+            <Button size="small" variant={problem.terminal ? "secondary" : "primary"} onClick={onAskAgain}>Ask again</Button>
+          )}
+          {problem.terminal && <Button size="small" variant="primary" onClick={() => api.openTerminal()}>Open Terminal</Button>}
+          {problem.settings && (
+            <Button size="small" variant="primary" onClick={() => window.avanzel.capsule.openSettingsFor("open-settings:agents")}>Open Settings</Button>
+          )}
+        </Actions>
+      }
+    >
+      {problemBody(problem)}
+    </Notice>
+  );
 }
 
 /**

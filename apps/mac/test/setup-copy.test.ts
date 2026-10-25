@@ -22,7 +22,7 @@ import {
   sourceTitle,
   stampDate,
   tooBroadLine,
-  TRANSCRIBING,
+  transcribingLine,
   workingLine,
 } from "../src/renderer/setup/copy.ts";
 import { NOTE_GONE, type AgentStatus, type FiledPage, type SetupAnswer, type SetupFiling } from "../src/shared/ipc.ts";
@@ -176,8 +176,10 @@ describe("setup copy", () => {
     expect(earsLine({ kind: "error", cause: "settings", message: "bad", resumable: false })).toBeNull();
   });
 
-  it("the transcribing line stays as it is, and its whole seconds show beside it once the words have taken 10 s", () => {
-    expect(TRANSCRIBING).toBe("Turning your voice into text on this Mac…");
+  it("the transcribing line says where the words are made only when it is on this Mac, and its whole seconds show beside it once they have taken 10 s", () => {
+    expect(transcribingLine(true)).toBe("Turning your voice into text on this Mac…");
+    // The command in a library's [voice] settings can run anywhere.
+    expect(transcribingLine(false)).toBe("Turning your voice into text…");
     expect(slowSeconds(0)).toBeNull();
     expect(slowSeconds(9.9)).toBeNull();
     expect(slowSeconds(10)).toBe("10 s");

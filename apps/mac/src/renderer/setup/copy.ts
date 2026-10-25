@@ -102,10 +102,15 @@ export function earsLine(model: ModelStatus): string | null {
 /** From how many seconds a wait gives its size: DESIGN.md's "past 10 seconds". */
 export const SLOW_SECONDS = 10;
 
-/** What the first-thought step says while the spoken thought's words are made. */
-export const TRANSCRIBING = "Turning your voice into text on this Mac…";
+/**
+ * What the first-thought step says while the spoken thought's words are made, and where only when that is on this Mac
+ * (`onThisMac`): the command in a library's [voice] settings can run anywhere.
+ */
+export function transcribingLine(onThisMac: boolean): string {
+  return onThisMac ? "Turning your voice into text on this Mac…" : "Turning your voice into text…";
+}
 
-/** The whole seconds the words have taken so far, from SLOW_SECONDS on, beside TRANSCRIBING: "12 s". Null before. */
+/** The whole seconds the words have taken so far, from SLOW_SECONDS on, beside the transcribing line: "12 s". Null before. */
 export function slowSeconds(seconds: number): string | null {
   return seconds >= SLOW_SECONDS ? `${Math.floor(seconds)} s` : null;
 }

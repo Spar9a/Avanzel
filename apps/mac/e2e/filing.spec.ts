@@ -33,6 +33,7 @@ import {
   tomorrowAtNine,
   windowFor,
 } from "./helpers.ts";
+import { failingClaude } from "./setup-helpers.ts";
 
 const inbox = (root: string) => filesUnder(root, "inbox");
 /** What each capture waiting in the inbox says. */
@@ -70,9 +71,12 @@ async function editTo(app: ElectronApplication, capsule: Page, words: string): P
   await expect.poll(() => call(app, "draftForTests")).toBe(words);
 }
 
-async function quit(app: ElectronApplication): Promise<void> {
+/** Quits the app and waits until it has gone. `during` acts once the quit has begun, while it waits. */
+async function quit(app: ElectronApplication, during?: () => Promise<void>): Promise<void> {
   const closed = app.waitForEvent("close", { timeout: 30_000 });
+  closed.catch(() => undefined); // reported by the await below; a `during` that fails first must not leave it unheard
   await app.evaluate(({ app: electronApp }) => electronApp.quit()).catch(() => undefined);
+  await during?.();
   await closed;
 }
 
@@ -87,11 +91,13 @@ const SHORT_QUIT_WAIT = { AVANZEL_QUIT_WAIT_MS: "2000" };
  * quitting's wait. `meanwhile` acts in the capsule, then Avanzel quits. The library is let go only
  * after the app has gone, so the app can leave only once the quit wait has run out, and the quit must
  * have taken all of it: REAL_QUIT_WAIT_MS, or the AVANZEL_QUIT_WAIT_MS in `env` (more variables for
- * the app to launch with). Returns what the inbox holds.
+ * the app to launch with). `during` acts once the quit is waiting, as a person can: a second quit, say. Returns what the
+ * inbox holds.
  */
 async function quitWhileHeld(
   meanwhile: (app: ElectronApplication, capsule: Page) => Promise<void>,
   env: Record<string, string> = {},
+  during?: (app: ElectronApplication) => Promise<void>,
 ): Promise<string[]> {
   const library = await makeLibrary();
   const waitMs = Number(env.AVANZEL_QUIT_WAIT_MS ?? REAL_QUIT_WAIT_MS);
@@ -105,7 +111,7 @@ async function quitWhileHeld(
     await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
     await meanwhile(app, capsule);
     const quitting = Date.now();
-    await quit(app);
+    await quit(app, during && (() => during(app)));
     // The library is still held, so only the end of the wait let the app go; 100 ms is slack for a timer's rounding.
     expect(Date.now() - quitting, "the app left before its quit wait ran out").toBeGreaterThanOrEqual(waitMs - 100);
   } finally {
@@ -298,6 +304,29 @@ test("words filed after an edit are saved when the quit wait runs out before the
   expect(words.filter((text) => text.includes("first fix"))).toHaveLength(1);
 });
 
+/** Whether the app is still there to answer: a quit that went ahead has taken it. */
+const stillRunning = (app: ElectronApplication) => call(app, "busy").then(() => true, () => false);
+
+test("a second quit while the first waits for the filing to stop waits for it too", async () => {
+  // The menu's Quit, ⌘Q and Quit and reopen are all app.quit(). A second one is no reason to stop waiting: the filing's
+  // bookkeeping isn't done, and quitWhileHeld checks that the app stayed until the whole wait had run out.
+  await quitWhileHeld(async () => {}, SHORT_QUIT_WAIT, async (app) => {
+    await app.evaluate(({ app: electronApp }) => electronApp.quit()).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await stillRunning(app), "the second quit let the app go before its filing was stopped").toBe(true);
+  });
+});
+
+test("Quit and reopen asked while a quit waits for the filing to stop relaunches nothing: the first quit's choice wins", async () => {
+  // Privacy's Quit and reopen. AVANZEL_TEST=1 relaunches nothing, and relaunchedForTests counts the relaunches that would begin.
+  await quitWhileHeld(async () => {}, SHORT_QUIT_WAIT, async (app) => {
+    expect(await call(app, "relaunchedForTests")).toBe(0);
+    await call(app, "relaunch");
+    expect(await call(app, "relaunchedForTests")).toBe(0);
+    expect(await stillRunning(app), "Quit and reopen let the app go before its filing was stopped").toBe(true);
+  });
+});
+
 test("corrected words that can't be saved yet are saved when Avanzel quits, and the card says so", async () => {
   const { library, app, capsule } = await dictateToStallingAgent("misheard words");
   await editTo(app, capsule, "corrected words");
@@ -319,6 +348,12 @@ test("corrected words that can't be saved yet are saved when Avanzel quits, and 
       message: "Your corrected words weren't saved yet.",
       detail: expect.stringMatching(/^EACCES: permission denied.*\nYour corrected words are saved to your inbox when you quit; the original note is still there\.$/),
     });
+    // The error names two long paths: its line is cut short, so the card, which shows about four lines of its body, shows all of
+    // it, what keeps the words last.
+    const { detail } = (await call(app, "capsuleStateForTests")) as { detail: string };
+    expect(Array.from(detail.split("\n")[0]!).length).toBeLessThanOrEqual(100);
+    expect(detail.split("\n")[0]!.endsWith("…")).toBe(true);
+    expect(await capsule.locator(".detail").evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
     await call(app, "idleForTests"); // nothing left to do: the words are only in memory
   } finally {
     chmodSync(inboxDir, 0o755);
@@ -429,14 +464,17 @@ test("when a symlinked inbox keeps the agent's rewrite, the capsule says where t
   // The blocked line first, then where the words are instead of "safe in the inbox", then what the run left in the
   // library. This library has no git, so those edits have no history to be undone from.
   const captureId = kept!.replace(/\.original\.md$/, "");
-  expect(await call(app, "capsuleStateForTests")).toMatchObject({
-    kind: "error",
-    message: "fake couldn't file this note.",
-    detail:
-      `The agent changed ${captureId}, and Avanzel does not write it back through a symlink in inbox/. ` +
-      `Your words are kept in .avanzel/logs/${kept}, and the inbox holds the agent's version; the evening review will try again. ` +
-      "Its partial edits stay in the library, outside its history, so they can't be undone.",
-  });
+  // The agent's line is longer than the card keeps (100 characters): it is cut, and ends in "…". Where the words are is not.
+  const state = (await call(app, "capsuleStateForTests")) as { detail: string };
+  expect(state).toMatchObject({ kind: "error", message: "fake couldn't file this note." });
+  expect(state.detail).toMatch(
+    new RegExp(
+      `^The agent changed ${captureId}, and Avanzel does not write it back[^.]*… ` +
+        `Your words are kept in \\.avanzel/logs/${kept}, and the inbox holds the agent's version; the evening review will try again\\. ` +
+        "Its partial edits stay in the library, outside its history, so they can't be undone\\.$",
+    ),
+  );
+  expect(state.detail.split("… ")[0]!.length).toBeLessThanOrEqual(100);
   await app.close();
 });
 
@@ -579,6 +617,46 @@ test("a timeout says how long it had", async () => {
     action: "refile:claude",
     actionLabel: "Try again",
   });
+  await app.close();
+});
+
+/** An agent's line of 280 characters that is none of a limit, a sign-in or a timeout: the engine allows 300. */
+const LONG_LINE = `Error: ${"the agent went on about what it could not do and why it could not do it, ".repeat(4)}and then it stopped`.slice(0, 280);
+const SAFE_LATER = "Your note is safe in the inbox; the evening review will try again.";
+
+test("a long line of the agent's is shortened on the card, so the sentence that says what is safe is in view", async () => {
+  // The legacy card shows about four lines of its body: left whole, this line would push the safe sentence out of sight.
+  const { library, app, capsule } = await failedWithClaude(agentStubs({ claude: failingClaude(LONG_LINE) }));
+  const state = (await call(app, "capsuleStateForTests")) as { kind: string; message: string; detail: string };
+  expect(state.message).toBe("Claude Code couldn't file this note.");
+  expect(state.detail.endsWith(SAFE_LATER)).toBe(true);
+  const line = state.detail.slice(0, state.detail.length - SAFE_LATER.length).trimEnd();
+  expect(Array.from(line).length).toBeLessThanOrEqual(100);
+  expect(line.endsWith("…")).toBe(true);
+  expect(line.startsWith("The agent went on about what it could not do")).toBe(true);
+  // The card shows all of its body, the safe sentence last: nothing is cut off by its height.
+  const detail = capsule.locator(".detail");
+  await expect(detail).toHaveText(`${line} ${SAFE_LATER}`);
+  expect(await detail.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
+  expect(inbox(library)).toHaveLength(1);
+  await app.close();
+});
+
+test("a long line of the agent's is shortened in the notification too, when the card is gone", async () => {
+  // The stand-in takes a moment, so the person can close the card before the run fails.
+  const slowlyFailing = `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else sleep 2; echo '${LONG_LINE}' >&2; exit 1; fi`;
+  const { library, app } = await claudeLibrary(agentStubs({ claude: slowlyFailing }));
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  await call(app, "dismiss");
+  await expect.poll(() => call(app, "notificationsForTests"), { timeout: 30_000 }).toHaveLength(1);
+  const [note] = (await call(app, "notificationsForTests")) as { title: string; body: string }[];
+  expect(note!.title).toBe("Claude Code couldn't file this note.");
+  expect(note!.body.endsWith(SAFE_LATER)).toBe(true);
+  const line = note!.body.slice(0, note!.body.length - SAFE_LATER.length).trimEnd();
+  expect(Array.from(line).length).toBeLessThanOrEqual(100);
+  expect(line.endsWith("…")).toBe(true);
+  expect(inbox(library)).toHaveLength(1);
   await app.close();
 });
 
@@ -1332,5 +1410,68 @@ test("a wait whose note another Avanzel filed meanwhile files nothing and says n
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(await capsuleKind(app)).toBe("hidden"); // the card of the failure, which promised the filing, goes: the note is filed
   expect(await waitsOf(app, library)).toEqual([]);
+  await app.close();
+});
+
+// ---- Where the words are made ----
+//
+// The capsule says its words are made on this Mac only when the library's speech does run here. The command in a library's
+// [voice] settings can run anywhere, so for it the capsule says only that the words are made.
+
+/** A library whose speech-to-text is the command in its settings (`true`, which hears nothing), and not the engine's model on this Mac. */
+async function libraryWithSpeechCommand(): Promise<string> {
+  const library = await makeLibrary();
+  const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600 };
+  saveSettings(library, { ...loadSettings(library), voice });
+  return library;
+}
+
+for (const [name, onThisMac] of [["the engine's model", true], ["a command", false]] as const) {
+  test(`while the words are made by ${name}, the capsule says ${onThisMac ? "that it is on this Mac" : "nothing of where"}`, async () => {
+    const library = onThisMac ? await makeLibrary() : await libraryWithSpeechCommand();
+    const app = await launch({
+      AVANZEL_LIBRARY: library,
+      AVANZEL_FAKE_AUDIO: speechWav("hello"),
+      AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
+      AVANZEL_AUDIO_TIMEOUT_MS: "60000",
+    });
+    const capsule = await windowFor(app, "capsule");
+    // The recording's audio is held on its way to main, so the capsule stays on "transcribing" as long as the test reads it.
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler("capsule:audio");
+      ipcMain.handle("capsule:audio", () => undefined);
+    });
+    await call(app, "toggleDictate");
+    await call(app, "toggleDictate");
+    await expect.poll(() => capsuleKind(app)).toBe("transcribing");
+    await expect(capsule.getByText(onThisMac ? "Transcribing on this Mac…" : "Transcribing…", { exact: true })).toBeVisible();
+    expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "transcribing", mode: "dictate", onThisMac });
+    await app.close();
+  });
+
+  test(`once the words are made by ${name}, the filing card says how long they took${onThisMac ? ", on this Mac" : " and not where"}`, async () => {
+    const library = onThisMac ? await makeLibrary() : await libraryWithSpeechCommand();
+    const app = await launch({
+      AVANZEL_LIBRARY: library,
+      AVANZEL_FAKE_AUDIO: speechWav("hello"),
+      AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
+      FAKE_AGENT_DELAY_MS: "20000", // the filing stays on view while the test reads it
+      FAKE_AGENT_DELAY_TASK: "file",
+    });
+    const capsule = await windowFor(app, "capsule");
+    await dictate(app);
+    await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+    await expect(capsule.getByText(onThisMac ? /^Transcribed on this Mac in \d+\.\d seconds$/ : /^Transcribed in \d+\.\d seconds$/)).toBeVisible();
+    expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filing", onThisMac });
+    await app.close();
+  });
+}
+
+test("a typed note says it was typed, whoever would have made its words", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await libraryWithSpeechCommand(), FAKE_AGENT_DELAY_MS: "20000", FAKE_AGENT_DELAY_TASK: "file" });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "submitQuick", "Plant tulips in October");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  await expect(capsule.getByText("Typed note", { exact: true })).toBeVisible();
   await app.close();
 });

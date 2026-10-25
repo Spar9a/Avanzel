@@ -229,11 +229,69 @@ export function remoteMessage(error: unknown): string {
 /** The title of the Notice for a change main refused: what happened. */
 export const CHANGE_NOT_SAVED = "That change wasn't saved.";
 
+/** What the Notice of a change that wasn't saved ends with: nothing was written, so the setting is what it was. */
+export const SETTING_KEPT = "The setting keeps its old value.";
+
+/** The IPC channels that write a setting, and whose settings they are: what "Avanzel can't write to …" names when the disk refuses. */
+const SETTINGS_WRITTEN: Readonly<Record<string, string>> = {
+  "settings:set-app": "Avanzel's settings",
+  "settings:choose-library": "Avanzel's settings", // the library to open is remembered with the app's own
+  "settings:set-library": "the library's settings",
+  "settings:save-task": "the library's settings", // a review is a file of the library
+};
+
+/** `message` without the file a system error names: ", open '/lib/.avanzel/config.toml.1.tmp'" or ", rename '/a.tmp' -> '/a'". */
+const withoutFiles = (message: string): string => message.replace(/,\s+\w+\s+'[^']*'(?:\s+->\s+'[^']*')?/g, "");
+
 /**
- * That Notice's body: why, as main said it, as a sentence. An IPC rejection arrives as "Error invoking remote method
- * 'settings:set-library': Error: EACCES: …"; the prefix and the error's class go (remoteMessage), and what is left is told as
- * an agent's line is (ownLine): without an "Error:" label, with a capital and a full stop. An error with nothing to say adds nothing.
+ * Why a call main refused was refused, in plain words, as a sentence. An IPC rejection arrives as "Error invoking remote
+ * method 'settings:set-library': Error: EACCES: …". A disk that won't take a write is told by what it means: the permission to
+ * write the settings that call wrote (named by its channel), a full disk, a read-only one. Any other message is told as an
+ * agent's line is (`ownLine`: no "Error:" label, a capital, a full stop) after its prefix, its error's class and the file a
+ * system error names go (`remoteMessage`, `withoutFiles`). An error with nothing to say adds nothing.
  */
-export function notSavedLine(error: unknown): string {
-  return ownLine(remoteMessage(error));
+export function plainCause(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const message = remoteMessage(error);
+  switch (/\b(EACCES|EPERM|ENOSPC|EROFS)\b/.exec(message)?.[1]) {
+    case "ENOSPC":
+      return "The disk is full.";
+    case "EROFS":
+      return "The disk is read-only.";
+    case "EACCES":
+    case "EPERM": {
+      const written = SETTINGS_WRITTEN[/^Error invoking remote method '([^']*)'/.exec(raw)?.[1] ?? ""];
+      if (written) return `Avanzel can't write to ${written}.`;
+    }
+  }
+  return ownLine(withoutFiles(message));
 }
+
+/** The body of the Notice of a change that wasn't saved: why (`plainCause`), and that the setting is as it was. */
+export function notSavedLine(error: unknown): string {
+  return [plainCause(error), SETTING_KEPT].filter(Boolean).join(" ");
+}
+
+/**
+ * The Notice for a call main refused. A change that saves a setting (no `title`) is headed CHANGE_NOT_SAVED, and its body says why
+ * and what the setting keeps. Any other call, such as a check or a run, saves nothing, so it has a title of its own, what didn't
+ * happen, and its body tells only why.
+ */
+export function refusedCall(error: unknown, title?: string): { title: string; body: string } {
+  return title === undefined ? { title: CHANGE_NOT_SAVED, body: notSavedLine(error) } : { title, body: plainCause(error) };
+}
+
+/** The title of the Notice for a review that Run now couldn't start. */
+export const reviewNotStarted = (review: string): string => `${review} didn't start.`;
+
+/** The title of the Notice for an agent whose Check was refused. */
+export const agentNotChecked = (agent: string): string => `${agent} couldn't be checked.`;
+
+/** The title of the Notice for the checks the Agents pane makes as it opens, which are of every agent. */
+export const AGENTS_NOT_CHECKED = "The agents couldn't be checked.";
+
+/** The title of the Notice for an Allow… that macOS could not be asked. */
+export const PERMISSION_NOT_ASKED = "Avanzel couldn't ask macOS.";
+
+/** The title of the Notice for a Download, or the Try again of one that failed, that did not start. */
+export const DOWNLOAD_NOT_STARTED = "The download didn't start.";

@@ -284,7 +284,7 @@ test("a download cut half way keeps its part, and Try again continues from it an
   // next try starts from zero, which the card now says.
   await expect.poll(() => modelStatus(app)).toMatchObject({ kind: "error", resumable: false });
   expect(existsSync(part)).toBe(false);
-  await expect(capsule.getByText(/SHA-256.*Try again downloads it again\.$/)).toBeVisible();
+  await expect(capsule.getByText(/silero_vad\.onnx: what arrived was damaged\. Typing works meanwhile, and Try again downloads it again\.$/)).toBeVisible();
   await expect(capsule.getByText(/continues where it stopped/)).toHaveCount(0);
   await app.close();
 });

@@ -163,11 +163,11 @@ function capsuleStates(): [string, CapsuleState, string][] {
   const context = { app: "Safari", title: "Shure MV7+ Podcast Microphone", url: "https://www.shure.com/mv7" };
   return [
     ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null }, "Auto"],
-    ["transcribing", { kind: "transcribing", mode: "dictate" }, "Transcribing on this Mac…"],
-    ["filing", { kind: "filing", text: said, agent: "Claude Code", transcribedIn: 1.4, canEdit: true }, "Filing with Claude Code…"],
+    ["transcribing", { kind: "transcribing", mode: "dictate", onThisMac: true }, "Transcribing on this Mac…"],
+    ["filing", { kind: "filing", text: said, agent: "Claude Code", transcribedIn: 1.4, onThisMac: true, canEdit: true }, "Filing with Claude Code…"],
     [
       "filing, waiting",
-      { kind: "filing", text: said, agent: "Claude Code", transcribedIn: 1.4, canEdit: true, waiting: true },
+      { kind: "filing", text: said, agent: "Claude Code", transcribedIn: 1.4, onThisMac: true, canEdit: true, waiting: true },
       "Waiting for another Avanzel run to finish…",
     ],
     ["editing", { kind: "editing", text: said }, "Edit before filing"],

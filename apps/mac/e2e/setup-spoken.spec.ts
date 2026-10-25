@@ -4,7 +4,7 @@ import { expect, test, type ElectronApplication, type Page } from "@playwright/t
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Vault } from "../../../packages/engine/src/index.ts";
+import { Vault, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import {
   call,
   capsuleKind,
@@ -17,8 +17,9 @@ import {
   snap,
   speechWav,
   throughFound,
+  windowFor,
 } from "./helpers.ts";
-import { closeSetup, inbox, INSTRUCTION, live, NUDGE, pressShortcut, sentToCapsule, watchCapsule, zel } from "./setup-helpers.ts";
+import { closeSetup, inbox, INSTRUCTION, live, NUDGE, pressShortcut, sentToCapsule, setupSnap, THINK, watchCapsule, zel } from "./setup-helpers.ts";
 
 test.afterEach(closeModelHubs);
 
@@ -392,6 +393,42 @@ test("words slow to come say how long they have taken, from 10 s on", async () =
   await expect(setup.getByText(/^1\d s$/)).toBeVisible();
   expect(await live(setup)).toEqual(["Turning your voice into text on this Mac…"]);
   await app.close();
+});
+
+test("the words are made on this Mac, the step says, unless the library's speech is a command that can run anywhere", async () => {
+  for (const command of [false, true]) {
+    const { env, home } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October", AVANZEL_AUDIO_TIMEOUT_MS: "60000" });
+    if (command) {
+      // A library brought from another Mac is there already, and its speech-to-text is the command in its settings.
+      const library = path.join(home, "Avanzel");
+      await Vault.init(library, { git: true });
+      const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600 };
+      saveSettings(library, { ...loadSettings(library), voice });
+    }
+    const app = await launch(env);
+    let setup: Page;
+    if (command) {
+      // Found offers the library that is there: Use this folder, where a new library has Looks good.
+      setup = await windowFor(app, "setup");
+      await setup.getByRole("button", { name: "Set me up" }).click();
+      await expect(setup.getByText("This folder is already an Avanzel library.")).toBeVisible();
+      await expect.poll(async () => (await setupSnap(app)).agent, { timeout: 20_000 }).toBe("claude");
+      await setup.getByRole("button", { name: "Use this folder" }).click();
+      await expect(setup.getByRole("heading", { name: THINK })).toBeVisible({ timeout: 20_000 });
+    } else {
+      setup = await throughFound(app);
+    }
+    // The audio is held on its way from the capsule, so the words take as long as the test likes.
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler("capsule:audio");
+      ipcMain.handle("capsule:audio", () => undefined);
+    });
+    await sayThought(app, setup);
+    await expect(setup.getByText(command ? "Turning your voice into text…" : "Turning your voice into text on this Mac…", { exact: true })).toBeVisible();
+    expect((await setupSnap(app)).thought).toMatchObject({ kind: "transcribing", onThisMac: !command });
+    expect(await live(setup)).toEqual([command ? "Turning your voice into text…" : "Turning your voice into text on this Mac…"]);
+    await app.close();
+  }
 });
 
 test("each moment of the first thought is one short sentence for VoiceOver, never the prompts", async () => {

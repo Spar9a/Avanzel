@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { harnessName } from "../../../main/jobs.ts";
 import { AGENT_INSTALLS, isAgentProblem, type AgentInstall, type HarnessInfo } from "../../../shared/ipc.ts";
 import { agentLine, ownLine } from "../../setup/copy.ts";
+import { agentNotChecked, AGENTS_NOT_CHECKED } from "../copy.ts";
 import { attemptChange, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -148,7 +149,7 @@ export function Agents(props: PaneProps): ReactNode {
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     // Only the free checks, which read a sign-in and never ask the model: a prompt waits for Check.
-    void attemptChange(props, () => api.checkAgents());
+    void attemptChange(props, () => api.checkAgents(), AGENTS_NOT_CHECKED);
     return () => clearTimeout(timer.current);
   }, []);
   // The shell draws this pane only while a library is open, so this only narrows the type. It stands below every hook.
@@ -182,7 +183,7 @@ export function Agents(props: PaneProps): ReactNode {
             onUse={() => void use(agent.name)}
             onCheck={async () => {
               setAsked((last) => new Set(last).add(agent.name));
-              await attemptChange(props, () => api.checkAgent(agent.name));
+              await attemptChange(props, () => api.checkAgent(agent.name), agentNotChecked(harnessName(agent.name)));
             }}
             onCopy={copy}
           />

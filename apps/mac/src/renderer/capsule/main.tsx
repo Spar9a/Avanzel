@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
 import type { AvanzelBridge, CapsuleState, FiledPage } from "../../shared/ipc.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
+import { transcribedLine, transcribingLine } from "../../shared/transcribing.ts";
 import { Recorder } from "./recorder.ts";
 import "./styles.css";
 
@@ -114,7 +115,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
       return (
         <div className="hud capsule" role="status">
           <span className="spin" />
-          <span>Transcribing on this Mac…</span>
+          <span>{transcribingLine(state.onThisMac)}</span>
         </div>
       );
     case "filing":
@@ -126,7 +127,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
           <p className="said">“{state.text}”</p>
           {state.detail && <p className="detail">{state.detail}</p>}
           <div className="foot">
-            <span>{state.transcribedIn === null ? "Typed note" : `Transcribed on this Mac in ${state.transcribedIn.toFixed(1)} seconds`}</span>
+            <span>{state.transcribedIn === null ? "Typed note" : transcribedLine(state.transcribedIn, state.onThisMac)}</span>
             {state.canEdit && <button className="btn" onClick={() => api.edit()}>Edit</button>}
           </div>
         </div>

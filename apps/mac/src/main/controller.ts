@@ -64,7 +64,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { isSettingsPane, NOTE_GONE, noSuchReview } from "../shared/ipc.ts";
+import { isSettingsPane, noSuchReview } from "../shared/ipc.ts";
 import {
   correctedWordsProblem,
   filingProblem,
@@ -144,6 +144,10 @@ const AUDIO_TIMEOUT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env
 const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PREPARING_SHOW_MS)) || 8_000;
 // How long the capsule says that a shortcut picked on its notice works.
 const PICKED_SHOW_MS = 3_000;
+// How many characters of an agent's own line (or of the error's lines, on the card of corrected words that weren't saved) the
+// capsule's failure card, and the notification of the same words, keep: the legacy card shows about four lines of its body, and
+// the sentence that says what is safe must not be among those it cuts off. The windows don't clip, and tell the whole line.
+const CAPSULE_LINE_MAX = 100;
 
 /** How long quitting waits for stopped agent runs: QUIT_WAIT_MS, or in tests the positive number of ms in AVANZEL_QUIT_WAIT_MS. */
 function quitWaitMs(): number {
@@ -316,7 +320,7 @@ export class Controller {
   private readonly spawned: string[] = [];
   /** Quit and reopen was asked (`relaunch`), and the quit it began may still be waiting for a filing to stop. */
   private relaunching = false;
-  /** How many times Quit and reopen was asked while AVANZEL_TEST=1, which relaunches nothing: for the e2e tests only. */
+  /** How many relaunches Quit and reopen began while AVANZEL_TEST=1, which relaunches nothing: for the e2e tests only. */
   private relaunched = 0;
 
   constructor(userData: string) {
@@ -774,6 +778,19 @@ export class Controller {
     return !!process.env.AVANZEL_FAKE_TRANSCRIPT || this.model.kind === "ready";
   }
 
+  /**
+   * Whether the open library's speech becomes words on this Mac, which the capsule and setup then say. The engine's own model
+   * does, and so does the default a library whose settings can't be read would have; the command in a library's [voice]
+   * settings can run anywhere, so for it the words say only that they are made.
+   */
+  private transcribesOnThisMac(): boolean {
+    try {
+      return (this.vault ? loadSettings(this.vault.root) : defaultSettings()).voice.backend !== "command";
+    } catch {
+      return true;
+    }
+  }
+
   private async startRecording(mode: CapsuleMode, shot?: Recording["shot"]): Promise<void> {
     if (mode === "dictate" && !(await this.readyToListen())) return;
     if (this.recording) {
@@ -815,8 +832,9 @@ export class Controller {
     recording.stopping = true;
     clearTimeout(recording.maxTimer);
     globalShortcut.unregister("Escape");
-    this.setCapsule({ kind: "transcribing", mode: recording.mode });
-    this.setup.moveThought(recording, { kind: "transcribing", startedAt: Date.now() });
+    const onThisMac = this.transcribesOnThisMac();
+    this.setCapsule({ kind: "transcribing", mode: recording.mode, onThisMac });
+    this.setup.moveThought(recording, { kind: "transcribing", startedAt: Date.now(), onThisMac });
     this.capsuleCommand("stop");
     this.clearAudioTimeout();
     this.audioTimeout = setTimeout(() => {
@@ -1023,6 +1041,7 @@ export class Controller {
       text: job.text,
       agent: job.agent,
       transcribedIn: job.transcribedIn,
+      onThisMac: this.transcribesOnThisMac(),
       canEdit: true,
       ...(job.detail ? { detail: job.detail } : {}),
       ...(job.waiting ? { waiting: true } : {}),
@@ -1099,10 +1118,10 @@ export class Controller {
     // Edit takes back what this run did (`refile`), and so does Cancel in setup (`cancelSetupFiling`).
     if (job.edited || job.cancelled || this.quitting) return;
     const seconds = (performance.now() - started) / 1000;
-    // No outcome at all: the capture left the inbox while the run waited for the library, and another Avanzel filed it. Setup
-    // says so, in its window or its notification; for anything else there is nothing left to do, as when the note was gone
-    // before the run's turn. The agent didn't stop without filing: its card would say that, and that the note is in the inbox.
-    if (!outcome) return job.setup ? this.filingFailed(job, NOTE_GONE) : this.noteGone(job);
+    // No outcome at all: the capture left the inbox while the run waited for the library, and another Avanzel filed it. As when
+    // the note was gone before the run's turn, setup's window says so while it is open, and there is nothing else to tell: the
+    // agent didn't stop without filing, and its card or notification would say that, and that the note is in the inbox.
+    if (!outcome) return this.noteGone(job);
     if (!outcome.ok) return this.filingFailed(job, outcome.error || outcome.message || "The agent stopped without filing.", outcome);
     const vault = this.requireVault();
     job.pages = filedPages(vault.root, outcome.changes);
@@ -1131,19 +1150,20 @@ export class Controller {
    * filing or, when a wait's or the watch's filing in the background finds the card of the note's earlier failure still up
    * (`cardCapture`), that card, replaced: left as it is, it would promise what is not so now. With no card of the note, a
    * notification says the same. Setup's window tells it in its own, with the failure and what the run left behind
-   * (`setup.failed`): setup starts no wait and no watch, so it says to try again. A note gone from the inbox has no failure to
-   * tell. What the words promise of a usage limit or a missing sign-in, the app then does (`keepPromise`).
+   * (`setup.failed`): setup starts no wait and no watch, so it says to try again. A note gone from the inbox is no failure
+   * (`noteGone`). What the words promise of a usage limit or a missing sign-in, the app then does (`keepPromise`).
    */
   private filingFailed(job: FilingJob, error: unknown, outcome?: FileOutcome): void {
     const harness = this.failedHarness(job.harness, error);
     const failure = this.agentFailure(harness, error, outcome?.failure ?? null);
     const partial = leftBehind(outcome);
-    if (this.setup.owns(job)) return this.setup.failed(job, error === NOTE_GONE ? null : failure, partial);
+    if (this.setup.owns(job)) return this.setup.failed(job, failure, partial);
     const now = new Date();
     const options: FilingProblemOptions = {
       ...(outcome?.savedOriginal ? { where: outcome.savedOriginal } : {}),
       partial,
       eveningReview: this.eveningReviewOn(),
+      lineMax: CAPSULE_LINE_MAX, // the card is the legacy one, which clips its body; so is the notification's twin of it
     };
     // A note that the watch filed and that still can't sign in is left to the evening review: no watch follows it.
     const outAgain = job.background?.by === "watch" && failure.kind === "signin";
@@ -1569,7 +1589,7 @@ export class Controller {
    * gets a notification with the same words. `originalKept`: the note they correct is still in the inbox.
    */
   private correctedWordsNotSaved(job: FilingJob, error: unknown, originalKept: boolean): void {
-    const problem = correctedWordsProblem(lastLines(errorMessage(error)), originalKept);
+    const problem = correctedWordsProblem(lastLines(errorMessage(error)), originalKept, CAPSULE_LINE_MAX);
     if (this.job === job && this.capsuleState.kind === "filing") this.fail(problem.title, problem.body);
     else this.notify(problem.title, problem.body);
     this.refreshMenu();
@@ -1793,16 +1813,17 @@ export class Controller {
   /**
    * Quit and reopen, on Privacy's screen row: macOS applies a Screen Recording grant only when the app starts again. It quits
    * as anywhere does (`before-quit`, index.ts), so a filing under way is stopped first; its note stays in the inbox, which is
-   * safe. Asked again while that quit waits for the filing to stop, it does nothing: Avanzel opens once. With AVANZEL_TEST=1
-   * nothing quits or relaunches, and relaunchedForTests counts the asks.
+   * safe. The first quit's choice wins: asked again while that quit waits for the filing to stop, it does nothing, so Avanzel
+   * opens once; and asked while a plain Quit waits, it does nothing either, so Avanzel doesn't come back after the person
+   * chose to quit. With AVANZEL_TEST=1 nothing quits or relaunches, and relaunchedForTests counts the relaunches that would begin.
    */
   relaunch(): void {
+    if (this.relaunching || this.quitting) return;
+    this.relaunching = true;
     if (process.env.AVANZEL_TEST === "1") {
       this.relaunched += 1;
       return;
     }
-    if (this.relaunching) return;
-    this.relaunching = true;
     app.relaunch();
     app.quit();
   }
@@ -2764,7 +2785,7 @@ export class Controller {
     return this.opened;
   }
 
-  /** How many times Quit and reopen was asked; the app relaunches nothing with AVANZEL_TEST=1, which only counts. */
+  /** How many relaunches Quit and reopen began; the app relaunches nothing with AVANZEL_TEST=1, which only counts. */
   relaunchedForTests(): number {
     return this.relaunched;
   }

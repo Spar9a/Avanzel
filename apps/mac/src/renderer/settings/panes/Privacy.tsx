@@ -4,7 +4,7 @@
 import { Button, Group, GroupRow, Row, Stack, Text } from "@avanzel/ui";
 import type { ReactNode } from "react";
 import type { PermissionStatus } from "../../../shared/ipc.ts";
-import { leavesThisMacLine } from "../copy.ts";
+import { leavesThisMacLine, PERMISSION_NOT_ASKED } from "../copy.ts";
 import { attemptChange, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -36,7 +36,13 @@ function PermissionRow({ kind, label, description, status, onChange, attempt }: 
         {status === "granted" ? (
           <Text variant="footnote" tone="ok">Allowed</Text>
         ) : kind === "microphone" && status === "not-determined" ? (
-          <Button size="small" variant="secondary" onClick={() => attemptChange({ onChange, attempt }, () => api.requestPermission("microphone"))}>Allow…</Button>
+          <Button
+            size="small"
+            variant="secondary"
+            onClick={() => attemptChange({ onChange, attempt }, () => api.requestPermission("microphone"), PERMISSION_NOT_ASKED)}
+          >
+            Allow…
+          </Button>
         ) : (
           <Row gap={8}>
             <Button size="small" variant="secondary" onClick={() => api.openPrivacy(kind)}>Open System Settings</Button>

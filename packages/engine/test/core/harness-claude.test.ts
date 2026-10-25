@@ -117,11 +117,22 @@ describe("runHeadless with Claude Code", () => {
 
   it("a run that takes too long, or is cancelled, keeps the rate limit it had seen", async () => {
     const allowed = { status: "allowed", resetsAt: 1792532400000 };
-    onPath(`${print(rateLimitEvent("allowed", 1792532400))}; /bin/sleep 30`);
-    expect(await runClaude({ timeoutSeconds: 1 })).toMatchObject({ exitCode: 124, rateLimit: allowed });
+    // The step comes after the event, so the event has been read when the step is handed over. Both runs are ended then, by
+    // the step and not by a clock that started when the stand-in did: a Mac under load can start it late enough for a real 1 s
+    // limit to run out before it has printed anything, and the run then has no rate limit to keep.
+    const withStep = `${print(rateLimitEvent("allowed", 1792532400), readEvent("/lib/index.md"), readDone)}; /bin/sleep 30`;
 
-    // The step comes after the event, so the event has been read when the run is cancelled.
-    onPath(`${print(rateLimitEvent("allowed", 1792532400), readEvent("/lib/index.md"), readDone)}; /bin/sleep 30`);
+    // The run's own limit is run out at once, by moving its timer on (only its timers; the stand-in is a real process).
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      onPath(withStep);
+      const timedOut = await runClaude({ timeoutSeconds: 1, onStep: () => void vi.advanceTimersByTime(1000) });
+      expect(timedOut).toMatchObject({ exitCode: 124, stderr: "claude timed out after 1s", rateLimit: allowed });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    onPath(withStep);
     const controller = new AbortController();
     const cancelled = await runClaude({ signal: controller.signal, onStep: () => controller.abort() });
     expect(cancelled).toMatchObject({ exitCode: 130, rateLimit: allowed });

@@ -4,7 +4,7 @@ import { expect, test, type ElectronApplication, type Page } from "@playwright/t
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Vault } from "../../../packages/engine/src/index.ts";
+import { Vault, loadSettings } from "../../../packages/engine/src/index.ts";
 import {
   call,
   capsuleKind,
@@ -20,6 +20,7 @@ import {
   speechWav,
   throughFound,
   typeFirstThought,
+  windowFor,
 } from "./helpers.ts";
 import {
   callsTo,
@@ -361,9 +362,12 @@ test("a filing that asks to sign in names it and offers Open Terminal", async ()
   await expect(notice).toContainText("Run claude once in Terminal and sign in, then try again. Your note is safe in the inbox.");
   await expect(notice.getByText("claude", { exact: true })).toBeVisible(); // the command, set as code
   await expect(notice.locator("code")).toHaveText("claude");
-  const tryAgain = notice.getByRole("button", { name: "Try again", exact: true });
-  await expect(tryAgain).toHaveAttribute("data-variant", "primary");
-  await expect(notice.getByRole("button")).toHaveText(["Open Terminal", "Try again"]);
+  // The fix is Open Terminal: the moment's one primary, and last in the row, as the Ask window has it. Try again, which would
+  // only fail again until the person has signed in, is secondary.
+  await expect(notice.getByRole("button")).toHaveText(["Try again", "Open Terminal"]);
+  await expect(notice.getByRole("button", { name: "Open Terminal", exact: true })).toHaveAttribute("data-variant", "primary");
+  await expect(notice.getByRole("button", { name: "Try again", exact: true })).toHaveAttribute("data-variant", "secondary");
+  await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Open Terminal"]);
   await expect(setup.getByRole("button", { name: "Continue" })).toHaveAttribute("data-variant", "secondary");
   await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
   await expect(zel(setup)).toHaveAttribute("data-mood", "needs-you");
@@ -442,6 +446,60 @@ test("a failed filing that left edits behind says where they are kept", async ()
   ).toBeVisible();
   expect((await setupSnap(app)).filing).toMatchObject({ kind: "failed", partial: "commit", failure: { kind: "other", agent: "Claude Code" } });
   expect(inbox(path.join(home, "Avanzel"))).toHaveLength(1);
+  await app.close();
+});
+
+test("a filing whose agent has gone offers Open Settings, the moment's primary, and not Try again", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  // Found chose Claude Code and saved it as the library's agent; it is uninstalled before the thought is filed.
+  expect(loadSettings(library).harness).toBe("claude");
+  rmSync(path.join(env.PATH!.split(":")[0]!, "claude"));
+  await typeFirstThought(setup, "Plant tulips in October");
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code isn't installed on this Mac any more.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(
+    notice.getByText("Your note is safe in the inbox. Settings → Agents can choose another agent, or has its install command.", { exact: true }),
+  ).toBeVisible();
+  // Trying again would only fail again until another agent is chosen: the fix is Settings → Agents.
+  await expect(notice.getByRole("button")).toHaveText(["Open Settings"]);
+  await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Open Settings"]);
+  await expect(setup.getByRole("button", { name: "Try again" })).toHaveCount(0);
+  await expect(setup.getByRole("button", { name: "Continue" })).toHaveAttribute("data-variant", "secondary");
+  expect(inbox(library)).toHaveLength(1);
+  await snap(setup, "setup-filing-gone");
+  await notice.getByRole("button", { name: "Open Settings", exact: true }).click();
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("radio", { name: "Agents", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(setup.getByRole("alert")).toBeVisible(); // setup stays where it was
+  await app.close();
+});
+
+test("a note that left the inbox after setup's window closed says nothing of a failed filing", async () => {
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch(env);
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  // Another Avanzel run has the library: this test holds its lock, and the filing waits for it.
+  let letGo = () => {};
+  const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
+  try {
+    await typeFirstThought(setup, "Plant tulips in October");
+    await expect(setup.getByText("Waiting for another Avanzel run to finish…", { exact: true })).toBeVisible({ timeout: 30_000 });
+    // The window closes, and the filing goes on without it. Meanwhile the note leaves the inbox, as when another Avanzel files it.
+    await closeSetup(app);
+    for (const name of inbox(library)) rmSync(path.join(library, "inbox", name));
+  } finally {
+    letGo();
+    await held;
+  }
+  await call(app, "idleForTests");
+  // Nothing failed, and there are no words to be safe in the inbox: no card and no notification, as for any note found gone.
+  expect(await call(app, "notificationsForTests")).toEqual([]);
+  expect(await capsuleKind(app)).toBe("hidden");
+  expect(await call(app, "cardCaptureForTests")).toBeNull();
   await app.close();
 });
 

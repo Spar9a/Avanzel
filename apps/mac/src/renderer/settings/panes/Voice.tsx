@@ -6,7 +6,7 @@ import { ACTION_NAMES, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { ModelStatus, Shortcuts } from "../../../shared/ipc.ts";
 import { downloadFailedProblem } from "../../../shared/problems.ts";
 import { passesThrough, toAccelerator } from "../accelerator.ts";
-import { asSentence, microphoneName, microphoneOptions, speechModelLine, type InputDevice } from "../copy.ts";
+import { asSentence, DOWNLOAD_NOT_STARTED, microphoneName, microphoneOptions, speechModelLine, type InputDevice } from "../copy.ts";
 import { attemptChange, ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -150,7 +150,7 @@ export function Voice(props: PaneProps): ReactNode {
     };
   }, [recording, snap, onChange, attempt]);
 
-  const download = () => attemptChange(props, () => api.downloadModel());
+  const download = () => attemptChange(props, () => api.downloadModel(), DOWNLOAD_NOT_STARTED);
   return (
     <Stack gap={20}>
       <Group label="Shortcuts" note="They work in every app.">

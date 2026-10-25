@@ -359,6 +359,14 @@ async function hashInto(hash: Hash, path: string, length: number): Promise<void>
 class WrongBytes extends Error {}
 
 /**
+ * A size as a person reads it in a failure's reason: megabytes (a million bytes each) with one decimal, and never less than
+ * 0.1, which a file too small for one decimal would otherwise read as. 2,327,524 bytes are "2.3".
+ */
+function megabytes(bytes: number): string {
+  return Math.max(0.1, Math.round(bytes / 1e5) / 10).toFixed(1);
+}
+
+/**
  * What a failure's cause says, in words: its message; else, for an AggregateError, which has none of its own (undici throws
  * one when a host has several addresses, `localhost` as ::1 and 127.0.0.1 say, and each of them failed), the first of its
  * errors' that has one; else its code ("ECONNREFUSED"). Empty when it says nothing.
@@ -451,7 +459,7 @@ async function fetchFile(
         async function* (chunks: AsyncIterable<Uint8Array>) {
           for await (const chunk of chunks) {
             // Not a byte more than the file has goes to the disk, whatever the server keeps sending.
-            if (received + chunk.length > size) throw new WrongBytes(`got more than the ${size} bytes expected`);
+            if (received + chunk.length > size) throw new WrongBytes(`got more than the ${megabytes(size)} MB expected`);
             hash.update(chunk);
             received += chunk.length;
             progress(received);
@@ -466,9 +474,9 @@ async function fetchFile(
       await file.close();
     }
     const written = (await stat(part)).size; // what reached the disk, whatever came over the network
-    if (written > size) throw new WrongBytes(`got ${written} bytes, more than the ${size} expected`);
-    if (written < size) throw new Error(`got ${written} of ${size} bytes`);
-    if (hash.digest("hex") !== sha256) throw new WrongBytes("the SHA-256 of what arrived is not the expected one");
+    if (written > size) throw new WrongBytes(`got more than the ${megabytes(size)} MB expected`);
+    if (written < size) throw new Error(written === 0 ? "nothing arrived" : `only ${megabytes(written)} of ${megabytes(size)} MB arrived`);
+    if (hash.digest("hex") !== sha256) throw new WrongBytes("what arrived was damaged");
     await rename(part, target);
   } catch (error) {
     if (signal?.aborted) {

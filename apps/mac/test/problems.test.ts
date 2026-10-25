@@ -191,6 +191,77 @@ describe("filingProblem: any other failure", () => {
   });
 });
 
+describe("filingProblem: a long line of the agent's, for the capsule's card", () => {
+  // The engine's errorLine allows a line 300 characters long; the capsule's card shows about four lines of its body.
+  const long = `Error: ${"the agent went on about what it could not do and why it could not do it, ".repeat(4)}and then it stopped`;
+  const safe = `${SAFE}; ${LATER}`;
+  /** The agent's line in a body that ends with `safe`: what comes before it. */
+  const lineOf = (body: string) => body.slice(0, body.length - safe.length).trimEnd();
+
+  it("is kept whole in the windows, which don't clip", () => {
+    expect(long.length).toBeGreaterThan(300);
+    const body = filingProblem(failure({ line: long.slice(0, 300) }), now).body;
+    expect(lineOf(body).length).toBeGreaterThan(290);
+    expect(body.endsWith(safe)).toBe(true);
+  });
+
+  it("is shortened to about the length asked, at a word, and ends in an ellipsis, so what is safe is still said", () => {
+    const { title, body } = filingProblem(failure({ line: long.slice(0, 300) }), now, { lineMax: 100 });
+    expect(title).toBe("Claude Code couldn't file this note.");
+    expect(body.endsWith(safe)).toBe(true);
+    const line = lineOf(body);
+    expect(Array.from(line).length).toBeLessThanOrEqual(100);
+    expect(Array.from(line).length).toBeGreaterThan(60);
+    expect(line.endsWith("…")).toBe(true);
+    expect(line).not.toMatch(/\s…$/); // no space left before the ellipsis
+    expect(line.startsWith("The agent went on about what it could not do")).toBe(true);
+    // At a word: the cut text is the start of the whole line's words.
+    const whole = filingProblem(failure({ line: long.slice(0, 300) }), now).body;
+    const words = line.slice(0, -1);
+    expect(whole.startsWith(words)).toBe(true);
+    expect(whole.charAt(words.length)).toMatch(/[\s,]/);
+  });
+
+  it("leaves a line that fits alone, with its full stop", () => {
+    expect(filingProblem(failure({ line: "Error: boom" }), now, { lineMax: 100 }).body).toBe(`Boom. ${safe}`);
+    const exact = "x".repeat(99);
+    expect(lineOf(filingProblem(failure({ line: exact }), now, { lineMax: 100 }).body)).toBe(`X${"x".repeat(98)}.`);
+  });
+
+  it("cuts a line that is one long word at the character, and never splits a character in two", () => {
+    const word = "💥".repeat(150);
+    const line = lineOf(filingProblem(failure({ line: word }), now, { lineMax: 100 }).body);
+    expect(Array.from(line)).toHaveLength(100);
+    expect(line.endsWith("…")).toBe(true);
+    expect(Array.from(line).slice(0, 99).every((char) => char === "💥")).toBe(true);
+  });
+
+  it("keeps the rest of the body: the partial edits, the owner's words kept aside, and the review being off", () => {
+    const line = long.slice(0, 300);
+    expect(filingProblem(failure({ line }), now, { lineMax: 100, partial: "commit" }).body).toMatch(
+      new RegExp(`… ${SAFE}; ${LATER} Claude Code's partial edits are kept as their own commit in the library's history\\.$`),
+    );
+    expect(filingProblem(failure({ line }), now, { lineMax: 100, where: KEPT }).body).toMatch(new RegExp(`… ${ASIDE}; ${LATER}$`));
+    expect(filingProblem(failure({ line }), now, { lineMax: 100, eveningReview: false }).body).toMatch(new RegExp(`… ${SAFE}\\.$`));
+  });
+
+  it("tells Avanzel's own line whole: it says what to mend, and it is not an agent going on", () => {
+    // The library's settings file can't be read: the path comes first, and what is wrong comes after it.
+    const line = "/Users/ana/Avanzel/.avanzel/config.toml: invalid TOML at line 2, column 17: incomplete key-value declaration, expected a value";
+    expect(line.length).toBeGreaterThan(100);
+    const own = failure({ agent: "Avanzel", command: null, line });
+    expect(filingProblem(own, now, { lineMax: 100 })).toEqual(filingProblem(own, now));
+    expect(filingProblem(own, now, { lineMax: 100 }).body).toBe(`${line}. ${safe}`);
+  });
+
+  it("changes nothing for a failure that has no line of the agent's to tell", () => {
+    for (const kind of ["limit", "signin", "timeout", "gone", "missing"] as const) {
+      const f = failure({ kind, line: long.slice(0, 300), resetsAt: on(0, 15) });
+      expect(filingProblem(f, now, { lineMax: 100 }), kind).toEqual(filingProblem(f, now));
+    }
+  });
+});
+
 describe("filingProblem: partial edits and the owner's words", () => {
   it("a commit holds the partial edits: the agent is named, and the history keeps them", () => {
     expect(filingProblem(failure(), now, { partial: "commit" }).body).toBe(
@@ -240,6 +311,21 @@ describe("correctedWordsProblem", () => {
     expect(correctedWordsProblem("EACCES: permission denied", false).body).toBe(
       "EACCES: permission denied\nYour corrected words are saved to your inbox when you quit.",
     );
+  });
+
+  it("shortens a long error line when asked, for a card that clips, so what keeps the words is still said", () => {
+    const lines =
+      "EACCES: permission denied, rename '/Users/ana/Avanzel/inbox/2026-10-26-032519-misheard-words.md' -> '/Users/ana/Avanzel/inbox/.2026-10-26-032519-misheard-words.md.editing'";
+    const kept = "Your corrected words are saved to your inbox when you quit; the original note is still there.";
+    const [first, ...rest] = correctedWordsProblem(lines, true, 100).body.split("\n");
+    expect(Array.from(first!).length).toBeLessThanOrEqual(100);
+    expect(Array.from(first!).length).toBeGreaterThan(60);
+    expect(first!.endsWith("…")).toBe(true);
+    expect(first!.startsWith("EACCES: permission denied, rename '/Users/ana/Avanzel/inbox/")).toBe(true);
+    expect(rest).toEqual([kept]);
+    // The windows keep it whole, as does a card with a line that fits.
+    expect(correctedWordsProblem(lines, true).body).toBe(`${lines}\n${kept}`);
+    expect(correctedWordsProblem("EACCES: permission denied", true, 100).body).toBe(`EACCES: permission denied\n${kept}`);
   });
 });
 
@@ -492,6 +578,13 @@ describe("the copy rules, for every problem a filing can have", () => {
       }
     }
   }
+  // The capsule's card shortens an agent's long line, and tells the rest by the same rules.
+  const longLine = `Error: ${"the agent went on about what it could not do and why it could not do it, ".repeat(4)}and then it stopped`;
+  for (const lineMax of [40, 100]) {
+    for (const partial of [null, "commit", "uncommitted"] as const) {
+      problems.push(filingProblem(failure({ line: longLine }), now, { lineMax, partial }), filingProblem(failure({ line: longLine }), now, { lineMax, where: KEPT, eveningReview: false }));
+    }
+  }
   // The corrected words' card is a problem of its own, and tells itself by the same rules, as do the refused undos.
   problems.push(correctedWordsProblem("EACCES: permission denied, open 'inbox/a.md'", true), correctedWordsProblem("EACCES: permission denied", false));
   problems.push(undoRefused, takeBackRefused, ...[true, false].flatMap((inInbox) => [true, false].map((review) => takeBackRefusedProblem(inInbox, review))));
@@ -555,7 +648,7 @@ describe("the copy rules, for every problem a filing can have", () => {
 });
 
 describe("downloadFailedProblem", () => {
-  const REASON = "Could not download silero_vad.onnx: got 1163762 of 2327524 bytes";
+  const REASON = "Could not download silero_vad.onnx: only 1.2 of 2.3 MB arrived";
   const TITLE = "The speech model didn't finish downloading.";
 
   it("says why, and that Try again continues where it stopped, when part of it was kept", () => {

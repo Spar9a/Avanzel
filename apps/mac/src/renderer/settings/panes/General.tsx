@@ -37,7 +37,7 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
               {snap.opensInObsidian && (
                 <Button size="small" variant="secondary" onClick={() => api.openLibrary()}>Open in Obsidian</Button>
               )}
-              <Button size="small" variant="quiet" onClick={() => attemptChange(props, () => api.chooseLibrary())}>Change…</Button>
+              <Button size="small" variant="secondary" onClick={() => attemptChange(props, () => api.chooseLibrary())}>Change…</Button>
             </Row>
           </GroupRow>
           {/* The shelves, in the library's panel under its row: a row holds a label and a control, not a line of tabs, so

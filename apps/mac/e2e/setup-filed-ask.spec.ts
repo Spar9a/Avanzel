@@ -1,7 +1,7 @@
 // The setup window's Filed and Ask steps: the first filing's stamp, proof and Undo, and a question about the new page.
 // Every test launches as a first run (firstRun) whose stand-in Claude Code files (filingClaude).
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { git, Vault } from "../../../packages/engine/src/index.ts";
 import {
@@ -17,6 +17,7 @@ import {
   stubOpening,
   throughFound,
   typeFirstThought,
+  windowFor,
 } from "./helpers.ts";
 import { callsTo, closeSetup, FILED, filedFirstThought, inbox, setupSnap, sideways, tabs, zel } from "./setup-helpers.ts";
 
@@ -369,8 +370,11 @@ test("an answer that hits a usage limit says so, and that the library hasn't cha
   await expect(notice.getByText("Claude Code has hit its usage limit.", { exact: true })).toBeVisible({ timeout: 30_000 });
   // The agent named no reset, so none is said.
   await expect(notice.getByText("Your library hasn't changed.", { exact: true })).toBeVisible();
-  // The step keeps its own buttons: the suggestion asks again, and Skip is the way on.
-  await expect(notice.getByRole("button")).toHaveCount(0);
+  // The Notice offers the Ask window's one fix, Ask again, the moment's primary; the step keeps its own: the suggestion asks
+  // again too, and Skip is the way on.
+  await expect(notice.getByRole("button")).toHaveText(["Ask again"]);
+  await expect(notice.getByRole("button", { name: "Ask again", exact: true })).toHaveAttribute("data-variant", "primary");
+  await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Ask again"]);
   await expect(askThis(setup)).toBeVisible();
   await expect(setup.getByRole("button", { name: "Skip" })).toBeVisible();
   expect((await setupSnap(app)).answer).toMatchObject({ kind: "failed", changedFiles: 0, failure: { kind: "limit", agent: "Claude Code", resetsAt: null } });
@@ -384,7 +388,60 @@ test("an answer that fails for a sign-in names what to run, as code", async () =
   await expect(notice.getByText("Claude Code isn't signed in on this Mac.", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(notice).toContainText("Your library hasn't changed. Run claude once in Terminal and sign in, then ask again.");
   await expect(notice.locator("code")).toHaveText("claude");
+  // Open Terminal is the fix, so it is the moment's one primary and comes last; Ask again, which would only fail again until the
+  // person has signed in, is secondary.
+  await expect(notice.getByRole("button")).toHaveText(["Ask again", "Open Terminal"]);
+  await expect(notice.getByRole("button", { name: "Open Terminal", exact: true })).toHaveAttribute("data-variant", "primary");
+  await expect(notice.getByRole("button", { name: "Ask again", exact: true })).toHaveAttribute("data-variant", "secondary");
+  await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Open Terminal"]);
   await snap(setup, "setup-ask-failed-signin");
+  expect(await call(app, "openedForTests")).toEqual([]);
+  await notice.getByRole("button", { name: "Open Terminal", exact: true }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["Terminal"]); // Terminal itself stays shut under test
+  await app.close();
+});
+
+test("Ask again asks the question that failed once more, whoever wrote it, and leaves what is typed be", async () => {
+  const { app, setup } = await onAsk(firstRun({ claude: failingAnswers("Error: boom") }).env);
+  const field = setup.getByRole("textbox", { name: "Ask your library" });
+  // A question of the person's own: Return asks it and empties the box, so only the Notice's button can ask it again.
+  await field.fill("Where are the bulbs?");
+  await field.press("Enter");
+  await expect(field).toHaveValue("");
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code couldn't answer.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(notice.getByRole("button")).toHaveText(["Ask again"]);
+  await expect(notice.getByRole("button", { name: "Ask again", exact: true })).toHaveAttribute("data-variant", "primary");
+  expect(await questionsAsked(app)).toBe(1);
+  // What the person types meanwhile stays in the box, and the focus goes there as the question is asked again.
+  await field.fill("And the pots");
+  await notice.getByRole("button", { name: "Ask again", exact: true }).click();
+  await expect.poll(() => questionsAsked(app), { timeout: 30_000 }).toBe(2);
+  await expect(field).toBeFocused();
+  await expect(field).toHaveValue("And the pots");
+  await expect.poll(async () => (await setupSnap(app)).answer, { timeout: 30_000 }).toMatchObject({ kind: "failed", question: "Where are the bulbs?" });
+  await expect(notice.getByText("Claude Code couldn't answer.", { exact: true })).toBeVisible();
+  await expect(setup.getByRole("article")).toContainText("Where are the bulbs?");
+  await app.close();
+});
+
+test("when the library's agent has gone, a failed question offers Open Settings, the moment's primary, and not Ask again", async () => {
+  const { env } = firstRun({ claude: filingClaude() });
+  const { app, setup } = await onAsk(env);
+  rmSync(path.join(env.PATH!.split(":")[0]!, "claude")); // Claude Code, the library's agent, is uninstalled after the filing
+  await askThis(setup).click();
+  const notice = setup.getByRole("alert");
+  await expect(notice.getByText("Claude Code isn't installed on this Mac any more.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(
+    notice.getByText("Your library hasn't changed. Settings → Agents can choose another agent, or has its install command.", { exact: true }),
+  ).toBeVisible();
+  // Asking again would only fail again until another agent is chosen: the fix is Settings → Agents.
+  await expect(notice.getByRole("button")).toHaveText(["Open Settings"]);
+  await expect(notice.getByRole("button", { name: "Open Settings", exact: true })).toHaveAttribute("data-variant", "primary");
+  await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Open Settings"]);
+  await notice.getByRole("button", { name: "Open Settings", exact: true }).click();
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("radio", { name: "Agents", exact: true })).toHaveAttribute("aria-checked", "true");
   await app.close();
 });
 

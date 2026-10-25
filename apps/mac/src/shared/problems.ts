@@ -111,11 +111,33 @@ export interface FilingProblemOptions {
   after?: "wait" | "retry";
   /** Whether the library's evening review is on. Off, a body that would end with its promise ends at "Your note is safe in the inbox." */
   eveningReview?: boolean;
+  /**
+   * The most characters of the agent's own line the body keeps, for a card that clips what it shows (the capsule's, and the
+   * notification that tells the same words): a longer line is cut at a word and ends in "…", so the sentence that says what is
+   * safe still follows it. The windows don't clip, and keep the whole line. Avanzel's own line, when no agent can be named (a
+   * settings file it can't read), is no agent going on: it says what to mend, and is told whole.
+   */
+  lineMax?: number;
+}
+
+/**
+ * `text` as a line of at most `max` characters (code points, so none is cut in half): whole when it fits, else cut after a word
+ * that ends in the last 40% of what fits, or at the character when there is none, and ended with "…" with no space or stop
+ * before it. Whole when `max` is not given.
+ */
+function shortened(text: string, max: number | undefined): string {
+  if (max === undefined) return text;
+  const chars = Array.from(text);
+  if (chars.length <= max) return text;
+  const head = chars.slice(0, Math.max(0, max - 1));
+  const space = head.lastIndexOf(" ");
+  const kept = space >= max * 0.6 ? head.slice(0, space) : head;
+  return `${kept.join("").replace(/[\s,;:.–—-]+$/u, "")}…`;
 }
 
 /** What a failed filing says, in the words of the copy table: the title, the body and, for a sign-in, the command to run. */
 export function filingProblem(f: AgentFailure, now: Date, o: FilingProblemOptions = {}): Problem {
-  const { where, partial = null, after = "wait", eveningReview = true } = o;
+  const { where, partial = null, after = "wait", eveningReview = true, lineMax } = o;
   const safe = where ? `Your words are kept in ${where}, and the inbox holds the agent's version` : "Your note is safe in the inbox";
   // The sentence that says what is safe, ending with the evening review's promise while the library's review is on.
   const reassure = eveningReview ? `${safe}; the evening review will try again.` : `${safe}.`;
@@ -151,20 +173,24 @@ export function filingProblem(f: AgentFailure, now: Date, o: FilingProblemOption
     case "missing":
       return done("Avanzel needs an AI agent to do the filing.", `${safe}. Claude Code works best, and Settings → Agents has its install command.`);
     case "other":
-      return done(`${f.agent} couldn't file this note.`, [ownLine(f.line), reassure].filter(Boolean).join(" "));
+      return done(
+        `${f.agent} couldn't file this note.`,
+        [shortened(ownLine(f.line), f.agent === "Avanzel" ? undefined : lineMax), reassure].filter(Boolean).join(" "),
+      );
   }
 }
 
 /**
  * The corrected words (File after Edit) couldn't be written to the inbox yet. Not an agent's failure: nothing ran. `lines` is
- * the error's last lines; the words are kept in memory and saved to the inbox when Avanzel quits, and `originalKept` says the
+ * the error's last lines, cut to `lineMax` characters for a card that clips (see FilingProblemOptions.lineMax: such an error
+ * names two long paths); the words are kept in memory and saved to the inbox when Avanzel quits, and `originalKept` says the
  * note they correct is still there.
  */
-export function correctedWordsProblem(lines: string, originalKept: boolean): Problem {
+export function correctedWordsProblem(lines: string, originalKept: boolean, lineMax?: number): Problem {
   const original = originalKept ? "; the original note is still there" : "";
   return {
     title: "Your corrected words weren't saved yet.",
-    body: `${lines}\nYour corrected words are saved to your inbox when you quit${original}.`,
+    body: `${shortened(lines, lineMax)}\nYour corrected words are saved to your inbox when you quit${original}.`,
   };
 }
 

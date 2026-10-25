@@ -594,7 +594,7 @@ describe("downloadModelFiles", () => {
     const download = downloadModelFiles(model, dir, { baseUrl });
 
     await expect(download).rejects.toThrow(DownloadError);
-    await expect(download).rejects.toThrow(/encoder-model\.int8\.onnx.*SHA-256/);
+    await expect(download).rejects.toThrow("Could not download encoder-model.int8.onnx: what arrived was damaged");
     await expect(download).rejects.toMatchObject({ resumable: false });
     expect(readdirSync(dir)).toEqual([]); // neither the file nor its .part
   });
@@ -607,10 +607,38 @@ describe("downloadModelFiles", () => {
 
     const download = downloadModelFiles(model, dir, { baseUrl });
 
-    await expect(download).rejects.toThrow(/encoder-model\.int8\.onnx.*got 150000 of 300000 bytes/);
+    await expect(download).rejects.toThrow("Could not download encoder-model.int8.onnx: only 0.2 of 0.3 MB arrived");
     await expect(download).rejects.toMatchObject({ resumable: true });
     expect(readdirSync(dir)).toEqual(["encoder-model.int8.onnx.part"]);
     expect(statSync(join(dir, "encoder-model.int8.onnx.part")).size).toBe(150_000);
+  });
+
+  it("tells sizes in megabytes with one decimal, never in bytes, and never as less than 0.1", async () => {
+    // Half of the real Silero VAD's 2,327,524 bytes arrive: 1,163,762 of them.
+    const sizes: [number, string][] = [
+      [2_327_524, "only 1.2 of 2.3 MB arrived"],
+      [40_000, "only 0.1 of 0.1 MB arrived"], // 0.02 of 0.04 MB, which is no 0.0
+    ];
+    for (const [size, words] of sizes) {
+      const body = randomBytes(size);
+      const model = vadSpec(body);
+      const { baseUrl } = await fakeHub(model, { "silero_vad.onnx": body }, { short: "silero_vad.onnx" });
+
+      const download = downloadModelFiles(model, join(tempDir(), VAD_MODEL), { baseUrl });
+
+      await expect(download).rejects.toThrow(`Could not download silero_vad.onnx: ${words}`);
+      await expect(download).rejects.not.toThrow(/\bbytes?\b/);
+    }
+  });
+
+  it("says that nothing arrived, rather than a size, when an empty body was all there was", async () => {
+    const model = vadSpec(Buffer.from([1]));
+    const { baseUrl } = await fakeHub(model, { "silero_vad.onnx": Buffer.from([1]) }, { short: "silero_vad.onnx" }); // half of 1 byte is none
+
+    const download = downloadModelFiles(model, join(tempDir(), VAD_MODEL), { baseUrl });
+
+    await expect(download).rejects.toThrow("Could not download silero_vad.onnx: nothing arrived");
+    await expect(download).rejects.toMatchObject({ resumable: false });
   });
 
   it("fails when the connection drops half way, and keeps what arrived", async () => {
@@ -755,7 +783,7 @@ describe("downloadModelFiles", () => {
 
     const download = downloadModelFiles(model, dir, { baseUrl });
 
-    await expect(download).rejects.toThrow(/silero_vad\.onnx.*SHA-256/);
+    await expect(download).rejects.toThrow("Could not download silero_vad.onnx: what arrived was damaged");
     await expect(download).rejects.toMatchObject({ resumable: false });
     expect(ranges).toEqual(["bytes=1000-"]);
     expect(readdirSync(dir)).toEqual([]);
@@ -774,7 +802,7 @@ describe("downloadModelFiles", () => {
 
     const download = downloadModelFiles(model, dir, { baseUrl });
 
-    await expect(download).rejects.toThrow(/silero_vad\.onnx.*more than the 300000 bytes/);
+    await expect(download).rejects.toThrow("Could not download silero_vad.onnx: got more than the 0.3 MB expected");
     await expect(download).rejects.toMatchObject({ resumable: false });
     expect(readdirSync(dir)).toEqual([]);
   });
@@ -1056,7 +1084,7 @@ describe("downloadModel", () => {
     const { baseUrl, requests } = await fakeHub(pin, { "silero_vad.onnx": wrong });
     const models = tempDir();
 
-    await expect(downloadModel(VAD_MODEL, models, { baseUrl })).rejects.toThrow(/silero_vad\.onnx.*SHA-256/);
+    await expect(downloadModel(VAD_MODEL, models, { baseUrl })).rejects.toThrow(/silero_vad\.onnx: what arrived was damaged/);
 
     expect(requests).toEqual([`GET /${pin.repo}/resolve/${pin.revision}/silero_vad.onnx`]);
     expect(readdirSync(join(models, VAD_MODEL))).toEqual([]); // the wrong bytes were not kept
@@ -1095,7 +1123,7 @@ describe("downloadModels", () => {
     const { baseUrl, requests } = await fakeHub(pin, { "silero_vad.onnx": wrong });
     const models = tempDir();
 
-    await expect(downloadModels([V3, VAD_MODEL], models, { baseUrl })).rejects.toThrow(/silero_vad\.onnx.*SHA-256/);
+    await expect(downloadModels([V3, VAD_MODEL], models, { baseUrl })).rejects.toThrow(/silero_vad\.onnx: what arrived was damaged/);
 
     // Silero VAD is the smaller download and the one that fails, so none of Parakeet's files was asked for.
     expect(requests).toEqual([`GET /${pin.repo}/resolve/${pin.revision}/silero_vad.onnx`]);

@@ -7,7 +7,18 @@ import { Actions, Button, Group, GroupRow, Notice, Segmented, Stack, Switch, Tex
 import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { harnessName } from "../../../main/jobs.ts";
 import type { HarnessInfo, PickOption, TaskInfo } from "../../../shared/ipc.ts";
-import { DAYS, failedSaveLine, kindLine, lastRunLine, remoteMessage, scheduleParts, scheduleText, validTime, whenLine } from "../copy.ts";
+import {
+  DAYS,
+  failedSaveLine,
+  kindLine,
+  lastRunLine,
+  plainCause,
+  reviewNotStarted,
+  scheduleParts,
+  scheduleText,
+  validTime,
+  whenLine,
+} from "../copy.ts";
 import { attemptChange, ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -54,7 +65,7 @@ const draftOf = (task: TaskInfo): Draft => ({
 /** `drafts` without review `id`'s. */
 const without = (drafts: Drafts, id: string): Drafts => Object.fromEntries(Object.entries(drafts).filter(([each]) => each !== id));
 
-/** A review's save that main refused: which review, and main's reason (remoteMessage of its error). */
+/** A review's save that main refused: which review, and main's reason in plain words (plainCause of its error). */
 export interface SaveFailure {
   id: string;
   message: string;
@@ -117,7 +128,7 @@ export function useReviewEdits(library: string | null, onChange: PaneProps["onCh
       clearFailure(id);
       return true;
     } catch (error) {
-      setFailure({ id, message: remoteMessage(error) });
+      setFailure({ id, message: plainCause(error) });
       throw error;
     } finally {
       setSaving((last) => new Set([...last].filter((each) => each !== id)));
@@ -363,7 +374,7 @@ export function Reviews(props: PaneProps & { edits: ReviewEdits }): ReactNode {
           onDraft={(change) => changeDraft(task.id, change)}
           onSwitch={(enabled) => void save(task, { enabled })}
           onSave={(beforeClose) => void saveDraft(task, beforeClose)}
-          onRun={() => attemptChange(props, () => api.runTask(task.id))}
+          onRun={() => attemptChange(props, () => api.runTask(task.id), reviewNotStarted(task.name))}
           // One editor is open at a time: Edit opens this one from the review as stored, and drops any other's draft.
           onEdit={() => {
             clearFailure(task.id);

@@ -1,9 +1,12 @@
 import { MODELS, VAD_MODEL } from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
 import {
+  agentNotChecked,
+  AGENTS_NOT_CHECKED,
   asSentence,
   CHANGE_NOT_SAVED,
   DAYS,
+  DOWNLOAD_NOT_STARTED,
   failedSaveLine,
   fileModeLine,
   kindLine,
@@ -14,9 +17,14 @@ import {
   microphoneOptions,
   notSavedLine,
   PANE_LABELS,
+  PERMISSION_NOT_ASKED,
+  plainCause,
+  refusedCall,
   remoteMessage,
+  reviewNotStarted,
   scheduleParts,
   scheduleText,
+  SETTING_KEPT,
   speechModelLine,
   SPEECH_MODEL_DESCRIPTION,
   validTime,
@@ -159,22 +167,113 @@ describe("settings copy", () => {
     expect(leavesThisMacLine({ backend: "command", model: "" })).not.toMatch(/never leaves/);
   });
 
-  it("a change main refused is told as what happened and why, without Electron's prefix", () => {
+  it("a change main refused is told as what happened, why, and what the setting keeps, without Electron's prefix", () => {
     expect(CHANGE_NOT_SAVED).toBe("That change wasn't saved.");
-    expect(
-      notSavedLine(new Error("Error invoking remote method 'settings:set-library': Error: EACCES: permission denied, open '/lib/.avanzel/config.toml.1.tmp'")),
-    ).toBe("EACCES: permission denied, open '/lib/.avanzel/config.toml.1.tmp'.");
-    // The error's class goes too, and a message that is a sentence already keeps its stop.
+    expect(SETTING_KEPT).toBe("The setting keeps its old value.");
+    // The error's class goes with the prefix, and a message that is a sentence already keeps its stop.
     expect(
       notSavedLine(
         new Error("Error invoking remote method 'settings:choose-library': AvanzelError: /Applications is too broad for a library. Choose or make a folder inside it."),
       ),
-    ).toBe("/Applications is too broad for a library. Choose or make a folder inside it.");
+    ).toBe("/Applications is too broad for a library. Choose or make a folder inside it. The setting keeps its old value.");
     // As an agent's line is told: no "Error:" label, a capital, a full stop.
-    expect(notSavedLine(new Error("Error invoking remote method 'settings:run-task': Error: error: the disk is full"))).toBe("The disk is full.");
-    expect(notSavedLine("gone")).toBe("Gone.");
-    // An error with nothing to say adds nothing: the title stands alone.
-    expect(notSavedLine(new Error(""))).toBe("");
+    expect(notSavedLine(new Error("Error invoking remote method 'settings:set-app': Error: error: something odd"))).toBe(
+      "Something odd. The setting keeps its old value.",
+    );
+    expect(notSavedLine("gone")).toBe("Gone. The setting keeps its old value.");
+    // An error with nothing to say adds nothing to what the setting keeps.
+    expect(notSavedLine(new Error(""))).toBe("The setting keeps its old value.");
+  });
+
+  describe("the plain cause of a refusal", () => {
+    const refused = (channel: string, message: string) => new Error(`Error invoking remote method '${channel}': Error: ${message}`);
+    const LIBRARY = "Avanzel can't write to the library's settings.";
+    const AVANZEL = "Avanzel can't write to Avanzel's settings.";
+
+    it("names the settings a refused write was for, when the disk refuses permission", () => {
+      const tmp = "open '/Users/ana/Avanzel/.avanzel/config.toml.1234.tmp'";
+      expect(plainCause(refused("settings:set-library", `EACCES: permission denied, ${tmp}`))).toBe(LIBRARY);
+      expect(plainCause(refused("settings:save-task", "EPERM: operation not permitted, rename '/lib/tasks/a.md.1.tmp' -> '/lib/tasks/a.md'"))).toBe(LIBRARY);
+      // An app setting is Avanzel's own: its shortcuts, when it files, the microphone, opening at login, the library it opens.
+      for (const channel of ["settings:set-app", "settings:choose-library"]) {
+        expect(plainCause(refused(channel, "EACCES: permission denied, open '/Users/ana/Library/Application Support/Avanzel/settings.json.tmp'"))).toBe(AVANZEL);
+      }
+      expect(notSavedLine(refused("settings:set-library", `EACCES: permission denied, ${tmp}`))).toBe(`${LIBRARY} ${SETTING_KEPT}`);
+    });
+
+    it("says the disk is full or read-only, whatever was being written", () => {
+      for (const channel of ["settings:set-library", "settings:set-app", "settings:save-task", "settings:run-task"]) {
+        expect(plainCause(refused(channel, "ENOSPC: no space left on device, write"))).toBe("The disk is full.");
+        expect(plainCause(refused(channel, "EROFS: read-only file system, open '/Volumes/Brain/.avanzel/config.toml.1.tmp'"))).toBe("The disk is read-only.");
+      }
+    });
+
+    it("tells any other system error as its message, without the file it names", () => {
+      expect(plainCause(refused("settings:set-app", "EISDIR: illegal operation on a directory, open '/data/settings.json.tmp'"))).toBe(
+        "EISDIR: illegal operation on a directory.",
+      );
+      expect(plainCause(refused("settings:set-library", "ENOENT: no such file or directory, rename '/a/c.toml.1.tmp' -> '/a/c.toml'"))).toBe(
+        "ENOENT: no such file or directory.",
+      );
+      // No path or temporary file name is left to read.
+      for (const message of ["EBUSY: resource busy or locked, open '/x/y.tmp'", "EMFILE: too many open files, open '/x/y.tmp'"]) {
+        expect(plainCause(refused("settings:set-app", message))).not.toMatch(/\/|\.tmp|'/);
+      }
+    });
+
+    it("says nothing of the library's or Avanzel's settings for a call that writes none", () => {
+      expect(plainCause(refused("settings:run-task", "EACCES: permission denied, open '/data/run-state.json.1.tmp'"))).toBe("EACCES: permission denied.");
+      expect(plainCause(refused("settings:check-agent", "EPERM: operation not permitted, open '/data/agents.json'"))).toBe("EPERM: operation not permitted.");
+    });
+
+    it("keeps the words of a refusal that is Avanzel's own, and the folder the person chose in them", () => {
+      expect(
+        plainCause(refused("settings:choose-library", "/Applications is too broad for a library. Choose or make a folder inside it.")),
+      ).toBe("/Applications is too broad for a library. Choose or make a folder inside it.");
+      expect(plainCause(refused("settings:save-task", "No scheduled review called x."))).toBe("No scheduled review called x.");
+    });
+
+    it("reads an error that isn't an IPC rejection the same way, and nothing as nothing", () => {
+      expect(plainCause(new Error("ENOSPC: no space left on device"))).toBe("The disk is full.");
+      expect(plainCause(new Error("EACCES: permission denied, open '/x/y.tmp'"))).toBe("EACCES: permission denied."); // no channel: no settings to name
+      expect(plainCause(new Error(""))).toBe("");
+      expect(plainCause("gone")).toBe("Gone.");
+    });
+  });
+
+  describe("a refused call's Notice", () => {
+    const error = new Error("Error invoking remote method 'settings:set-library': Error: EACCES: permission denied, open '/lib/.avanzel/config.toml.1.tmp'");
+
+    it("is headed “That change wasn't saved.” for a change, whose body says what the setting keeps", () => {
+      expect(refusedCall(error)).toEqual({
+        title: CHANGE_NOT_SAVED,
+        body: "Avanzel can't write to the library's settings. The setting keeps its old value.",
+      });
+    });
+
+    it("has a title of its own for a call that saves nothing, and tells only why", () => {
+      expect(refusedCall(error, "Weekly review didn't start.")).toEqual({
+        title: "Weekly review didn't start.",
+        body: "Avanzel can't write to the library's settings.",
+      });
+      expect(refusedCall(new Error("Error invoking remote method 'settings:run-task': Error: EACCES: permission denied, open '/x/run-state.json.tmp'"), "Weekly review didn't start.")).toEqual({
+        title: "Weekly review didn't start.",
+        body: "EACCES: permission denied.",
+      });
+    });
+
+    it("names what didn't happen, in sentence case, with a full stop", () => {
+      expect(reviewNotStarted("Weekly review")).toBe("Weekly review didn't start.");
+      expect(reviewNotStarted("Evening review")).toBe("Evening review didn't start.");
+      expect(agentNotChecked("Claude Code")).toBe("Claude Code couldn't be checked.");
+      expect(AGENTS_NOT_CHECKED).toBe("The agents couldn't be checked.");
+      expect(PERMISSION_NOT_ASKED).toBe("Avanzel couldn't ask macOS.");
+      expect(DOWNLOAD_NOT_STARTED).toBe("The download didn't start.");
+      for (const title of [reviewNotStarted("Weekly review"), agentNotChecked("Codex"), AGENTS_NOT_CHECKED, PERMISSION_NOT_ASKED, DOWNLOAD_NOT_STARTED]) {
+        expect(title).toMatch(/^\p{Lu}[^.]*\.$/u);
+        expect(title).not.toMatch(/saved|change/i); // none of them saves a setting
+      }
+    });
   });
 });
 

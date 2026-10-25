@@ -16,7 +16,7 @@ import { Actions, Button, Card, Kbd, Notice, PermissionPrimer, Row, Spinner, Sta
 import { useEffect, useState, type ReactNode } from "react";
 import { keyCaps, prettyAccelerator, reachKey, takenMessage } from "../../../main/shortcuts.ts";
 import type { SetupPress, SetupThought } from "../../../shared/ipc.ts";
-import { earsLine, recordingProblem, slowSeconds, TRANSCRIBING } from "../copy.ts";
+import { earsLine, recordingProblem, slowSeconds, transcribingLine } from "../copy.ts";
 import { Frame, useNow, type StepProps } from "../frame.tsx";
 
 const api = window.avanzel.setup;
@@ -207,7 +207,7 @@ function said(thought: SetupThought): ReactNode {
     case "listening":
       return <Text variant="callout" as="span">I'm listening.</Text>;
     case "transcribing":
-      return <Text variant="callout" as="span">{TRANSCRIBING}</Text>;
+      return <Text variant="callout" as="span">{transcribingLine(thought.onThisMac)}</Text>;
     case "test":
       return <Text variant="voice" as="span">Heard you. Want to try a real thought?</Text>;
     default:

@@ -45,12 +45,16 @@ export type CardAction =
 export type CapsuleState =
   | { kind: "hidden" }
   | { kind: "listening"; mode: CapsuleMode; startedAt: number; fakeMic: boolean; microphoneId: string | null; thumbnail?: string }
-  | { kind: "transcribing"; mode: CapsuleMode }
+  /** `onThisMac`: the library's speech-to-text runs on this Mac, which the card then says; a command can run anywhere. */
+  | { kind: "transcribing"; mode: CapsuleMode; onThisMac: boolean }
   | {
       kind: "filing";
       text: string;
       agent: string;
+      /** How long its words took to make, in seconds; null for a note that was typed. */
       transcribedIn: number | null;
+      /** As for "transcribing": where the words were made, which the card says only when it is on this Mac. */
+      onThisMac: boolean;
       canEdit: boolean;
       detail?: string;
       /** Waiting for the library: another run (a question, a review, another Avanzel) has it. */
@@ -298,8 +302,11 @@ export type SetupThought =
   | { kind: "denied" }
   /** The capsule records it; `startedAt` is the recording's Date.now(). */
   | { kind: "listening"; startedAt: number }
-  /** The recording has stopped, and its words are being made; `startedAt` is the stop's Date.now(). */
-  | { kind: "transcribing"; startedAt: number }
+  /**
+   * The recording has stopped, and its words are being made; `startedAt` is the stop's Date.now(). `onThisMac`: the library's
+   * speech-to-text runs on this Mac, which the step then says; the command in a library's settings can run anywhere.
+   */
+  | { kind: "transcribing"; startedAt: number; onThisMac: boolean }
   /** Its words are a mic check ("Testing, testing"), kept in the inbox until File it anyway or Try again. */
   | { kind: "test"; words: string }
   /**

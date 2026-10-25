@@ -4,10 +4,11 @@
 }
 
 /* A strip to drag the window by, where the traffic lights sit; the toolbar that moves between the panes, in the middle,
-   as a macOS settings window has it; the pane under them. The pane scrolls and the toolbar stays put. */
+   as a macOS settings window has it; the row for the problem a refused call leaves, which has no height while there is none;
+   the pane under them. The pane scrolls; the toolbar and the problem stay put. */
 .settings {
   display: grid;
-  grid-template-rows: 40px auto minmax(0, 1fr);
+  grid-template-rows: 40px auto auto minmax(0, 1fr);
   height: 100%;
 }
 .settings-drag {
@@ -16,6 +17,12 @@
 .settings-toolbar {
   display: flex;
   justify-content: center;
+  padding: 0 var(--av-space-24) var(--av-space-20);
+}
+/* The problem's Notice, in line with the pane's rows and 20 above what follows, as the toolbar is. Its words break rather than
+   push the row sideways, as the pane's do. */
+.settings-problem-box {
+  overflow-wrap: anywhere;
   padding: 0 var(--av-space-24) var(--av-space-20);
 }
 /* A word too long for its line, such as a path or an agent's message, breaks rather than pushing the pane sideways. The pane
