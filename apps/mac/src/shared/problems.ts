@@ -223,7 +223,7 @@ export function askProblem(f: AgentFailure, changedFiles: number, now: Date): As
 
 /**
  * A speech-model download that didn't finish, as the capsule and Settings → Voice tell it. `reason` is the engine's: the file
- * and why, without the address it came from. Typing works meanwhile; `resumable` says part of the download was kept, so Try
+ * and why, without the URL it came from. Typing works meanwhile; `resumable` says part of the download was kept, so Try
  * again continues where it stopped, and otherwise it downloads the file again. It promises nothing of a recording, since
  * nothing records meanwhile.
  */

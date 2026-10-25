@@ -85,9 +85,10 @@ export class MissingModelError extends AvanzelError {
 }
 
 /**
- * A file of a speech model could not be downloaded. `message` names the file and why, and never the address it came
- * from. `resumable` says a part of the file was kept, so the next try continues where this one stopped; false when
- * nothing arrived, or what did was wrong and has been deleted.
+ * A file of a speech model could not be downloaded. `message` names the file and why, without the URL it came from (a host
+ * name or an ip:port that the system names in its own words, like "ENOTFOUND huggingface.co", stays: it is what says why).
+ * `resumable` says a part of the file was kept, so the next try continues where this one stopped; false when nothing
+ * arrived, or what did was wrong and has been deleted.
  */
 export class DownloadError extends AvanzelError {
   override name = "DownloadError";
@@ -277,7 +278,8 @@ export async function downloadModelFiles(model: ModelSpec, dir: string, options:
  *
  * A download that stops keeps its `.part` and the next one continues from it (see `fetchFile`). When a download starts,
  * the `.part` files in the jobs' directories that it doesn't fetch are deleted: what is left of a file that is complete
- * or cached by now, or of one the quantization no longer needs.
+ * or cached by now, or of one the quantization no longer needs. Run one download per models folder at a time: two would
+ * write the same `.part` files. The caller guards that (Avanzel's controller starts none while one is downloading).
  *
  * Rejects with a `DownloadError` when a file can't be downloaded, which says whether a part of it was kept; with the
  * signal's own error when `options.signal` aborts, which keeps nothing.
@@ -357,13 +359,29 @@ async function hashInto(hash: Hash, path: string, length: number): Promise<void>
 class WrongBytes extends Error {}
 
 /**
- * An error's message and its cause's, without any address (`url` is the one asked for, which a message about an address
- * that can't be parsed repeats): a person reads it, and a download's address is long and says nothing.
+ * What a failure's cause says, in words: its message; else, for an AggregateError, which has none of its own (undici throws
+ * one when a host has several addresses, `localhost` as ::1 and 127.0.0.1 say, and each of them failed), the first of its
+ * errors' that has one; else its code ("ECONNREFUSED"). Empty when it says nothing.
+ */
+function causeOf(cause: unknown): string {
+  if (!(cause instanceof Error)) return "";
+  if (cause.message) return cause.message;
+  const { errors, code } = cause as { errors?: unknown; code?: unknown };
+  const inner: unknown = Array.isArray(errors) ? errors.find((each) => each instanceof Error && each.message) : undefined;
+  if (inner instanceof Error) return inner.message;
+  return typeof code === "string" ? code : "";
+}
+
+/**
+ * An error's message with its cause's, without the URL (`url` is the one asked for, which a message about a URL that can't
+ * be parsed repeats): a person reads it, and a download's URL is long and says nothing. A host name or an ip:port that the
+ * system names in its own words stays, since "getaddrinfo ENOTFOUND huggingface.co" is what says why. Never empty.
  */
 function reasonOf(error: unknown, url: string): string {
   const message = error instanceof Error ? error.message : String(error);
-  const cause = error instanceof Error && error.cause instanceof Error ? ` (${error.cause.message})` : "";
-  return `${message}${cause}`.replaceAll(url, "the server").replace(/\bhttps?:\/\/[^\s)]+/gi, "the server");
+  const cause = error instanceof Error ? causeOf(error.cause) : "";
+  const why = message && cause ? `${message} (${cause})` : message || cause || "no reason was given";
+  return why.replaceAll(url, "the server").replace(/\bhttps?:\/\/[^\s)]+/gi, "the server");
 }
 
 /**

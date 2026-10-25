@@ -14,7 +14,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it, onTestFinished } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { AvanzelError } from "../../src/types.ts";
 import {
   DownloadError,
@@ -280,6 +280,7 @@ type Behaviour = {
   long?: string;
   stall?: string;
   unsatisfiable?: string;
+  always416?: string;
   ignoreRange?: boolean;
 };
 type Pin = Pick<ModelSpec, "repo" | "revision">;
@@ -298,9 +299,9 @@ type Hub = {
  * it came with (`ranges`). A range from where an earlier try stopped ("bytes=150000-") is answered as Hugging Face
  * does, with 206 and the bytes from there. `behaviour` names a file to answer 404, to cut the connection half way
  * (`truncate`: the first response only, so the next try is served whole) or before the first byte (`hangup`), to serve
- * only half as long (`short`) or with more bytes than the file has (`long`), to stall after the first kilobyte, or to
- * answer 416 to any range (`unsatisfiable`); `ignoreRange` answers 200 with the whole file whatever is asked, as a
- * server without ranges does.
+ * only half as long (`short`) or with more bytes than the file has (`long`), to stall after the first kilobyte, to
+ * answer 416 to any range (`unsatisfiable`) or to every request, a range or not (`always416`); `ignoreRange` answers
+ * 200 with the whole file whatever is asked, as a server without ranges does.
  */
 function fakeHub(repos: { pin: Pin; files: Files }[], behaviour?: Behaviour): Promise<Hub>;
 function fakeHub(pin: Pin, files: Files, behaviour?: Behaviour): Promise<Hub>;
@@ -336,7 +337,7 @@ async function fakeHub(
     }
     const asked = behaviour.ignoreRange ? null : /^bytes=(\d+)-$/.exec(req.headers.range ?? "");
     const start = asked ? Number(asked[1]) : 0;
-    if (asked && (name === behaviour.unsatisfiable || start >= body.length)) {
+    if (name === behaviour.always416 || (asked && (name === behaviour.unsatisfiable || start >= body.length))) {
       res.writeHead(416, { "content-range": `bytes */${body.length}` }).end();
       return;
     }
@@ -403,6 +404,16 @@ function vadSpec(body: Buffer, repo = "istupakov/silero-vad-onnx"): ModelSpec {
 
 const get = (name: string) => `GET /${V3_REPO}/resolve/${REVISION}/${name}`;
 const getVad = ({ repo, revision }: ModelSpec) => `GET /${repo}/resolve/${revision}/silero_vad.onnx`;
+
+/** A port nothing listens on any more: a server had it, and let it go. */
+function closedPort(): Promise<number> {
+  return new Promise((resolve) => {
+    const server = createServer().listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      server.close(() => resolve(port));
+    });
+  });
+}
 
 describe("downloadModelFiles", () => {
   it("downloads every file from the pinned revision, reporting progress against the pinned sizes", async () => {
@@ -820,18 +831,12 @@ describe("downloadModelFiles", () => {
       expect(error).toBeInstanceOf(AvanzelError);
       return error as DownloadError;
     };
-    // A port nothing listens on any more.
-    const closed = await new Promise<string>((resolve) => {
-      const server = createServer().listen(0, "127.0.0.1", () => {
-        const { port } = server.address() as AddressInfo;
-        server.close(() => resolve(`http://127.0.0.1:${port}`));
-      });
-    });
+    const closed = `http://127.0.0.1:${await closedPort()}`;
 
     const notFound = await fails((await fakeHub(model, { "silero_vad.onnx": body }, { notFound: "silero_vad.onnx" })).baseUrl);
     const dropped = await fails((await fakeHub(model, { "silero_vad.onnx": body }, { truncate: "silero_vad.onnx" })).baseUrl);
     const refused = await fails(closed);
-    const unparsable = await fails("http://127.0.0.1:99999"); // an address fetch repeats in its own message
+    const unparsable = await fails("http://127.0.0.1:99999"); // a URL fetch repeats in its own message
 
     expect(notFound.resumable).toBe(false); // a 404 brings nothing to keep
     expect(notFound.message).toMatch(/silero_vad\.onnx.*404/);
@@ -857,6 +862,94 @@ describe("downloadModelFiles", () => {
     await expect(downloadModelFiles(model, dir, { baseUrl })).rejects.toMatchObject({ resumable: false });
 
     expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("says why a connection refused at localhost was refused, though fetch gives its cause no message", async () => {
+    // localhost is ::1 and 127.0.0.1 on a dual-stack Mac, and fetch then fails with an AggregateError whose message is empty.
+    const model = vadSpec(randomBytes(300_000));
+    const port = await closedPort();
+
+    const error = await downloadModelFiles(model, join(tempDir(), VAD_MODEL), { baseUrl: `http://localhost:${port}` }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(DownloadError);
+    const { message, resumable } = error as DownloadError;
+    expect(resumable).toBe(false);
+    expect(message).toMatch(/^Could not download silero_vad\.onnx: fetch failed \(.*ECONNREFUSED.*\)$/);
+    expect(message).not.toMatch(/\(\s*\)/);
+    expect(message).not.toMatch(/https?:/);
+  });
+
+  describe("the reason of a failed request says the cause's message, else its first error's, else its code, and is never empty", () => {
+    // What fetch rejects with when the connection fails: a TypeError "fetch failed", and the cause undici found.
+    const failedWith = (cause?: unknown) => new TypeError("fetch failed", cause === undefined ? undefined : { cause });
+    const refused = (where: string) => Object.assign(new Error(`connect ECONNREFUSED ${where}`), { code: "ECONNREFUSED" });
+    // What undici throws when a host has several addresses and each of them failed: an AggregateError with no message.
+    const several = (errors: Error[], code: string) => Object.assign(new AggregateError(errors, ""), { code });
+
+    it.each([
+      ["the cause's message comes first, in parentheses", failedWith(new Error("other side closed")), "fetch failed (other side closed)"],
+      [
+        "an AggregateError, which has no message, gives its first error's",
+        failedWith(several([refused("::1:49732"), refused("127.0.0.1:49732")], "ECONNREFUSED")),
+        "fetch failed (connect ECONNREFUSED ::1:49732)",
+      ],
+      [
+        "an AggregateError gives the first of its errors that has a message",
+        failedWith(several([new Error(""), new Error("connect ETIMEDOUT 203.0.113.9:443")], "ETIMEDOUT")),
+        "fetch failed (connect ETIMEDOUT 203.0.113.9:443)",
+      ],
+      [
+        "an AggregateError none of whose errors say anything gives its code",
+        failedWith(several([new Error(""), new Error("")], "ETIMEDOUT")),
+        "fetch failed (ETIMEDOUT)",
+      ],
+      [
+        "an error with no message and no errors gives its code",
+        failedWith(Object.assign(new Error(""), { code: "UND_ERR_CONNECT_TIMEOUT" })),
+        "fetch failed (UND_ERR_CONNECT_TIMEOUT)",
+      ],
+      ["a cause that says nothing leaves no parentheses", failedWith(new Error("")), "fetch failed"],
+      ["no cause leaves none either", failedWith(), "fetch failed"],
+    ])("%s", async (_what, rejection, reason) => {
+      expect(await reasonOfRejection(rejection)).toBe(`Could not download silero_vad.onnx: ${reason}`);
+    });
+
+    it("a rejection that says nothing at all still says so", async () => {
+      expect(await reasonOfRejection(new Error(""))).toBe("Could not download silero_vad.onnx: no reason was given");
+    });
+
+    /** The message of the DownloadError for a download whose request rejects with `rejection`, which keeps nothing. */
+    async function reasonOfRejection(rejection: unknown): Promise<string> {
+      vi.stubGlobal("fetch", () => Promise.reject(rejection));
+      onTestFinished(() => {
+        vi.unstubAllGlobals();
+      });
+      const dir = join(tempDir(), VAD_MODEL);
+      const error = await downloadModelFiles(vadSpec(randomBytes(1000)), dir, { baseUrl: "http://hub.test" }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadError);
+      expect((error as DownloadError).resumable).toBe(false);
+      expect(readdirSync(dir)).toEqual([]);
+      return (error as DownloadError).message;
+    }
+  });
+
+  it("a 416 answered again to the request for the whole file is an HTTP error, not another round", async () => {
+    const body = randomBytes(300_000);
+    const model = vadSpec(body);
+    const { baseUrl, requests, ranges } = await fakeHub(model, { "silero_vad.onnx": body }, { always416: "silero_vad.onnx" });
+    const dir = join(tempDir(), VAD_MODEL);
+    writeFiles(dir, { "silero_vad.onnx.part": body.subarray(0, 1000) });
+
+    const download = downloadModelFiles(model, dir, { baseUrl });
+
+    await expect(download).rejects.toThrow(/silero_vad\.onnx.*416/);
+    await expect(download).rejects.toMatchObject({ resumable: false });
+    // The range, which the first 416 refused, and the whole file once; there is no third.
+    expect(requests).toEqual([getVad(model), getVad(model)]);
+    expect(ranges).toEqual(["bytes=1000-", undefined]);
+    expect(readdirSync(dir)).toEqual([]); // the part went at the first 416, and nothing arrived since
   });
 
   it("downloads nothing for a spec that pins no digest for a file it lists", async () => {

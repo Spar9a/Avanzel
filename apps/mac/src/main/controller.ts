@@ -2437,7 +2437,7 @@ export class Controller {
         this.followDownload({ kind: "hidden" });
       })
       .catch((error) => {
-        // Its message names the file and why, with no address in it. Only a DownloadError can have kept a part to continue from.
+        // Its message names the file and why, with no URL in it. Only a DownloadError can have kept a part to continue from.
         const reason = errorMessage(error);
         const resumable = error instanceof DownloadError && error.resumable;
         this.model = { kind: "error", cause: "download", message: reason, resumable };

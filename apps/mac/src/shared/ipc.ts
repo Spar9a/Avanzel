@@ -73,7 +73,7 @@ export type CapsuleState =
     }
   /**
    * The shortcut, after the speech models' download failed: typing instead, or Try again. `reason` names the file and why,
-   * without the address it came from; `resumable` says part of the download was kept, so Try again continues where it
+   * without the URL it came from; `resumable` says part of the download was kept, so Try again continues where it
    * stopped (otherwise it downloads the file again).
    */
   | { kind: "model-failed"; reason: string; resumable: boolean }
@@ -162,7 +162,7 @@ export type ModelStatus =
       kind: "error";
       /** download: the download failed, and trying again may work. settings: the library's [voice] settings can't be used, so nothing downloads. */
       cause: "download" | "settings";
-      /** download: the file and why it failed, without the address it came from. settings: what is wrong with the settings. */
+      /** download: the file and why it failed, without the URL it came from. settings: what is wrong with the settings. */
       message: string;
       /** download: part of the file was kept, so Try again continues where it stopped. settings: false, since nothing downloads. */
       resumable: boolean;

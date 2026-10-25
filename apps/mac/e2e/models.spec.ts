@@ -201,7 +201,7 @@ test("a failed download says why, in the capsule and in Voice", async () => {
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
   await settings.getByRole("radio", { name: "Voice", exact: true }).click();
-  // Voice says the same: what happened, why (the same reason, with no address in it), what works meanwhile, and what Try again does.
+  // Voice says the same: what happened, why (the same reason, with no URL in it), what works meanwhile, and what Try again does.
   const alert = settings.getByRole("alert");
   await expect(alert).toContainText("The speech model didn't finish downloading.");
   await expect(alert.getByText(body, { exact: true })).toBeVisible();
