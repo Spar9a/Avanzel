@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, writeWav } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { agentCalls, agentPath, alive, call, launch, makeLibrary, noAgents, openSettings, SIGNED_OUT_CLAUDE, snap, UNREADABLE_CLAUDE, windowFor } from "./helpers.ts";
+import { agentCalls, agentPath, alive, call, capsuleKind, filesUnder, launch, makeLibrary, noAgents, openSettings, SIGNED_OUT_CLAUDE, snap, UNREADABLE_CLAUDE, windowFor } from "./helpers.ts";
 
 /** Opens Settings → Agents and returns the fake agent's row, a group named for its agent. */
 const fakeAgentRow = async (app: ElectronApplication) => (await openSettings(app, "Agents")).getByRole("group", { name: "fake" });
@@ -329,23 +329,41 @@ test("Open Settings moves a Settings window that is open to the pane, and a pane
   await app.close();
 });
 
-/** Dictates once with `audio` standing in for the microphone, then clicks Open Settings on the error card it ends in. */
-async function openSettingsAfterDictating(audio: string, error: string | RegExp): Promise<{ app: ElectronApplication; settings: Page }> {
+/** Dictates once with `audio` standing in for the microphone, then waits for the error card it ends in. */
+async function dictateUntilCard(audio: string, error: string | RegExp): Promise<{ app: ElectronApplication; capsule: Page }> {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_AUDIO: audio, AVANZEL_FAKE_TRANSCRIPT: "unused" });
   await call(app, "toggleDictate");
   await call(app, "toggleDictate");
   const capsule = await windowFor(app, "capsule");
   await expect(capsule.getByText(error)).toBeVisible({ timeout: 30_000 });
+  return { app, capsule };
+}
+
+/** Dictates once with `audio` standing in for the microphone, then clicks Open Settings on the error card it ends in. */
+async function openSettingsAfterDictating(audio: string, error: string | RegExp): Promise<{ app: ElectronApplication; settings: Page }> {
+  const { app, capsule } = await dictateUntilCard(audio, error);
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   return { app, settings: await windowFor(app, "settings") };
 }
 
 const scratchDir = () => mkdtempSync(path.join(tmpdir(), "avz-e2e-audio-"));
 
-test("Open Settings on a recording too short to hold speech opens Settings → Voice", async () => {
+test("a recording too short to hold speech says nothing was heard or saved, and Choose microphone opens Settings → Voice", async () => {
   const blip = path.join(scratchDir(), "blip.wav");
   writeWav(blip, new Float32Array(1600)); // 0.1 s: under 0.3 s Avanzel doesn't try to transcribe
-  const { app, settings } = await openSettingsAfterDictating(blip, "No speech recognized");
+  const { app, capsule } = await dictateUntilCard(blip, "Nothing was heard.");
+  // What happened, what is safe, and the one fix, which names what to do: the microphone is chosen in Voice.
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    kind: "error",
+    message: "Nothing was heard.",
+    detail: "Is the right microphone selected? Nothing was saved.",
+    action: "open-settings:voice",
+    actionLabel: "Choose microphone",
+  });
+  await expect(capsule.getByText("Is the right microphone selected? Nothing was saved.", { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("button", { name: "Open Settings", exact: true })).toHaveCount(0);
+  await capsule.getByRole("button", { name: "Choose microphone", exact: true }).click();
+  const settings = await windowFor(app, "settings");
   await expect(paneRadio(settings, "Voice")).toHaveAttribute("aria-checked", "true");
   await app.close();
 });
@@ -355,5 +373,43 @@ test("Open Settings on a recording that can't be read opens Settings → Voice",
   writeFileSync(notAudio, "this is not a recording");
   const { app, settings } = await openSettingsAfterDictating(notAudio, /is not a PCM WAV file/);
   await expect(paneRadio(settings, "Voice")).toHaveAttribute("aria-checked", "true");
+  await app.close();
+});
+
+test("a microphone that didn't start says why and that nothing was recorded, and Open Settings opens Settings → Voice", async () => {
+  const library = await makeLibrary();
+  const blip = path.join(scratchDir(), "blip.wav");
+  writeWav(blip, new Float32Array(1600));
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: blip, AVANZEL_FAKE_TRANSCRIPT: "unused" });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "toggleDictate"); // a recording starts, the fake audio standing in for the microphone
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  // The capsule's page couldn't start the microphone, and reports why in the words getUserMedia gave.
+  await call(app, "micError", "Requested device not found");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    kind: "error",
+    message: "The microphone didn't start.",
+    detail: "Requested device not found. Nothing was recorded. Check the microphone in Settings → Voice.",
+    action: "open-settings:voice",
+    actionLabel: "Open Settings",
+  });
+  await expect(capsule.getByText("The microphone didn't start.")).toBeVisible();
+  await expect(capsule.getByText("Requested device not found. Nothing was recorded. Check the microphone in Settings → Voice.", { exact: true })).toBeVisible();
+  expect(filesUnder(library, "inbox")).toEqual([]);
+  expect(filesUnder(library, "raw/audio")).toEqual([]);
+  // A microphone that gives no reason leaves the body with what is true, and no stray space before it.
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await call(app, "micError", "");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    kind: "error",
+    message: "The microphone didn't start.",
+    detail: "Nothing was recorded. Check the microphone in Settings → Voice.",
+  });
+  await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
+  const settings = await windowFor(app, "settings");
+  await expect(paneRadio(settings, "Voice")).toHaveAttribute("aria-checked", "true");
+  // The old way out, System Settings, is not what the card opens any more.
+  expect(await call(app, "openedForTests")).toEqual([]);
   await app.close();
 });

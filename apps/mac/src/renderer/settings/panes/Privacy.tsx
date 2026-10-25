@@ -1,6 +1,7 @@
 // Settings → Privacy: the two permissions Avanzel asks macOS for, each with what it is for and where it stands, and what
-// leaves this Mac. Allow… and Open System Settings act at once. The pane needs no library.
-import { Button, Group, GroupRow, Stack, Text } from "@avanzel/ui";
+// leaves this Mac. Allow…, Open System Settings and Quit and reopen act at once. The pane needs no library, and follows
+// System Settings: main sends it a fresh snapshot whenever Settings has the focus again.
+import { Button, Group, GroupRow, Row, Stack, Text } from "@avanzel/ui";
 import type { ReactNode } from "react";
 import type { PermissionStatus } from "../../../shared/ipc.ts";
 import type { PaneProps } from "../parts.tsx";
@@ -23,8 +24,10 @@ interface PermissionRowProps {
 /**
  * One permission's row: what it is for, and a control that says where it stands. It is Allowed once macOS has allowed it;
  * Allow…, for the microphone while macOS hasn't asked; and otherwise Open System Settings, where the person turns it on.
- * Screen recording never offers Allow…: Electron can't tell its "never asked" from "denied". The control is a group named
- * for the row, so VoiceOver says which permission it belongs to, and tests find it by that name.
+ * Screen recording never offers Allow…: Electron can't tell its "never asked" from "denied". It offers Quit and reopen
+ * beside Open System Settings, since macOS applies its grant only when Avanzel starts again; both are secondary, as neither
+ * is the one fix of a problem. The control is a group named for the row, so VoiceOver says which permission it belongs to,
+ * and tests find it by that name.
  */
 function PermissionRow({ kind, label, description, status, onChange }: PermissionRowProps): ReactNode {
   return (
@@ -35,7 +38,10 @@ function PermissionRow({ kind, label, description, status, onChange }: Permissio
         ) : kind === "microphone" && status === "not-determined" ? (
           <Button size="small" variant="secondary" onClick={async () => onChange(await api.requestPermission("microphone"))}>Allow…</Button>
         ) : (
-          <Button size="small" variant="secondary" onClick={() => api.openPrivacy(kind)}>Open System Settings</Button>
+          <Row gap={8}>
+            <Button size="small" variant="secondary" onClick={() => api.openPrivacy(kind)}>Open System Settings</Button>
+            {kind === "screen" && <Button size="small" variant="secondary" onClick={() => api.relaunch()}>Quit and reopen</Button>}
+          </Row>
         )}
       </div>
     </GroupRow>

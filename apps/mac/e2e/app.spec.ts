@@ -3,6 +3,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileS
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { git, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
+import type { MenuItemModel } from "../src/main/menu-model.ts";
 import {
   agentStubs,
   alive,
@@ -288,6 +289,40 @@ test("an Undo git refuses says so on the card, and the edit made since stays", a
   await app.close();
 });
 
+test("the menu's Recently filed invites a first thought while nothing is filed, and clicking it starts one", async () => {
+  const app = await launch({
+    AVANZEL_LIBRARY: await makeLibrary(),
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Say hello to the garden",
+  });
+  const menu = async () => (await call(app, "menuForTests")) as MenuItemModel[];
+  const items = await menu();
+  const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
+  expect(at).toBeGreaterThan(-1);
+  // An enabled item, since macOS draws a disabled one too dim to read, that does what Record a thought does. It is no page:
+  // the pages the menu lists open one, and this opens none.
+  const invite = items[at + 1]!;
+  expect(invite).toEqual({ type: "item", label: "Nothing filed yet. Press ⌥Space and say hello.", action: "dictate" });
+  expect(await recentlyFiled(app)).toEqual([]);
+  // Clicking it records, as the menu's own Record a thought does; clicking again stops, and the note is filed.
+  await call(app, "menuAction", "dictate");
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await call(app, "menuAction", "dictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  // Something is filed now, so the pages take the invitation's place.
+  await expect.poll(() => recentlyFiled(app)).toHaveLength(1);
+  expect((await menu()).some((item) => item.type === "item" && item.label.startsWith("Nothing filed yet"))).toBe(false);
+  await app.close();
+});
+
+test("the menu's invitation says to record a thought when the dictate shortcut is another app's", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
+  const items = (await call(app, "menuForTests")) as MenuItemModel[];
+  const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
+  expect(items[at + 1]).toEqual({ type: "item", label: "Nothing filed yet. Record a thought and say hello.", action: "dictate" });
+  await app.close();
+});
+
 test("asking shows the agent's answer", async () => {
   const library = await makeLibrary();
   writeFileSync(path.join(library, "goals", "run.md"), "# Run a marathon\n");
@@ -302,6 +337,31 @@ test("asking shows the agent's answer", async () => {
   await expect(ask.getByText(/^fake answered in \d+ s$/)).toBeVisible();
   await expect(ask.getByText("Pages used:")).toHaveCount(0);
   await snap(ask, "9-ask");
+  await app.close();
+});
+
+test("Ask on a library with no pages says to say something first, and gives the usual line back once a page is there", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  // The six shelves count, as Settings' library line counts them: a page in a folder of the owner's own doesn't.
+  expect(await call(app, "libraryPages")).toBe(0);
+  mkdirSync(path.join(library, "notes"));
+  writeFileSync(path.join(library, "notes", "loose.md"), "# Loose\n");
+  expect(await call(app, "libraryPages")).toBe(0);
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  const empty = ask.getByText("Your shelves are empty. Say something first, then ask about it.", { exact: true });
+  const usual = ask.getByText("Answers come from your library only, with links to the pages they use.", { exact: true });
+  await expect(empty).toBeVisible();
+  await expect(usual).toHaveCount(0);
+  await snap(ask, "9-ask-empty-shelves");
+  // A page lands on a shelf while the window is open, say a note was filed: the window counts the shelves again when it
+  // has the focus again, so the line doesn't go on inviting a first thought.
+  writeFileSync(path.join(library, "ideas", "tulips.md"), "# Tulips\n");
+  expect(await call(app, "libraryPages")).toBe(1);
+  await ask.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(usual).toBeVisible();
+  await expect(empty).toHaveCount(0);
   await app.close();
 });
 

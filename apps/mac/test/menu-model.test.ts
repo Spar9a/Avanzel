@@ -65,6 +65,52 @@ describe("tray menu", () => {
     expect(weekly).toMatchObject({ action: "task:weekly-review", detail: "Sun 18:00" });
   });
 
+  describe("Recently filed, with nothing filed yet", () => {
+    const empty = (overrides: Partial<MenuInput> = {}) => buildMenuModel(input({ recent: [], ...overrides }), now);
+    /** The item right under the Recently filed header; none when the menu has no such header. */
+    const underHeader = (items: ReturnType<typeof buildMenuModel>) => {
+      const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
+      return at === -1 ? undefined : items[at + 1];
+    };
+
+    it("keeps the header and invites a first thought: an enabled item that records one, naming the real shortcut", () => {
+      const items = empty();
+      expect(labels(items)).toEqual([
+        "2 notes in the inbox", "--",
+        "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "--",
+        "Recently filed", "Nothing filed yet. Press ⌥Space and say hello.", "--",
+        "Scheduled reviews", "Evening review", "Weekly review", "--",
+        "Open library", "Settings…", "Quit Avanzel",
+      ]);
+      // Exactly an item that does what Record a thought does: enabled (macOS draws a disabled one too dim to read), and
+      // with no accelerator of its own, since its words name the shortcut already.
+      expect(underHeader(items)).toEqual({ type: "item", label: "Nothing filed yet. Press ⌥Space and say hello.", action: "dictate" });
+    });
+
+    it("is no page and is not dimmed: its action opens nothing, and it is never disabled", () => {
+      const item = underHeader(empty());
+      expect(item).toMatchObject({ type: "item", action: "dictate" });
+      expect(item).not.toMatchObject({ action: expect.stringMatching(/^open:/) });
+      expect(item).not.toHaveProperty("enabled", false);
+    });
+
+    it("names the dictate shortcut the person has chosen", () => {
+      const shortcuts = { ...DEFAULT_SETTINGS.shortcuts, dictate: "Control+Alt+R" };
+      expect(underHeader(empty({ shortcuts }))).toMatchObject({ label: "Nothing filed yet. Press ⌃⌥R and say hello.", action: "dictate" });
+    });
+
+    it("without a dictate shortcut, one that didn't register or none at all, says to record a thought", () => {
+      const noShortcut = { type: "item", label: "Nothing filed yet. Record a thought and say hello.", action: "dictate" };
+      expect(underHeader(empty({ unregisteredShortcuts: ["dictate"] }))).toEqual(noShortcut);
+      expect(underHeader(empty({ shortcuts: { ...DEFAULT_SETTINGS.shortcuts, dictate: "" } }))).toEqual(noShortcut);
+    });
+
+    it("gives way to the pages once there are some, and is not there for a library that isn't ready", () => {
+      expect(labels(buildMenuModel(input(), now))).not.toContain("Nothing filed yet. Press ⌥Space and say hello.");
+      expect(labels(buildMenuModel(input({ recent: [], libraryReady: false }), now))).toEqual(["Set up Avanzel…", "--", "Quit Avanzel"]);
+    });
+  });
+
   it("a shortcut that didn't register is not shown in the menu", () => {
     const items = buildMenuModel(input({ unregisteredShortcuts: ["dictate"] }), now);
     const item = (action: string) => items.find((i) => i.type === "item" && i.action === action);

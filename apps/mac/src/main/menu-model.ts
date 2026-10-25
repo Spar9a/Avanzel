@@ -1,5 +1,6 @@
 // What the menu bar menu shows, as plain data; tray.ts turns it into an Electron menu.
 import type { FiledPage, Shortcuts } from "../shared/ipc.ts";
+import { prettyAccelerator } from "./shortcuts.ts";
 
 export interface MenuTask {
   id: string;
@@ -87,13 +88,20 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     SEP,
   ];
 
+  items.push({ type: "header", label: "Recently filed" });
   if (input.recent.length) {
-    items.push({ type: "header", label: "Recently filed" });
     for (const page of input.recent.slice(0, 3)) {
       items.push({ type: "item", label: page.title, action: `open:${page.path}`, shelf: page.shelf });
     }
-    items.push(SEP);
+  } else {
+    // Nothing filed yet invites a first thought. What the owner has to read is an enabled item (see MenuItemModel), so this is
+    // one, and it does what Record a thought does. It names the shortcut that action really has: none when it didn't register
+    // or isn't set.
+    const dictate = input.unregisteredShortcuts.includes("dictate") ? "" : input.shortcuts.dictate;
+    const press = dictate ? `Press ${prettyAccelerator(dictate)}` : "Record a thought";
+    items.push({ type: "item", label: `Nothing filed yet. ${press} and say hello.`, action: "dictate" });
   }
+  items.push(SEP);
 
   if (input.tasks.length || input.undoableReview) {
     items.push({ type: "header", label: "Scheduled reviews" });

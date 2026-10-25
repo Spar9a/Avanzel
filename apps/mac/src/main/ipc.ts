@@ -47,6 +47,7 @@ export function registerIpc(controller: Controller): void {
   on("settings:show-library", () => controller.showLibraryInFinder());
   on("settings:open-setup", () => controller.openSetupFromSettings());
   on("settings:open-privacy", (_e, pane: "microphone" | "screen") => void controller.openPrivacy(pane));
+  on("settings:relaunch", () => controller.relaunch());
 
   // quick type & ask
   handle("quick:submit", (_e, text: string) => controller.submitQuick(text));
@@ -55,6 +56,7 @@ export function registerIpc(controller: Controller): void {
   on("ask:cancel", () => controller.cancelAsk());
   on("ask:open-page", (_e, name: string) => controller.openPageByName(name));
   on("ask:close", () => controller.closeAsk());
+  handle("ask:library-pages", () => controller.libraryPages());
 
   // setup
   handle("setup:get", () => controller.setup.snapshot());

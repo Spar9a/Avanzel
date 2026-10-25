@@ -3,7 +3,8 @@
 // and who answered in how many seconds. While the agent looks, a line says what it is doing, and from 10 s on for how
 // long, beside Stop, which gives the question up. When it couldn't answer, a Notice says what happened and that the library
 // hasn't changed (or what the run changed); the newest turn's offers the one fix: Ask again, Open Terminal for a sign-in
-// (beside Ask again), or Open Settings when the library's agent isn't installed. The newest turn is on top. One question
+// (beside Ask again), or Open Settings when the library's agent isn't installed. The newest turn is on top. Before the first
+// question a line says where answers come from, or, while the six shelves hold no pages, to say something first. One question
 // is answered at a time, and Esc closes the window, which gives up a question that is still being answered.
 import "@avanzel/ui/base.css";
 import { Actions, Button, Notice, Row, ShelfTag, Spinner, Stack, Text, TextField } from "@avanzel/ui";
@@ -13,7 +14,7 @@ import type { AskResult, AvanzelBridge } from "../../shared/ipc.ts";
 import { pageName } from "../../shared/wikilinks.ts";
 import { problemBody } from "../common/problem.tsx";
 import { isShelf, sourceTitle } from "../setup/copy.ts";
-import { answeredLine, failedAnswer, waitingLine } from "./copy.ts";
+import { answeredLine, emptyLine, failedAnswer, waitingLine } from "./copy.ts";
 import "./styles.css";
 
 declare global {
@@ -59,12 +60,21 @@ function Ask() {
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [progress, setProgress] = useState<Progress>(() => ({ message: null, since: Date.now() }));
+  // The pages on the six shelves (null until counted), which decide the line under the field before the first question.
+  const [pages, setPages] = useState<number | null>(null);
   const counter = useRef(0);
   const field = useRef<HTMLInputElement>(null);
   const busy = turns.some((turn) => turn.outcome === null);
 
   // Whatever main says next starts the count again: the seconds are those of what the question is doing now.
   useEffect(() => api.onProgress((message) => setProgress({ message, since: Date.now() })), []);
+  // The shelves are counted when the window opens, and again whenever it has the focus: a note may have been filed meanwhile.
+  useEffect(() => {
+    const count = () => void api.libraryPages().then(setPages, () => undefined);
+    count();
+    window.addEventListener("focus", count);
+    return () => window.removeEventListener("focus", count);
+  }, []);
   // Esc closes the window wherever the focus is: in the field, or on a page's button.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -118,7 +128,7 @@ function Ask() {
       <div className="ask-turns">
         {turns.length === 0 ? (
           <div className="ask-empty">
-            <Text variant="callout" tone="secondary">Answers come from your library only, with links to the pages they use.</Text>
+            <Text variant="callout" tone="secondary">{emptyLine(pages)}</Text>
           </div>
         ) : (
           <Stack gap={24}>

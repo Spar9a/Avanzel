@@ -25,6 +25,17 @@ export function failedAnswer(result: AskResult, now: Date): AskProblem {
   return askProblem(result.failure ?? avanzelFailure(message), result.changedFiles, now);
 }
 
+/**
+ * The line under the field before the first question: where answers come from; or, for a library whose six shelves hold no
+ * pages (`pages` is 0), what to do first, since there is nothing to ask about yet. Until main has counted them (null) the
+ * usual line stands, which is true of every library.
+ */
+export function emptyLine(pages: number | null): string {
+  return pages === 0
+    ? "Your shelves are empty. Say something first, then ask about it."
+    : "Answers come from your library only, with links to the pages they use.";
+}
+
 /** What the waiting line says while the agent looks, before its seconds count: main's own words for it, too. */
 export const LOOKING = "Looking through your library…";
 

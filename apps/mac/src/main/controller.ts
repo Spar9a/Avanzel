@@ -19,6 +19,7 @@ import {
   BUILTIN_ORDER,
   Librarian,
   NoAgentError,
+  SHELVES,
   Vault,
   WAITING,
   checkAgent as checkHarness,
@@ -65,6 +66,7 @@ import { isSettingsPane, NOTE_GONE, noSuchReview } from "../shared/ipc.ts";
 import {
   correctedWordsProblem,
   filingProblem,
+  ownLine,
   takeBackRefused,
   takeBackRefusedProblem,
   undoRefused,
@@ -300,6 +302,10 @@ export class Controller {
    */
   private readonly opened: string[] = [];
   private readonly copied: string[] = [];
+  /** Quit and reopen was asked (`relaunch`), and the quit it began may still be waiting for a filing to stop. */
+  private relaunching = false;
+  /** How many times Quit and reopen was asked while AVANZEL_TEST=1, which relaunches nothing: for the e2e tests only. */
+  private relaunched = 0;
 
   constructor(userData: string) {
     this.store = new SettingsStore(path.join(userData, "settings.json"));
@@ -642,9 +648,9 @@ export class Controller {
   }
 
   /**
-   * `recording` went wrong: the capsule's card says so (`message`, `detail`), unless it is setup's first spoken thought,
-   * which the setup window says in its own words instead (`setup.lost`): the `problem`, and whether the recording is
-   * `kept` in the library, which nothing else of it is.
+   * `recording` went wrong: the capsule's card says so (`message`, `detail`, and its button: `action` and `actionLabel`),
+   * unless it is setup's first spoken thought, which the setup window says in its own words instead (`setup.lost`): the
+   * `problem`, and whether the recording is `kept` in the library, which nothing else of it is.
    */
   private recordingFailed(
     recording: Recording,
@@ -652,8 +658,9 @@ export class Controller {
     message: string,
     detail?: string,
     action?: ErrorAction,
+    actionLabel?: string,
   ): void {
-    if (!this.setup.lost(recording, { kind: "failed", problem, kept })) this.fail(message, detail, action);
+    if (!this.setup.lost(recording, { kind: "failed", problem, kept })) this.fail(message, detail, action, actionLabel);
   }
 
   // ---------------------------------------------------------------- recording
@@ -698,9 +705,10 @@ export class Controller {
   /** macOS applies a Screen Recording grant only when the app starts again. */
   private cantSeeScreen(): void {
     this.fail(
-      "Avanzel can't see the screen yet",
-      "Allow Avanzel under System Settings → Privacy & Security → Screen Recording, then quit and reopen Avanzel.",
+      "Avanzel can't see the screen yet.",
+      "Allow it in System Settings, under Screen Recording, then quit and reopen Avanzel.",
       "open-screen-settings",
+      "Open System Settings",
     );
   }
 
@@ -735,7 +743,7 @@ export class Controller {
       return false;
     }
     if (!(await requestMicrophone())) {
-      this.fail("Avanzel can't use the microphone", "Allow it under System Settings → Privacy & Security → Microphone.", "open-microphone-settings");
+      this.fail("Avanzel can't hear you yet.", "Allow it in System Settings, under Microphone.", "open-microphone-settings", "Open System Settings");
       return false;
     }
     return true;
@@ -818,6 +826,10 @@ export class Controller {
     this.setup.moveThought(recording, { kind: "waiting" });
   }
 
+  /**
+   * The capsule's page couldn't start the microphone, and says why in the words the browser gave (`message`). Nothing was
+   * recorded, and the card sends the person to Settings → Voice, where the microphone is chosen.
+   */
   micError(message: string): void {
     const recording = this.recording;
     if (!recording) return;
@@ -825,9 +837,10 @@ export class Controller {
     this.recordingFailed(
       recording,
       { problem: "microphone" },
-      "The microphone didn't start",
-      `${message}\nCheck Settings → Voice and System Settings → Privacy & Security → Microphone.`,
-      "open-microphone-settings",
+      "The microphone didn't start.",
+      [ownLine(message), "Nothing was recorded. Check the microphone in Settings → Voice."].filter(Boolean).join(" "),
+      "open-settings:voice",
+      "Open Settings",
     );
   }
 
@@ -899,9 +912,10 @@ export class Controller {
         return this.recordingFailed(
           recording,
           { problem: "silence" },
-          "No speech recognized",
-          "If you did speak, check the microphone in Settings → Voice.",
+          "Nothing was heard.",
+          "Is the right microphone selected? Nothing was saved.",
           "open-settings:voice",
+          "Choose microphone",
         );
       }
       const capture = vault.newCapture(text, { source: "voice", audio: audioPath, transcriber: engine, now });
@@ -1751,6 +1765,23 @@ export class Controller {
     openPrivacyPane(kind);
   }
 
+  /**
+   * Quit and reopen, on Privacy's screen row: macOS applies a Screen Recording grant only when the app starts again. It quits
+   * as anywhere does (`before-quit`, index.ts), so a filing under way is stopped first; its note stays in the inbox, which is
+   * safe. Asked again while that quit waits for the filing to stop, it does nothing: Avanzel opens once. With AVANZEL_TEST=1
+   * nothing quits or relaunches, and relaunchedForTests counts the asks.
+   */
+  relaunch(): void {
+    if (process.env.AVANZEL_TEST === "1") {
+      this.relaunched += 1;
+      return;
+    }
+    if (this.relaunching) return;
+    this.relaunching = true;
+    app.relaunch();
+    app.quit();
+  }
+
   // ---------------------------------------------------------------- quick type & ask
 
   openQuick(): void {
@@ -1805,6 +1836,17 @@ export class Controller {
 
   closeAsk(): void {
     if (this.askWindow && !this.askWindow.isDestroyed()) this.askWindow.close();
+  }
+
+  /**
+   * The pages on the six shelves, counted as Settings' library line counts them: a folder of the owner's own doesn't count.
+   * Ask invites a first thought, not a question, while there are none. Nothing without a library that is there.
+   */
+  libraryPages(): number {
+    const vault = this.vault;
+    if (!vault?.exists()) return 0;
+    const shelves = vault.shelfCounts();
+    return SHELVES.reduce((sum, shelf) => sum + (shelves[shelf] ?? 0), 0);
   }
 
   async ask(question: string): Promise<AskResult> {
@@ -1919,6 +1961,16 @@ export class Controller {
     if (!this.settingsWindow || this.settingsWindow.isDestroyed()) {
       this.settingsWindow = createSettingsWindow(pane);
       this.settingsWindow.once("ready-to-show", () => this.settingsWindow?.show());
+      // Back from System Settings, say, where the person may have allowed the microphone or Screen Recording: Privacy follows
+      // it, as setup reads the sign-ins again when it has the focus (`rereadSignIns`). That is a read of what is on this
+      // Mac, and starts no agent check, which could cost quota.
+      this.settingsWindow.on("focus", () => {
+        try {
+          this.refreshSettings();
+        } catch (error) {
+          console.error("settings", error); // an event handler that throws would bring up Electron's error box
+        }
+      });
     } else if (pane) {
       this.settingsWindow.webContents.send("settings:show-pane", pane);
     }
@@ -1956,9 +2008,14 @@ export class Controller {
     if (win && !win.isDestroyed()) win.close();
   }
 
-  private broadcast(): void {
+  /** Settings, if it is open, is sent a fresh snapshot (`settings:changed`), which its shell draws in the pane it shows. */
+  private refreshSettings(): void {
     const win = this.settingsWindow;
     if (win && !win.isDestroyed()) win.webContents.send("settings:changed", this.snapshot());
+  }
+
+  private broadcast(): void {
+    this.refreshSettings();
     this.setup.publish();
     this.refreshMenu();
   }
@@ -1970,8 +2027,7 @@ export class Controller {
    * (`broadcast`).
    */
   private broadcastProgress(): void {
-    const win = this.settingsWindow;
-    if (win && !win.isDestroyed()) win.webContents.send("settings:changed", this.snapshot());
+    this.refreshSettings();
     this.setup.publishProgress();
   }
 
@@ -2659,6 +2715,11 @@ export class Controller {
    */
   openedForTests(): string[] {
     return this.opened;
+  }
+
+  /** How many times Quit and reopen was asked; the app relaunches nothing with AVANZEL_TEST=1, which only counts. */
+  relaunchedForTests(): number {
+    return this.relaunched;
   }
 
   /** The capture of the note the capsule's failure card is about, while it shows one (what its button files again); else null. */

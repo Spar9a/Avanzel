@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answeredLine, failedAnswer, LOOKING, waitingLine } from "../src/renderer/ask/copy.ts";
+import { answeredLine, emptyLine, failedAnswer, LOOKING, waitingLine } from "../src/renderer/ask/copy.ts";
 import type { AskResult } from "../src/shared/ipc.ts";
 import type { AgentFailure } from "../src/shared/problems.ts";
 
@@ -86,6 +86,14 @@ describe("ask copy", () => {
     expect(failedAnswer(failed({ answer: "\nThe settings can't be read:\n config.toml: invalid TOML at line 2 \n\n", failure: null }), now).body).toBe(
       "Your library hasn't changed. The settings can't be read: config.toml: invalid TOML at line 2.",
     );
+  });
+
+  it("emptyLine says where answers come from, or for a library with no pages what to do first", () => {
+    expect(emptyLine(0)).toBe("Your shelves are empty. Say something first, then ask about it.");
+    expect(emptyLine(1)).toBe("Answers come from your library only, with links to the pages they use.");
+    expect(emptyLine(42)).toBe("Answers come from your library only, with links to the pages they use.");
+    // Before main has counted the pages, the usual line stands: it is true of every library.
+    expect(emptyLine(null)).toBe("Answers come from your library only, with links to the pages they use.");
   });
 
   it("waitingLine says the agent looks, and counts its whole seconds only from 10 s on", () => {

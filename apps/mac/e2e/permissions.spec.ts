@@ -1,6 +1,7 @@
 // Microphone and Screen Recording turned down (AVANZEL_FAKE_PERMISSIONS stands in for macOS):
 // the capsule says what to do, and nothing half-made is left in the library. Settings → Privacy
-// says what each permission is for, where it stands, and how to allow it.
+// says what each permission is for, where it stands, and how to allow it, offers Quit and reopen
+// for the screen (which relaunches nothing under AVANZEL_TEST=1), and follows System Settings.
 import { expect, test } from "@playwright/test";
 import { call, capsuleKind, filesUnder, launch, makeLibrary, openSettings, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
 
@@ -19,11 +20,23 @@ test("with the microphone denied, dictating says how to allow it and saves nothi
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app)).toBe("error");
-  await expect(capsule.getByText("Avanzel can't use the microphone")).toBeVisible();
-  await expect(capsule.getByRole("button", { name: "Open Settings" })).toBeVisible();
-  expect(await call(app, "capsuleStateForTests")).toMatchObject({ action: "open-microphone-settings" });
+  // What happened, what to do, and the one fix: Open System Settings, on the Microphone pane.
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    message: "Avanzel can't hear you yet.",
+    detail: "Allow it in System Settings, under Microphone.",
+    action: "open-microphone-settings",
+    actionLabel: "Open System Settings",
+  });
+  await expect(capsule.getByText("Avanzel can't hear you yet.")).toBeVisible();
+  await expect(capsule.getByText("Allow it in System Settings, under Microphone.", { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("button", { name: "Open System Settings", exact: true })).toBeVisible();
+  await expect(capsule.getByRole("button", { name: "Open Settings", exact: true })).toHaveCount(0);
   await snap(capsule, "mic-denied");
   expect(saved(library)).toEqual(before);
+  // With AVANZEL_TEST=1 System Settings stays shut, and openedForTests says which pane the button went to.
+  await capsule.getByRole("button", { name: "Open System Settings", exact: true }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Microphone"]);
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await app.close();
 });
 
@@ -40,12 +53,23 @@ test("with Screen Recording denied, a screen capture says how to allow it, relau
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleCapture");
   await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("error");
-  await expect(capsule.getByText("Avanzel can't see the screen yet")).toBeVisible();
-  await expect(capsule.getByText(/then quit and reopen Avanzel\.$/)).toBeVisible();
-  await expect(capsule.getByRole("button", { name: "Open Settings" })).toBeVisible();
-  expect(await call(app, "capsuleStateForTests")).toMatchObject({ action: "open-screen-settings" });
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    message: "Avanzel can't see the screen yet.",
+    detail: "Allow it in System Settings, under Screen Recording, then quit and reopen Avanzel.",
+    action: "open-screen-settings",
+    actionLabel: "Open System Settings",
+  });
+  await expect(capsule.getByText("Avanzel can't see the screen yet.")).toBeVisible();
+  await expect(
+    capsule.getByText("Allow it in System Settings, under Screen Recording, then quit and reopen Avanzel.", { exact: true }),
+  ).toBeVisible();
+  await expect(capsule.getByRole("button", { name: "Open System Settings", exact: true })).toBeVisible();
+  await expect(capsule.getByRole("button", { name: "Open Settings", exact: true })).toHaveCount(0);
   await snap(capsule, "screen-denied");
   expect(saved(library)).toEqual(before);
+  await capsule.getByRole("button", { name: "Open System Settings", exact: true }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Screen Recording"]);
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await app.close();
 });
 
@@ -62,7 +86,11 @@ test("a blank first screen capture asks for Screen Recording and a relaunch, and
   await call(app, "toggleCapture");
   await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("error");
   await expect(capsule.getByText(/then quit and reopen Avanzel\.$/)).toBeVisible();
-  expect(await call(app, "capsuleStateForTests")).toMatchObject({ action: "open-screen-settings" });
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    message: "Avanzel can't see the screen yet.",
+    action: "open-screen-settings",
+    actionLabel: "Open System Settings",
+  });
   expect(saved(library)).toEqual(before);
   await app.close();
 });
@@ -77,7 +105,9 @@ test("Settings → Privacy says what each permission is for, and Open System Set
   await expect(settings.getByText("Needed only to capture the screen with a comment.", { exact: true })).toBeVisible();
   await expect(microphone.getByText("Allowed", { exact: true })).toBeVisible();
   await expect(microphone.getByRole("button")).toHaveCount(0);
-  await expect(screen.getByRole("button")).toHaveText(["Open System Settings"]);
+  // Screen recording applies only once Avanzel starts again, so its row offers that beside the way to allow it; the group's
+  // note, which says so, stays.
+  await expect(screen.getByRole("button")).toHaveText(["Open System Settings", "Quit and reopen"]);
   await expect(settings.getByText("After you allow screen recording, quit and reopen Avanzel: macOS applies it only then.", { exact: true })).toBeVisible();
   // What leaves this Mac names a captured screen too, since a screenshot goes to the agent as well as the words.
   await expect(
@@ -129,7 +159,66 @@ test("Allow… asks macOS for the microphone once, and the row then says Allowed
 test("Screen recording never offers Allow…, since Electron can't tell never asked from denied", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_PERMISSIONS: "screen:not-determined" });
   const settings = await openSettings(app, "Privacy");
-  await expect(settings.getByRole("group", { name: "Screen recording", exact: true }).getByRole("button")).toHaveText(["Open System Settings"]);
+  await expect(settings.getByRole("group", { name: "Screen recording", exact: true }).getByRole("button")).toHaveText([
+    "Open System Settings",
+    "Quit and reopen",
+  ]);
   await expect(settings.getByRole("button", { name: "Allow…" })).toHaveCount(0);
+  await app.close();
+});
+
+test("a screen row that isn't allowed offers Quit and reopen, secondary, which relaunches once; the microphone's row has none", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_PERMISSIONS: "microphone:denied,screen:denied" });
+  const settings = await openSettings(app, "Privacy");
+  const microphone = settings.getByRole("group", { name: "Microphone", exact: true });
+  const screen = settings.getByRole("group", { name: "Screen recording", exact: true });
+  // macOS applies a microphone grant at once, so only the screen row restarts.
+  await expect(microphone.getByRole("button")).toHaveText(["Open System Settings"]);
+  await expect(screen.getByRole("button")).toHaveText(["Open System Settings", "Quit and reopen"]);
+  // Neither is the moment's one primary: both are secondary, as the table's Privacy row says.
+  await expect(screen.getByRole("button", { name: "Open System Settings", exact: true })).toHaveAttribute("data-variant", "secondary");
+  await expect(screen.getByRole("button", { name: "Quit and reopen", exact: true })).toHaveAttribute("data-variant", "secondary");
+  await snap(settings, "settings-privacy-quit-and-reopen");
+  expect(await call(app, "relaunchedForTests")).toBe(0);
+  await screen.getByRole("button", { name: "Quit and reopen", exact: true }).click();
+  // With AVANZEL_TEST=1 nothing relaunches: the ask is only noted, and Avanzel goes on running.
+  await expect.poll(() => call(app, "relaunchedForTests")).toBe(1);
+  expect(await call(app, "openedForTests")).toEqual([]);
+  await expect(settings.getByRole("heading", { name: "Privacy", exact: true })).toBeVisible();
+  await app.close();
+});
+
+test("a screen that is allowed has no Quit and reopen", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_PERMISSIONS: "microphone:denied" });
+  const settings = await openSettings(app, "Privacy");
+  await expect(settings.getByRole("group", { name: "Screen recording", exact: true }).getByText("Allowed", { exact: true })).toBeVisible();
+  await expect(settings.getByRole("button", { name: "Quit and reopen" })).toHaveCount(0);
+  await app.close();
+});
+
+test("Settings → Privacy follows System Settings: a permission allowed there shows as Allowed once Settings has the focus again", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_PERMISSIONS: "microphone:denied,screen:denied" });
+  const settings = await openSettings(app, "Privacy");
+  const microphone = settings.getByRole("group", { name: "Microphone", exact: true });
+  const screen = settings.getByRole("group", { name: "Screen recording", exact: true });
+  await expect(microphone.getByRole("button")).toHaveText(["Open System Settings"]);
+  await expect(screen.getByRole("button")).toHaveText(["Open System Settings", "Quit and reopen"]);
+  // The person allows both in System Settings (the stand-in for macOS now says granted) and comes back: Settings has the
+  // focus again. Main sends a fresh snapshot then, as setup reads the sign-ins again when it has the focus.
+  await app.evaluate(({ BrowserWindow }) => {
+    process.env.AVANZEL_FAKE_PERMISSIONS = "microphone:granted,screen:granted";
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
+  });
+  await expect(microphone.getByText("Allowed", { exact: true })).toBeVisible();
+  await expect(screen.getByText("Allowed", { exact: true })).toBeVisible();
+  await expect(settings.getByRole("button", { name: "Open System Settings" })).toHaveCount(0);
+  await expect(settings.getByRole("button", { name: "Quit and reopen" })).toHaveCount(0);
+  // And back again: a permission taken away there reads as not allowed.
+  await app.evaluate(({ BrowserWindow }) => {
+    process.env.AVANZEL_FAKE_PERMISSIONS = "microphone:denied,screen:granted";
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
+  });
+  await expect(microphone.getByRole("button")).toHaveText(["Open System Settings"]);
+  await expect(screen.getByText("Allowed", { exact: true })).toBeVisible();
   await app.close();
 });

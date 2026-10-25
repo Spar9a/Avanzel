@@ -1,10 +1,10 @@
 // The Settings window, built from @avanzel/ui: its toolbar, and each pane's controls.
 import { expect, test, type ElectronApplication } from "@playwright/test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { answerMenus, call, launch, makeLibrary, openedWith, openSettings, shownMenus, snap, stubOpening, stubPicker } from "./helpers.ts";
+import { agentCalls, answerMenus, call, launch, makeLibrary, openedWith, openSettings, shownMenus, snap, stubOpening, stubPicker } from "./helpers.ts";
 
 /** What Settings is sent now. */
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
@@ -62,6 +62,28 @@ test("General shows the library with its shelves, and each of its controls appli
   await expect(
     settings.getByText("Your first thought will fill a shelf. This folder has no git history, so changes can't be undone.", { exact: true }),
   ).toBeVisible();
+  await app.close();
+});
+
+test("Settings is sent a fresh snapshot when it has the focus again, and reading it asks no agent anything", async () => {
+  const library = await makeLibrary();
+  const record = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-record-")), "runs.jsonl");
+  const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_RECORD: record });
+  const settings = await openSettings(app);
+  await expect(
+    settings.getByText("Your first thought will fill a shelf. This folder has no git history, so changes can't be undone.", { exact: true }),
+  ).toBeVisible();
+  const before = await agentCalls(app);
+  // Something outside Avanzel changes what Settings shows, a page landing on a shelf, and the person comes back to Settings:
+  // the window has the focus again, as setup's has when they come back from Terminal.
+  writeFileSync(path.join(library, "goals", "run.md"), "# Run a marathon\n");
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
+  });
+  await expect(settings.getByText("1 page on six shelves. This folder has no git history, so changes can't be undone.", { exact: true })).toBeVisible();
+  // The refresh only reads: no agent's sign-in was read, and the library's agent was asked nothing, since each costs quota.
+  expect(await agentCalls(app)).toEqual(before);
+  expect(existsSync(record)).toBe(false);
   await app.close();
 });
 

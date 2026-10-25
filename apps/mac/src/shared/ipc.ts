@@ -567,6 +567,11 @@ export interface AvanzelBridge {
     /** Set up Avanzel…: setup opens or comes forward, and Settings closes. */
     openSetup(): void;
     openPrivacy(pane: "microphone" | "screen"): void;
+    /**
+     * Quit and reopen, on Privacy's screen row: macOS applies a Screen Recording grant only when Avanzel starts again. Avanzel
+     * quits as it does anywhere, stopping a filing under way first (its note stays in the inbox), and opens again.
+     */
+    relaunch(): void;
     requestPermission(kind: "microphone" | "screen"): Promise<SettingsSnapshot>;
     /** Choose…: a native menu of `options` pops up at `at` (window points; null: at the pointer). Resolves with the
         value picked, or null when the menu closes without one. */
@@ -587,6 +592,11 @@ export interface AvanzelBridge {
     cancel(): void;
     openPage(name: string): void;
     close(): void;
+    /**
+     * How many pages the six shelves hold, as Settings' library line counts them (a folder of the owner's own doesn't count):
+     * 0 tells the window to invite a first thought rather than a question.
+     */
+    libraryPages(): Promise<number>;
   };
   setup: {
     get(): Promise<SetupSnapshot>;

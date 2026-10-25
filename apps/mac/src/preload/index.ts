@@ -45,6 +45,7 @@ const bridge: AvanzelBridge = {
     showLibrary: () => ipcRenderer.send("settings:show-library"),
     openSetup: () => ipcRenderer.send("settings:open-setup"),
     openPrivacy: (pane) => ipcRenderer.send("settings:open-privacy", pane),
+    relaunch: () => ipcRenderer.send("settings:relaunch"),
     requestPermission: (kind) => ipcRenderer.invoke("settings:request-permission", kind),
     pick: (options, at) => ipcRenderer.invoke("settings:pick", options, at),
   },
@@ -58,6 +59,7 @@ const bridge: AvanzelBridge = {
     cancel: () => ipcRenderer.send("ask:cancel"),
     openPage: (name) => ipcRenderer.send("ask:open-page", name),
     close: () => ipcRenderer.send("ask:close"),
+    libraryPages: () => ipcRenderer.invoke("ask:library-pages"),
   },
   setup: {
     get: () => ipcRenderer.invoke("setup:get"),
