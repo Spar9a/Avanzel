@@ -1,7 +1,7 @@
 import { _electron as electron, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { MODELS, Vault, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -31,9 +31,23 @@ export async function makeLibrary({ git = false }: { git?: boolean } = {}): Prom
   return root;
 }
 
+/** What `say` made for each `${voice}\n${text}` in this process: the suite says few texts, and `say` takes about 0.8 s a call. */
+const spoken = new Map<string, string>();
+
+/**
+ * A new WAV file of `voice` saying `text`. `say` speaks each voice and text once per process; the file it made stays here,
+ * and every call (the first too) hands out a copy of it in its own folder, so a test may delete or move its file.
+ */
 export function speechWav(text: string, voice = "Samantha"): string {
+  const key = `${voice}\n${text}`;
+  let made = spoken.get(key);
+  if (made === undefined) {
+    made = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-wav-")), "speech.wav");
+    execFileSync("say", ["-v", voice, "-o", made, "--data-format=LEI16@16000", text]);
+    spoken.set(key, made);
+  }
   const file = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-wav-")), "speech.wav");
-  execFileSync("say", ["-v", voice, "-o", file, "--data-format=LEI16@16000", text]);
+  copyFileSync(made, file);
   return file;
 }
 
@@ -382,7 +396,12 @@ export async function toDone(app: ElectronApplication): Promise<Page> {
   return setup;
 }
 
+/**
+ * A picture of `page` for people to look at, in test-results/shots. Run with `AVANZEL_E2E_SHOTS=1` to collect them; without
+ * it, this returns at once: no test asserts on a picture, and each costs about half a second.
+ */
 export async function snap(page: Page, name: string): Promise<void> {
+  if (process.env.AVANZEL_E2E_SHOTS !== "1") return;
   mkdirSync(shots, { recursive: true });
   await page.waitForTimeout(350); // let the appear animation finish
   try {

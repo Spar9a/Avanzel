@@ -47,23 +47,38 @@ async function quit(app: ElectronApplication): Promise<void> {
   await closed;
 }
 
+/** How long the app's quit wait is (controller.ts, QUIT_WAIT_MS) unless a test shortens it with AVANZEL_QUIT_WAIT_MS. */
+const REAL_QUIT_WAIT_MS = 10_000;
+/** For a test that needs the quit wait only to run out, not to take 10 s doing it. */
+const SHORT_QUIT_WAIT = { AVANZEL_QUIT_WAIT_MS: "2000" };
+
 /**
  * Dictates "misheard words" while another process holds the library (this test, standing in for a
  * second Avanzel): the filing waits for it, and so does all that queues behind it, past the end of
- * quitting's wait. `meanwhile` acts in the capsule, then Avanzel quits. Returns what the inbox holds.
+ * quitting's wait. `meanwhile` acts in the capsule, then Avanzel quits. The library is let go only
+ * after the app has gone, so the app can leave only once the quit wait has run out, and the quit must
+ * have taken all of it: REAL_QUIT_WAIT_MS, or the AVANZEL_QUIT_WAIT_MS in `env` (more variables for
+ * the app to launch with). Returns what the inbox holds.
  */
-async function quitWhileHeld(meanwhile: (app: ElectronApplication, capsule: Page) => Promise<void>): Promise<string[]> {
+async function quitWhileHeld(
+  meanwhile: (app: ElectronApplication, capsule: Page) => Promise<void>,
+  env: Record<string, string> = {},
+): Promise<string[]> {
   const library = await makeLibrary();
+  const waitMs = Number(env.AVANZEL_QUIT_WAIT_MS ?? REAL_QUIT_WAIT_MS);
   let letGo = () => {};
   const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
   try {
-    const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("hello"), AVANZEL_FAKE_TRANSCRIPT: "misheard words" });
+    const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_AUDIO: speechWav("hello"), AVANZEL_FAKE_TRANSCRIPT: "misheard words", ...env });
     const capsule = await windowFor(app, "capsule");
     await call(app, "toggleDictate");
     await call(app, "toggleDictate");
     await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
     await meanwhile(app, capsule);
+    const quitting = Date.now();
     await quit(app);
+    // The library is still held, so only the end of the wait let the app go; 100 ms is slack for a timer's rounding.
+    expect(Date.now() - quitting, "the app left before its quit wait ran out").toBeGreaterThanOrEqual(waitMs - 100);
   } finally {
     letGo();
     await held;
@@ -193,7 +208,7 @@ test("quitting with the editor open keeps the edit in the inbox", async () => {
 });
 
 test("quitting with the editor open still saves the edit when the wait runs out", async () => {
-  const words = await quitWhileHeld((app, capsule) => editTo(app, capsule, "corrected words"));
+  const words = await quitWhileHeld((app, capsule) => editTo(app, capsule, "corrected words"), SHORT_QUIT_WAIT);
   // The corrected words are written anyway, with the recording and transcriber of the misheard ones, which stay too.
   expect(words).toHaveLength(2);
   expect(words.filter((text) => text.includes("misheard words"))).toHaveLength(1);
@@ -203,7 +218,7 @@ test("quitting with the editor open still saves the edit when the wait runs out"
 });
 
 test("words filed after an edit are saved when the quit wait runs out before their turn", async () => {
-  const words = await quitWhileHeld((app, capsule) => fileEdit(app, capsule, "first fix"));
+  const words = await quitWhileHeld((app, capsule) => fileEdit(app, capsule, "first fix"), SHORT_QUIT_WAIT);
   expect(words).toHaveLength(2);
   expect(words.filter((text) => text.includes("misheard words"))).toHaveLength(1);
   expect(words.filter((text) => text.includes("first fix"))).toHaveLength(1);
@@ -236,10 +251,11 @@ test("File with the words unchanged is a Cancel: quitting before its turn writes
     await expect.poll(() => capsuleKind(app)).toBe("editing");
     await capsule.getByRole("button", { name: "File" }).click(); // nothing typed
     await expect.poll(() => capsuleKind(app)).toBe("filing");
-  });
+  }, SHORT_QUIT_WAIT);
   expect(words).toEqual([expect.stringContaining("misheard words")]);
 });
 
+// The one quit-wait test that keeps the app's real wait: it covers that wait, and quitWhileHeld checks the quit took all 10 s.
 test("a second Edit on a refiled note keeps its words when the quit wait runs out", async () => {
   const words = await quitWhileHeld(async (app, capsule) => {
     await fileEdit(app, capsule, "first fix");

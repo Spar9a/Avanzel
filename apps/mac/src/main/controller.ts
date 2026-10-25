@@ -108,6 +108,12 @@ const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.en
 // How long the capsule says that a shortcut picked on its notice works.
 const PICKED_SHOW_MS = 3_000;
 
+/** How long quitting waits for stopped agent runs: QUIT_WAIT_MS, or in tests the positive number of ms in AVANZEL_QUIT_WAIT_MS. */
+function quitWaitMs(): number {
+  const shortened = process.env.AVANZEL_TEST === "1" ? Number(process.env.AVANZEL_QUIT_WAIT_MS) : 0;
+  return shortened > 0 ? shortened : QUIT_WAIT_MS;
+}
+
 /** What an evening review that had nothing to file says: an empty inbox, or how many notes it left to their own filing or edit. */
 function nothingFiled(left: number): string {
   if (!left) return "Inbox was empty.";
@@ -279,7 +285,7 @@ export class Controller {
 
   /**
    * Before quitting: stop every agent run and agent check, and keep an open edit (`keepEdit`), then
-   * wait (at most QUIT_WAIT_MS) while the engine does the runs' bookkeeping: protected files put
+   * wait (at most quitWaitMs()) while the engine does the runs' bookkeeping: protected files put
    * back, what a run left committed, the capture kept in the inbox. A check isn't waited for. Nothing
    * new starts meanwhile. Words the wait left only in memory (`saveUnwritten`) are saved all the same.
    */
@@ -289,7 +295,7 @@ export class Controller {
     this.stopAgentChecks();
     this.keepEdit();
     let timer: NodeJS.Timeout | undefined;
-    const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, QUIT_WAIT_MS)));
+    const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, quitWaitMs())));
     await Promise.race([Promise.allSettled([this.queue, ...this.runs.values()]), waited]);
     clearTimeout(timer);
     this.saveUnwritten();

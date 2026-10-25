@@ -274,6 +274,7 @@ no Avanzel server.
 npm install
 npm test                                   # engine + app unit tests
 npm run e2e -w @avanzel/mac                # the real app driven by Playwright, with a fake agent
+AVANZEL_E2E_SHOTS=1 npm run e2e -w @avanzel/mac   # the same, and collect the windows' screenshots in apps/mac/test-results/shots/
 AVANZEL_TEST_ASR=1 npm test -w @avanzel/engine   # real Parakeet (macOS `say` voices)
 
 # Python CLI (v0.1)
