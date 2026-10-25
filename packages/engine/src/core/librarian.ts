@@ -16,7 +16,16 @@ import { localDate } from "./dates.ts";
 import { flowItems, frontmatterFields, splitFrontmatter } from "./frontmatter.ts";
 import * as gitops from "./git.ts";
 import { protectedState, undoProtected } from "./guard.ts";
-import { errorLine, runHeadless, selectHarness, type Harness, type RunResult } from "./harness.ts";
+import {
+  NoAgentError,
+  classifyFailure,
+  errorLine,
+  runHeadless,
+  selectHarness,
+  type Harness,
+  type RunFailure,
+  type RunResult,
+} from "./harness.ts";
 import { createInside, lstatOrNull, realFoldersTo, removeInside, writeInside } from "./inside.ts";
 import { askPrompt, filePrompt, reviewPrompt } from "./prompts.ts";
 import { insideLibrary, stepPath, type FilingStep } from "./steps.ts";
@@ -63,6 +72,14 @@ export interface FileOutcome {
    * behind. Null without git, with auto_commit off, or when a failed run changed nothing.
    */
   commit: string | null;
+  /**
+   * Why an agent's run did not file the capture (a usage limit, a missing sign-in, a timeout, or another failure), read
+   * from what the agent printed (`classifyFailure`). A run that exited 0 and still wasn't filed (the inbox is a symlink,
+   * nothing was written, the archive is blocked) is `other`, in Avanzel's own words and never the agent's reply. Null
+   * when the capture was filed, and when something else failed it (an unreadable capture, a recording that could not be
+   * transcribed): then only `error` says why.
+   */
+  failure: RunFailure | null;
 }
 
 export interface AgentOutcome {
@@ -187,7 +204,8 @@ export class Librarian {
 
   /**
    * File captures one per agent run, oldest first. Without `only`, the inbox is re-read after every
-   * capture, so anything captured meanwhile is filed too.
+   * capture, so anything captured meanwhile is filed too. When the agent isn't there (a `NoAgentError`, from the first
+   * capture or a later one), nothing more is tried and the promise rejects with it; the captures stay in the inbox.
    */
   async file(only?: readonly string[] | null, options: FileOptions = {}): Promise<FileOutcome[]> {
     return this.vault.withLock(() => this.#fileQueue(only ?? null, options), () => (options.progress ?? quiet)(WAITING));
@@ -273,6 +291,8 @@ export class Librarian {
       try {
         outcomes.push(await this.#fileOne(path, instructions, signal, steps));
       } catch (error) {
+        // The agent is gone, and so it is for every capture: say so, instead of failing each in turn.
+        if (error instanceof NoAgentError) throw error;
         outcomes.push(outcome(stem(path), { error: errorMessage(error) })); // this capture fails alone; the rest go on
       }
     }
@@ -329,7 +349,10 @@ export class Librarian {
       // What the run left behind (it failed, timed out, was cancelled or filed nothing) is its own
       // commit, handed out with the outcome so Undo covers it; a run that changed nothing makes none.
       const commit = await this.#commit(`avanzel: leftovers of failed filing ${captureId}`);
-      return outcome(captureId, { ...ran, error, commit });
+      // A run that failed is read for why. One that exited 0 is not: its reply could say anything, and what stopped it
+      // is Avanzel's own finding.
+      const failure: RunFailure = result.ok ? { kind: "other", resetsAt: null, line: errorLine(error) } : classifyFailure(result);
+      return outcome(captureId, { ...ran, error, commit, failure });
     }
     if (!this.vault.logMentions(captureId)) {
       this.vault.appendLog("file", `[[${captureId}]] → ${changes.pages.map(wikilink).join(", ")}`, now);
@@ -562,6 +585,7 @@ function outcome(captureId: string, fields: Partial<Omit<FileOutcome, "captureId
     guarded: [],
     refused: [],
     commit: null,
+    failure: null,
     ...fields,
   };
 }

@@ -11,10 +11,13 @@ import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { AvanzelError } from "../types.ts";
-import { ClaudeStream, type ToolStep } from "./claude-stream.ts";
+import { ClaudeStream, type RateLimit, type ToolStep } from "./claude-stream.ts";
 import type { CustomHarness, Env, Settings } from "./config.ts";
 import { guardSettings, installHook } from "./guard-hook.ts";
 import { which } from "./proc.ts";
+
+// A run's result carries it, so it is offered here as well as where it is read.
+export type { RateLimit } from "./claude-stream.ts";
 
 export const BUILTIN_ORDER = ["claude", "codex", "opencode", "cursor-agent", "gemini"] as const;
 
@@ -121,6 +124,11 @@ export interface RunResult {
   ok: boolean;
   /** The paths of the writes the agent was refused, as it gave them. Only Claude Code reports these; the rest give []. */
   refused: string[];
+  /**
+   * The last rate limit the agent reported, even for a run that went well. Only Claude Code's stream reports one; the
+   * rest give null.
+   */
+  rateLimit: RateLimit | null;
 }
 
 export interface RunOptions {
@@ -241,6 +249,20 @@ export function installed(settings: Settings): string[] {
     .map(([name]) => name);
 }
 
+/**
+ * The agent a run needs isn't there. `agent` names the harness that was asked for ("claude") when it is unknown, isn't on
+ * PATH, or was gone when it was started; it is null when none is installed at all.
+ */
+export class NoAgentError extends AvanzelError {
+  override name = "NoAgentError";
+  readonly agent: string | null;
+
+  constructor(message: string, agent: string | null = null) {
+    super(message);
+    this.agent = agent;
+  }
+}
+
 export function selectHarness(settings: Settings, requested?: string | null): Harness {
   const table = harnesses(settings);
   const choice = requested || settings.harness;
@@ -249,16 +271,18 @@ export function selectHarness(settings: Settings, requested?: string | null): Ha
       const harness = table[name];
       if (harness?.available()) return harness;
     }
-    throw new AvanzelError(
+    throw new NoAgentError(
       "No agent CLI found. Install one of: Claude Code (claude), Codex (codex), OpenCode (opencode), " +
         "Cursor Agent (cursor-agent), Gemini CLI (gemini) — or add [harnesses.<name>] to .avanzel/config.toml.",
     );
   }
   const harness = Object.hasOwn(table, choice) ? table[choice] : undefined;
-  if (!harness) throw new AvanzelError(`Unknown harness '${choice}'. Known harnesses: ${Object.keys(table).join(", ")}.`);
+  if (!harness) {
+    throw new NoAgentError(`Unknown harness '${choice}'. Known harnesses: ${Object.keys(table).join(", ")}.`, choice);
+  }
   if (!harness.available()) {
     const others = installed(settings).join(", ") || "none";
-    throw new AvanzelError(`Harness '${choice}' needs \`${harness.binary}\` on your PATH. Installed harnesses: ${others}.`);
+    throw new NoAgentError(`Harness '${choice}' needs \`${harness.binary}\` on your PATH. Installed harnesses: ${others}.`, choice);
   }
   return harness;
 }
@@ -270,9 +294,14 @@ const TELLING = [
   "quota", "rate limit",
 ];
 
+/** The lines of `text` that say something: without colours, trimmed, and not blank. */
+function rowsOf(text: string): string[] {
+  return text.replace(ANSI, "").split(/\r?\n/).map((row) => row.trim()).filter(Boolean);
+}
+
 /** The line of a failed run's output worth showing: the last error or login line, else the last line. */
 export function errorLine(text: string): string {
-  const rows = text.replace(ANSI, "").split(/\r?\n/).map((row) => row.trim()).filter(Boolean);
+  const rows = rowsOf(text);
   const telling = rows.filter((row) => TELLING.some((word) => row.toLowerCase().includes(word)));
   return Array.from(telling.at(-1) ?? rows.at(-1) ?? "").slice(0, 300).join("");
 }
@@ -287,13 +316,20 @@ export function childEnv(env: Env): Record<string, string> {
 export async function runHeadless(harness: Harness, prompt: string, vault: string, options: RunOptions): Promise<RunResult> {
   const { write, model = null, timeoutSeconds, images = [], signal, onStep } = options;
   const started = performance.now();
-  const result = (exitCode: number, output: string, stderr: string, refused: string[] = []): RunResult => ({
+  const result = (
+    exitCode: number,
+    output: string,
+    stderr: string,
+    refused: string[] = [],
+    rateLimit: RateLimit | null = null,
+  ): RunResult => ({
     exitCode,
     output: output.replace(ANSI, "").trim(),
     stderr,
     seconds: (performance.now() - started) / 1000,
     ok: exitCode === 0,
     refused,
+    rateLimit,
   });
   if (!isDirectory(vault)) throw new AvanzelError(`No such folder: ${vault}`);
   const cancelled = `${harness.name} was cancelled`;
@@ -308,20 +344,28 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
     // Claude Code prints a JSON event per line. Reading them as they arrive hands over each step while the agent works,
     // and its reply is the result event's text: what comes back as `output` is plain text, as for every other agent.
     const stream = harness.streams ? new ClaudeStream(onStep ?? (() => {})) : null;
-    const run = await collect(argv, vault, timeoutSeconds * 1000, signal, stream ? (line) => stream.line(line) : undefined);
+    const run = await collect(
+      argv,
+      vault,
+      timeoutSeconds * 1000,
+      signal,
+      stream ? (line) => stream.line(line) : undefined,
+      harness.name,
+    );
     const stdout = stream ? stream.reply : run.stdout;
     const refused = stream ? stream.refused : [];
+    const rateLimit = stream ? stream.rateLimit : null;
     if (run.stopped === "timeout") {
-      return result(124, stdout, `${run.stderr}\n${harness.name} timed out after ${timeoutSeconds}s`.trim(), refused);
+      return result(124, stdout, `${run.stderr}\n${harness.name} timed out after ${timeoutSeconds}s`.trim(), refused, rateLimit);
     }
-    if (run.stopped === "cancel") return result(130, stdout, `${run.stderr}\n${cancelled}`.trim(), refused);
+    if (run.stopped === "cancel") return result(130, stdout, `${run.stderr}\n${cancelled}`.trim(), refused, rateLimit);
     if (stream?.failed) {
       // The result says the run failed, whatever the exit code. Its words are what a plain run printed, so they go where
       // the error line is read.
-      return result(run.exitCode || 1, stdout, `${run.stderr}\n${stream.reply}`.trim(), refused);
+      return result(run.exitCode || 1, stdout, `${run.stderr}\n${stream.reply}`.trim(), refused, rateLimit);
     }
     const output = harness.readsOutputFile && existsSync(outputFile) ? readFileSync(outputFile, "utf8") : stdout;
-    return result(run.exitCode, output, run.stderr, refused);
+    return result(run.exitCode, output, run.stderr, refused, rateLimit);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -353,6 +397,62 @@ const SIGN_IN_LINE = /sign in|log in|login|not logged|unauthori[sz]ed|authentica
 /** Whether a failed run's telling line (`errorLine`) is the agent asking its owner to sign in. */
 export function asksToSignIn(line: string): boolean {
   return SIGN_IN_LINE.test(line);
+}
+
+/**
+ * Why a run failed, as far as a person needs to tell: it hit a usage limit (`limit`), wants a sign-in (`signin`), ran
+ * out of time and was stopped (`timeout`), or failed some other way (`other`).
+ */
+export type RunFailureKind = "limit" | "signin" | "timeout" | "other";
+
+export interface RunFailure {
+  kind: RunFailureKind;
+  /** When a usage limit resets, in epoch ms, if the agent said; null when it didn't, and for every other kind. */
+  resetsAt: number | null;
+  /** The line of the run's output worth showing (`errorLine`). */
+  line: string;
+}
+
+// The words of a usage limit, as the agents are expected to print it. None has been seen at a real limit on this Mac, so
+// these are the shapes to expect, for a real limit to confirm.
+const USAGE_LIMIT = /usage limit|rate limit|limit reached|hit your limit|quota|too many requests|\b429\b/i;
+// How Claude Code ends its limit message: a bar and the reset in epoch seconds ("Claude AI usage limit reached|1792532400").
+const RESET_SUFFIX = /\|(\d{10})$/;
+// A limit is looked for in this many of the last lines. Before them is what an agent echoed back (Codex prints the whole
+// prompt on stderr, and the prompt holds the capture's slug or the question).
+const TAIL_LINES = 5;
+
+/**
+ * Classifies a run that failed (the caller has checked `result.ok`), first match winning:
+ * - `limit`: the stream's rate limit was rejected, or the last lines of its output name a usage limit. Its `resetsAt` is
+ *   the stream's, whatever its status; else the epoch seconds that end a line (`…|1792532400`); else null. A time such as
+ *   "try again at 3:05 PM" isn't read, since its date and zone aren't known.
+ * - `timeout`: the run was stopped for its time (exit 124).
+ * - `signin`: the telling line (`errorLine`) asks to sign in, as a failed check reads it.
+ * - `other`.
+ *
+ * A limit is read from the last lines only, so that what the agent echoed can't pass for one. A sign-in is read from the
+ * telling line, which is the last error or login line wherever it stands, as the agent check reads it.
+ */
+export function classifyFailure(result: RunResult): RunFailure {
+  const text = `${result.output}\n${result.stderr}`;
+  const line = errorLine(text);
+  const tail = rowsOf(text).slice(-TAIL_LINES);
+  if (result.rateLimit?.status === "rejected" || USAGE_LIMIT.test(tail.join("\n"))) {
+    return { kind: "limit", resetsAt: result.rateLimit?.resetsAt ?? resetFrom(tail), line };
+  }
+  if (result.exitCode === 124) return { kind: "timeout", resetsAt: null, line };
+  if (asksToSignIn(line)) return { kind: "signin", resetsAt: null, line };
+  return { kind: "other", resetsAt: null, line };
+}
+
+/** The reset in epoch ms that the last of `rows` to end in one gives, or null. */
+function resetFrom(rows: readonly string[]): number | null {
+  for (const row of [...rows].reverse()) {
+    const seconds = RESET_SUFFIX.exec(row)?.[1];
+    if (seconds) return Number(seconds) * 1000;
+  }
+  return null;
 }
 
 /**
@@ -406,7 +506,8 @@ interface Collected {
 
 /**
  * Runs `argv` and collects what it printed. `onLine` is given each line of stdout as it arrives, without its line end
- * (`\n` or `\r\n`), and the last one at close if it had none; stdout is still collected whole.
+ * (`\n` or `\r\n`), and the last one at close if it had none; stdout is still collected whole. A program that is not
+ * there rejects with a `NoAgentError` that names `agent`, the harness the run is for.
  */
 function collect(
   argv: readonly string[],
@@ -414,6 +515,7 @@ function collect(
   timeoutMs: number,
   signal?: AbortSignal,
   onLine?: (line: string) => void,
+  agent: string | null = null,
 ): Promise<Collected> {
   const [file = "", ...args] = argv;
   return new Promise((resolve, reject) => {
@@ -468,11 +570,9 @@ function collect(
     child.on("error", (error: NodeJS.ErrnoException) => {
       cleanUp();
       reject(
-        new AvanzelError(
-          error.code === "ENOENT"
-            ? `Could not start \`${file}\`: it is not on your PATH.`
-            : `Could not start \`${file}\`: ${error.message}`,
-        ),
+        error.code === "ENOENT"
+          ? new NoAgentError(`Could not start \`${file}\`: it is not on your PATH.`, agent)
+          : new AvanzelError(`Could not start \`${file}\`: ${error.message}`),
       );
     });
     child.on("close", (code, signalName) => {

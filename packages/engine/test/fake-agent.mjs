@@ -4,7 +4,7 @@
 // `codex exec … -o <file> [-i <image> … --] "<prompt>"` instead, prints only progress and writes its
 // reply to the -o file.
 //
-// FAKE_AGENT_MODE selects misbehaviour: ok | fail | fail-noisy | fail-signin | slow-noisy | noop |
+// FAKE_AGENT_MODE selects misbehaviour: ok | fail | fail-noisy | fail-signin | limit | slow-noisy | noop |
 // logonly | arm | nolog | tamper | move | spawn | noreport | picky (fails captures that say
 // "unfileable") | plant-task (rewrites a shadow task's instructions) | link-tasks, link-commands,
 // link-meta, link-log (replace tasks/, .claude/commands/, .avanzel/, log.md with a symlink to
@@ -37,6 +37,12 @@
 // permission_denials. A filing makes it after the idea page; a noop run, which writes nothing, makes it and gives up.
 // FAKE_AGENT_READS=<n> (stream mode) reports n Reads of ideas/seen-<i>.md before the agent files, back to back, with
 // no wait between them. The pages need not exist: each is answered as read all the same.
+// FAKE_AGENT_MODE=limit hits a usage limit and exits 1, as an agent does when its owner has used up their quota, right
+// after the stream's init event and before any task, so asks hit it too. FAKE_AGENT_RESETS_AT=<epoch seconds> is when the
+// limit resets. In stream mode it prints a rate_limit_event, in the shape of test/fixtures/claude-filing.jsonl's first
+// line, with status "rejected" and that reset, then a failed result event, "Claude AI usage limit reached|<s>". Without
+// the variable the event names no reset and the result has no suffix. Without the stream it says "You've hit your usage
+// limit. Try again at 3:05 PM." on stderr.
 
 import {
   appendFileSync,
@@ -190,6 +196,19 @@ if (mode === "fail-noisy") {
   // like Codex: echoes the prompt to stderr before the real error
   complain(Array.from({ length: 40 }, (_, n) => `echoed prompt line ${n}\n`).join(""));
   complain("warning: model metadata not found\nERROR: the model is not supported with this account\n");
+  process.exit(1);
+}
+
+if (mode === "limit") {
+  // like an agent whose owner has used up their quota; $FAKE_AGENT_RESETS_AT is when it resets, in epoch seconds
+  const resetsAt = Number(process.env.FAKE_AGENT_RESETS_AT) || null;
+  if (streaming) {
+    event({ type: "rate_limit_event", rate_limit_info: { status: "rejected", ...(resetsAt && { resetsAt }), rateLimitType: "five_hour" } });
+    const result = `Claude AI usage limit reached${resetsAt ? `|${resetsAt}` : ""}`;
+    event({ type: "result", subtype: "success", is_error: true, result, permission_denials: refusals });
+  } else {
+    complain("You've hit your usage limit. Try again at 3:05 PM.\n");
+  }
   process.exit(1);
 }
 

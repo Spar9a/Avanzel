@@ -1,10 +1,20 @@
 // What `claude -p --output-format stream-json --verbose` prints: one JSON event per line, as the run goes. Reading the
 // lines as they arrive hands over each step the agent takes while it takes it (a read or a write once Claude Code has
 // done it, a search when it is made), and the run's reply is the result event's text, so a caller sees the same plain
-// reply that `--output-format text` printed whole.
+// reply that `--output-format text` printed whole. The last rate_limit_event is kept too: it says whether the run hit
+// its usage limit, and when the limit resets.
 
 /** One thing a Claude Code run did, with the path as the agent gave it (absolute). */
 export type ToolStep = { kind: "read"; path: string } | { kind: "search" } | { kind: "wrote"; path: string };
+
+/**
+ * What a rate_limit_event said: its `status` ("allowed", "rejected", …), and `resetsAt`, when the limit resets, in epoch
+ * ms (Claude Code gives epoch seconds), or null when the event named no time.
+ */
+export interface RateLimit {
+  status: string;
+  resetsAt: number | null;
+}
 
 type Json = Record<string, unknown>;
 
@@ -25,6 +35,7 @@ export class ClaudeStream {
   // The lines that weren't JSON objects. A run that never got as far as a result has nothing else to say.
   readonly #plain: string[] = [];
   #result: Result | null = null;
+  #rateLimit: RateLimit | null = null;
 
   constructor(onStep: (step: ToolStep) => void) {
     this.#onStep = onStep;
@@ -37,13 +48,16 @@ export class ClaudeStream {
       this.#plain.push(text);
       return;
     }
-    // Everything else is ignored: thinking and text, rate_limit_event, system/* (hook events too) and stream_event.
+    // Everything else is ignored: thinking and text, system/* (hook events too) and stream_event.
     switch (event.type) {
       case "assistant":
         for (const block of blocks(event)) if (block.type === "tool_use") this.#toolUse(block);
         break;
       case "user":
         for (const block of blocks(event)) if (block.type === "tool_result") this.#toolResult(block);
+        break;
+      case "rate_limit_event":
+        this.#rateLimit = rateLimitOf(event) ?? this.#rateLimit; // the last one that says a status counts
         break;
       case "result":
         this.#result = {
@@ -71,6 +85,11 @@ export class ClaudeStream {
   /** `permission_denials[].tool_input.file_path` (or `notebook_path`) of each refused write, as given. */
   get refused(): string[] {
     return this.#result ? [...this.#result.refused] : [];
+  }
+
+  /** The last rate_limit_event that gave a status, even for a run that went well; null when there was none. */
+  get rateLimit(): RateLimit | null {
+    return this.#rateLimit ? { ...this.#rateLimit } : null;
   }
 
   #toolUse(block: Json): void {
@@ -146,6 +165,20 @@ function resultText(event: Json): string | null {
     ? event.errors.filter((error: unknown): error is string => typeof error === "string" && error !== "")
     : [];
   return errors.length ? errors.join("\n") : null;
+}
+
+/**
+ * What a rate_limit_event says. Its `status` and `resetsAt` (epoch seconds) are under `rate_limit_info`, or on the event
+ * itself; each is read from the first that has it. Null when the event gives no status. A `resetsAt` that is no time
+ * (not a positive number) is none, so that nothing waits for a moment that isn't one.
+ */
+function rateLimitOf(event: Json): RateLimit | null {
+  const info: Json = isObject(event.rate_limit_info) ? event.rate_limit_info : {};
+  const status = [info.status, event.status].find((value): value is string => typeof value === "string" && value !== "");
+  if (status === undefined) return null;
+  const isTime = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
+  const seconds = [info.resetsAt, event.resetsAt].find(isTime);
+  return { status, resetsAt: seconds === undefined ? null : seconds * 1000 };
 }
 
 /** The tools that write: a denial of one of them is a refused write. */

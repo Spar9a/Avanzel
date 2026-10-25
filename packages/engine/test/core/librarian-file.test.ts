@@ -6,6 +6,7 @@ import {
   readdirSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -13,7 +14,7 @@ import {
 import { basename, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings } from "../../src/core/config.ts";
-import { errorLine } from "../../src/core/harness.ts";
+import { NoAgentError, errorLine } from "../../src/core/harness.ts";
 import { Librarian } from "../../src/core/librarian.ts";
 import { Vault } from "../../src/core/vault.ts";
 import { AvanzelError, type Transcriber, type Transcript } from "../../src/types.ts";
@@ -63,6 +64,7 @@ describe("file", () => {
       guarded: [],
       refused: [],
       commit: null,
+      failure: null,
     });
     expect(outcome.changes.created).toEqual([`ideas/idea-${capture.id}.md`]);
     expect(outcome.changes.modified).toEqual(["index.md", "log.md"]);
@@ -85,16 +87,80 @@ describe("file", () => {
   });
 
   it("fails a capture whose agent cannot be started, and still tries the next", async () => {
-    const agent = write(tmp(), "bin/agent", "#!/avanzel/no/such/interpreter\n");
-    chmodSync(agent, 0o755); // executable, so it is picked, but its interpreter is missing: it cannot start
+    // Picked because it is executable, but its interpreter is not, so running it is refused (EACCES). A missing agent
+    // (ENOENT) is another matter: it fails every capture alike, and `file` rejects with it.
+    const interpreter = write(tmp(), "bin/interpreter", "not a program\n");
+    const agent = write(tmp(), "bin/agent", `#!${interpreter}\n`);
+    chmodSync(agent, 0o755);
     const harnesses = { fake: { name: "fake", headless: [agent, "{prompt}"], interactive: [] } };
     librarian = new Librarian(vault, fakeSettings({ harnesses }), { clock: () => NOW });
     const first = librarian.captureText("first");
     const second = librarian.captureText("second");
     const outcomes = await librarian.file();
     expect(outcomes.map((outcome) => [outcome.captureId, outcome.ok])).toEqual([[first.id, false], [second.id, false]]);
-    for (const { error } of outcomes) expect(error).toContain(`Could not start \`${agent}\``);
+    for (const { error, failure } of outcomes) {
+      expect(error).toContain(`Could not start \`${agent}\``);
+      expect(failure).toBeNull(); // not a run that failed, so there is nothing to classify
+    }
     expect(vault.pending()).toEqual([first.path, second.path]);
+  });
+
+  it("rejects with the NoAgentError when the agent it picked is gone, and tries no other capture", async () => {
+    const bin = binScripts(tmp(), { claude: "exit 0" });
+    vi.stubEnv("PATH", bin); // no other agent of this Mac's is on it
+    librarian = new Librarian(vault, { ...defaultSettings(), harness: "claude", timeoutSeconds: 30 }, { clock: () => NOW });
+    const first = librarian.captureText("first");
+    const second = librarian.captureText("second");
+    expect(librarian.harness.name).toBe("claude"); // picked while it was there
+    rmSync(join(bin, "claude"));
+    const error: unknown = await librarian.file().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NoAgentError);
+    expect(error).toMatchObject({ agent: "claude", message: "Could not start `claude`: it is not on your PATH." });
+    expect(vault.pending()).toEqual([first.path, second.path]);
+    expect(vault.logMentions(first.id)).toBe(false);
+  });
+
+  it("rejects with a NoAgentError that names none when no agent is installed, for a filing and for an ask", async () => {
+    vi.stubEnv("PATH", binScripts(tmp(), {}));
+    librarian = new Librarian(vault, { ...defaultSettings(), harness: "auto", timeoutSeconds: 30 }, { clock: () => NOW });
+    const capture = librarian.captureText("Something to keep");
+    const filing: unknown = await librarian.file().catch((caught: unknown) => caught);
+    expect(filing).toBeInstanceOf(NoAgentError);
+    expect(filing).toMatchObject({ agent: null });
+    const asking: unknown = await librarian.ask("anything?").catch((caught: unknown) => caught);
+    expect(asking).toBeInstanceOf(NoAgentError);
+    expect(vault.pending()).toEqual([capture.path]);
+  });
+
+  it("says a capture hit a usage limit, and keeps it in the inbox", async () => {
+    mode("limit");
+    const capture = librarian.captureText("Something to keep");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(false);
+    expect(outcome.failure).toEqual({ kind: "limit", resetsAt: null, line: "You've hit your usage limit. Try again at 3:05 PM." });
+    expect(outcome.archivedTo).toBeNull();
+    expect(outcome.commit).toBeNull();
+    expect(vault.pending()).toEqual([capture.path]);
+    expect(vault.logMentions(capture.id)).toBe(false);
+  });
+
+  it("reads when Claude Code's usage limit resets from its stream", async () => {
+    vi.stubEnv("PATH", binScripts(tmp(), { claude: `exec '${process.execPath}' '${FAKE_AGENT}' "$2"` })); // the stand-in, and no other agent
+    vi.stubEnv("FAKE_AGENT_STREAM", "claude");
+    vi.stubEnv("FAKE_AGENT_RESETS_AT", "1792532400");
+    mode("limit");
+    librarian = new Librarian(vault, { ...defaultSettings(), harness: "claude", timeoutSeconds: 30 }, { clock: () => NOW });
+    const capture = librarian.captureText("Something to keep");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(false);
+    expect(outcome.failure).toEqual({ kind: "limit", resetsAt: 1792532400000, line: "Claude AI usage limit reached|1792532400" });
+    expect(vault.pending()).toEqual([capture.path]);
+  });
+
+  it("classifies a failed filing by what the agent printed", async () => {
+    mode("fail");
+    librarian.captureText("Something to keep");
+    expect((await only(librarian.file())).failure).toEqual({ kind: "signin", resetsAt: null, line: "agent crashed: not logged in" });
   });
 
   it("restores the owner's words when the agent edits the capture", async () => {
@@ -153,8 +219,41 @@ describe("file", () => {
     const outcome = await only(librarian.file());
     expect(outcome.ok).toBe(false);
     expect(outcome.error).toContain("I would need permission to write files.");
+    expect(outcome.failure).toMatchObject({ kind: "other", resetsAt: null });
     expect(vault.pending()).toEqual([capture.path]);
     expect(vault.logMentions(capture.id)).toBe(false);
+  });
+
+  it("a run that finished without filing is other, whatever its reply says", async () => {
+    // The reply talks of a usage limit, but only what a failed run printed is read for one.
+    const reply = "You've hit your usage limit. Try again at 3:05 PM.";
+    const talker = { name: "talker", headless: ["/bin/sh", "-c", `echo "${reply}"`, "{prompt}"], interactive: [] };
+    librarian = new Librarian(vault, fakeSettings({ harness: "talker", harnesses: { talker } }), { clock: () => NOW });
+    const capture = librarian.captureText("Something the agent ignores");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(false);
+    expect(outcome.error).toBe(`talker finished without filing anything. Its reply: ${reply}`);
+    expect(outcome.failure).toEqual({ kind: "other", resetsAt: null, line: outcome.error });
+    expect(vault.pending()).toEqual([capture.path]);
+  });
+
+  it("a capture the agent left a folder at the archive for is other, in Avanzel's words", async () => {
+    mode("folder-at-archive");
+    const capture = librarian.captureText("blocked-archive notes");
+    const outcome = await only(librarian.file());
+    const problem = `Could not archive ${capture.id}: the agent left a folder at raw/2026/10/${capture.id}.md.`;
+    expect(outcome).toMatchObject({ ok: false, error: problem, failure: { kind: "other", resetsAt: null, line: problem } });
+  });
+
+  it("a capture the agent changed behind a symlinked inbox/ is other, in Avanzel's words", async () => {
+    mode("tamper"); // files it, then rewrites the capture
+    const elsewhere = join(tmp(), "elsewhere");
+    renameSync(vault.inbox, elsewhere);
+    symlinkSync(elsewhere, vault.inbox);
+    const capture = librarian.captureText("My exact words");
+    const outcome = await only(librarian.file());
+    const blocked = `The agent changed ${capture.id}, and Avanzel does not write it back through a symlink in inbox/.`;
+    expect(outcome).toMatchObject({ ok: false, error: blocked, failure: { kind: "other", resetsAt: null, line: blocked } });
   });
 
   it("lets the agent decide nothing needs filing, when it says so in the log", async () => {
@@ -424,6 +523,7 @@ describe("file", () => {
     const outcome = await only(librarian.file());
     expect(outcome.ok).toBe(false);
     expect(outcome.error).toContain("memo.m4a");
+    expect(outcome.failure).toBeNull();
     expect(vault.pending()).toEqual([memo]);
   });
 
@@ -474,6 +574,8 @@ describe("failures report the line that matters", () => {
     librarian.captureText("Will fail");
     const outcome = await only(librarian.file());
     expect(errorLine(outcome.error)).toBe("ERROR: the model is not supported with this account");
+    // Nor does the echoed prompt make a limit or a sign-in of it.
+    expect(outcome.failure).toEqual({ kind: "other", resetsAt: null, line: "ERROR: the model is not supported with this account" });
   });
 
   it("surfaces a login prompt", async () => {
@@ -491,6 +593,7 @@ describe("failures report the line that matters", () => {
     const capture = librarian.captureText("Takes forever");
     const outcome = await only(librarian.file());
     expect(errorLine(outcome.error)).toBe("fake timed out after 1s");
+    expect(outcome.failure).toEqual({ kind: "timeout", resetsAt: null, line: "fake timed out after 1s" });
     expect(vault.pending()).toEqual([capture.path]);
   });
 });

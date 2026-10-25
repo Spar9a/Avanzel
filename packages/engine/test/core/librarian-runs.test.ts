@@ -103,7 +103,10 @@ describe("the steps of a filing", () => {
     // Node lists a watch that is open among its active resources, so one left open can be seen without a mock.
     const open = () => process.getActiveResourcesInfo().filter((resource) => resource === "FSEventWrap").length;
     await vi.waitFor(() => expect(open()).toBe(0), { timeout: 3000 }); // earlier filings' watches finish closing
-    const agent = write(tmp(), "bin/agent", "#!/avanzel/no/such/interpreter\n");
+    // Executable, so it is picked, but its interpreter is not: running it is refused (EACCES). A missing agent (ENOENT)
+    // is a NoAgentError, and `file` rejects with it.
+    const interpreter = write(tmp(), "bin/interpreter", "not a program\n");
+    const agent = write(tmp(), "bin/agent", `#!${interpreter}\n`);
     chmodSync(agent, 0o755);
     const harnesses = { fake: { name: "fake", headless: [agent, "{prompt}"], interactive: [] } };
     librarian = new Librarian(vault, fakeSettings({ harnesses }), { clock: () => NOW });

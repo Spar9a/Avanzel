@@ -605,8 +605,12 @@ test("an evening review that comes due with nothing to file says so", async () =
 
 test("an evening review that files nothing says why", async () => {
   const library = await makeLibrary();
-  const agent = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-agent-")), "agent");
-  writeFileSync(agent, "#!/avanzel/no/such/interpreter\n", { mode: 0o755 }); // picked (it is executable), but it cannot start
+  const dir = mkdtempSync(path.join(tmpdir(), "avz-e2e-agent-"));
+  const agent = path.join(dir, "agent");
+  // Picked (it is executable), but its interpreter is not, so it cannot start: running it is refused. An agent that is
+  // missing altogether is a different failure, which rejects the review.
+  writeFileSync(path.join(dir, "interpreter"), "not a program\n", { mode: 0o644 });
+  writeFileSync(agent, `#!${path.join(dir, "interpreter")}\n`, { mode: 0o755 });
   saveSettings(library, { ...loadSettings(library), harnesses: { fake: { name: "fake", headless: [agent, "{prompt}"], interactive: [] } } });
   const app = await launch({ AVANZEL_LIBRARY: library });
   await call(app, "setApp", { fileMode: "evening" });

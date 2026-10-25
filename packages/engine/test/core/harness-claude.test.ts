@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { ToolStep } from "../../src/core/claude-stream.ts";
-import { Harness, checkAgent, errorLine, harnesses, runHeadless, type RunOptions } from "../../src/core/harness.ts";
+import { Harness, checkAgent, classifyFailure, errorLine, harnesses, runHeadless, type RunOptions } from "../../src/core/harness.ts";
 import { builtin, script, settingsWith } from "./harness-fixtures.ts";
 import { binScripts, useTmp } from "./helpers.ts";
 
@@ -56,7 +56,7 @@ describe("runHeadless with Claude Code", () => {
 
   it("Claude Code's reply is the result's text", async () => {
     onPath(print('{"type":"system","subtype":"init"}', readEvent("/lib/index.md"), resultEvent("Filed.")));
-    expect(await runClaude()).toMatchObject({ ok: true, exitCode: 0, output: "Filed.", refused: [] });
+    expect(await runClaude()).toMatchObject({ ok: true, exitCode: 0, output: "Filed.", refused: [], rateLimit: null });
   });
 
   it("hands over a whole filing's steps, its reply and the writes it was refused", async () => {
@@ -91,6 +91,46 @@ describe("runHeadless with Claude Code", () => {
     expect(result.exitCode).toBe(1);
     expect(errorLine(result.stderr)).toBe("Claude AI usage limit reached");
     expect(result.output).toBe("Claude AI usage limit reached");
+  });
+
+  /** Claude Code's rate_limit_event, as the filing fixture's first line has it (no single quote, for the shell). */
+  const rateLimitEvent = (status: string, resetsAt?: number) =>
+    JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status, ...(resetsAt && { resetsAt }), rateLimitType: "five_hour" } });
+
+  it("a run that hit its usage limit has the rate limit Claude Code reported, which classifies it", async () => {
+    const limit = "Claude AI usage limit reached|1792532400";
+    onPath(`${print(rateLimitEvent("rejected", 1792532400), resultEvent(limit, true))}; exit 1`);
+    const result = await runClaude();
+    expect(result).toMatchObject({ ok: false, exitCode: 1, rateLimit: { status: "rejected", resetsAt: 1792532400000 } });
+    expect(classifyFailure(result)).toEqual({ kind: "limit", resetsAt: 1792532400000, line: limit });
+  });
+
+  it("a rejected rate limit makes a limit of a failure whose words say nothing of one", async () => {
+    onPath(`${print(rateLimitEvent("rejected", 1792532400), resultEvent("Something went wrong", true))}; exit 1`);
+    expect(classifyFailure(await runClaude())).toEqual({ kind: "limit", resetsAt: 1792532400000, line: "Something went wrong" });
+  });
+
+  it("a run that went well reports the rate limit Claude Code last saw", async () => {
+    onPath(`/bin/cat '${FILING}'`);
+    expect(await runClaude()).toMatchObject({ ok: true, rateLimit: { status: "allowed", resetsAt: 1792532400000 } });
+  });
+
+  it("a run that takes too long, or is cancelled, keeps the rate limit it had seen", async () => {
+    const allowed = { status: "allowed", resetsAt: 1792532400000 };
+    onPath(`${print(rateLimitEvent("allowed", 1792532400))}; /bin/sleep 30`);
+    expect(await runClaude({ timeoutSeconds: 1 })).toMatchObject({ exitCode: 124, rateLimit: allowed });
+
+    // The step comes after the event, so the event has been read when the run is cancelled.
+    onPath(`${print(rateLimitEvent("allowed", 1792532400), readEvent("/lib/index.md"), readDone)}; /bin/sleep 30`);
+    const controller = new AbortController();
+    const cancelled = await runClaude({ signal: controller.signal, onStep: () => controller.abort() });
+    expect(cancelled).toMatchObject({ exitCode: 130, rateLimit: allowed });
+  });
+
+  it("another agent's output has no rate limit, even when it looks like Claude Code's", async () => {
+    const event = { type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1792532400 } };
+    const lookalike = script(`console.log(JSON.stringify(${JSON.stringify(event)})); process.exitCode = 1`);
+    expect(await runHeadless(lookalike, "x", tmp(), { write: false, timeoutSeconds: 30 })).toMatchObject({ ok: false, rateLimit: null });
   });
 
   it("a Claude Code that prints plain text is read as before", async () => {

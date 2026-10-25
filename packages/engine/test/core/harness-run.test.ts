@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Harness, harnesses, runHeadless } from "../../src/core/harness.ts";
+import { Harness, NoAgentError, harnesses, runHeadless } from "../../src/core/harness.ts";
 import { AvanzelError } from "../../src/types.ts";
-import { script, settingsWith } from "./harness-fixtures.ts";
-import { useTmp } from "./helpers.ts";
+import { builtin, script, settingsWith } from "./harness-fixtures.ts";
+import { binScripts, useTmp } from "./helpers.ts";
 
 const tmp = useTmp();
 
@@ -76,6 +76,37 @@ describe("runHeadless", () => {
       /definitely-not-installed-avanzel/,
     );
     await expect(runHeadless(ghost, "x", tmp(), { write: false, timeoutSeconds: 30 })).rejects.toBeInstanceOf(AvanzelError);
+  });
+
+  it("a binary that is not installed is a NoAgentError naming the harness", async () => {
+    const ghost = harnesses(
+      settingsWith({ harnesses: { ghost: { name: "ghost", headless: ["definitely-not-installed-avanzel", "{prompt}"], interactive: [] } } }),
+    ).ghost as Harness;
+    const error: unknown = await runHeadless(ghost, "x", tmp(), { write: false, timeoutSeconds: 30 }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NoAgentError);
+    expect(error).toMatchObject({
+      name: "NoAgentError",
+      agent: "ghost",
+      message: "Could not start `definitely-not-installed-avanzel`: it is not on your PATH.",
+    });
+    // Claude Code is named the same way.
+    vi.stubEnv("PATH", binScripts(tmp(), {}));
+    const claude: unknown = await runHeadless(builtin("claude"), "x", tmp(), { write: false, timeoutSeconds: 30 }).catch(
+      (caught: unknown) => caught,
+    );
+    expect(claude).toBeInstanceOf(NoAgentError);
+    expect(claude).toMatchObject({ agent: "claude" });
+  });
+
+  it("a binary that can't be run is no missing agent", async () => {
+    // A folder named as the binary is there but can't be run: spawning it fails with EACCES, not ENOENT.
+    const refused = harnesses(
+      settingsWith({ harnesses: { refused: { name: "refused", headless: [tmp(), "{prompt}"], interactive: [] } } }),
+    ).refused as Harness;
+    const error: unknown = await runHeadless(refused, "x", tmp(), { write: false, timeoutSeconds: 30 }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AvanzelError);
+    expect(error).not.toBeInstanceOf(NoAgentError);
+    expect(error).toMatchObject({ message: expect.stringContaining(`Could not start \`${tmp()}\``) });
   });
 
   it("stops the agent when the caller cancels", async () => {

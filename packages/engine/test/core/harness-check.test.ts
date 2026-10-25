@@ -4,12 +4,15 @@ import { describe, expect, it, vi } from "vitest";
 import { defaultSettings } from "../../src/core/config.ts";
 import {
   Harness,
+  NoAgentError,
   asksToSignIn,
   checkAgent,
   childEnv,
+  classifyFailure,
   errorLine,
   harnesses,
   selectHarness,
+  type RunResult,
 } from "../../src/core/harness.ts";
 import { AvanzelError } from "../../src/types.ts";
 import { builtin, settingsWith } from "./harness-fixtures.ts";
@@ -158,6 +161,58 @@ describe("selectHarness", () => {
     expect(error).toBeInstanceOf(AvanzelError);
     expect(error.message).toContain("claude");
   });
+
+  it("says with a NoAgentError that no agent is installed, naming none", () => {
+    onPath();
+    const error = thrownBy(() => selectHarness(defaultSettings()));
+    expect(error).toBeInstanceOf(NoAgentError);
+    expect(error).toBeInstanceOf(AvanzelError);
+    expect(error).toMatchObject({
+      name: "NoAgentError",
+      agent: null,
+      message:
+        "No agent CLI found. Install one of: Claude Code (claude), Codex (codex), OpenCode (opencode), " +
+        "Cursor Agent (cursor-agent), Gemini CLI (gemini) — or add [harnesses.<name>] to .avanzel/config.toml.",
+    });
+  });
+
+  it("says with a NoAgentError that the library's own agent isn't there, naming it", () => {
+    onPath("codex");
+    for (const error of [
+      thrownBy(() => selectHarness(settingsWith({ harness: "claude" }))),
+      thrownBy(() => selectHarness(defaultSettings(), "claude")), // asked for by name
+    ]) {
+      expect(error).toBeInstanceOf(NoAgentError);
+      expect(error).toMatchObject({ agent: "claude", message: "Harness 'claude' needs `claude` on your PATH. Installed harnesses: codex." });
+    }
+  });
+
+  it("names the library's own agent even when no other is installed either", () => {
+    onPath();
+    const error = thrownBy(() => selectHarness(settingsWith({ harness: "claude" })));
+    expect(error).toBeInstanceOf(NoAgentError);
+    expect(error).toMatchObject({ agent: "claude", message: "Harness 'claude' needs `claude` on your PATH. Installed harnesses: none." });
+  });
+
+  it("says with a NoAgentError that an unknown harness isn't there, naming it", () => {
+    onPath("codex");
+    for (const name of ["nope", "toString"]) {
+      const error = thrownBy(() => selectHarness(defaultSettings(), name));
+      expect(error).toBeInstanceOf(NoAgentError);
+      expect(error).toMatchObject({
+        agent: name,
+        message: `Unknown harness '${name}'. Known harnesses: claude, codex, opencode, cursor-agent, gemini.`,
+      });
+    }
+  });
+
+  it("a custom harness whose binary is gone is a NoAgentError naming the harness", () => {
+    onPath();
+    const mine = { name: "mine", headless: ["avanzel-no-such-agent", "{prompt}"], interactive: [] };
+    const error = thrownBy(() => selectHarness(settingsWith({ harness: "mine", harnesses: { mine } })));
+    expect(error).toMatchObject({ agent: "mine", message: expect.stringContaining("`avanzel-no-such-agent`") });
+    expect(error).toBeInstanceOf(NoAgentError);
+  });
 });
 
 describe("errorLine", () => {
@@ -181,6 +236,179 @@ describe("asksToSignIn", () => {
   it("asksToSignIn knows a sign-in line", () => {
     expect(asksToSignIn("Error: not logged in. Run cursor-agent login")).toBe(true);
     expect(asksToSignIn("Error: usage limit reached")).toBe(false);
+  });
+});
+
+describe("classifyFailure", () => {
+  /** A run that failed, as runHeadless reports one, with the fields given. */
+  const failed = (fields: Partial<RunResult> = {}): RunResult => ({
+    exitCode: 1,
+    output: "",
+    stderr: "",
+    seconds: 2,
+    ok: false,
+    refused: [],
+    rateLimit: null,
+    ...fields,
+  });
+  const RESETS_AT = 1792532400; // epoch seconds, as Claude Code gives it and as the end of its limit message does
+  const LIMIT_LINE = `Claude AI usage limit reached|${RESETS_AT}`;
+  const lines = (count: number) => Array.from({ length: count }, (_, n) => `progress ${n}`);
+
+  it("a rejected rate limit is a limit, and its reset is read in ms", () => {
+    const rateLimit = { status: "rejected", resetsAt: RESETS_AT * 1000 };
+    expect(classifyFailure(failed({ rateLimit, stderr: "something unrelated" }))).toEqual({
+      kind: "limit",
+      resetsAt: 1792532400000,
+      line: "something unrelated",
+    });
+  });
+
+  it("a rejected rate limit that names no reset is a limit with an unknown one", () => {
+    const rateLimit = { status: "rejected", resetsAt: null };
+    expect(classifyFailure(failed({ rateLimit }))).toEqual({ kind: "limit", resetsAt: null, line: "" });
+  });
+
+  it("reads a limit from the words when the stream said nothing, and its reset from their end", () => {
+    const expected = { kind: "limit", resetsAt: 1792532400000, line: LIMIT_LINE };
+    expect(classifyFailure(failed({ stderr: LIMIT_LINE }))).toEqual(expected);
+    expect(classifyFailure(failed({ output: LIMIT_LINE }))).toEqual(expected);
+    expect(classifyFailure(failed({ output: LIMIT_LINE, stderr: LIMIT_LINE }))).toEqual(expected); // Claude Code's failed result is both
+  });
+
+  it("reads Codex's usage limit; its 'try again at' time is no date", () => {
+    const stderr = "You've hit your usage limit. Try again at 3:05 PM.";
+    expect(classifyFailure(failed({ stderr }))).toEqual({ kind: "limit", resetsAt: null, line: stderr });
+  });
+
+  it.each([
+    "You've hit your usage limit.",
+    "Error: rate limit exceeded",
+    "Claude AI usage limit reached",
+    "You have hit your limit · resets 3pm",
+    "Quota exceeded for this project",
+    "429 Too Many Requests",
+    "HTTP status 429",
+    "too many requests, slow down",
+  ])("%s is a limit", (stderr) => {
+    expect(classifyFailure(failed({ stderr }))).toEqual({ kind: "limit", resetsAt: null, line: errorLine(stderr) });
+  });
+
+  it("takes the reset of the stream's rate limit at any status once the limit is hit", () => {
+    const allowed = { status: "allowed", resetsAt: 1792550000000 };
+    expect(classifyFailure(failed({ rateLimit: allowed, stderr: "Claude AI usage limit reached" }))).toMatchObject({
+      kind: "limit",
+      resetsAt: 1792550000000,
+    });
+  });
+
+  it("the stream's reset comes before the one at the end of the words", () => {
+    const rateLimit = { status: "rejected", resetsAt: 1792550000000 };
+    expect(classifyFailure(failed({ rateLimit, stderr: LIMIT_LINE })).resetsAt).toBe(1792550000000);
+    expect(classifyFailure(failed({ rateLimit: { status: "rejected", resetsAt: null }, stderr: LIMIT_LINE })).resetsAt).toBe(
+      1792532400000,
+    );
+  });
+
+  it("an allowed rate limit is no limit, and its reset is no failure's", () => {
+    const rateLimit = { status: "allowed", resetsAt: RESETS_AT * 1000 };
+    expect(classifyFailure(failed({ rateLimit, stderr: "boom" }))).toEqual({ kind: "other", resetsAt: null, line: "boom" });
+  });
+
+  it("takes the reset only from a ten-digit suffix after a bar", () => {
+    const resetOf = (stderr: string) => classifyFailure(failed({ stderr })).resetsAt;
+    expect(resetOf(`Claude AI usage limit reached|${RESETS_AT}  `)).toBe(1792532400000);
+    for (const text of [
+      "Claude AI usage limit reached|179253240", // nine digits
+      "Claude AI usage limit reached|17925324001", // eleven
+      `Claude AI usage limit reached|${RESETS_AT} soon`, // not a suffix
+      `Claude AI usage limit reached ${RESETS_AT}`, // no bar
+      "Claude AI usage limit reached|",
+    ]) {
+      expect(resetOf(text)).toBeNull();
+    }
+  });
+
+  it("reads the last five lines, not the whole text", () => {
+    const kindAndReset = (...rows: string[]) => {
+      const { kind, resetsAt } = classifyFailure(failed({ stderr: rows.join("\n") }));
+      return [kind, resetsAt];
+    };
+    expect(kindAndReset(LIMIT_LINE, ...lines(4))).toEqual(["limit", 1792532400000]); // fifth from the end
+    expect(kindAndReset(LIMIT_LINE, ...lines(5))).toEqual(["other", null]); // sixth: whatever the agent echoed
+    // The window is the last five of both, and its reset must be in it too.
+    expect(kindAndReset(LIMIT_LINE, ...lines(5), "You've hit your usage limit.")).toEqual(["limit", null]);
+    // Blank lines don't use the window up.
+    expect(kindAndReset(LIMIT_LINE, "", "  ", "progress 0", "", "progress 1", "progress 2", "", "progress 3", "\n")).toEqual([
+      "limit",
+      1792532400000,
+    ]);
+  });
+
+  it("an echoed prompt can't fool it", () => {
+    // Codex echoes the prompt to stderr, and the prompt holds the capture's slug or the question.
+    const echoed = Array.from({ length: 40 }, (_, n) => `echoed prompt line ${n}`);
+    echoed[0] = "fix-the-429-error";
+    echoed[1] = "how do I log in";
+    const stderr = [...echoed, "ERROR: boom"].join("\n");
+    expect(classifyFailure(failed({ stderr }))).toEqual({ kind: "other", resetsAt: null, line: "ERROR: boom" });
+  });
+
+  it("reads past colours", () => {
+    const stderr = "\x1b[31mError:\x1b[0m You've hit your \x1b[1musage limit\x1b[0m.";
+    expect(classifyFailure(failed({ stderr }))).toMatchObject({ kind: "limit", line: "Error: You've hit your usage limit." });
+  });
+
+  it("exit 124, which the harness gives a run it stopped, is a timeout", () => {
+    const stderr = "echoed prompt\n\njs timed out after 1s";
+    expect(classifyFailure(failed({ exitCode: 124, stderr }))).toEqual({ kind: "timeout", resetsAt: null, line: "js timed out after 1s" });
+  });
+
+  it("a missing sign-in is a sign-in", () => {
+    expect(classifyFailure(failed({ exitCode: 3, stderr: "agent crashed: not logged in" }))).toEqual({
+      kind: "signin",
+      resetsAt: null,
+      line: "agent crashed: not logged in",
+    });
+    expect(classifyFailure(failed({ output: "Not logged in · Please run /login" })).kind).toBe("signin");
+    // Cursor Agent prints its sign-in prompt among art on stdout, and nothing on stderr.
+    const art = '  +i":;;\n  [?+<l,",::;;;I\n  11}[]-+####oppqqIl     Press any key to sign in...\n    ttttt/tZZfff^>\n      >>\n';
+    expect(classifyFailure(failed({ output: art }))).toEqual({
+      kind: "signin",
+      resetsAt: null,
+      line: "11}[]-+####oppqqIl     Press any key to sign in...",
+    });
+  });
+
+  it("a sign-in is read from the telling line, not from the last lines", () => {
+    // "please log in" is among the last lines, but the line that tells is the error after it.
+    expect(classifyFailure(failed({ stderr: "please log in first\nERROR: boom" }))).toEqual({
+      kind: "other",
+      resetsAt: null,
+      line: "ERROR: boom",
+    });
+    // And a telling sign-in line is read wherever it stands, as a check reads it.
+    const stderr = ["Error: not logged in", ...lines(10)].join("\n");
+    expect(classifyFailure(failed({ stderr }))).toMatchObject({ kind: "signin", line: "Error: not logged in" });
+  });
+
+  it("anything else is other, with the line that tells", () => {
+    expect(classifyFailure(failed({ stderr: "boom" }))).toEqual({ kind: "other", resetsAt: null, line: "boom" });
+    expect(classifyFailure(failed())).toEqual({ kind: "other", resetsAt: null, line: "" });
+    const stderr = "echoed prompt\nwarning: model metadata not found\nERROR: the model is not supported\nbye";
+    expect(classifyFailure(failed({ stderr }))).toEqual({
+      kind: "other",
+      resetsAt: null,
+      line: "ERROR: the model is not supported",
+    });
+  });
+
+  it("the first rule that fits wins: a limit, then a timeout, then a sign-in", () => {
+    const rejected = { status: "rejected", resetsAt: null };
+    expect(classifyFailure(failed({ exitCode: 124, rateLimit: rejected, stderr: "please log in" })).kind).toBe("limit");
+    expect(classifyFailure(failed({ exitCode: 124, stderr: "please log in" })).kind).toBe("timeout");
+    expect(classifyFailure(failed({ exitCode: 1, stderr: "please log in" })).kind).toBe("signin");
+    expect(classifyFailure(failed({ stderr: "Error: usage limit reached, please log in" })).kind).toBe("limit");
   });
 });
 

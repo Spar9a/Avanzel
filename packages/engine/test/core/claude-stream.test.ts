@@ -29,6 +29,10 @@ const toolResult = (id: string, isError = false): string =>
     message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "done", ...(isError ? { is_error: true } : {}) }] },
   });
 
+/** Claude Code's rate_limit_event, with `info` under rate_limit_info as the filing fixture's first line has it. */
+const rateLimitEvent = (info: Record<string, unknown>): string =>
+  JSON.stringify({ type: "rate_limit_event", rate_limit_info: info, session_id: "s1" });
+
 describe("ClaudeStream", () => {
   it("turns Claude Code's tool calls into steps", () => {
     const { steps } = feed(FILING);
@@ -87,6 +91,64 @@ describe("ClaudeStream", () => {
     expect(replyOf("a line", resultEvent({ result: undefined, errors }))).toBe("first\nsecond");
     expect(replyOf("a line", resultEvent({ result: undefined, errors: [] }))).toBe("a line");
     expect(replyOf("a line", resultEvent({ result: undefined }))).toBe("a line");
+  });
+
+  it("keeps the rate limit of a run that hit its limit, with the reset in epoch ms", () => {
+    const { stream } = feed([
+      rateLimitEvent({ status: "rejected", resetsAt: 1792532400, rateLimitType: "five_hour" }),
+      resultEvent({ is_error: true, result: "Claude AI usage limit reached|1792532400" }),
+    ]);
+    expect(stream.failed).toBe(true);
+    expect(stream.rateLimit).toEqual({ status: "rejected", resetsAt: 1792532400000 });
+  });
+
+  it("reads the allowed rate limit on a filing's first line", () => {
+    expect(feed(FILING).stream.rateLimit).toEqual({ status: "allowed", resetsAt: 1792532400000 });
+  });
+
+  it("has no rate limit when Claude Code reported none", () => {
+    expect(feed([]).stream.rateLimit).toBeNull();
+    expect(feed([resultEvent({ is_error: true, result: "Credit balance is too low" })]).stream.rateLimit).toBeNull();
+  });
+
+  it("reads the status and the reset from the event itself as well as from rate_limit_info", () => {
+    const atTop = JSON.stringify({ type: "rate_limit_event", status: "rejected", resetsAt: 1792532400 });
+    expect(feed([atTop]).stream.rateLimit).toEqual({ status: "rejected", resetsAt: 1792532400000 });
+    const split = JSON.stringify({ type: "rate_limit_event", status: "rejected", rate_limit_info: { resetsAt: 1792532400 } });
+    expect(feed([split]).stream.rateLimit).toEqual({ status: "rejected", resetsAt: 1792532400000 });
+  });
+
+  it("the last rate_limit_event is the one that counts", () => {
+    const rejected = rateLimitEvent({ status: "rejected", resetsAt: 1792532400 });
+    const allowed = rateLimitEvent({ status: "allowed", resetsAt: 1792550000 });
+    expect(feed([rejected, allowed]).stream.rateLimit).toEqual({ status: "allowed", resetsAt: 1792550000000 });
+    expect(feed([allowed, rejected]).stream.rateLimit).toEqual({ status: "rejected", resetsAt: 1792532400000 });
+  });
+
+  it("a rate limit that names no reset, or one that isn't a time, has none", () => {
+    expect(feed([rateLimitEvent({ status: "rejected" })]).stream.rateLimit).toEqual({ status: "rejected", resetsAt: null });
+    for (const resetsAt of ["soon", "1792532400", 0, -1, null, {}]) {
+      expect(feed([rateLimitEvent({ status: "rejected", resetsAt })]).stream.rateLimit).toEqual({ status: "rejected", resetsAt: null });
+    }
+  });
+
+  it("ignores a rate_limit_event that says no status, and keeps the one before it", () => {
+    const { stream } = feed([
+      rateLimitEvent({ status: "allowed", resetsAt: 1792532400 }),
+      '{"type":"rate_limit_event"}',
+      '{"type":"rate_limit_event","rate_limit_info":null}',
+      '{"type":"rate_limit_event","rate_limit_info":"rejected"}',
+      '{"type":"rate_limit_event","rate_limit_info":{"status":5,"resetsAt":1792550000}}',
+      '{"type":"rate_limit_event","rate_limit_info":{"status":"","resetsAt":1792550000}}',
+    ]);
+    expect(stream.rateLimit).toEqual({ status: "allowed", resetsAt: 1792532400000 });
+  });
+
+  it("hands over a rate limit nobody can change from outside", () => {
+    const { stream } = feed([rateLimitEvent({ status: "rejected", resetsAt: 1792532400 })]);
+    const seen = stream.rateLimit;
+    if (seen) seen.status = "allowed";
+    expect(stream.rateLimit).toEqual({ status: "rejected", resetsAt: 1792532400000 });
   });
 
   it("hands over a search at once, and a read or a write once its result arrives", () => {
