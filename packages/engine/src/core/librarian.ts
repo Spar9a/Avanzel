@@ -519,8 +519,12 @@ export class Librarian {
         });
       } finally {
         // Right after the run, before the guard: what the guard puts back is its own doing, not a step of the agent's.
-        after = before ? snapshot(root) : undefined;
-        narration?.stop(after);
+        // The watch stops whatever becomes of the snapshot.
+        try {
+          after = before ? snapshot(root) : undefined;
+        } finally {
+          narration?.stop(after);
+        }
       }
     } finally {
       guarded = undoProtected(root, protectedBefore);

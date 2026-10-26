@@ -310,7 +310,12 @@ describe("file", () => {
     expect(read(join(vault.root, "tasks", "evening-review.md"))).toBe(evening);
     expect(existsSync(join(vault.root, "tasks", "planted.md"))).toBe(false);
     expect(outcome.guarded).toEqual(["tasks/evening-review.md", "tasks/planted.md"]);
-    expect(outcome.changes.created).toEqual([`ideas/idea-${outcome.captureId}.md`]);
+    // The task that was planted and the one that was changed are the guard's to put back, not the filing's changes.
+    expect(outcome.changes).toMatchObject({
+      created: [`ideas/idea-${outcome.captureId}.md`],
+      modified: ["index.md", "log.md"],
+      deleted: [],
+    });
   });
 
   it("never writes through a symlink an agent put in place of a protected folder", async () => {
@@ -328,6 +333,12 @@ describe("file", () => {
     expect(lstatSync(join(vault.root, "tasks")).isDirectory()).toBe(true);
     for (const [name, text] of Object.entries(tasks)) expect(read(join(vault.root, "tasks", name))).toBe(text);
     expect(outcome.guarded).toEqual(["tasks", "tasks/evening-review.md", "tasks/weekly-review.md"]);
+    // The tasks looked gone while the link stood, and are put back: neither is a change of the filing's.
+    expect(outcome.changes).toMatchObject({
+      created: [`ideas/idea-${outcome.captureId}.md`],
+      modified: ["index.md", "log.md"],
+      deleted: [],
+    });
   });
 
   it("removes a settings file an agent links into a protected folder from elsewhere", async () => {
@@ -384,6 +395,8 @@ describe("file", () => {
     expect(lstatSync(vault.logPath).isFile()).toBe(true);
     expect(read(vault.logPath)).toContain(`| file | [[${capture.id}]] → [[idea-${capture.id}]]\n`);
     expect(outcome.guarded).toEqual(["log.md"]);
+    // The link stood in place of the log, and is gone: log.md is the guard's, and Avanzel's line comes after the changes.
+    expect(outcome.changes).toMatchObject({ created: [`ideas/idea-${capture.id}.md`], modified: ["index.md"], deleted: [] });
   });
 
   it("puts back a protected file an agent turned into a folder", async () => {
@@ -396,6 +409,12 @@ describe("file", () => {
     expect(lstatSync(join(vault.root, "AGENTS.md")).isFile()).toBe(true);
     expect(read(join(vault.root, "AGENTS.md"))).toBe(rules);
     expect(outcome.guarded).toEqual(["AGENTS.md", "AGENTS.md/x.md"]);
+    // The file looked gone, and a page looked new inside it, while it stood as a folder: neither is the filing's change.
+    expect(outcome.changes).toMatchObject({
+      created: [`ideas/idea-${outcome.captureId}.md`],
+      modified: ["index.md", "log.md"],
+      deleted: [],
+    });
   });
 
   it("puts back the settings file an agent turned into a folder", async () => {

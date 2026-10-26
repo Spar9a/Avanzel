@@ -95,7 +95,8 @@ describe("the steps of a filing", () => {
     const outcome = await only(librarian.file(null, { steps: hear }));
     expect(outcome.guarded).toEqual(["tasks/evening-review.md", "tasks/planted.md"]);
     expect(existsSync(join(vault.root, "tasks", "planted.md"))).toBe(false);
-    // The watch ends before the guard runs. Were it to end after, the folder would no longer show the planted task.
+    // The watch ends with the snapshot taken right after the run, before the guard runs. Were that taken after, the
+    // library would no longer show the planted task. (librarian-snapshots.test.ts pins the order of the two.)
     expect(steps).toContainEqual({ kind: "wrote", path: "tasks/planted.md", created: true });
   });
 

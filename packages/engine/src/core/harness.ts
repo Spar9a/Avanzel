@@ -15,6 +15,7 @@ import { ClaudeStream, type RateLimit, type ToolStep } from "./claude-stream.ts"
 import type { CustomHarness, Env, Settings } from "./config.ts";
 import { guardSettings, installHook } from "./guard-hook.ts";
 import { which } from "./proc.ts";
+import { tailKeeper } from "./tail.ts";
 
 // A run's result carries it, so it is offered here as well as where it is read.
 export type { RateLimit } from "./claude-stream.ts";
@@ -55,9 +56,10 @@ const KILL_AFTER_MS = 5_000;
 // After the agent exits, how long its output may stay open (held by something it started).
 const EXIT_GRACE_MS = 1_000;
 const MAX_TIMER_MS = 2 ** 31 - 1; // setTimeout fires at once beyond this
-// How much of an agent's stdout is kept: the last 64 KB. An agent that prints without end (Claude Code's stream prints a
-// line for every step it takes) can't fill the memory, and the end is what is read: its reply, and the lines that say
-// why it failed.
+// How much of an agent's stdout is kept, and of its stderr: the last 64 KB of each. An agent that prints without end
+// (Claude Code's stream prints a line for every step it takes, and Codex echoes its prompt) can't fill the memory, and the
+// end is what is read: its reply, and the lines that say why it failed. What an agent echoed long ago is let go with the
+// rest, so that it can't pass for what the run said last.
 const OUTPUT_TAIL_BYTES = 64 * 1024;
 
 export interface HeadlessOptions {
@@ -136,7 +138,16 @@ export class Harness {
 
 export interface RunResult {
   exitCode: number;
+  /**
+   * What the agent replied. For an agent whose stdout is its reply, at most the last 64 KB of it, from the first whole
+   * character. Claude Code's reply (its result event's text) and a reply the agent writes to an output file are kept whole;
+   * a Claude Code run that never got as far as a result gives the last 200 lines it printed that weren't events.
+   */
   output: string;
+  /**
+   * What the agent printed on stderr, at most the last 64 KB of it, from the first whole character; then the note of a run
+   * that was stopped, or the words of a Claude Code result that failed.
+   */
   stderr: string;
   seconds: number;
   ok: boolean;
@@ -526,8 +537,8 @@ interface Collected {
 /**
  * Runs `argv` and collects what it printed. `onLine` is given each line of stdout as it arrives, without its line end
  * (`\n` or `\r\n`), and the last one at close if it had none; every line is given, however much stdout there is, but only
- * its last `OUTPUT_TAIL_BYTES` are collected. A program that is not there rejects with a `NoAgentError` that names
- * `agent`, the harness the run is for.
+ * the last `OUTPUT_TAIL_BYTES` of stdout are collected, and of stderr. A program that is not there rejects with a
+ * `NoAgentError` that names `agent`, the harness the run is for.
  */
 function collect(
   argv: readonly string[],
@@ -542,7 +553,7 @@ function collect(
     // In a process group of its own, so stopping the agent stops whatever it started too.
     const child = spawn(file, args, { cwd, env: childEnv(process.env), stdio: ["ignore", "pipe", "pipe"], detached: true });
     const stdout = tailKeeper(OUTPUT_TAIL_BYTES);
-    const stderr: Buffer[] = [];
+    const stderr = tailKeeper(OUTPUT_TAIL_BYTES);
     let stopped: Collected["stopped"] = null;
     let killTimer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined;
@@ -578,7 +589,7 @@ function collect(
       stdout.write(chunk);
       lines?.write(chunk);
     });
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.write(chunk));
     // Something the agent started may hold its output open long after it exited; don't wait for that.
     child.on("exit", () => {
       exited(); // a run that finished is not timed out or cancelled while its output drains
@@ -601,47 +612,11 @@ function collect(
       resolve({
         exitCode: code ?? 128 + (signalName ? constants.signals[signalName] : 0),
         stdout: stdout.text(),
-        stderr: Buffer.concat(stderr).toString("utf8"),
+        stderr: stderr.text(),
         stopped,
       });
     });
   });
-}
-
-/**
- * Keeps the end of what a process prints: the last `limit` bytes of the chunks written to it, however many come. While
- * they come, up to twice that is held (cut in one go, so that a program that writes a byte at a time costs no more than
- * one that writes a megabyte). `text()` gives the last `limit` bytes as text, from the first whole character.
- */
-function tailKeeper(limit: number): { write(chunk: Buffer): void; text(): string } {
-  let chunks: Buffer[] = [];
-  let held = 0;
-  let total = 0;
-  const lastBytes = (): Buffer => {
-    const bytes = Buffer.concat(chunks);
-    return bytes.subarray(Math.max(0, bytes.length - limit));
-  };
-  return {
-    write(chunk) {
-      chunks.push(chunk);
-      held += chunk.length;
-      total += chunk.length;
-      if (held >= 2 * limit) {
-        chunks = [lastBytes()];
-        held = limit;
-      }
-    },
-    text() {
-      const bytes = lastBytes();
-      let start = 0;
-      if (total > limit) {
-        // Bytes were cut off, and the cut may fall inside a character: the rest of it isn't kept. (A character has at
-        // most 3 UTF-8 continuation bytes after its first, and each is 10xxxxxx.)
-        while (start < 3 && ((bytes[start] ?? 0) & 0xc0) === 0x80) start += 1;
-      }
-      return bytes.subarray(start).toString("utf8");
-    },
-  };
 }
 
 /**

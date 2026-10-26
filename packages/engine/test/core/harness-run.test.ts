@@ -74,6 +74,25 @@ describe("runHeadless", () => {
       expect(classifyFailure(result).line).toBe(GAVE_UP);
     });
 
+    it("keeps the last 64 KB of what it printed on stderr too, where a prompt it echoed long ago is no sign-in", async () => {
+      // Like Codex, which echoes the prompt on stderr: this one says to log in. A megabyte of progress follows, and the
+      // run fails with a line that says nothing of signing in.
+      const FAILED = "stream disconnected before completion";
+      const harness = script(
+        "console.error('echoed prompt: remember to log in to the bank');" +
+          ` for (let i = 0; i < ${PROGRESS}; i++) console.error('progress ' + String(i).padStart(5, '0') + ' of a long run, kept only at its end');` +
+          ` console.error('${FAILED}'); process.exitCode = 1`,
+      );
+      const result = await runHeadless(harness, "x", tmp(), { write: false, timeoutSeconds: 60 });
+      expect(result.exitCode).toBe(1);
+      const kept = Buffer.byteLength(result.stderr);
+      expect(kept).toBeLessThanOrEqual(64 * 1024);
+      expect(kept).toBeGreaterThan(63 * 1024); // the last 64 KB, not a sliver of it
+      expect(result.stderr).not.toContain("echoed prompt");
+      expect(result.stderr.trimEnd().endsWith(FAILED)).toBe(true); // stderr is given as it was printed, line end and all
+      expect(classifyFailure(result)).toEqual({ kind: "other", resetsAt: null, line: FAILED });
+    });
+
     it("cuts at 64 KB exactly, however much comes", async () => {
       // 'a', then `b`s, then the line end that `output` is trimmed of: the first byte goes as soon as there is one over.
       const limit = 64 * 1024;
