@@ -55,6 +55,10 @@ const KILL_AFTER_MS = 5_000;
 // After the agent exits, how long its output may stay open (held by something it started).
 const EXIT_GRACE_MS = 1_000;
 const MAX_TIMER_MS = 2 ** 31 - 1; // setTimeout fires at once beyond this
+// How much of an agent's stdout is kept: the last 64 KB. An agent that prints without end (Claude Code's stream prints a
+// line for every step it takes) can't fill the memory, and the end is what is read: its reply, and the lines that say
+// why it failed.
+const OUTPUT_TAIL_BYTES = 64 * 1024;
 
 export interface HeadlessOptions {
   write: boolean;
@@ -521,8 +525,9 @@ interface Collected {
 
 /**
  * Runs `argv` and collects what it printed. `onLine` is given each line of stdout as it arrives, without its line end
- * (`\n` or `\r\n`), and the last one at close if it had none; stdout is still collected whole. A program that is not
- * there rejects with a `NoAgentError` that names `agent`, the harness the run is for.
+ * (`\n` or `\r\n`), and the last one at close if it had none; every line is given, however much stdout there is, but only
+ * its last `OUTPUT_TAIL_BYTES` are collected. A program that is not there rejects with a `NoAgentError` that names
+ * `agent`, the harness the run is for.
  */
 function collect(
   argv: readonly string[],
@@ -536,7 +541,7 @@ function collect(
   return new Promise((resolve, reject) => {
     // In a process group of its own, so stopping the agent stops whatever it started too.
     const child = spawn(file, args, { cwd, env: childEnv(process.env), stdio: ["ignore", "pipe", "pipe"], detached: true });
-    const stdout: Buffer[] = [];
+    const stdout = tailKeeper(OUTPUT_TAIL_BYTES);
     const stderr: Buffer[] = [];
     let stopped: Collected["stopped"] = null;
     let killTimer: NodeJS.Timeout | undefined;
@@ -570,7 +575,7 @@ function collect(
     };
     const lines = onLine ? lineSplitter(onLine) : null;
     child.stdout.on("data", (chunk: Buffer) => {
-      stdout.push(chunk);
+      stdout.write(chunk);
       lines?.write(chunk);
     });
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
@@ -595,12 +600,48 @@ function collect(
       lines?.end();
       resolve({
         exitCode: code ?? 128 + (signalName ? constants.signals[signalName] : 0),
-        stdout: Buffer.concat(stdout).toString("utf8"),
+        stdout: stdout.text(),
         stderr: Buffer.concat(stderr).toString("utf8"),
         stopped,
       });
     });
   });
+}
+
+/**
+ * Keeps the end of what a process prints: the last `limit` bytes of the chunks written to it, however many come. While
+ * they come, up to twice that is held (cut in one go, so that a program that writes a byte at a time costs no more than
+ * one that writes a megabyte). `text()` gives the last `limit` bytes as text, from the first whole character.
+ */
+function tailKeeper(limit: number): { write(chunk: Buffer): void; text(): string } {
+  let chunks: Buffer[] = [];
+  let held = 0;
+  let total = 0;
+  const lastBytes = (): Buffer => {
+    const bytes = Buffer.concat(chunks);
+    return bytes.subarray(Math.max(0, bytes.length - limit));
+  };
+  return {
+    write(chunk) {
+      chunks.push(chunk);
+      held += chunk.length;
+      total += chunk.length;
+      if (held >= 2 * limit) {
+        chunks = [lastBytes()];
+        held = limit;
+      }
+    },
+    text() {
+      const bytes = lastBytes();
+      let start = 0;
+      if (total > limit) {
+        // Bytes were cut off, and the cut may fall inside a character: the rest of it isn't kept. (A character has at
+        // most 3 UTF-8 continuation bytes after its first, and each is 10xxxxxx.)
+        while (start < 3 && ((bytes[start] ?? 0) & 0xc0) === 0x80) start += 1;
+      }
+      return bytes.subarray(start).toString("utf8");
+    },
+  };
 }
 
 /**

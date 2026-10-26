@@ -64,6 +64,34 @@ describe("ClaudeStream", () => {
     expect(stream.reply).toBe("first\n42\n[1]\nnull\n\nlast");
   });
 
+  it("keeps the last 200 lines that weren't JSON, however many came", () => {
+    const lines = Array.from({ length: 1000 }, (_, i) => `plain line ${i + 1}`);
+    const { stream } = feed(lines);
+    expect(stream.reply.split("\n")).toEqual(lines.slice(-200));
+  });
+
+  it("keeps 200 lines that weren't JSON whole, and lets go of the first when a 201st comes", () => {
+    const lines = Array.from({ length: 201 }, (_, i) => `plain line ${i + 1}`);
+    expect(feed(lines.slice(0, 200)).stream.reply.split("\n")).toEqual(lines.slice(0, 200));
+    expect(feed(lines).stream.reply.split("\n")).toEqual(lines.slice(1));
+  });
+
+  it("counts only the lines that weren't JSON toward the 200: a blank line is one, an event is none", () => {
+    const plain = Array.from({ length: 300 }, (_, i) => (i % 3 === 0 ? "" : `plain line ${i + 1}`));
+    const event = '{"type":"system","subtype":"hook_started"}';
+    const { stream } = feed(plain.flatMap((line) => [line, event]));
+    expect(stream.reply.split("\n")).toEqual(plain.slice(-200));
+  });
+
+  it("forgets plain lines without losing a step, a refusal or the result", () => {
+    const noise = Array.from({ length: 1000 }, (_, i) => `noise ${i + 1}`);
+    const lines = FILING.flatMap((line) => [...noise.slice(0, 100), line]);
+    const { stream, steps } = feed(lines);
+    expect(steps).toEqual([{ kind: "read", path: "/lib/index.md" }, { kind: "search" }, { kind: "wrote", path: "/lib/ideas/podcast.md" }]);
+    expect(stream.reply).toBe("Filed into [[podcast]].");
+    expect(stream.refused).toEqual(["/lib/raw/2026/10/x.md"]);
+  });
+
   it("prefers the result's text to lines that weren't JSON", () => {
     const { stream } = feed(["a warning on stdout", ...FILING]);
     expect(stream.reply).toBe("Filed into [[podcast]].");

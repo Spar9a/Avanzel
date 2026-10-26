@@ -102,6 +102,28 @@ describe("watchWrites", () => {
     expect(steps).toHaveLength(1);
   });
 
+  it("reports, at stop(after), what is left in the snapshot it is given, not in the folder", async () => {
+    const root = library();
+    for (const name of ["a", "b", "c"]) write(root, `ideas/${name}.md`, name);
+    const { steps, stop } = watching(root);
+    // The run writes a new file, adds to one and removes one, and `after` is the library as it leaves it.
+    write(root, "ideas/new.md", "new");
+    appendFileSync(join(root, "ideas/a.md"), " and more");
+    rmSync(join(root, "ideas/b.md"));
+    const after = snapshot(root);
+    // The folder then moves on, so that it no longer says what `after` does: it has a file `after` hasn't, and lacks one
+    // `after` has.
+    write(root, "ideas/later.md", "later");
+    rmSync(join(root, "ideas/c.md"));
+    stop(after); // at once: no event can have arrived, and the 150 ms a path waits for hasn't passed
+    expect(steps).toHaveLength(3);
+    expect(steps).toContainEqual({ kind: "wrote", path: "ideas/new.md", created: true });
+    expect(steps).toContainEqual({ kind: "wrote", path: "ideas/a.md", created: false });
+    expect(steps).toContainEqual({ kind: "deleted", path: "ideas/b.md" });
+    await pause(400); // and the folder's later changes are not told after it
+    expect(steps).toHaveLength(3);
+  });
+
   it("closes the watcher when it stops", async () => {
     // Node lists a watch that is open among its active resources, so a watcher left open can be seen without a mock.
     const open = () => process.getActiveResourcesInfo().filter((resource) => resource === "FSEventWrap").length;

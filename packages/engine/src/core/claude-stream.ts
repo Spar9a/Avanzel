@@ -18,6 +18,9 @@ export interface RateLimit {
 
 type Json = Record<string, unknown>;
 
+/** How many of the lines that weren't JSON are kept: the last 200. A run that prints without end can't fill the memory. */
+const PLAIN_LINES_KEPT = 200;
+
 /** What the result event, the last line of a run, said. `reply` is null when it had neither a result nor errors. */
 interface Result {
   reply: string | null;
@@ -32,7 +35,8 @@ export class ClaudeStream {
   // page that isn't there can't be read, and the write guard may refuse a write. They wait here by tool_use id, with the
   // step they will be. A search is a step when it is made, since it was made even when it found nothing.
   readonly #pending = new Map<string, ToolStep>();
-  // The lines that weren't JSON objects. A run that never got as far as a result has nothing else to say.
+  // The last PLAIN_LINES_KEPT lines that weren't JSON objects. A run that never got as far as a result has nothing else
+  // to say, and what it said last is what tells why.
   readonly #plain: string[] = [];
   #result: Result | null = null;
   #rateLimit: RateLimit | null = null;
@@ -46,6 +50,7 @@ export class ClaudeStream {
     const event = parseObject(text);
     if (!event) {
       this.#plain.push(text);
+      if (this.#plain.length > PLAIN_LINES_KEPT) this.#plain.shift();
       return;
     }
     // Everything else is ignored: thinking and text, system/* (hook events too) and stream_event.
@@ -71,7 +76,7 @@ export class ClaudeStream {
 
   /**
    * The result event's `result`; else its `errors`, one to a line (a run that failed before it could reply has those
-   * and no result); with neither, the lines that weren't JSON, joined with "\n".
+   * and no result); with neither, the last 200 lines that weren't JSON, joined with "\n".
    */
   get reply(): string {
     return this.#result?.reply ?? this.#plain.join("\n");

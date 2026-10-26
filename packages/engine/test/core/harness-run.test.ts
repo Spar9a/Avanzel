@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Harness, NoAgentError, harnesses, runHeadless } from "../../src/core/harness.ts";
+import type { ToolStep } from "../../src/core/claude-stream.ts";
+import { Harness, NoAgentError, classifyFailure, errorLine, harnesses, runHeadless } from "../../src/core/harness.ts";
 import { AvanzelError } from "../../src/types.ts";
 import { builtin, script, settingsWith } from "./harness-fixtures.ts";
 import { binScripts, useTmp } from "./helpers.ts";
@@ -46,6 +47,82 @@ describe("runHeadless", () => {
     const result = await runHeadless(harness, "x", tmp(), { write: false, timeoutSeconds: 30 });
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("please log in");
+  });
+
+  describe("a run that prints without end", () => {
+    // A megabyte of progress (21,000 lines of 51 bytes in the script harness), and then the line that says why it failed.
+    const PROGRESS = 21_000;
+    const GAVE_UP = "Error: the agent gave up";
+    const REPLACEMENT_CHARACTER = String.fromCharCode(0xfffd);
+    /** The shell that prints the progress, one numbered line at a time. A stand-in `claude` is alone on PATH: builtins only. */
+    const progress = `i=0; while [ "$i" -lt ${PROGRESS} ]; do echo "progress $i of a long run"; i=$((i + 1)); done`;
+    const claudeOnPath = (body: string) => vi.stubEnv("PATH", binScripts(tmp(), { claude: body }));
+
+    it("keeps the last 64 KB of its output, and the line that says why it failed is still found", async () => {
+      const harness = script(
+        `for (let i = 0; i < ${PROGRESS}; i++) console.log('progress ' + String(i).padStart(5, '0') + ' of a long run, kept only at its end');` +
+          ` console.log('${GAVE_UP}'); process.exitCode = 1`,
+      );
+      const result = await runHeadless(harness, "x", tmp(), { write: false, timeoutSeconds: 60 });
+      expect(result.exitCode).toBe(1);
+      const kept = Buffer.byteLength(result.output);
+      expect(kept).toBeLessThanOrEqual(64 * 1024);
+      expect(kept).toBeGreaterThan(63 * 1024); // the last 64 KB, not a sliver of it
+      expect(result.output).toContain(`progress ${PROGRESS - 1} `); // the end of the run is there
+      expect(result.output).not.toContain("progress 00000 "); // the beginning is not
+      expect(errorLine(result.output)).toBe(GAVE_UP);
+      expect(classifyFailure(result).line).toBe(GAVE_UP);
+    });
+
+    it("cuts at 64 KB exactly, however much comes", async () => {
+      // 'a', then `b`s, then the line end that `output` is trimmed of: the first byte goes as soon as there is one over.
+      const limit = 64 * 1024;
+      const printed = async (bs: number) => {
+        const harness = script(`console.log('a' + 'b'.repeat(${bs}))`);
+        return (await runHeadless(harness, "x", tmp(), { write: false, timeoutSeconds: 60 })).output;
+      };
+      expect(await printed(limit - 2)).toBe(`a${"b".repeat(limit - 2)}`); // 64 KB in all
+      for (const bs of [limit - 1, 100_000, 2 * limit - 2, 3 * limit + 7]) {
+        expect(await printed(bs), `${bs} bs`).toBe("b".repeat(limit - 1)); // the last 64 KB, which end with the line end
+      }
+    });
+
+    it("starts what it keeps at a whole character", async () => {
+      // 2 bytes to a character, so the cut that leaves the last 64 KB falls inside one.
+      const harness = script("console.log('é'.repeat(100_000))");
+      const result = await runHeadless(harness, "x", tmp(), { write: false, timeoutSeconds: 60 });
+      expect(Buffer.byteLength(result.output)).toBeLessThanOrEqual(64 * 1024);
+      expect(result.output).toMatch(/^é+$/);
+      expect(result.output).not.toContain(REPLACEMENT_CHARACTER);
+    });
+
+    it("keeps the last 200 lines of a Claude Code run that never replied", async () => {
+      claudeOnPath(`${progress}; echo '${GAVE_UP}'; exit 1`);
+      const result = await runHeadless(builtin("claude"), "x", tmp(), { write: false, timeoutSeconds: 60 });
+      expect(result.ok).toBe(false);
+      const lines = result.output.split("\n");
+      expect(lines).toHaveLength(200);
+      expect(lines[0]).toBe(`progress ${PROGRESS - 199} of a long run`); // 199 lines of progress, then the error
+      expect(errorLine(result.output)).toBe(GAVE_UP);
+    });
+
+    it("reads every line of a Claude Code run as it comes, whether or not it is kept", async () => {
+      // Its one step is among the first half of the lines, which are long gone by the end.
+      const search = JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Glob", input: { pattern: "*.md" } }] },
+      });
+      const done = JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "Filed.", permission_denials: [] });
+      claudeOnPath(`${progress}; printf '%s\\n' '${search}'; ${progress}; printf '%s\\n' '${done}'`);
+      const steps: ToolStep[] = [];
+      const run = await runHeadless(builtin("claude"), "x", tmp(), {
+        write: false,
+        timeoutSeconds: 60,
+        onStep: (step) => void steps.push(step),
+      });
+      expect(steps).toEqual([{ kind: "search" }]);
+      expect(run).toMatchObject({ ok: true, output: "Filed." });
+    });
   });
 
   it("strips ANSI escapes from the output", async () => {

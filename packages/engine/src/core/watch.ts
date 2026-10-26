@@ -11,8 +11,12 @@ const SETTLE_MS = 150;
 
 type Written = Extract<FilingStep, { kind: "wrote" | "deleted" }>;
 
-/** Reports each file a run writes or removes, once, while it runs. stop() reports what is left, then ends the watch. */
-export function watchWrites(root: string, before: Snapshot, onStep: (step: FilingStep) => void): () => void {
+/**
+ * Reports each file a run writes or removes, once, while it runs. stop() reports what is left, then ends the watch. What
+ * is left is read from `after`, the library as the run left it, when stop() is given one by a caller that has taken it
+ * already, and else from a snapshot of the folder that stop() takes itself.
+ */
+export function watchWrites(root: string, before: Snapshot, onStep: (step: FilingStep) => void): (after?: Snapshot) => void {
   const reported = new Set<string>();
   const waiting = new Map<string, ReturnType<typeof setTimeout>>();
   let watcher: FSWatcher | null = null;
@@ -69,12 +73,13 @@ export function watchWrites(root: string, before: Snapshot, onStep: (step: Filin
     // Nothing to watch, or no way to watch it: stop() still reports what changed, only at the end.
   }
 
-  return () => {
+  return (after) => {
     if (stopped) return;
     stopped = true;
     try {
-      // Events reach fs.watch late, so the run's last write may not have arrived yet: the folder says what's left.
-      const { created, modified, deleted } = diff(before, snapshot(root));
+      // Events reach fs.watch late, so the run's last write may not have arrived yet: the library as the run left it says
+      // what's left, in the snapshot the caller gives, else in the folder as it is now.
+      const { created, modified, deleted } = diff(before, after ?? snapshot(root));
       const left: Written[] = [
         ...created.map((path): Written => ({ kind: "wrote", path, created: true })),
         ...modified.map((path): Written => ({ kind: "wrote", path, created: false })),

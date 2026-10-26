@@ -135,6 +135,25 @@ export interface LibrarianOptions {
   clock?: () => Date;
 }
 
+/** What one agent run is asked to do. */
+interface RunSpec {
+  write: boolean;
+  images?: readonly string[];
+  signal?: AbortSignal | undefined;
+}
+
+/** A run whose caller will diff the library against `before`, and may be told each step as it is taken. */
+interface WithBefore {
+  before: Snapshot;
+  steps?: ((step: FilingStep) => void) | undefined;
+}
+
+/** What one agent run gives: its result, and what the guard put back after it. */
+interface Ran {
+  result: RunResult;
+  guarded: string[];
+}
+
 function quiet(): void {}
 
 export class Librarian {
@@ -333,16 +352,13 @@ export class Librarian {
     const before = snapshot(root);
     const prompt = filePrompt(captureRel, captureId, now, { attachments, instructions });
     // Only a caller that asked for the steps is told them: Claude Code's come from its own events, and other agents'
-    // from the folder.
-    const { result, guarded } = await this.#run(prompt, {
-      write: true,
-      images: attachments,
-      signal,
-      ...(steps && { before, steps }),
-    });
+    // from the folder. The changes below are read from `after`, the library as the run left it, whether or not they are.
+    const { result, guarded, after } = await this.#run(prompt, { write: true, images: attachments, signal, before, steps });
     const restoral = restoreCapture(root, captureRel, original, archiveExisted ? null : archiveRel);
     const savedOriginal = restoral === "blocked" ? this.#keepOriginal(captureId, original) : null;
-    const changes = diff(before, snapshot(root)).without([...SOURCES, ...guarded]);
+    // `after` is from before the guard and the capture's restoral put anything back. What they touch is left out: the
+    // capture is in inbox/ or raw/, and the guard lists what it put back.
+    const changes = diff(before, after).without([...SOURCES, ...guarded]);
     const refused = result.refused.map((refusedPath) => insideLibrary(root, refusedPath) ?? refusedPath);
     const ran = { changes, message: result.output, restored: restoral === "restored", savedOriginal, guarded, refused };
     const error = this.#notFiled(result, restoral, changes, captureId, archiveRel);
@@ -471,29 +487,23 @@ export class Librarian {
 
   /**
    * One agent run; returns its result and what the guard put back after it: changes to the protected paths and
-   * links the agent left in Avanzel's own paths (see `FileOutcome.guarded`). Given `steps` (and `before`, the library
-   * as it was when the run began), the run tells each step the agent takes as it takes it.
+   * links the agent left in Avanzel's own paths (see `FileOutcome.guarded`). Given `before` (the library as it was when
+   * the run began), it also returns `after`, the library as the run left it, for the caller to diff against `before`.
+   * `after` is taken once, right after the run and before the guard puts anything back. Given `steps` too, the run tells
+   * each step the agent takes as it takes it, and the watch of the folder (for an agent that doesn't tell its own)
+   * reports what is left from that same `after`.
    */
+  #run(prompt: string, options: RunSpec & WithBefore): Promise<Ran & { after: Snapshot }>;
+  #run(prompt: string, options: RunSpec): Promise<Ran>;
   async #run(
     prompt: string,
-    {
-      write,
-      images = [],
-      signal,
-      before,
-      steps,
-    }: {
-      write: boolean;
-      images?: readonly string[];
-      signal?: AbortSignal | undefined;
-      before?: Snapshot | undefined;
-      steps?: ((step: FilingStep) => void) | undefined;
-    },
-  ): Promise<{ result: RunResult; guarded: string[] }> {
+    { write, images = [], signal, before, steps }: RunSpec & Partial<WithBefore>,
+  ): Promise<Ran & { after?: Snapshot }> {
     const root = this.vault.root;
     const protectedBefore = protectedState(root);
     let result: RunResult;
     let guarded: string[];
+    let after: Snapshot | undefined;
     try {
       const harness = this.harness;
       const model = Object.hasOwn(this.settings.models, harness.name) ? (this.settings.models[harness.name] ?? null) : null;
@@ -509,12 +519,13 @@ export class Librarian {
         });
       } finally {
         // Right after the run, before the guard: what the guard puts back is its own doing, not a step of the agent's.
-        narration?.stop();
+        after = before ? snapshot(root) : undefined;
+        narration?.stop(after);
       }
     } finally {
       guarded = undoProtected(root, protectedBefore);
     }
-    return { result, guarded };
+    return { result, guarded, after };
   }
 
   async #commit(message: string): Promise<string | null> {
@@ -595,14 +606,15 @@ function outcome(captureId: string, fields: Partial<Omit<FileOutcome, "captureId
 
 /**
  * How a run's steps reach `steps`. Claude Code tells its own tool calls (`onStep`, handed to the run). Any other agent
- * has its writes seen in the folder (`watchWrites`) from now until `stop()`, which the caller calls when the run is over.
+ * has its writes seen in the folder (`watchWrites`) from now until `stop(after)`, which the caller calls when the run is
+ * over, with the library as the run left it if it has taken that already.
  */
 function narrate(
   root: string,
   harness: Harness,
   before: Snapshot,
   steps: (step: FilingStep) => void,
-): { onStep: ((step: ToolStep) => void) | undefined; stop: () => void } {
+): { onStep: ((step: ToolStep) => void) | undefined; stop: (after?: Snapshot) => void } {
   if (!harness.streams) return { onStep: undefined, stop: watchWrites(root, before, steps) };
   return {
     onStep: (step) => {
