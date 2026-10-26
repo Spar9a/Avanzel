@@ -235,11 +235,11 @@ export class FirstRunLog {
 /**
  * How many recordings the library has kept, in a file of the app's own on this Mac (userData/captures.json): never in the
  * library, and nothing reports it. Its one reader is the listening card's hint, which the first recordings get. A recording
- * counts once the library keeps something of it: its words, its screenshot (a screen comment) or its audio. What becomes of it
- * after (filed, saved for the evening review, stopped) changes nothing. An Esc doesn't count, nor does a dictation with no
- * speech, nor a typed thought, which is no recording. A failed recording doesn't count either, even when its audio stays in
- * raw/audio/. A recording that Stop keeps in the inbox does. A missing or broken file reads as none kept. Counting is best
- * effort: a file that can't be written costs a count, never the recording.
+ * counts once the library keeps something of it: its words, its screenshot (a screen comment), or its audio when Stop keeps it
+ * in the inbox. What becomes of it after (filed, saved for the evening review, stopped) changes nothing. An Esc doesn't count,
+ * nor does a dictation with no speech, nor a typed thought, which is no recording. A failed recording doesn't count either, even
+ * when its audio stays in raw/audio/: that audio is not kept in this sense. A missing or broken file reads as none kept.
+ * Counting is best effort: a file that can't be written costs a count, never the recording.
  */
 export class CaptureCount {
   constructor(private readonly file: string) {}
@@ -254,7 +254,7 @@ export class CaptureCount {
     }
   }
 
-  /** One more recording is kept: whatever keeps one calls this as soon as the library has what it made (its words, screenshot or audio). */
+  /** One more recording is kept: whatever keeps one calls this as soon as the library has what it made (its words, its screenshot, or the audio Stop keeps in the inbox). */
   add(): void {
     try {
       writeJsonAtomic(this.file, { version: 1, kept: this.get() + 1 });

@@ -43,6 +43,26 @@ describe.skipIf(!git.available())("with git", () => {
     expect(gitOut("status", "--porcelain")).toBe("");
   });
 
+  it("never commits a recording that waits in the inbox, neither with the owner's changes before a filing nor with the filing", async () => {
+    // A voice memo dropped there, or a recording the capsule's Stop kept; and a volume that tells cases apart.
+    gitOut("config", "core.ignorecase", "false");
+    write(versioned.root, "inbox/Voice memo.WAV", "sound");
+    write(versioned.root, "inbox/memo.m4a", "sound");
+    const capture = librarian.captureText("Commit me, not the recordings");
+    const outcome = await only(librarian.file([capture.path]));
+    expect(outcome.ok).toBe(true);
+    expect(subjects()).toEqual([
+      `avanzel: file ${capture.id}`,
+      `avanzel: owner's changes before file ${capture.id}`,
+      "avanzel: new library",
+    ]);
+    expect(gitOut("log", "--all", "--name-only", "--format=").split("\n").filter((name) => /\.(wav|m4a)$/i.test(name))).toEqual([]);
+    expect(gitOut("ls-files").split("\n").filter(Boolean).some((name) => name.startsWith("inbox/"))).toBe(false);
+    expect(gitOut("status", "--porcelain")).toBe("");
+    expect(read(join(versioned.root, "inbox", "Voice memo.WAV"))).toBe("sound"); // waiting where it was, for the evening review
+    expect(read(join(versioned.root, "inbox", "memo.m4a"))).toBe("sound");
+  });
+
   it("keeps what the owner wrote before a filing when the filing is undone", async () => {
     write(versioned.root, "goals/mine.md", "# My own goal\n");
     appendFileSync(versioned.indexPath, "- [[mine]] — my own goal\n");

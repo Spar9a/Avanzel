@@ -11,6 +11,7 @@ import {
   filesUnder,
   filingClaude,
   firstRun,
+  gitOut,
   launch,
   makeLibrary,
   read,
@@ -165,17 +166,20 @@ type Hearing = { transcribe(samples: unknown): Promise<unknown> };
 /**
  * From now on, counts the transcriptions that have started and those that have ended, with their words or with a failure
  * (`transcriptions`): the controller's own `transcribe`, wrapped. With `failWith`, each fails with that message once the stand-in
- * for the speech model has given its words.
+ * for the speech model has given its words. With `hold`, each waits once it has started, until the test lets that one go
+ * (`letTranscriptionGo`, by the order they started in).
  */
-async function noteTranscriptions(app: ElectronApplication, failWith?: string): Promise<void> {
-  await app.evaluate((_electron, failure) => {
+async function noteTranscriptions(app: ElectronApplication, { failWith, hold = false }: { failWith?: string; hold?: boolean } = {}): Promise<void> {
+  await app.evaluate((_electron, { failure, holding }) => {
     const controller = (globalThis as unknown as { __avanzel: Hearing }).__avanzel;
     const transcribe = controller.transcribe.bind(controller);
     const counts = { started: 0, ended: 0 };
-    Object.assign(globalThis, { transcriptions: counts });
+    const goes = new Map<number, () => void>();
+    Object.assign(globalThis, { transcriptions: counts, letTranscriptionGo: (nth: number) => goes.get(nth)?.() });
     controller.transcribe = async (samples) => {
-      counts.started++;
+      const nth = ++counts.started;
       try {
+        if (holding) await new Promise<void>((resolve) => goes.set(nth, resolve));
         const heard = await transcribe(samples);
         if (failure !== undefined) throw new Error(failure);
         return heard;
@@ -183,11 +187,15 @@ async function noteTranscriptions(app: ElectronApplication, failWith?: string): 
         counts.ended++;
       }
     };
-  }, failWith);
+  }, { failure: failWith, holding: hold });
 }
 
 const transcriptions = (app: ElectronApplication) =>
   app.evaluate(() => (globalThis as { transcriptions?: { started: number; ended: number } }).transcriptions ?? { started: 0, ended: 0 });
+
+/** Lets the `nth` transcription that `noteTranscriptions` holds go on. */
+const letTranscriptionGo = (app: ElectronApplication, nth: number) =>
+  app.evaluate((_electron, which) => (globalThis as { letTranscriptionGo?: (nth: number) => void }).letTranscriptionGo?.(which), nth);
 
 /** The samples of a recording: what two files must share to be the same recording. */
 const samplesOf = (file: string) => readWav(file).samples;
@@ -241,7 +249,7 @@ test("a transcription that returns after Stop is dropped", async () => {
 
 test("a transcription that fails after Stop is dropped too", async () => {
   const { library, userData, app, capsule } = await launchSlowly(2_000);
-  await noteTranscriptions(app, "the speech model fell over");
+  await noteTranscriptions(app, { failWith: "the speech model fell over" });
   await dictate(app);
   await untilSlow(app);
   await stopTranscribing(capsule);
@@ -251,6 +259,30 @@ test("a transcription that fails after Stop is dropped too", async () => {
   expect(filesUnder(library, "raw")).toEqual([]);
   const kinds = await sentToCapsule(app);
   for (const kind of SHOWING_WORDS) expect(kinds).not.toContain(kind);
+  expect(capturesKept(userData)).toBe(1);
+  await app.close();
+});
+
+test("a stopped transcription that finds no words writes nothing, removes nothing and shows no error", async () => {
+  // Whitespace only, so that the stand-in still counts as a speech model that is ready, and its words trim to none.
+  const { library, userData, app, capsule } = await launchSlowly(3_000, { env: { AVANZEL_FAKE_TRANSCRIPT: "   " } });
+  await noteTranscriptions(app);
+  await dictate(app);
+  await untilSlow(app);
+  const kept = filesUnder(library, "raw/audio")[0]!;
+  await stopTranscribing(capsule);
+  expect(await capsuleKind(app)).toBe("recorded");
+  // Another file takes the path the recording had (a new recording stamped in the same second claims it, say). A transcription that
+  // finds no words removes the recording it kept at that path, so this one must not remove what it finds there.
+  const taken = path.join(library, "raw", "audio", kept);
+  writeFileSync(taken, "Someone else's recording, at the path this one had.");
+  await expect.poll(async () => (await transcriptions(app)).ended, { timeout: 30_000 }).toBe(1);
+  expect(readFileSync(taken, "utf8")).toBe("Someone else's recording, at the path this one had.");
+  expect(filesUnder(library, "raw")).toEqual([`audio/${kept}`]);
+  expect(filesUnder(library, "inbox")).toHaveLength(1); // the recording Stop kept, and no note
+  const kinds = await sentToCapsule(app);
+  expect(kinds).toContain("recorded");
+  for (const kind of SHOWING_WORDS) expect(kinds).not.toContain(kind); // "Nothing was heard." is an error card
   expect(capturesKept(userData)).toBe(1);
   await app.close();
 });
@@ -406,6 +438,29 @@ test("Stop keeps the recording in the library it was made in, and names that lib
   await app.close();
 });
 
+test("a recording waiting in the inbox is never committed, though the filing after it commits everything else", async () => {
+  // Recordings stay on this machine, and the library's git commits everything the inbox holds before a filing, and with it.
+  const library = await makeLibrary({ git: true });
+  const { app, capsule } = await launchSlowly(60_000, { library });
+  await dictate(app);
+  await untilSlow(app);
+  await stopTranscribing(capsule);
+  expect(await capsuleKind(app)).toBe("recorded");
+  const [recording] = filesUnder(library, "inbox");
+  // A thought typed after it is filed now: the owner's changes are committed before the filing, and the filing after them.
+  await call(app, "submitQuick", "Plant tulips in October");
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  const subjects = gitOut(library, "log", "--all", "--format=%s").split("\n");
+  expect(subjects.some((subject) => subject.startsWith("avanzel: owner's changes before file "))).toBe(true);
+  expect(subjects.some((subject) => subject.startsWith("avanzel: file "))).toBe(true);
+  const everWritten = gitOut(library, "log", "--all", "--name-only", "--format=").split("\n").filter(Boolean);
+  expect(everWritten.filter((name) => /\.wav$/i.test(name))).toEqual([]);
+  expect(gitOut(library, "ls-files").split("\n").filter((name) => /\.wav$/i.test(name))).toEqual([]);
+  expect(gitOut(library, "status", "--porcelain")).toBe("");
+  expect(filesUnder(library, "inbox")).toEqual([recording]); // still waiting there for the evening review
+  await app.close();
+});
+
 test("an older transcription that runs long doesn't turn a newer recording's card slow, and Stop doesn't reach it", async () => {
   const { library, userData, app, capsule } = await launchSlowly(60_000, { env: { AVANZEL_TRANSCRIBE_STOP_MS: "2000" } });
   await noteTranscriptions(app);
@@ -425,6 +480,28 @@ test("an older transcription that runs long doesn't turn a newer recording's car
   expect(filesUnder(library, "inbox")).toEqual([]);
   expect(filesUnder(library, "raw/audio")).toHaveLength(1); // the first recording, where it was
   expect(capturesKept(userData)).toBe(0);
+  await app.close();
+});
+
+test("an older transcription that ends while a newer one runs leaves the newer one its Stop", async () => {
+  const { library, userData, app, capsule } = await launchSlowly(0);
+  await noteTranscriptions(app, { hold: true }); // each one's words come when the test says
+  await dictate(app);
+  await untilSlow(app);
+  await stopTranscribing(capsule); // the first is kept in the inbox, and its transcription goes on
+  expect(await capsuleKind(app)).toBe("recorded");
+  await dictate(app);
+  await expect.poll(async () => (await transcriptions(app)).started, { timeout: 30_000 }).toBe(2);
+  await untilSlow(app);
+  // The first one's words come now, and are dropped. The second is still what the capsule shows, and Stop is still its.
+  await letTranscriptionGo(app, 1);
+  await expect.poll(async () => (await transcriptions(app)).ended, { timeout: 30_000 }).toBe(1);
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "transcribing", slow: true });
+  await stopTranscribing(capsule);
+  expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "recorded", review: "at 21:00" });
+  expect(filesUnder(library, "inbox")).toHaveLength(2);
+  expect(filesUnder(library, "raw")).toEqual([]);
+  expect(capturesKept(userData)).toBe(2);
   await app.close();
 });
 

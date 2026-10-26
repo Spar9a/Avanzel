@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as git from "../../src/core/git.ts";
 import { which } from "../../src/core/proc.ts";
-import { Vault } from "../../src/core/vault.ts";
+import { AUDIO_EXTS, Vault } from "../../src/core/vault.ts";
 import { binScripts, envHome, gitIdentity, useTmp, write } from "./helpers.ts";
 
 const tmp = useTmp();
@@ -256,5 +256,131 @@ describe.skipIf(!git.available())("git", () => {
     expect(readFileSync(join(root, "raw/2026/10/note.md"), "utf8")).toBe("the owner's words\n");
     expect(subjects(root)).toEqual(["add the note", "base"]);
     expect(gitOut(root, "status", "--porcelain")).toBe("");
+  });
+
+  // Recordings stay on this machine. The library's .gitignore keeps raw/audio/ out of git, but audio that waits in the inbox (a
+  // voice memo dropped there, or a recording the capsule's Stop kept) is not under raw/, and `commitAll` stages everything. So the
+  // repository's own exclude file lists the inbox's audio, which covers a library made before this, and the owner's own git use.
+  describe("audio waiting in the inbox", () => {
+    const excludeFile = (root: string) => join(root, ".git", "info", "exclude");
+    const tracked = (root: string) => gitOut(root, "ls-files").split("\n").filter(Boolean);
+    const inHistory = (root: string) => gitOut(root, "log", "--all", "--name-only", "--format=").split("\n").filter(Boolean);
+
+    /** A repository that matches names as they are written, as on a volume that tells cases apart. */
+    async function caseSensitiveRepo(): Promise<string> {
+      gitIdentity();
+      const root = repo();
+      await git.initRepo(root);
+      gitOut(root, "config", "core.ignorecase", "false");
+      return root;
+    }
+
+    it("is never committed, in any of the audio types or either case, and the notes beside it are", async () => {
+      const root = await caseSensitiveRepo();
+      write(root, "inbox/A note.md", "words");
+      write(root, "inbox/Another note.txt", "more words");
+      for (const ext of AUDIO_EXTS) {
+        write(root, `inbox/memo${ext}`, "sound");
+        write(root, `inbox/LOUD${ext.toUpperCase()}`, "SOUND");
+      }
+      expect(await git.commitAll(root, "first")).toMatch(/^[0-9a-f]{40}$/);
+      expect(tracked(root)).toEqual(["inbox/A note.md", "inbox/Another note.txt"]);
+      expect(inHistory(root)).toEqual(["inbox/A note.md", "inbox/Another note.txt"]);
+      expect(gitOut(root, "status", "--porcelain")).toBe(""); // the recordings are not even listed as new
+      for (const ext of AUDIO_EXTS) {
+        expect(readFileSync(join(root, `inbox/memo${ext}`), "utf8")).toBe("sound"); // and they are where they were
+        expect(readFileSync(join(root, `inbox/LOUD${ext.toUpperCase()}`), "utf8")).toBe("SOUND");
+      }
+    });
+
+    it("is kept out only at the top of the inbox, which is all the library's queue lists", async () => {
+      const root = await caseSensitiveRepo();
+      write(root, "inbox/memo.wav", "sound");
+      write(root, "inbox/folder/inside.wav", "sound");
+      write(root, "ideas/clip.wav", "sound");
+      await git.commitAll(root, "first");
+      expect(tracked(root)).toEqual(["ideas/clip.wav", "inbox/folder/inside.wav"]);
+    });
+
+    it("is kept out from the moment the repository is made, for the owner's own git too", async () => {
+      const root = await caseSensitiveRepo();
+      write(root, "inbox/memo.wav", "sound");
+      write(root, "inbox/note.md", "words");
+      gitOut(root, "add", "-A"); // the owner, with no commit of Avanzel's yet
+      expect(tracked(root)).toEqual(["inbox/note.md"]);
+    });
+
+    it("lists its patterns once, adds them to what the exclude file holds, and leaves a complete file as it is", async () => {
+      const root = await caseSensitiveRepo();
+      // The owner's own lines, the last without a newline: kept, and not run into the first pattern.
+      writeFileSync(excludeFile(root), "# mine\nscratch/\n*.tmp");
+      write(root, "inbox/memo.wav", "sound");
+      write(root, "a.md", "a");
+      await git.commitAll(root, "first");
+      const once = readFileSync(excludeFile(root), "utf8");
+      const lines = once.split("\n");
+      expect(lines.slice(0, 3)).toEqual(["# mine", "scratch/", "*.tmp"]);
+      expect(lines).toContain("inbox/*.[wW][aA][vV]");
+      expect(lines.at(-1)).toBe(""); // ends with a newline
+      const named = lines.filter(Boolean);
+      expect(new Set(named).size).toBe(named.length); // no line twice
+      write(root, "b.md", "b");
+      await git.commitAll(root, "second");
+      await git.commitAll(root, "nothing changed");
+      expect(readFileSync(excludeFile(root), "utf8")).toBe(once);
+    });
+
+    it("puts back a pattern the owner deleted, and only that one", async () => {
+      const root = await caseSensitiveRepo();
+      write(root, "a.md", "a");
+      await git.commitAll(root, "first");
+      const complete = readFileSync(excludeFile(root), "utf8");
+      writeFileSync(excludeFile(root), complete.replace("inbox/*.[wW][aA][vV]\n", ""));
+      write(root, "inbox/memo.wav", "sound");
+      write(root, "b.md", "b");
+      await git.commitAll(root, "second");
+      const lines = readFileSync(excludeFile(root), "utf8").split("\n");
+      expect(lines.filter((line) => line === "inbox/*.[wW][aA][vV]")).toHaveLength(1);
+      expect(lines.filter((line) => line.startsWith("# Avanzel"))).toHaveLength(1);
+      expect(tracked(root)).toEqual(["a.md", "b.md"]);
+    });
+
+    it("makes the folder of the exclude file when it is missing", async () => {
+      const root = await caseSensitiveRepo();
+      rmSync(join(root, ".git", "info"), { recursive: true });
+      write(root, "inbox/memo.wav", "sound");
+      write(root, "a.md", "a");
+      expect(await git.commitAll(root, "first")).toMatch(/^[0-9a-f]{40}$/);
+      expect(existsSync(excludeFile(root))).toBe(true);
+      expect(tracked(root)).toEqual(["a.md"]);
+    });
+
+    it("makes no commit, and stages nothing, when the audio can't be kept out", async () => {
+      const root = await caseSensitiveRepo();
+      writeFileSync(excludeFile(root), "# mine\n");
+      chmodSync(excludeFile(root), 0o444); // a file git can read and Avanzel can't write
+      write(root, "inbox/memo.wav", "sound");
+      write(root, "a.md", "a");
+      expect(await git.commitAll(root, "first")).toBeNull();
+      expect(gitOut(root, "diff", "--cached", "--name-only")).toBe("");
+      expect(() => gitOut(root, "rev-parse", "--verify", "-q", "HEAD")).toThrow(); // still no commit at all
+      expect(readFileSync(excludeFile(root), "utf8")).toBe("# mine\n");
+    });
+
+    it("leaves another repository's exclude file alone when the library's .git holds no repository", async () => {
+      // git takes a .git that is no repository for none, and looks in the folders above: it must find the library's own, or nothing.
+      gitIdentity();
+      const parent = repo();
+      await git.initRepo(parent);
+      const before = readFileSync(excludeFile(parent), "utf8");
+      const library = join(parent, "library");
+      mkdirSync(join(library, ".git"), { recursive: true });
+      write(library, "inbox/memo.wav", "sound");
+      write(library, "a.md", "a");
+      expect(await git.commitAll(library, "first")).toBeNull();
+      expect(gitOut(parent, "ls-files")).toBe("");
+      expect(gitOut(parent, "diff", "--cached", "--name-only")).toBe("");
+      expect(readFileSync(excludeFile(parent), "utf8")).toBe(before);
+    });
   });
 });

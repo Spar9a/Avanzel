@@ -1,9 +1,10 @@
 // Version the library with git so every agent edit is reviewable and undoable.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, renameSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { AvanzelError } from "../types.ts";
+import { AUDIO_EXTS } from "./extensions.ts";
 import { run, which, type Completed } from "./proc.ts";
 
 // The library is private notes, not code: no hooks (an agent must not be able to plant one) and
@@ -84,11 +85,60 @@ export function isRepo(root: string): boolean {
 export async function initRepo(root: string): Promise<void> {
   const result = await git(root, ["init", "-q"]);
   if (result.code !== 0) throw new AvanzelError(`git init failed in ${root}: ${result.stderr.trim()}`);
+  await excludeInboxAudio(root); // from the start, for the owner's own git too; commitAll makes sure again before it stages
 }
 
-/** Stage everything and commit: the new HEAD, or null when there is nothing to commit or git refuses. */
+/**
+ * The lines of the repository's own exclude file that keep audio waiting in the inbox out of git: `inbox/*.[wW][aA][vV]` and
+ * the like, one for each of AUDIO_EXTS, in either case, since a volume that tells cases apart has `core.ignorecase=false`. The top
+ * of the inbox only, which is all the library's queue lists (`Vault.pending`).
+ */
+function inboxAudioPatterns(): string[] {
+  const either = (letter: string) => (letter.toLowerCase() === letter.toUpperCase() ? letter : `[${letter.toLowerCase()}${letter.toUpperCase()}]`);
+  return [...AUDIO_EXTS].map((ext) => `inbox/*.${Array.from(ext.slice(1), either).join("")}`);
+}
+
+const EXCLUDE_NOTE = "# Avanzel: recordings waiting in the inbox stay on this machine";
+
+/**
+ * Recordings stay on this machine. The library's .gitignore keeps raw/audio/ out of git, but audio that waits in the inbox (a voice
+ * memo dropped there, or a recording the capsule's Stop kept) is not under raw/, and `commitAll` stages everything. So the
+ * repository's own exclude file (`.git/info/exclude`, wherever git keeps it) lists the inbox's audio (`inboxAudioPatterns`): it covers
+ * a library made before this, and the owner's own git use, and it leaves the owner's .gitignore and the library's template alone.
+ * The lines are added when they are missing and no other line is touched, so calling this again changes nothing. Whether the
+ * file lists them now: false when git can't say where it is, when the repository git finds from `root` is not the library's own (a
+ * `.git` that holds no repository, which git passes over to look in the folders above, must not have its owner's file written), and
+ * when the file can't be read or written.
+ */
+async function excludeInboxAudio(root: string): Promise<boolean> {
+  const asked = await git(root, ["rev-parse", "--show-toplevel", "--git-path", "info/exclude"]);
+  const [top, found] = asked.stdout.split("\n");
+  if (asked.code !== 0 || !top || !found) return false;
+  try {
+    const [there, here] = [statSync(top), statSync(root)];
+    if (there.dev !== here.dev || there.ino !== here.ino) return false;
+    const file = resolve(root, found);
+    const had = existsSync(file) ? readFileSync(file, "utf8") : "";
+    const lines = new Set(had.split(/\r?\n/));
+    const missing = inboxAudioPatterns().filter((pattern) => !lines.has(pattern));
+    if (missing.length > 0) {
+      mkdirSync(dirname(file), { recursive: true });
+      const note = lines.has(EXCLUDE_NOTE) ? [] : [EXCLUDE_NOTE];
+      appendFileSync(file, `${had === "" || had.endsWith("\n") ? "" : "\n"}${[...note, ...missing].join("\n")}\n`);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stage everything and commit: the new HEAD, or null when there is nothing to commit or git refuses. Everything but the audio that
+ * waits in the inbox (`excludeInboxAudio`): when that can't be kept out, nothing is staged and there is no commit.
+ */
 export async function commitAll(root: string, message: string): Promise<string | null> {
   if (!isRepo(root) || !available()) return null;
+  if (!(await excludeInboxAudio(root))) return null;
   await git(root, ["add", "-A"]);
   if (!(await git(root, ["status", "--porcelain"])).stdout.trim()) return null;
   return commitStaged(root, message);

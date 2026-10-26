@@ -25,6 +25,7 @@ import { AvanzelError } from "../types.ts";
 import { visibleFiles } from "./changes.ts";
 import { CONFIG_NAME, defaultSettings, saveSettings, VAULT_MARKER } from "./config.ts";
 import { idStamp, isoLocal, localMinute, yearMonth } from "./dates.ts";
+import { AUDIO_EXTS, TEXT_EXTS } from "./extensions.ts";
 import { yamlScalar } from "./frontmatter.ts";
 import * as gitops from "./git.ts";
 import { lstatOrNull, realFoldersTo, replaceInside } from "./inside.ts";
@@ -36,13 +37,7 @@ export { isoLocal } from "./dates.ts";
 export const SHELVES = ["goals", "ideas", "problems", "memories", "people", "topics"] as const;
 /** Top-level folders that are not shelves. */
 export const SPECIAL_DIRS: readonly string[] = ["inbox", "raw", "reviews", "tasks"];
-export const TEXT_EXTS: ReadonlySet<string> = new Set([".md", ".txt"]);
-export const AUDIO_EXTS: ReadonlySet<string> = new Set([
-  ".wav", ".m4a", ".mp3", ".ogg", ".oga", ".opus", ".flac", ".aiff", ".aif", ".aac", ".webm", ".mp4", ".caf",
-]);
-export const IMAGE_EXTS: ReadonlySet<string> = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".tiff", ".tif", ".bmp", ".avif",
-]);
+export { AUDIO_EXTS, IMAGE_EXTS, TEXT_EXTS } from "./extensions.ts";
 
 // vault-relative path -> template name (`.avanzel/config.toml` is rendered from the default settings)
 const SCAFFOLD: Readonly<Record<string, string>> = {

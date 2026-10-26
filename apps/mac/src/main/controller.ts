@@ -12,7 +12,7 @@ import {
   type WebContents,
 } from "electron";
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -101,6 +101,7 @@ import type {
   TaskInfo,
 } from "../shared/ipc.ts";
 import { frontContext } from "./front-app.ts";
+import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
@@ -156,7 +157,8 @@ const FAKE_TRANSCRIPT_DELAY_MS = (process.env.AVANZEL_TEST === "1" && Number(pro
 const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PREPARING_SHOW_MS)) || 8_000;
 // How long the capsule says that a shortcut picked on its notice works.
 const PICKED_SHOW_MS = 3_000;
-// How long the capsule says that a filing is stopped (hovering over it keeps it longer, as it does any card that hides itself).
+// How long the capsule says that a filing or a transcription is stopped (hovering over it keeps it longer, as it does any card that
+// hides itself).
 const STOPPED_SHOW_MS = 6_000;
 // The listening card names the shortcut that finishes a recording until the library has kept this many recordings: the first ones
 // teach the keys.
@@ -224,22 +226,6 @@ interface Transcribing {
   now: Date;
   samples: Float32Array;
   stopped: boolean;
-}
-
-/**
- * `name` in `folder`, or when the folder has it, the first of `name-2`, `name-3` … (before the extension) that it has not: nothing
- * there is replaced.
- */
-function freeName(folder: string, name: string): string {
-  const { name: stem, ext } = path.parse(name);
-  for (let n = 1; ; n++) {
-    const candidate = path.join(folder, n === 1 ? name : `${stem}-${n}${ext}`);
-    try {
-      lstatSync(candidate); // lstat, so that a link with nothing at its end is a name taken as well
-    } catch {
-      return candidate; // nothing there; or nothing that can be told, which what is done with the name then reports
-    }
-  }
 }
 
 /** What a failed filing's run left behind in the library: its edits as their own commit, or outside any history; null when it left none. */
@@ -1169,6 +1155,8 @@ export class Controller {
   stopTranscribing(sender: WebContents): void {
     const transcribing = this.transcribing;
     const state = this.capsuleState;
+    // `transcribing.stopped` is a belt, and nothing reaches it today: once Stop has kept the recording the card is `recorded`, and
+    // the check of the card turns a second Stop away. It keeps a recording from being kept twice, should the card ever allow it.
     if (!isPageOf(sender, this.capsule) || !transcribing || transcribing.stopped || state.kind !== "transcribing" || !state.slow) return;
     try {
       this.keepInInbox(transcribing);
@@ -1185,16 +1173,14 @@ export class Controller {
   }
 
   /**
-   * Moves the recording of `transcribing` into its library's inbox, as audio the evening review finds (`Vault.pending`), under the
-   * name it has in raw/audio/, or the next free one: a rename replaces what it finds there, so the name is looked for first
-   * (`freeName`). A recording the library kept no copy of (`audioPath` null) is written there from its samples instead. Throws when
-   * the inbox can't take it, with the recording as it was.
+   * Keeps the recording of `transcribing` in its library's inbox, as audio the evening review finds (`Vault.pending`): moved there
+   * from raw/audio/ (`moveInto`: a rename, never over a file, under its own name or the next free one), or, when the library kept
+   * no copy of it (`audioPath` null), written there from its samples (`writeInto`, which removes what a failed write leaves).
+   * Throws when the inbox can't take it, with the recording as it was.
    */
   private keepInInbox({ vault, audioPath, now, samples }: Transcribing): void {
-    mkdirSync(vault.inbox, { recursive: true });
-    const to = freeName(vault.inbox, audioPath ? path.basename(audioPath) : `${idStamp(now)}.wav`);
-    if (audioPath) renameSync(audioPath, to);
-    else writeWav(to, samples, 16000);
+    if (audioPath) moveInto(vault.inbox, audioPath);
+    else writeInto(vault.inbox, `${idStamp(now)}.wav`, (file) => writeWav(file, samples, 16000));
   }
 
   // ---------------------------------------------------------------- filing
