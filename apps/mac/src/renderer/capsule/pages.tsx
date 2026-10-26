@@ -1,7 +1,7 @@
 // The pages a filing wrote, as the filed card's footer lists them (owner item 3: a clickable chip that says new or updated is a stand-in).
 import { Button, ShelfTag, Stack, Text } from "@avanzel/ui";
 import type { FiledPage } from "../../shared/ipc.ts";
-import { isShelf } from "../setup/copy.ts";
+import { isShelf } from "../common/shelf.ts";
 import { api } from "./api.ts";
 import { moreLine, pageCaption, shortTitle, SHOWN_PAGES } from "./copy.ts";
 

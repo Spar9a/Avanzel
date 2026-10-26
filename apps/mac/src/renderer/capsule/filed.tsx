@@ -2,7 +2,7 @@
 // took, with Hide, Undo and Open. Nothing here ticks: the bar is a live region, and its one line stays the same.
 import { Button, CapsuleBar, Card, Text } from "@avanzel/ui";
 import { useState } from "react";
-import { stampDate } from "../setup/copy.ts";
+import { useStampDate } from "../common/stamp.ts";
 import { api, type StateOf } from "./api.ts";
 import { filedLine, notedLine } from "./copy.ts";
 import { Hide } from "./hide.tsx";
@@ -18,7 +18,7 @@ import { Words } from "./words.tsx";
  * Noted, and offers no Open: Hide, and Undo while there is a commit.
  */
 export function Filed({ state }: { state: StateOf<"filed"> }) {
-  const [day] = useState(() => stampDate(new Date())); // the day the card came, not the day it is redrawn
+  const day = useStampDate(); // the day the card came, not the day it is redrawn
   const [undoing, setUndoing] = useState(false); // Undo answers once: busy from the press until the card is replaced by what came of it
   const receipt = !state.noted && state.pages.length > 0;
   return (

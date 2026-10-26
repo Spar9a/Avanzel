@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameS
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault, git, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
+import type { AgentFailure, Problem } from "../src/shared/problems.ts";
 import {
   agentCalls,
   agentStubs,
@@ -39,7 +40,7 @@ import {
   tomorrowAtNine,
   windowFor,
 } from "./helpers.ts";
-import { expectInPanel, expectStoppedFiling, expectStoppedRecording, namesOf, stampDay } from "./capsule-helpers.ts";
+import { expectInPanel, expectProblem, expectStoppedFiling, expectStoppedRecording, namesOf, stampDay } from "./capsule-helpers.ts";
 import { failingClaude, zel } from "./setup-helpers.ts";
 
 const inbox = (root: string) => filesUnder(root, "inbox");
@@ -241,8 +242,7 @@ const BOTH_VERSIONS = "Usually a later change touched the same lines. The librar
 test("an Edit whose first try git won't take back says so, and that the note waits for the evening review", async () => {
   const { library, app, capsule, state } = await editWhoseFirstTryStays(true);
   expect(state).toEqual({ kind: "error", message: FIRST_TRY, detail: `${BOTH_VERSIONS} The note waits in your inbox for the evening review.` });
-  await expect(capsule.getByRole("alert")).toContainText(FIRST_TRY);
-  await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]); // nothing to fix
+  await expectProblem(capsule, { title: FIRST_TRY, lines: [`${BOTH_VERSIONS} The note waits in your inbox for the evening review.`] }); // nothing to fix: Hide alone
   // The corrected words wait in the inbox, and the change by hand stays.
   expect(inboxWords(library)).toEqual([expect.stringContaining("corrected words")]);
   expect(read(library, "goals/half.md")).toBe("# Half done, by hand\n");
@@ -380,25 +380,23 @@ test("corrected words that can't be saved yet are saved when Avanzel quits, and 
   try {
     await capsule.getByRole("button", { name: "File" }).click();
     await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
-    // Not an agent's failure: its own title, the error's line and what keeps the words, and OK only, so that nothing
+    // Not an agent's failure: its own title, the error's line and what keeps the words, and Hide only, so that nothing
     // files the misheard capture again.
-    await expect(capsule.getByRole("alert")).toContainText("Your corrected words weren't saved yet.");
-    await expect(
-      capsule.getByText("Your corrected words are saved to your inbox when you quit; the original note is still there.", { exact: false }),
-    ).toBeVisible();
-    await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
     expect(await cardNote(app)).toBeNull(); // no note for the card to file again
     expect(await call(app, "capsuleStateForTests")).toEqual({
       kind: "error",
       message: "Your corrected words weren't saved yet.",
       detail: expect.stringMatching(/^EACCES: permission denied.*\nYour corrected words are saved to your inbox when you quit; the original note is still there\.$/),
     });
-    // The error names two long paths: its line is cut short, so the card, which shows about four lines of its body, shows all of
-    // it, what keeps the words last.
+    // The error names two long paths: its line is cut short, so the card shows all of it, what keeps the words last, on a line of its own.
     const { detail } = (await call(app, "capsuleStateForTests")) as { detail: string };
-    expect(Array.from(detail.split("\n")[0]!).length).toBeLessThanOrEqual(100);
-    expect(detail.split("\n")[0]!.endsWith("…")).toBe(true);
-    expect(await capsule.locator(".detail").evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
+    const [reason] = detail.split("\n");
+    expect(Array.from(reason!).length).toBeLessThanOrEqual(100);
+    expect(reason!.endsWith("…")).toBe(true);
+    await expectProblem(capsule, {
+      title: "Your corrected words weren't saved yet.",
+      lines: [reason!, "Your corrected words are saved to your inbox when you quit; the original note is still there."],
+    });
     await call(app, "idleForTests"); // nothing left to do: the words are only in memory
   } finally {
     chmodSync(inboxDir, 0o755);
@@ -449,6 +447,37 @@ test("starting a new dictation with the editor open keeps the edit", async () =>
   await app.close();
 });
 
+test("an edit that can't be saved when another recording takes the card is told in a notification, in the corrected words' own", async () => {
+  const { library, app, capsule } = await dictateToStallingAgent("misheard words");
+  await editTo(app, capsule, "corrected words");
+  const inboxDir = path.join(library, "inbox");
+  chmodSync(inboxDir, 0o555); // the corrected words can't be written for now
+  try {
+    await call(app, "toggleDictate"); // the next recording takes the card, so the edit is kept: it can't be written
+    await expect.poll(() => capsuleKind(app)).toBe("listening");
+    await call(app, "cancelRecording");
+    await call(app, "idleForTests");
+    // The card that shows the same problem when File can't write the words has these words: the title, and the error's line cut short
+    // above what keeps the words.
+    expect(await call(app, "notificationsForTests")).toEqual([
+      {
+        title: "Your corrected words weren't saved yet.",
+        body: expect.stringMatching(/^EACCES: permission denied.*\nYour corrected words are saved to your inbox when you quit; the original note is still there\.$/),
+      },
+    ]);
+    const [note] = (await call(app, "notificationsForTests")) as { body: string }[];
+    expect(Array.from(note!.body.split("\n")[0]!).length).toBeLessThanOrEqual(100);
+  } finally {
+    chmodSync(inboxDir, 0o755);
+  }
+  // The edit is kept in memory, as the notification says, and quitting saves it beside the note it corrects.
+  await quit(app);
+  const words = inboxWords(library);
+  expect(words).toHaveLength(2);
+  expect(words.filter((text) => text.includes("corrected words"))).toHaveLength(1);
+  expect(words.filter((text) => text.includes("misheard words"))).toHaveLength(1);
+});
+
 test("a failed filing says its partial edits are kept as their own commit", async () => {
   const library = await makeLibrary({ git: true });
   const app = await launch({
@@ -461,19 +490,19 @@ test("a failed filing says its partial edits are kept as their own commit", asyn
   await call(app, "toggleDictate");
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("error");
-  await expect(capsule.getByText(/partial edits are kept as their own commit in the library's history/)).toBeVisible();
   // Any other failure keeps the agent's own line, as a sentence, then what is safe and what the agent left behind. Its one
   // fix files the note again with the same agent.
+  const detail =
+    "Agent crashed: cannot file this one. Your note is safe in the inbox; the evening review will try again. " +
+    "fake's partial edits are kept as their own commit in the library's history.";
   expect(await call(app, "capsuleStateForTests")).toEqual({
     kind: "error",
     message: "fake couldn't file this note.",
-    detail:
-      "Agent crashed: cannot file this one. Your note is safe in the inbox; the evening review will try again. " +
-      "fake's partial edits are kept as their own commit in the library's history.",
+    detail,
     action: "refile:fake",
     actionLabel: "Try again",
   });
-  await expect(capsule.getByRole("button")).toHaveText(["×", "Try again", "OK"]);
+  await expectProblem(capsule, { title: "fake couldn't file this note.", lines: [detail], fix: "Try again" });
   await snap(capsule, "5-error-partial-edits");
   expect(inbox(library)).toHaveLength(1);
   expect(gitOut(library, "log", "-1", "--format=%s")).toMatch(/^avanzel: leftovers of failed filing /);
@@ -514,11 +543,12 @@ test("when a symlinked inbox keeps the agent's rewrite, the capsule says where t
   // anything else, and fits in what the card keeps of a line (100 characters): it is whole, with no "…".
   const state = (await call(app, "capsuleStateForTests")) as { detail: string };
   expect(state).toMatchObject({ kind: "error", message: "fake couldn't file this note." });
-  expect(state.detail).toBe(
+  const detail =
     "A symlink in inbox/ kept Avanzel from putting back the words the agent changed. " +
-      `Your words are kept in .avanzel/logs/${kept}, and the inbox holds the agent's version; the evening review will try again. ` +
-      "Its partial edits stay in the library, outside its history, so they can't be undone.",
-  );
+    `Your words are kept in .avanzel/logs/${kept}, and the inbox holds the agent's version; the evening review will try again. ` +
+    "Its partial edits stay in the library, outside its history, so they can't be undone.";
+  expect(state.detail).toBe(detail);
+  await expectProblem(capsule, { title: "fake couldn't file this note.", lines: [detail], fix: "Try again" });
   await app.close();
 });
 
@@ -585,10 +615,8 @@ async function waitsOf(app: ElectronApplication, library: string): Promise<Wait[
 test("a usage limit names its reset and offers another agent", async () => {
   const { library, app, capsule } = await failedWithClaude(agentStubs({ claude: limitedClaude() }));
   const body = "It resets tomorrow at 09:00. Your note is safe in the inbox and will be filed then.";
-  await expect(capsule.getByRole("alert")).toContainText("Claude Code has hit its usage limit.");
-  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
-  // The one fix is the best other agent, here Codex's stand-in: the card's button names it. OK stays beside it.
-  await expect(capsule.getByRole("button")).toHaveText(["×", "File it with Codex now", "OK"]);
+  // The one fix is the best other agent, here Codex's stand-in: the notice's button names it, and Hide stays beside it.
+  await expectProblem(capsule, { title: "Claude Code has hit its usage limit.", lines: [body], fix: "File it with Codex now" });
   expect(await call(app, "capsuleStateForTests")).toEqual({
     kind: "error",
     message: "Claude Code has hit its usage limit.",
@@ -606,7 +634,9 @@ test("a usage limit names its reset and offers another agent", async () => {
   await capsule.reload();
   await expect(capsule.getByRole("alert")).toContainText("Claude Code has hit its usage limit.");
   expect(await cardNote(app)).toBe(note);
-  await call(app, "dismiss");
+  // Hide puts it away, and the note's card goes with it.
+  await capsule.getByRole("button", { name: "Hide", exact: true }).click();
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
   expect(await cardNote(app)).toBeNull();
   await app.close();
 });
@@ -616,9 +646,7 @@ test("a usage limit with no other agent offers no fix", async () => {
   answerAs(bin, "claude", limitedClaude()); // the only agent on this Mac
   const { library, app, capsule } = await failedWithClaude(bin);
   const body = "It resets tomorrow at 09:00. Your note is safe in the inbox and will be filed then.";
-  await expect(capsule.getByRole("alert")).toContainText("Claude Code has hit its usage limit.");
-  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
-  await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
+  await expectProblem(capsule, { title: "Claude Code has hit its usage limit.", lines: [body] }); // no other agent to offer: Hide alone
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: "Claude Code has hit its usage limit.", detail: body });
   expect(inbox(library)).toHaveLength(1);
   expect(await cardNote(app)).toBe(inbox(library)[0]); // a card with no button still remembers its note
@@ -628,13 +656,13 @@ test("a usage limit with no other agent offers no fix", async () => {
 test("a sign-in failure opens Terminal", async () => {
   const { library, app, capsule } = await failedWithClaude(agentStubs({ claude: filingClaude({ FAKE_AGENT_MODE: "fail" }) })); // "not logged in"
   const body = "Run claude once in Terminal and sign in, and your note will be filed straight away.";
-  await expect(capsule.getByRole("alert")).toContainText("Claude Code isn't signed in on this Mac.");
-  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
-  await expect(capsule.getByRole("button")).toHaveText(["×", "Open Terminal", "OK"]);
+  // The command is in the code face, as the windows set it, and the state names it for the page to set.
+  await expectProblem(capsule, { title: "Claude Code isn't signed in on this Mac.", lines: [body], fix: "Open Terminal", command: "claude" });
   expect(await call(app, "capsuleStateForTests")).toEqual({
     kind: "error",
     message: "Claude Code isn't signed in on this Mac.",
     detail: body,
+    command: "claude",
     action: "open-terminal",
     actionLabel: "Open Terminal",
   });
@@ -651,9 +679,7 @@ test("a timeout says how long it had", async () => {
   // The stand-in echoes a long prompt and then never finishes, so the run is stopped at the library's limit.
   const { app, capsule } = await failedWithClaude(agentStubs({ claude: filingClaude({ FAKE_AGENT_MODE: "slow-noisy" }) }), { timeoutSeconds: 2 });
   const body = "Your note is safe in the inbox; the evening review will try again.";
-  await expect(capsule.getByRole("alert")).toContainText("Claude Code took longer than 2 s and was stopped.");
-  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
-  await expect(capsule.getByRole("button")).toHaveText(["×", "Try again", "OK"]);
+  await expectProblem(capsule, { title: "Claude Code took longer than 2 s and was stopped.", lines: [body], fix: "Try again" });
   expect(await call(app, "capsuleStateForTests")).toEqual({
     kind: "error",
     message: "Claude Code took longer than 2 s and was stopped.",
@@ -669,7 +695,7 @@ const LONG_LINE = `Error: ${"the agent went on about what it could not do and wh
 const SAFE_LATER = "Your note is safe in the inbox; the evening review will try again.";
 
 test("a long line of the agent's is shortened on the card, so the sentence that says what is safe is in view", async () => {
-  // The legacy card shows about four lines of its body: left whole, this line would push the safe sentence out of sight.
+  // The panel is 300 px tall: left whole, a line of the agent's this long would push the safe sentence and the buttons out of it.
   const { library, app, capsule } = await failedWithClaude(agentStubs({ claude: failingClaude(LONG_LINE) }));
   const state = (await call(app, "capsuleStateForTests")) as { kind: string; message: string; detail: string };
   expect(state.message).toBe("Claude Code couldn't file this note.");
@@ -678,10 +704,8 @@ test("a long line of the agent's is shortened on the card, so the sentence that 
   expect(Array.from(line).length).toBeLessThanOrEqual(100);
   expect(line.endsWith("…")).toBe(true);
   expect(line.startsWith("The agent went on about what it could not do")).toBe(true);
-  // The card shows all of its body, the safe sentence last: nothing is cut off by its height.
-  const detail = capsule.locator(".detail");
-  await expect(detail).toHaveText(`${line} ${SAFE_LATER}`);
-  expect(await detail.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
+  // The notice shows all of its body, the safe sentence last, with its buttons, inside the panel.
+  await expectProblem(capsule, { title: "Claude Code couldn't file this note.", lines: [`${line} ${SAFE_LATER}`], fix: "Try again" });
   expect(inbox(library)).toHaveLength(1);
   await app.close();
 });
@@ -704,13 +728,59 @@ test("a long line of the agent's is shortened in the notification too, when the 
   await app.close();
 });
 
+test("the longest problems the capsule tells fit the panel with their buttons, and a command is in the code face", async () => {
+  const { correctedWordsProblem, filingProblem, stopFailedProblem, voiceSettingsProblem } = await import("../src/shared/problems.ts");
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const capsule = await windowFor(app, "capsule");
+  const now = new Date();
+  const failure: AgentFailure = { kind: "other", agent: "Claude Code", command: "claude", resetsAt: null, seconds: 900, line: LONG_LINE };
+  const recording = "raw/audio/2026/10/2026-10-27-101500.wav";
+  const worst: Problem[] = [
+    // The agent's line cut at 100 characters, then the words kept aside, then the partial edits with no history to undo them from.
+    filingProblem(failure, now, { lineMax: 100, where: ".avanzel/logs/2026-10-27-101500-plant-tulips-in-october.original.md", partial: "uncommitted" }),
+    // Avanzel's own line, told whole, under the longest title there is.
+    voiceSettingsProblem(
+      "/Users/ana/Documents/Notes and thoughts/Avanzel/.avanzel/config.toml: invalid TOML at line 2, column 17: incomplete key-value declaration, expected a value",
+    ),
+    // A sign-in, whose command is set in code.
+    filingProblem({ ...failure, kind: "signin" }, now),
+    // A system error with two long paths, cut before the first, and the line that says where the recording is.
+    stopFailedProblem(
+      "EACCES: permission denied, rename '/Users/ana/Documents/Notes and thoughts/Avanzel/raw/audio/2026/10/2026-10-27-101500.wav' -> '/Users/ana/Documents/Notes and thoughts/Avanzel/inbox/2026-10-27-101500.wav'",
+      recording,
+      100,
+    ),
+    // Two lines of body, the reason and what keeps the words.
+    correctedWordsProblem("EACCES: permission denied, rename '/Users/ana/Documents/Notes and thoughts/Avanzel/inbox/2026-10-27-101500-plant-tulips.md'", true, 100),
+  ];
+  for (const problem of worst) {
+    await call(app, "setCapsule", {
+      kind: "error",
+      message: problem.title,
+      detail: problem.body,
+      ...(problem.command ? { command: problem.command } : {}),
+      action: "refile:codex",
+      actionLabel: "File it with Codex now", // the longest label a fix has
+    });
+    const alert = await expectProblem(capsule, {
+      title: problem.title,
+      lines: problem.body.split("\n"),
+      fix: "File it with Codex now",
+      ...(problem.command ? { command: problem.command } : {}),
+    });
+    // The panel keeps a 16 px margin under the notice: it is nowhere near its edge.
+    const box = (await alert.boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual((await capsule.evaluate(() => innerHeight)) - 16 + 0.5);
+  }
+  await app.close();
+});
+
 test("a library whose evening review is off promises no review", async () => {
   // A plain-text agent's limit names no reset, so the card has no moment to promise. With the evening review off it has no
   // one to promise either: it says only that the note is safe.
   const bin = agentStubs({ claude: filingClaude({ FAKE_AGENT_MODE: "limit" }) });
   const { app, capsule } = await failedWithClaude(bin, { eveningReview: false });
-  await expect(capsule.getByRole("alert")).toContainText("Claude Code has hit its usage limit.");
-  await expect(capsule.getByText("Your note is safe in the inbox.", { exact: true })).toBeVisible();
+  await expectProblem(capsule, { title: "Claude Code has hit its usage limit.", lines: ["Your note is safe in the inbox."], fix: "File it with Codex now" });
   expect(await call(app, "capsuleStateForTests")).toEqual({
     kind: "error",
     message: "Claude Code has hit its usage limit.",
@@ -726,9 +796,7 @@ test("a library whose own agent is gone says so", async () => {
   answerAs(bin, "codex", SIGNED_IN.codex!); // this Mac has Codex, but the library's agent is Claude Code
   const { library, app, capsule } = await failedWithClaude(bin);
   const body = "Your note is safe in the inbox. Settings → Agents can choose another agent, or has its install command.";
-  await expect(capsule.getByRole("alert")).toContainText("Claude Code isn't installed on this Mac any more.");
-  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
-  await expect(capsule.getByRole("button")).toHaveText(["×", "Open Settings", "OK"]);
+  await expectProblem(capsule, { title: "Claude Code isn't installed on this Mac any more.", lines: [body], fix: "Open Settings" });
   expect(await call(app, "capsuleStateForTests")).toEqual({
     kind: "error",
     message: "Claude Code isn't installed on this Mac any more.",
@@ -758,10 +826,12 @@ test("a library whose settings can't be read says so, and not that no agent is i
     message: "Avanzel couldn't file this note.",
     detail: expect.stringMatching(/config\.toml: invalid TOML at line 2, column \d+: .+\. Your note is safe in the inbox; the evening review will try again\.$/),
   });
-  await expect(capsule.getByText(/config\.toml: invalid TOML at line 2/)).toBeVisible();
   await expect(capsule.getByText("needs an AI agent")).toHaveCount(0);
   await snap(capsule, "5-error-settings");
-  await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
+  await expectProblem(capsule, {
+    title: "Avanzel couldn't file this note.",
+    lines: [/config\.toml: invalid TOML at line 2, column \d+: .+\. Your note is safe in the inbox; the evening review will try again\.$/],
+  });
   expect(inbox(library)).toHaveLength(1);
   expect(await cardNote(app)).toBe(inbox(library)[0]);
   await app.close();
@@ -907,8 +977,10 @@ test("a limit card left up while another library opens stops promising the filin
     message: "Claude Code has hit its usage limit.",
     detail: "It resets tomorrow at 09:00. Your note is safe in the inbox; the evening review will try again.",
   });
-  await expect(capsule.getByText("It resets tomorrow at 09:00. Your note is safe in the inbox; the evening review will try again.", { exact: true })).toBeVisible();
-  await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
+  await expectProblem(capsule, {
+    title: "Claude Code has hit its usage limit.",
+    lines: ["It resets tomorrow at 09:00. Your note is safe in the inbox; the evening review will try again."],
+  });
   expect(await cardNote(app)).toBe(note);
   expect(await waitsOf(app, library)).toHaveLength(1); // kept with the first library, for when it opens again
   // A press of the old button that was already on its way closes the card at once and queues nothing: a filing queued for it
@@ -947,7 +1019,10 @@ test("a note whose library is switched while it is filed is promised nothing tha
     message: "Claude Code has hit its usage limit.",
     detail: "It resets tomorrow at 09:00. Your note is safe in the inbox; the evening review will try again.",
   });
-  await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
+  await expectProblem(capsule, {
+    title: "Claude Code has hit its usage limit.",
+    lines: ["It resets tomorrow at 09:00. Your note is safe in the inbox; the evening review will try again."],
+  });
   expect(await waitsOf(app, library)).toEqual([]);
   expect(await waitsOf(app, other)).toEqual([]);
   expect(inbox(library)).toHaveLength(1);
@@ -975,7 +1050,7 @@ test("a usage limit whose wait can't be kept names the reset, and promises only 
     action: "refile:codex",
     actionLabel: "File it with Codex now",
   });
-  await expect(capsule.getByText(body, { exact: true })).toBeVisible();
+  await expectProblem(capsule, { title: "Claude Code has hit its usage limit.", lines: [body], fix: "File it with Codex now" });
   expect(await waitsOf(app, library)).toEqual([]);
   expect(inbox(library)).toHaveLength(1);
   await app.close();
@@ -2537,7 +2612,7 @@ test("Stop just as the run ends takes back a filing that left a commit, and the 
 
 test("Stop just as the run ends, when git won't take the finished filing back, says so and leaves it filed", async () => {
   const library = await makeLibrary({ git: true });
-  const { app } = await launchOn(library);
+  const { app, capsule } = await launchOn(library);
   await stopAtTheEnd(app, { hold: true });
   await watchStates(app);
   await dictate(app);
@@ -2548,16 +2623,171 @@ test("Stop just as the run ends, when git won't take the finished filing back, s
   expect(await git.commitAll(library, "An edit by hand")).not.toBeNull();
   await app.evaluate(() => (globalThis as Left).letItEnd?.());
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
-  // The card says it can't be undone, never that the words are back in the inbox: the filing stands.
-  expect(await call(app, "capsuleStateForTests")).toEqual({
-    kind: "error",
-    message: "This one can't be undone automatically.",
-    detail: "Usually a later change touched the same lines. The library's history keeps both versions.",
-  });
+  // The card names Stop, which was pressed after the filing had finished, and says the filing stands: it never says the words are
+  // back in the inbox. There is nothing to fix here (a way to show the history is not built), so Hide alone.
+  const title = "Stop couldn't take back a filing that had finished.";
+  expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: BOTH_VERSIONS });
+  await expectProblem(capsule, { title, lines: [BOTH_VERSIONS] });
   expect(await kindsSent(app)).not.toContain("cancelled");
   expect(read(library, `ideas/${page}`)).toBe("# Changed by hand\n");
   expect(archived(library)).toHaveLength(1);
   expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+// ---- A Stop whose card has gone: hidden, or replaced by another recording's ----
+//
+// A card that is gone can't say how the stop ended, so a notification does, with the card's words, when there is something to tell: the
+// filing stands because git won't take it back, or the stopped run's edits stay. A stop that left the library as it was has nothing to
+// tell. These hold the result of the filing when the engine hands it back (`holdTheEnd`), so that the card can be taken away after
+// Stop has been pressed and before the stop is over.
+
+/**
+ * From now on, a filing's result is held when the engine hands it back (`atTheEnd` says that it is, `letItEnd` lets it go): the agent
+ * has ended, and the app has not yet looked at what it did. The test presses Stop, and takes the card away, in between.
+ */
+async function holdTheEnd(app: ElectronApplication): Promise<void> {
+  await app.evaluate(() => {
+    const controller = (globalThis as unknown as { __avanzel: Wrappable }).__avanzel;
+    const librarian = controller.librarian.bind(controller);
+    controller.librarian = async (harness) => {
+      const made = await librarian(harness);
+      const file = made.file.bind(made);
+      made.file = async (...args) => {
+        const outcomes = await file(...args);
+        Object.assign(globalThis, { atTheEnd: true });
+        await new Promise<void>((resolve) => Object.assign(globalThis, { letItEnd: resolve }));
+        return outcomes;
+      };
+      return made;
+    };
+  });
+}
+
+/** A finished filing in a library with git, Stop pressed after it, and a change by hand to its page committed since: git won't take it back. */
+async function stoppedAfterItFiled(): Promise<{ app: ElectronApplication; capsule: Page; library: string; page: string }> {
+  const library = await makeLibrary({ git: true });
+  const { app, capsule } = await launchOn(library);
+  await holdTheEnd(app);
+  await dictate(app);
+  await expect.poll(() => reachedTheEnd(app), { timeout: 60_000 }).toBe(true);
+  await stop(capsule); // after the agent, before the result
+  const [page] = filesUnder(library, "ideas");
+  writeFileSync(path.join(library, "ideas", page!), "# Changed by hand\n");
+  expect(await git.commitAll(library, "An edit by hand")).not.toBeNull();
+  await watchStates(app); // what the capsule is sent from here on
+  return { app, capsule, library, page: page! };
+}
+
+const FINISHED = "Stop couldn't take back a filing that had finished.";
+
+test("a Stop that git won't take back, whose card was hidden, tells it in a notification, and the filing stands", async () => {
+  const { app, library, page } = await stoppedAfterItFiled();
+  await call(app, "dismiss"); // the person hides the card
+  expect(await capsuleKind(app)).toBe("hidden");
+  await app.evaluate(() => (globalThis as Left).letItEnd?.());
+  await call(app, "idleForTests");
+  // The words are the card's. Nothing brings the hidden card back, and nothing else was sent to it.
+  expect(await call(app, "notificationsForTests")).toEqual([{ title: FINISHED, body: BOTH_VERSIONS }]);
+  expect(await capsuleKind(app)).toBe("hidden");
+  expect(await kindsSent(app)).toEqual(["hidden"]);
+  expect(read(library, `ideas/${page}`)).toBe("# Changed by hand\n");
+  expect(archived(library)).toHaveLength(1);
+  expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("a Stop that git won't take back, whose card another recording replaced, tells it in a notification and leaves that card alone", async () => {
+  const { app } = await stoppedAfterItFiled();
+  await call(app, "toggleDictate"); // the next thought takes the card
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await app.evaluate(() => (globalThis as Left).letItEnd?.());
+  await call(app, "idleForTests");
+  expect(await call(app, "notificationsForTests")).toEqual([{ title: FINISHED, body: BOTH_VERSIONS }]);
+  expect(await capsuleKind(app)).toBe("listening");
+  expect(await kindsSent(app)).not.toContain("error");
+  await call(app, "cancelRecording");
+  await app.close();
+});
+
+test("a Stop whose card is up says it on the card, and notifies nothing", async () => {
+  const { app, capsule } = await stoppedAfterItFiled();
+  await app.evaluate(() => (globalThis as Left).letItEnd?.());
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+  await expectProblem(capsule, { title: FINISHED, lines: [BOTH_VERSIONS] });
+  expect(await call(app, "notificationsForTests")).toEqual([]);
+  await app.close();
+});
+
+test("a Stop whose take-back git refuses, with its card hidden, notifies that the stopped run's edits stay as their own commit", async () => {
+  const { library, app, capsule } = await dictateToStallingAgent("Plant tulips in October");
+  await watchStates(app);
+  await watchUndos(app, { hold: true });
+  await stop(capsule);
+  await expect.poll(() => reachedUndo(app), { timeout: 30_000 }).toBe(true);
+  writeFileSync(path.join(library, "goals", "half.md"), "# Half done, by hand\n");
+  expect(await git.commitAll(library, "An edit by hand")).not.toBeNull();
+  await call(app, "dismiss"); // the person hides the card while the stop is under way
+  await app.evaluate(() => (globalThis as Left).letUndoIn?.());
+  await call(app, "idleForTests");
+  expect(await call(app, "notificationsForTests")).toEqual([
+    {
+      title: "Stopped, but some edits stay in your library.",
+      body:
+        "Your words are back in the inbox, untouched. fake's partial edits are kept as their own commit in the library's history. " +
+        "The evening review files your words at 21:00.",
+    },
+  ]);
+  expect(await kindsSent(app)).not.toContain("cancelled"); // the card stayed hidden
+  expect(await capsuleKind(app)).toBe("hidden");
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
+  await app.close();
+});
+
+test("a Stop in a library without git, with its card hidden, notifies that the edits nothing recorded stay as they are", async () => {
+  const library = await makeLibrary();
+  const { app, capsule } = await launchOn(library, { FAKE_AGENT_MODE: "slow-messy" });
+  await holdTheEnd(app);
+  await watchStates(app);
+  await dictate(app);
+  await expect.poll(() => exists(library, "goals/half.md"), { timeout: 30_000 }).toBe(true);
+  await stop(capsule); // the agent is stopped, and its result is held
+  await expect.poll(() => reachedTheEnd(app), { timeout: 30_000 }).toBe(true);
+  await call(app, "dismiss");
+  await app.evaluate(() => (globalThis as Left).letItEnd?.());
+  await call(app, "idleForTests");
+  expect(await call(app, "notificationsForTests")).toEqual([
+    {
+      title: "Stopped, but some edits stay in your library.",
+      body:
+        "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them. " +
+        "The evening review files your words at 21:00.",
+    },
+  ]);
+  expect(await kindsSent(app)).not.toContain("cancelled");
+  expect(exists(library, "goals/half.md")).toBe(true);
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
+  await app.close();
+});
+
+test("a Stop that leaves the library as it was, with its card hidden, says nothing", async () => {
+  // In a library with git the stopped run's edits are committed and taken back whole: nothing is left to tell.
+  const library = await makeLibrary({ git: true });
+  const { app, capsule } = await launchOn(library, { FAKE_AGENT_MODE: "slow-messy" });
+  await holdTheEnd(app);
+  await watchStates(app);
+  await dictate(app);
+  await expect.poll(() => exists(library, "goals/half.md"), { timeout: 30_000 }).toBe(true);
+  await stop(capsule);
+  await expect.poll(() => reachedTheEnd(app), { timeout: 30_000 }).toBe(true);
+  await call(app, "dismiss");
+  await app.evaluate(() => (globalThis as Left).letItEnd?.());
+  await call(app, "idleForTests");
+  expect(await call(app, "notificationsForTests")).toEqual([]);
+  expect(await kindsSent(app)).not.toContain("cancelled");
+  expect(await capsuleKind(app)).toBe("hidden");
+  expect(exists(library, "goals/half.md")).toBe(false); // taken back
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
   await app.close();
 });
 

@@ -2,8 +2,10 @@
 // cards, which name the evening review only while the library's runs. The rest of their words are main's (a saved thought's
 // note) or fixed, and are written where they are shown.
 import type { FiledPage } from "../../shared/ipc.ts";
-import { shortened } from "../../shared/problems.ts";
-import { cancelledLine } from "../setup/copy.ts";
+import { reviewDoes, shortened, stoppedLine } from "../../shared/problems.ts";
+
+// What a Stopped filing's card says is shared with the main process, which tells the same in a notification when the card is gone.
+export { stoppedLine };
 
 /** The bar's line once a filing ends well: who filed it, in whole seconds, and never "0 s": a filing that took no time took one. */
 export function filedLine(agent: string, seconds: number): string {
@@ -84,27 +86,6 @@ export function pageCaption(page: Pick<FiledPage, "created">): string {
 /** The count of the pages the card doesn't list: "and 2 more". */
 export function moreLine(hidden: number): string {
   return `and ${hidden} more`;
-}
-
-/**
- * `what`, a sentence without its end, with when the evening review does it (`review`, as `reviewTime` words it: "at 21:00", "on
- * Sundays at 18:00"), then a full stop. A review whose schedule can't be read ("") is named without a time. Null while the review is
- * off: nothing will do it, so no sentence promises it.
- */
-function reviewDoes(what: string, review: string | null): string | null {
-  if (review === null) return null;
-  return review === "" ? `${what}.` : `${what} ${review}.`;
-}
-
-/**
- * The footer of a Stopped filing: what became of the words and of the run's edits (setup's `cancelledLine`, which setup says of
- * the same ending), then when the evening review files the words: "your words", for `cancelledLine` has just said what is in the
- * inbox, and "it" would read as the commit it may name, or the agent's edits. While the review is off, the first alone.
- */
-export function stoppedLine(agent: string, partial: boolean, leftovers: number, review: string | null): string {
-  const kept = cancelledLine(agent, partial, leftovers);
-  const later = reviewDoes("The evening review files your words", review);
-  return later === null ? kept : `${kept} ${later}`;
 }
 
 /**

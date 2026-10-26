@@ -1,7 +1,8 @@
 // What a person is told when something goes wrong, in one place: the capsule's card and the notifications (the main
 // process) and setup's and Ask's windows (their renderers) all use these functions, so one problem reads the same wherever
 // it shows. A problem is three parts: the title says what happened, the body says what is safe and anything else the
-// person needs to know, and the window offers one fix.
+// person needs to know, and the window offers one fix. What a Stop says of how it ended is here too (`stoppedLine`): the
+// capsule's Stopped card says it, and a notification says the same when that card is gone.
 
 /**
  * Why a filing didn't happen, as far as a person needs to tell: the agent hit its usage limit (`limit`), wants a sign-in
@@ -136,6 +137,37 @@ export function shortened(text: string, max: number | undefined): string {
   const space = head.lastIndexOf(" ");
   const kept = space >= max * 0.6 ? head.slice(0, space) : head;
   return `${kept.join("").replace(/[\s,;:.–—-]+$/u, "")}…`;
+}
+
+/**
+ * What an error says (Node's, the speech engine's), as a sentence (`ownLine`) of at most `max` characters for a card that clips:
+ * whole when it fits, or when `max` is not given. A longer one is cut after a word, and ends in "…" with no space or stop before
+ * it; never through a path, which these messages name, long and more than once, and which a person can't use: a word with a slash
+ * in it is kept whole or left out. When the cut falls before a path, the word that led up to it ("rename", "to") goes too, so that
+ * the line doesn't end on a word that points at nothing. A first word longer than the room (one long path) is cut at the character.
+ */
+export function shortReason(reason: string, max?: number): string {
+  const line = ownLine(reason);
+  if (max === undefined || Array.from(line).length <= max) return line;
+  const words = line.split(/\s+/u);
+  // As many whole words as fit beside the ellipsis.
+  let fit = 0;
+  let used = 0;
+  while (fit < words.length) {
+    const next = used + (fit > 0 ? 1 : 0) + Array.from(words[fit] ?? "").length;
+    if (next > max - 1) break;
+    used = next;
+    fit++;
+  }
+  if (fit === 0) return shortened(line, max);
+  if (fit === words.length) return words.join(" "); // only its runs of white space made it long
+  if (fit > 1 && /\//.test(words[fit] ?? "") && /^[a-z]+,?$/.test(words[fit - 1] ?? "")) fit--;
+  return `${words.slice(0, fit).join(" ").replace(/[\s,;:.–—>-]+$/u, "")}…`;
+}
+
+/** Sentences told one after the other: the ones there are, with a space between. */
+function sentences(...parts: string[]): string {
+  return parts.filter(Boolean).join(" ");
 }
 
 /** What a failed filing says, in the words of the copy table: the title, the body and, for a sign-in, the command to run. */
@@ -289,6 +321,128 @@ export const takeBackRefused: Problem = {
 export function takeBackRefusedProblem(inInbox: boolean, eveningReview: boolean): Problem {
   const where = !inInbox ? "" : eveningReview ? " The note waits in your inbox for the evening review." : " Your note is safe in the inbox.";
   return { title: takeBackRefused.title, body: `${takeBackRefused.body}${where}` };
+}
+
+/**
+ * Stop, pressed on a filing the agent had finished by then, whose take-back git refused: the filing stands, and the history keeps both
+ * versions. Not `undoRefused`, which says "this one" to a person who pressed Undo: it names Stop, which they pressed. The fix would
+ * be to show the history, which nothing in the app can do, so there is none.
+ */
+export const stopRefused: Problem = {
+  title: "Stop couldn't take back a filing that had finished.",
+  body: HISTORY_KEEPS_BOTH,
+};
+
+/**
+ * What a Stopped filing says of the words and the library. `partial`: the stopped run's edits stay, as their own commit, because
+ * taking them back failed. `leftovers`: how many files the run changed that nothing recorded (a library without git, or with
+ * automatic commits off), which stay as they are; it doesn't say how many. A run that changed nothing says so.
+ */
+export function cancelledLine(agent: string, partial: boolean, leftovers: number): string {
+  if (partial) return `Your words are back in the inbox, untouched. ${agent}'s partial edits are kept as their own commit in the library's history.`;
+  if (leftovers > 0) return "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them.";
+  return "Your words are back in the inbox, untouched, and nothing else changed.";
+}
+
+/**
+ * `what`, a sentence without its end, with when the evening review does it (`review`, as `reviewTime` words it: "at 21:00", "on
+ * Sundays at 18:00"), then a full stop. A review whose schedule can't be read ("") is named without a time. Null while the review is
+ * off: nothing will do it, so no sentence promises it.
+ */
+export function reviewDoes(what: string, review: string | null): string | null {
+  if (review === null) return null;
+  return review === "" ? `${what}.` : `${what} ${review}.`;
+}
+
+/**
+ * What a Stopped filing's card says under the words: what became of them and of the run's edits (`cancelledLine`), then when the
+ * evening review files the words: "your words", for `cancelledLine` has just said what is in the inbox, and "it" would read as the
+ * commit it may name, or the agent's edits. While the review is off, the first alone.
+ */
+export function stoppedLine(agent: string, partial: boolean, leftovers: number, review: string | null): string {
+  const kept = cancelledLine(agent, partial, leftovers);
+  const later = reviewDoes("The evening review files your words", review);
+  return later === null ? kept : `${kept} ${later}`;
+}
+
+/**
+ * A Stop whose card has gone (hidden, or replaced by another recording's) ended with the stopped run's edits staying: told in a
+ * notification, in the card's own words. Null when the stop left the library as it was: the person hid the card, and there is
+ * nothing to tell.
+ */
+export function stoppedNotice(agent: string, partial: boolean, leftovers: number, review: string | null): Problem | null {
+  if (!partial && leftovers === 0) return null;
+  return { title: "Stopped, but some edits stay in your library.", body: stoppedLine(agent, partial, leftovers, review) };
+}
+
+/**
+ * Stop, pressed on a transcription that has run long, couldn't move the recording to the inbox, and `reason` says why (the error's
+ * message, cut to `lineMax` characters for a card that clips). The transcription goes on as if Stop had not been pressed, so the
+ * body says only where the recording is now (`where`: its library path, null when the library keeps no copy of it): not that it
+ * stays, since a transcription that finds no words removes it.
+ */
+export function stopFailedProblem(reason: string, where: string | null, lineMax?: number): Problem {
+  return {
+    title: "Avanzel couldn't move the recording to your inbox.",
+    body: sentences(
+      shortReason(reason, lineMax),
+      where === null ? "The transcription goes on, but no copy of your recording is saved." : `The transcription goes on, and your recording is in ${where}.`,
+    ),
+  };
+}
+
+/** What a recording's problem says is safe: the library path its recording is kept in (`kept`), or that nothing is. */
+function recordingKept(kept: string | null): string {
+  return kept === null ? "Nothing was saved." : `Your recording is kept in ${kept}.`;
+}
+
+/**
+ * The screen couldn't be captured, or its screenshot kept, and `reason` says why (an error's message; cut to `lineMax` characters for
+ * a card that clips, or told whole when it is Avanzel's own). Whatever was taken is removed first, so nothing was saved.
+ */
+export function screenCaptureProblem(reason: string, lineMax?: number): Problem {
+  return { title: "Avanzel couldn't capture the screen.", body: sentences(shortReason(reason, lineMax), "Nothing was saved.") };
+}
+
+/** The audio of a recording never reached Avanzel: nothing was recorded to keep. The fix is to choose the microphone. */
+export const recordingLost: Problem = {
+  title: "The recording didn't arrive.",
+  body: "Nothing was saved. Is the right microphone selected?",
+};
+
+/**
+ * A recording's words couldn't be made (`reason`, as for `screenCaptureProblem`). `kept`: where the library keeps the recording, as a
+ * library path; null when it keeps none.
+ */
+export function unheardProblem(reason: string, kept: string | null, lineMax?: number): Problem {
+  return { title: "The recording couldn't be turned into words.", body: sentences(shortReason(reason, lineMax), recordingKept(kept)) };
+}
+
+/**
+ * A recording's words were made, but not saved (`reason`, `kept` and `lineMax` as for `unheardProblem`); for a screen comment
+ * (`screen`), it is the screen capture that couldn't be saved.
+ */
+export function unsavedProblem(reason: string, kept: string | null, screen: boolean, lineMax?: number): Problem {
+  return {
+    title: screen ? "The screen capture couldn't be saved." : "Your words couldn't be saved.",
+    body: sentences(shortReason(reason, lineMax), recordingKept(kept)),
+  };
+}
+
+/**
+ * A thought typed in Quick couldn't be saved (`reason`, as for `screenCaptureProblem`). Its words stay in Quick's box, which the type
+ * shortcut (`key`, as the menu bar writes it) opens again.
+ */
+export function thoughtNotSavedProblem(reason: string, key: string, lineMax?: number): Problem {
+  return { title: "That thought couldn't be saved.", body: sentences(shortReason(reason, lineMax), `It's still in the box: press ${key} to try again.`) };
+}
+
+/**
+ * The library's [voice] settings can't be used, and `reason` is what is wrong with them, told whole: it says what to mend. Typing
+ * works meanwhile. Trying again can't help, since they are fixed in the config file; the capsule's fix is Settings → Voice.
+ */
+export function voiceSettingsProblem(reason: string): Problem {
+  return { title: "Avanzel can't use the voice settings in this library's config file.", body: sentences(ownLine(reason), "Typing a thought works meanwhile.") };
 }
 
 /**

@@ -37,7 +37,7 @@ export const isSetupStep = (value: unknown): value is SetupStep => SETUP_STEPS.s
 export type LibraryFolder = "missing" | "empty" | "has-files" | "library";
 
 /**
- * What the one button of the capsule's error card does: opens a pane of System Settings, or Avanzel's Settings on the pane
+ * What the one button of the capsule's problem card does: opens a pane of System Settings, or Avanzel's Settings on the pane
  * that fixes the problem; opens Terminal, where an agent signs in; or (`refile:<agent>`, the agent's harness name) files
  * the note the card is about again with that agent.
  */
@@ -163,10 +163,12 @@ export type CapsuleState =
    */
   | { kind: "saved"; text: string; thumbnail?: string; context?: ScreenContext; note: string; detail?: string; undone?: true }
   /**
-   * `message` says what happened and `detail` what is safe. `action`: what the card's one button does (see CardAction), and
-   * `actionLabel` what it says; "Open Settings" when it names none.
+   * A problem, told as the windows tell theirs (shared/problems.ts): `message` says what happened and `detail` what is safe, a line
+   * of it for each "\n". `command`: the part of `detail` the person types in Terminal, which follows "Run " there and which the card
+   * sets in code; absent for a problem that names none. `action`: what the card's one button does (see CardAction), and
+   * `actionLabel` what it says; "Open Settings" when it names none. A card with no `action` offers Hide alone.
    */
-  | { kind: "error"; message: string; detail?: string; action?: CardAction; actionLabel?: string }
+  | { kind: "error"; message: string; detail?: string; command?: string; action?: CardAction; actionLabel?: string }
   /** The shortcut, while the speech models download: how far along they are, and typing instead. */
   | {
       kind: "preparing";

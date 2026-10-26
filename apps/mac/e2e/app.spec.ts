@@ -31,6 +31,7 @@ import {
   stubOpening,
   windowFor,
 } from "./helpers.ts";
+import { expectProblem } from "./capsule-helpers.ts";
 
 const inbox = (root: string) => readdirSync(path.join(root, "inbox")).filter((n) => !n.startsWith("."));
 const archived = (root: string) => {
@@ -93,9 +94,11 @@ test("an agent failure is shown and the note stays in the inbox", async () => {
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("error");
   // The fake agent's "fail" mode says "not logged in": the card reads it as a sign-in, which Terminal fixes. fake isn't
   // Claude Code or Codex, so the card gives no command to run, and the evening review is what files the note.
-  await expect(capsule.getByRole("alert")).toContainText("fake isn't signed in on this Mac.");
-  await expect(capsule.getByText("Sign in to fake in Terminal. Your note is safe in the inbox; the evening review will try again.", { exact: true })).toBeVisible();
-  await expect(capsule.getByRole("button", { name: "Open Terminal", exact: true })).toBeVisible();
+  await expectProblem(capsule, {
+    title: "fake isn't signed in on this Mac.",
+    lines: ["Sign in to fake in Terminal. Your note is safe in the inbox; the evening review will try again."],
+    fix: "Open Terminal",
+  });
   await snap(capsule, "5-error");
   expect(inbox(library)).toHaveLength(1);
   await app.close();
@@ -224,6 +227,32 @@ test("typing a thought files it", async () => {
   await app.close();
 });
 
+test("a typed thought that can't be saved says so, where it is now, and which key opens it again", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "openQuick");
+  const quick = await windowFor(app, "quick");
+  const box = quick.getByRole("textbox", { name: "Type a thought" });
+  const inboxDir = path.join(library, "inbox");
+  chmodSync(inboxDir, 0o555); // nothing can be written there
+  try {
+    await box.fill("Plant tulips in October");
+    await box.press("Enter");
+    await expect.poll(() => capsuleKind(app)).toBe("error");
+    // What happened, and where the words are now: still in the box, which the key opens. No fix: it is trying again.
+    const title = "That thought couldn't be saved.";
+    const why = /^EACCES: permission denied.*[.…] It's still in the box: press ⌥⇧Space to try again\.$/;
+    expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: expect.stringMatching(why) });
+    await expectProblem(capsule, { title, lines: [why] });
+    await expect(box).toHaveValue("Plant tulips in October");
+    expect(inbox(library)).toEqual([]);
+  } finally {
+    chmodSync(inboxDir, 0o755);
+  }
+  await app.close();
+});
+
 test("Quick is a clear page on a native panel: its field has the focus, and Esc puts it away", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
@@ -319,12 +348,10 @@ test("an Undo git refuses says so on the card, and the edit made since stays", a
   expect(await git.commitAll(library, "An edit by hand")).not.toBeNull();
   await capsule.getByRole("button", { name: "Undo" }).click();
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
-  // The card says what happened and why, and that the history keeps both versions; there is nothing to fix, so OK alone.
+  // The card says what happened and why, and that the history keeps both versions; there is nothing to fix, so Hide alone.
   const title = "This one can't be undone automatically.";
   const why = "Usually a later change touched the same lines. The library's history keeps both versions.";
-  await expect(capsule.getByRole("alert")).toContainText(title);
-  await expect(capsule.getByText(why, { exact: true })).toBeVisible();
-  await expect(capsule.getByRole("button")).toHaveText(["×", "OK"]);
+  await expectProblem(capsule, { title, lines: [why] });
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: why });
   expect(readFileSync(file, "utf8")).toBe("# Tulips, by hand\n");
   expect(inbox(library)).toEqual([]);
@@ -820,8 +847,11 @@ test("Open Settings in the Ask window leaves a recording and a note being edited
 
 test("Open Settings still takes away the capsule's error card and its notice of a taken shortcut, whose button it is", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const capsule = await windowFor(app, "capsule");
   await call(app, "setCapsule", { kind: "error", message: "Claude Code isn't installed on this Mac any more.", detail: "Your note is safe in the inbox.", action: "open-settings:agents" });
   expect(await capsuleKind(app)).toBe("error");
+  // The card names no label for its button, so it says Open Settings; the page sends the action the state names.
+  await expectProblem(capsule, { title: "Claude Code isn't installed on this Mac any more.", lines: ["Your note is safe in the inbox."], fix: "Open Settings" });
   await call(app, "openSettingsFor", "open-settings:agents");
   expect(await capsuleKind(app)).toBe("hidden");
   await call(app, "setCapsule", { kind: "shortcut-taken", key: "dictate", accelerator: "Alt+Space", holder: null, alternatives: [] });
@@ -1235,6 +1265,55 @@ test("a dictation listens on a bar whose one button is its file mode, and the fi
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ note: "Saved to your inbox for the evening review at 21:00." });
   expect(archived(library)).toEqual([]);
   expect(inbox(library)).toHaveLength(1);
+  await app.close();
+});
+
+test("the capsule's corners beside the hint catch no pointer: only what is drawn takes it, and gives it back", async () => {
+  const library = await makeLibrary();
+  const { app, capsule } = await launchHearing(library, newUserData());
+  await startListening(app);
+  const hint = (await capsule.locator(".hint").boundingBox())!;
+  const bar = (await capsule.getByRole("status").boundingBox())!;
+  const stack = (await capsule.locator(".stack").boundingBox())!;
+  // The hint takes only the room of its words, over the middle of a bar as wide as the stack: there is room beside it.
+  const beside = { x: hint.x - 20, y: hint.y + hint.height / 2 };
+  const between = { x: bar.x + bar.width / 2, y: hint.y + hint.height + 4 }; // the gap under the hint, over the bar
+  const onHint = { x: hint.x + hint.width / 2, y: hint.y + hint.height / 2 };
+  const onBar = { x: bar.x + bar.width / 2, y: bar.y + bar.height / 2 };
+  expect(beside.x).toBeGreaterThan(stack.x + 8);
+  expect(between.y).toBeLessThan(bar.y);
+  // What is under each point to the pointer: the pieces that are drawn answer, and the rest of the stack, which is wider than some of
+  // them, and the gaps between them, let it through to the panel.
+  const under = (at: { x: number; y: number }) =>
+    capsule.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest(".stack"), at);
+  expect(await under(onHint)).toBe(true);
+  expect(await under(onBar)).toBe(true);
+  expect(await under(beside)).toBe(false);
+  expect(await under(between)).toBe(false);
+  // The window takes the pointer, to be clicked and to keep its card up, only while it is over one of them.
+  await app.evaluate(() => {
+    const controller = (globalThis as unknown as { __avanzel: { setInteractive(interactive: boolean): void } }).__avanzel;
+    const asked: boolean[] = [];
+    Object.assign(globalThis, { interactiveAsked: asked });
+    const setInteractive = controller.setInteractive.bind(controller);
+    controller.setInteractive = (interactive) => {
+      asked.push(interactive);
+      setInteractive(interactive);
+    };
+  });
+  const asked = () => app.evaluate(() => (globalThis as { interactiveAsked?: boolean[] }).interactiveAsked ?? []);
+  await capsule.mouse.move(beside.x, beside.y);
+  await capsule.mouse.move(beside.x + 6, beside.y);
+  await capsule.mouse.move(between.x, between.y);
+  await capsule.waitForTimeout(400);
+  expect(await asked()).toEqual([]);
+  await capsule.mouse.move(onHint.x, onHint.y);
+  await expect.poll(asked).toEqual([true]);
+  await capsule.mouse.move(beside.x, beside.y);
+  await expect.poll(asked).toEqual([true, false]);
+  await capsule.mouse.move(onBar.x, onBar.y);
+  await expect.poll(asked).toEqual([true, false, true]);
+  await call(app, "cancelRecording");
   await app.close();
 });
 

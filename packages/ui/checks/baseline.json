@@ -1,13 +1,1 @@
-{
-  "apps/mac/src/renderer/capsule/main.tsx": {
-    "no-style-prop": 2,
-    "use-components": 10,
-    "raw-colour": 1,
-    "no-exclamation": 1
-  },
-  "apps/mac/src/renderer/capsule/styles.css": {
-    "windows-arrange": 104,
-    "space-scale": 29,
-    "no-important": 1
-  }
-}
+{}

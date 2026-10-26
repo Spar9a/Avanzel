@@ -25,6 +25,44 @@ export async function expectInPanel(capsule: Page): Promise<void> {
   expect(card.x + card.width).toBeLessThanOrEqual(panel.width);
 }
 
+/** What a problem card says: its title; the lines of its body, each whole (a string) or matched (a regular expression); the label of its one fix; the part of the body set in code. */
+export interface ProblemCard {
+  title: string;
+  lines?: (string | RegExp)[];
+  fix?: string;
+  command?: string;
+}
+
+/**
+ * The capsule shows a problem: one notice in the `alert` role (Zel worried, and no card or bar with it), headed `title`, with the
+ * lines of its body under it, and its buttons: Hide first, quiet, and then the fix when there is one, the moment's one primary. All
+ * small, and the notice inside the panel. Returns the notice.
+ */
+export async function expectProblem(capsule: Page, { title, lines = [], fix, command }: ProblemCard): Promise<Locator> {
+  const alert = capsule.getByRole("alert");
+  await expect(alert).toHaveCount(1);
+  await expect(capsule.getByRole("status")).toHaveCount(0);
+  await expect(capsule.getByRole("article")).toHaveCount(0);
+  await expect(alert.getByText(title, { exact: true })).toBeVisible();
+  for (const line of lines) await expect(typeof line === "string" ? alert.getByText(line, { exact: true }) : alert.getByText(line)).toBeVisible();
+  // A command is in the code face, as the windows set it, and nothing else is.
+  if (command === undefined) await expect(alert.locator("code")).toHaveCount(0);
+  else await expect(alert.locator("code")).toHaveText(command);
+  await expect(zel(capsule)).toHaveAttribute("data-mood", "needs-you");
+  const buttons = alert.getByRole("button");
+  expect(await namesOf(buttons)).toEqual(fix === undefined ? ["Hide"] : ["Hide", fix]);
+  await expect(buttons.first()).toHaveAttribute("data-variant", "quiet");
+  if (fix !== undefined) await expect(buttons.last()).toHaveAttribute("data-variant", "primary");
+  for (const button of await buttons.all()) await expect(button).toHaveAttribute("data-size", "small");
+  const box = (await alert.boundingBox())!;
+  const panel = await capsule.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(panel.width);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.y + box.height).toBeLessThanOrEqual(panel.height);
+  return alert;
+}
+
 /** The capsule shows a Stopped filing: "Stopped" in the bar, which offers Hide alone, over the words and `line`, what is safe. */
 export async function expectStoppedFiling(capsule: Page, words: string, line: string): Promise<void> {
   const bar = capsule.getByRole("status");

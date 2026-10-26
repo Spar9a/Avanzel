@@ -1,6 +1,6 @@
 // The recording state machine: tap to start, tap to stop, and what happens when taps or audio go astray.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault, readWav } from "../../../packages/engine/src/index.ts";
@@ -22,7 +22,7 @@ import {
   throughFound,
   windowFor,
 } from "./helpers.ts";
-import { expectStoppedRecording } from "./capsule-helpers.ts";
+import { expectProblem, expectStoppedRecording } from "./capsule-helpers.ts";
 import { pressShortcut, sentToCapsule, watchCapsule, zel } from "./setup-helpers.ts";
 
 const WAIT_FOR_AUDIO_MS = 3000; // AVANZEL_AUDIO_TIMEOUT_MS: how long the app waits for audio after a stop (15 s outside tests)
@@ -103,9 +103,28 @@ test("a recording whose audio never arrives is given up, and the capsule is told
   await call(app, "toggleDictate");
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: WAIT_FOR_AUDIO_MS + 10_000 }).toBe("error");
-  await expect(capsule.getByText("The recording didn't arrive")).toBeVisible();
-  expect(await call(app, "capsuleStateForTests")).toMatchObject({ action: "open-settings:voice" }); // its Open Settings opens Voice
+  // What happened, what is safe, and the one fix: the microphone is chosen in Settings → Voice.
+  await expectProblem(capsule, {
+    title: "The recording didn't arrive.",
+    lines: ["Nothing was saved. Is the right microphone selected?"],
+    fix: "Choose microphone",
+  });
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: "The recording didn't arrive.",
+    detail: "Nothing was saved. Is the right microphone selected?",
+    action: "open-settings:voice",
+    actionLabel: "Choose microphone",
+  });
   expect(await app.evaluate(() => (globalThis as unknown as { __commands: unknown[] }).__commands)).toEqual(["start", "stop", "cancel"]);
+  // Nothing was saved, as the card says.
+  expect(filesUnder(library, "inbox")).toEqual([]);
+  expect(filesUnder(library, "raw")).toEqual([]);
+  // Its button takes the person to the microphone, in Settings → Voice, and the card goes.
+  await capsule.getByRole("button", { name: "Choose microphone", exact: true }).click();
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("radio", { name: "Voice", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await app.close();
 });
 
@@ -426,25 +445,206 @@ test("a recording the library keeps no copy of in raw/audio/ is written to the i
   await app.close();
 });
 
-test("a recording that can't be moved to the inbox stays where it is, and the capsule says so", async () => {
-  const { library, userData, app, capsule } = await launchSlowly(60_000);
+/** A library in a deep folder, so that an error naming a path inside it is longer than a card keeps of a line. */
+async function deepLibrary(): Promise<string> {
+  const library = await makeLibrary();
+  const deep = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-deep-")), "Documents", "Notes and thoughts", "Avanzel");
+  mkdirSync(path.dirname(deep), { recursive: true });
+  renameSync(library, deep);
+  return deep;
+}
+
+/** Makes `library` keep no copy of this year's recordings: the folder for them is a link, which a library never saves through. Returns where the link leads. */
+function linkRecordingsAway(library: string): string {
+  const outside = mkdtempSync(path.join(tmpdir(), "avz-e2e-outside-"));
+  mkdirSync(path.join(library, "raw", "audio"), { recursive: true });
+  symlinkSync(outside, path.join(library, "raw", "audio", String(new Date().getFullYear())));
+  return outside;
+}
+
+test("a recording that can't be moved to the inbox is where the card says, which doesn't promise it stays", async () => {
+  const { library, userData, app, capsule } = await launchSlowly(60_000, { library: await deepLibrary() });
   await dictate(app);
   await untilSlow(app);
   const inbox = path.join(library, "inbox");
   chmodSync(inbox, 0o555); // nothing can be put there
   try {
     await stopTranscribing(capsule);
-    expect(await call(app, "capsuleStateForTests")).toMatchObject({
-      kind: "error",
-      message: "Avanzel couldn't move the recording to your inbox.",
-      detail: expect.stringMatching(/^EACCES: permission denied.* The transcription goes on, and your recording stays where it is\.$/),
-    });
+    // Why, then where the recording is. The reason names two long paths: it is cut before the first, not through it, and the recording's
+    // own place follows whole. The card says nothing of the recording staying: a transcription that finds no words removes it.
+    const [recording] = filesUnder(library, "raw/audio");
+    const title = "Avanzel couldn't move the recording to your inbox.";
+    const body = `EACCES: permission denied… The transcription goes on, and your recording is in raw/audio/${recording}.`;
+    expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: body });
+    await expectProblem(capsule, { title, lines: [body] });
     expect(filesUnder(library, "raw/audio")).toHaveLength(1);
+    expect(filesUnder(library, "inbox")).toEqual([]);
     expect(capturesKept(userData)).toBe(0);
     expect(await sentToCapsule(app)).not.toContain("recorded");
   } finally {
     chmodSync(inbox, 0o755);
   }
+  await app.close();
+});
+
+test("a recording the library keeps no copy of, that can't be written to the inbox, is said to be saved nowhere", async () => {
+  const library = await deepLibrary();
+  const outside = linkRecordingsAway(library);
+  const { userData, app, capsule } = await launchSlowly(60_000, { library });
+  await dictate(app);
+  await untilSlow(app);
+  const inbox = path.join(library, "inbox");
+  chmodSync(inbox, 0o555);
+  try {
+    await stopTranscribing(capsule);
+    const title = "Avanzel couldn't move the recording to your inbox.";
+    const body = "EACCES: permission denied… The transcription goes on, but no copy of your recording is saved.";
+    expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: body });
+    await expectProblem(capsule, { title, lines: [body] });
+    expect(filesUnder(library, "inbox")).toEqual([]);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(capturesKept(userData)).toBe(0);
+  } finally {
+    chmodSync(inbox, 0o755);
+  }
+  await app.close();
+});
+
+// ---- The problems a recording ends in ----
+//
+// Each of these says what happened, what is safe (where the recording is kept, or that nothing was saved) and, when there is one, the
+// fix. A reason is the system's line (Node's or the speech engine's) cut before its paths, or Avanzel's own, told whole.
+
+test("a transcription that fails says the recording couldn't be turned into words, and where the recording is kept", async () => {
+  const { library, userData, app, capsule } = await launchSlowly(0, { library: await deepLibrary() });
+  await noteTranscriptions(app, { failWith: "the speech model fell over" });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+  const [recording] = filesUnder(library, "raw/audio");
+  const title = "The recording couldn't be turned into words.";
+  const body = `The speech model fell over. Your recording is kept in raw/audio/${recording}.`;
+  expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: body });
+  await expectProblem(capsule, { title, lines: [body] }); // no fix: trying again is the next recording
+  expect(filesUnder(library, "inbox")).toEqual([]);
+  expect(capturesKept(userData)).toBe(0); // a recording that fails keeps no note, so it doesn't count
+  await app.close();
+});
+
+test("a transcription that fails, in a library that keeps no copy of the recording, says nothing was saved", async () => {
+  const library = await makeLibrary();
+  linkRecordingsAway(library);
+  const { app, capsule } = await launchSlowly(0, { library });
+  await noteTranscriptions(app, { failWith: "the speech model fell over" });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+  const title = "The recording couldn't be turned into words.";
+  await expectProblem(capsule, { title, lines: ["The speech model fell over. Nothing was saved."] });
+  expect(filesUnder(library, "inbox")).toEqual([]);
+  await app.close();
+});
+
+test("words that can't be saved say so, and where the recording is kept", async () => {
+  const { library, userData, app, capsule } = await launchSlowly(0, { library: await deepLibrary() });
+  const inbox = path.join(library, "inbox");
+  chmodSync(inbox, 0o555); // the words can't be written
+  try {
+    await dictate(app);
+    await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+    const [recording] = filesUnder(library, "raw/audio");
+    const title = "Your words couldn't be saved.";
+    const body = `EACCES: permission denied… Your recording is kept in raw/audio/${recording}.`;
+    expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: body });
+    await expectProblem(capsule, { title, lines: [body] });
+    expect(filesUnder(library, "inbox")).toEqual([]);
+    expect(capturesKept(userData)).toBe(0);
+  } finally {
+    chmodSync(inbox, 0o755);
+  }
+  await app.close();
+});
+
+test("words that can't be saved, in a library that keeps no copy of the recording, say nothing was saved", async () => {
+  const library = await deepLibrary();
+  linkRecordingsAway(library);
+  const { app, capsule } = await launchSlowly(0, { library });
+  const inbox = path.join(library, "inbox");
+  chmodSync(inbox, 0o555);
+  try {
+    await dictate(app);
+    await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+    await expectProblem(capsule, { title: "Your words couldn't be saved.", lines: ["EACCES: permission denied… Nothing was saved."] });
+  } finally {
+    chmodSync(inbox, 0o755);
+  }
+  await app.close();
+});
+
+test("a screen comment that can't be saved says the screen capture couldn't be, and its screenshot goes with it", async () => {
+  const { library, app, capsule } = await launchSlowly(0, {
+    library: await deepLibrary(),
+    env: { AVANZEL_FAKE_SCREEN: screenshotFixture(), AVANZEL_FAKE_FRONT_APP: "Safari|Growing basil|https://example.com/basil" },
+  });
+  const inbox = path.join(library, "inbox");
+  chmodSync(inbox, 0o555);
+  try {
+    await call(app, "toggleCapture");
+    await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("listening");
+    await call(app, "toggleCapture");
+    await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+    const [recording] = filesUnder(library, "raw/audio");
+    await expectProblem(capsule, {
+      title: "The screen capture couldn't be saved.",
+      lines: [`EACCES: permission denied… Your recording is kept in raw/audio/${recording}.`],
+    });
+    // The card says the capture wasn't saved: no screenshot is left in the library with no note to hold it.
+    expect(filesUnder(library, "raw/attachments")).toEqual([]);
+    expect(filesUnder(library, "inbox")).toEqual([]);
+  } finally {
+    chmodSync(inbox, 0o755);
+  }
+  await app.close();
+});
+
+test("a screenshot the library won't take says Avanzel couldn't capture the screen, in its own words, and that nothing was saved", async () => {
+  const library = await makeLibrary();
+  const outside = mkdtempSync(path.join(tmpdir(), "avz-e2e-outside-"));
+  rmSync(path.join(library, "raw", "attachments"), { recursive: true, force: true });
+  symlinkSync(outside, path.join(library, "raw", "attachments")); // a link on the way: the library saves nothing through it
+  const { app, capsule } = await launchSlowly(0, {
+    library,
+    env: { AVANZEL_FAKE_SCREEN: screenshotFixture(), AVANZEL_FAKE_FRONT_APP: "Safari|Growing basil|https://example.com/basil" },
+  });
+  await call(app, "toggleCapture");
+  await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("error");
+  // The library's own sentence says what to do about it, so it is told whole.
+  const why = /^Avanzel saves only into plain folders, and raw\/attachments\/\d{4}\/\d{2} isn't one: a link or a file is on its path\. Remove it, then try again\. Nothing was saved\.$/;
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: "Avanzel couldn't capture the screen.",
+    detail: expect.stringMatching(why),
+  });
+  await expectProblem(capsule, { title: "Avanzel couldn't capture the screen.", lines: [why] });
+  expect(readdirSync(outside)).toEqual([]); // nothing went through the link
+  expect(filesUnder(library, "inbox")).toEqual([]);
+  await app.close();
+});
+
+test("a screenshot that was taken for a recording that can't start is removed, and the card says nothing was saved", async () => {
+  const library = await makeLibrary();
+  const { app, capsule } = await launchSlowly(0, {
+    library,
+    env: { AVANZEL_FAKE_SCREEN: screenshotFixture(), AVANZEL_FAKE_FRONT_APP: "Safari|Growing basil|https://example.com/basil" },
+  });
+  // The library's settings break after Avanzel has read them: the screenshot is taken, and then the recording can't start.
+  writeFileSync(path.join(library, ".avanzel", "config.toml"), 'harness = "claude"\ntimeout_seconds =\n');
+  await call(app, "toggleCapture");
+  await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("error");
+  await expectProblem(capsule, {
+    title: "Avanzel couldn't capture the screen.",
+    lines: [/config\.toml: invalid TOML at line 2, column \d+: .+\. Nothing was saved\.$/],
+  });
+  expect(filesUnder(library, "raw/attachments")).toEqual([]); // the card says nothing was saved: the screenshot is not left behind
+  expect(filesUnder(library, "inbox")).toEqual([]);
   await app.close();
 });
 

@@ -1,8 +1,7 @@
 // The capsule once words are saved to the inbox, and not filed yet: the person's words on a card, over a bar that says Saved. Hide is
 // its only button. A screen comment's card is labelled with the app and holds its screenshot, its page's title and its address.
 import { CapsuleBar, Card, Row, Stack, Text } from "@avanzel/ui";
-import { useState } from "react";
-import { stampDate } from "../setup/copy.ts";
+import { useStampDate } from "../common/stamp.ts";
 import type { StateOf } from "./api.ts";
 import { Hide } from "./hide.tsx";
 import { Words } from "./words.tsx";
@@ -18,7 +17,7 @@ import { Words } from "./words.tsx";
  * would give it).
  */
 export function Saved({ state }: { state: StateOf<"saved"> }) {
-  const [day] = useState(() => stampDate(new Date())); // the day the card came, not the day it is redrawn
+  const day = useStampDate(); // the day the card came, not the day it is redrawn
   const screen = state.thumbnail !== undefined || state.context !== undefined;
   const app = state.context?.app;
   const title = state.context?.title;

@@ -1,6 +1,5 @@
 /* The capsule's layout. It only arranges: everything you see comes from @avanzel/ui. A card of paper sits above the bar, at the
-   bottom of the panel. The rules from "Legacy cards" on belong to the error card, which is still the old one; they go as it moves
-   onto the components. */
+   bottom of the panel. */
 html,
 body {
   overflow: hidden;
@@ -13,6 +12,18 @@ body {
   justify-content: center;
   padding: 0 var(--av-space-16) var(--av-space-16);
   user-select: none;
+}
+
+/* The panel is click-through where nothing is drawn: the window takes the pointer, and holds a card up, only while it is over a piece
+   that is (the page's wrapper hears it enter and leave). The wrapper takes no pointer itself, and nor does the stack, which is wider
+   than some of what is in it (the hint takes only the room of its words) and has gaps between its pieces; each piece, and each notice,
+   takes its own. Pointer events are inherited, so a piece's own parts take them with it. */
+.app {
+  pointer-events: none;
+}
+.stack > *,
+.slot {
+  pointer-events: auto;
 }
 
 /* A bar with a card above it (every state but a problem's notice and the download's): all as wide as the notices below. */
@@ -91,40 +102,7 @@ body {
 .editor {
   padding: var(--av-space-8) 0;
 }
-/* A notice or a card from @avanzel/ui in a state that isn't one of the above (preparing, a failed download, a taken shortcut), as
-   wide as the cards above; .fill takes the rest of its row. */
+/* A notice or a card from @avanzel/ui in a state that isn't one of the above (a problem, preparing, a failed download, a taken
+   shortcut), as wide as the cards above; .fill takes the rest of its row. */
 .slot { width: 420px; max-width: 100%; }
 .slot .fill { flex: 1; min-width: 0; }
-
-/* Legacy cards. */
-:root {
-  --hud: rgba(24, 24, 27, 0.9);
-  --hud-line: rgba(255, 255, 255, 0.14);
-  --accent: #0a84ff;
-  --danger: #ff453a;
-}
-.hud {
-  background: var(--hud); color: #fff;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 0 0 0.5px var(--hud-line);
-  animation: appear 160ms ease-out;
-}
-@keyframes appear { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .hud { animation: none !important; } }
-
-/* The old card was drawn before base.css, which makes every box border-box and sets the page's line height: it keeps its
-   content-box width, and .detail has room for its four lines at base's line height (4 x 17.4 px). */
-.card { box-sizing: content-box; position: relative; width: 420px; max-width: 100%; border-radius: 18px; padding: 14px 16px; }
-.row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
-button.btn {
-  appearance: none; border: 0; display: inline-flex; align-items: center; height: 26px; padding: 0 13px; border-radius: 13px;
-  background: rgba(255, 255, 255, 0.14); color: #fff; font: inherit; font-size: 12.5px; font-weight: 500;
-}
-button.btn:hover { background: rgba(255, 255, 255, 0.22); }
-button.btn.primary { background: var(--accent); }
-button.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.close { position: absolute; top: 8px; right: 10px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.7); font-size: 12px; line-height: 18px; padding: 0; opacity: 0; transition: opacity 120ms; }
-.card:hover .close { opacity: 1; }
-.close + * { padding-right: 20px; } /* the card's first row stops short of the close button */
-.warn { width: 16px; height: 16px; border-radius: 50%; background: var(--danger); display: inline-grid; place-items: center; flex: none; font-size: 11px; font-weight: 800; }
-.detail { margin: 6px 0 0; font-size: 12px; color: rgba(255, 255, 255, 0.6); white-space: pre-wrap; max-height: 5.9em; overflow: hidden; }

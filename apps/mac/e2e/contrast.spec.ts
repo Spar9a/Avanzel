@@ -1,6 +1,5 @@
 // Every window and capsule state, light and dark: each text the owner reads has WCAG AA contrast
-// against what is really behind it (labels on fills: see ON_FILL). Colours come from the pages'
-// computed styles, not from pixels.
+// against what is really behind it. Colours come from the pages' computed styles, not from pixels.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -18,8 +17,6 @@ interface Sample {
   color: string;
   fontSize: number;
   fontWeight: number;
-  /** An ON_FILL label that is white on the page's own accent or danger fill. */
-  onFill: boolean;
   layers: { background: string; opacity: number }[];
 }
 
@@ -27,9 +24,6 @@ interface Sample {
 type Bases = (mode: Appearance, page: Page) => Promise<string[]>;
 
 const APPEARANCES: Appearance[] = ["light", "dark"];
-// The capsule's legacy primary buttons and error badge (1c rebuilds them): white on its --accent or
-// --danger, at 3.4–3.7:1, held to 3:1 while on exactly that fill.
-const ON_FILL = ".btn.primary, .warn";
 // The capsule floats over any desktop: the lightest and the darkest.
 const desktops: Bases = async () => ["#ffffff", "#000000"];
 // Quick's page is clear, over the popover material macOS draws, which the page can't read: it is read over the window
@@ -68,7 +62,7 @@ function contrast(a: RGB, b: RGB): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-/** The texts below AA over `base`: 4.5:1, or 3:1 from 24 px, from 18.66 px when bold, and on a fill. */
+/** The texts below AA over `base`: 4.5:1, or 3:1 from 24 px, and from 18.66 px when bold. */
 function failures(samples: Sample[], base: string, where: string): string[] {
   const found: string[] = [];
   for (const t of samples) {
@@ -80,7 +74,7 @@ function failures(samples: Sample[], base: string, where: string): string[] {
     }
     const [r, g, b, a] = rgba(t.color);
     const color = over([r, g, b, a * opacity], background);
-    const needed = t.fontSize >= 24 || (t.fontSize >= 18.66 && t.fontWeight >= 700) || t.onFill ? 3 : 4.5;
+    const needed = t.fontSize >= 24 || (t.fontSize >= 18.66 && t.fontWeight >= 700) ? 3 : 4.5;
     const ratio = contrast(color, background);
     if (ratio < needed) found.push(`${where}: ${t.selector} "${t.text}" ${hex(color)} on ${hex(background)} is ${ratio.toFixed(2)}:1, needs ${needed}:1`);
   }
@@ -89,19 +83,11 @@ function failures(samples: Sample[], base: string, where: string): string[] {
 
 /** Every visible text on the page: elements' own text, inputs' values or placeholders, selects' choices. Disabled controls are exempt. */
 async function texts(page: Page): Promise<Sample[]> {
-  // The capsule's appear animation and the close button's fade end first; spinners never do.
+  // The animations that end (a card landing, a stamp) end first; spinners never do.
   await page.evaluate(() =>
     Promise.all(document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined))));
-  return page.evaluate((onFill) => {
+  return page.evaluate(() => {
     const name = (el: Element) => el.tagName.toLowerCase() + [...el.classList].map((c) => `.${c}`).join("");
-    // This page's accent and danger fills, resolved through a probe element (a page without one leaves it transparent).
-    const fills = ["--accent", "--danger"].map((variable) => {
-      const probe = document.body.appendChild(document.createElement("i"));
-      probe.style.backgroundColor = `var(${variable})`;
-      const fill = getComputedStyle(probe).backgroundColor;
-      probe.remove();
-      return fill;
-    }).filter((fill) => fill !== "rgba(0, 0, 0, 0)");
     const found: Sample[] = [];
     for (const el of document.body.querySelectorAll("*")) {
       if (el.matches("option, optgroup, script, style") || el.closest(":disabled")) continue;
@@ -128,12 +114,11 @@ async function texts(page: Page): Promise<Sample[]> {
         color: style.color,
         fontSize: parseFloat(style.fontSize),
         fontWeight: Number(style.fontWeight),
-        onFill: el.matches(onFill) && own.color === "rgb(255, 255, 255)" && fills.includes(own.backgroundColor),
         layers: chain.map((up) => ({ background: getComputedStyle(up).backgroundColor, opacity: Number(getComputedStyle(up).opacity) })),
       });
     }
     return found;
-  }, ON_FILL);
+  });
 }
 
 /** `page` in light and in dark: the native appearance, and the page's colour scheme, which Playwright otherwise holds at light. */
@@ -316,7 +301,49 @@ function capsuleStates(): [string, CapsuleState, string][] {
     ],
     ["stopped, a transcription", { kind: "recorded", review: "at 21:00" }, "The evening review turns it into words and files it at 21:00."],
     ["stopped, a transcription with the review off", { kind: "recorded", review: null }, "It's in your inbox."],
-    ["error", { kind: "error", message: "Claude Code couldn't file this note", detail: "Error: rate limited\nThe note is still in your inbox; the evening review will try again.", action: "open-settings:agents" }, "Claude Code couldn't file this note"],
+    // A problem is a notice: what happened, what is safe, Hide and the one fix. The fix's primary label, a command in the code face,
+    // a notice with no fix, and the most one says (a title of two lines, and a body of several) are each read in both appearances.
+    [
+      "error",
+      {
+        kind: "error",
+        message: "Claude Code has hit its usage limit.",
+        detail: "It resets tomorrow at 09:00. Your note is safe in the inbox and will be filed then.",
+        action: "refile:codex",
+        actionLabel: "File it with Codex now",
+      },
+      "Claude Code has hit its usage limit.",
+    ],
+    [
+      "error, a command",
+      {
+        kind: "error",
+        message: "Claude Code isn't signed in on this Mac.",
+        detail: "Run claude once in Terminal and sign in, and your note will be filed straight away.",
+        command: "claude",
+        action: "open-terminal",
+        actionLabel: "Open Terminal",
+      },
+      "Claude Code isn't signed in on this Mac.",
+    ],
+    [
+      "error, no fix",
+      { kind: "error", message: "This one can't be undone automatically.", detail: "Usually a later change touched the same lines. The library's history keeps both versions." },
+      "This one can't be undone automatically.",
+    ],
+    [
+      "error, the most it says",
+      {
+        kind: "error",
+        message: "Avanzel can't use the voice settings in this library's config file.",
+        detail:
+          "/Users/ana/Documents/Notes/Avanzel/.avanzel/config.toml: invalid TOML at line 2, column 17: incomplete key-value declaration, expected a value. " +
+          "Typing a thought works meanwhile.\nYour words are kept in raw/audio/2026/10/2026-10-27-101500.wav.",
+        action: "open-settings:voice",
+        actionLabel: "Open Settings",
+      },
+      "Avanzel can't use the voice settings in this library's config file.",
+    ],
     ["preparing", { kind: "preparing", receivedBytes: 412_000_000, totalBytes: 672_807_563 }, "The speech model is still downloading"],
     [
       "model-failed",
@@ -389,7 +416,6 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   for (const [name, state, shows] of capsuleStates()) {
     await call(app, "setCapsule", state);
     await expect(capsule.getByText(shows)).toBeVisible();
-    await capsule.locator(".hud, .av-hud, .av-card").first().hover(); // the error card, the one legacy card left, shows its close button on hover
     found.push(...(await readable(app, capsule, `capsule ${name}`, desktops)));
   }
   await app.close();

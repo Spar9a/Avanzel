@@ -4,6 +4,7 @@
 // for the screen (which relaunches nothing under AVANZEL_TEST=1), and follows System Settings.
 import { expect, test } from "@playwright/test";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
+import { expectProblem } from "./capsule-helpers.ts";
 import { call, capsuleKind, filesUnder, launch, makeLibrary, openSettings, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
 
 const saved = (root: string) => ({
@@ -28,10 +29,11 @@ test("with the microphone denied, dictating says how to allow it and saves nothi
     action: "open-microphone-settings",
     actionLabel: "Open System Settings",
   });
-  await expect(capsule.getByText("Avanzel can't hear you yet.")).toBeVisible();
-  await expect(capsule.getByText("Allow it in System Settings, under Microphone.", { exact: true })).toBeVisible();
-  await expect(capsule.getByRole("button", { name: "Open System Settings", exact: true })).toBeVisible();
-  await expect(capsule.getByRole("button", { name: "Open Settings", exact: true })).toHaveCount(0);
+  await expectProblem(capsule, {
+    title: "Avanzel can't hear you yet.",
+    lines: ["Allow it in System Settings, under Microphone."],
+    fix: "Open System Settings",
+  });
   await snap(capsule, "mic-denied");
   expect(saved(library)).toEqual(before);
   // With AVANZEL_TEST=1 System Settings stays shut, and openedForTests says which pane the button went to.
@@ -60,12 +62,11 @@ test("with Screen Recording denied, a screen capture says how to allow it, relau
     action: "open-screen-settings",
     actionLabel: "Open System Settings",
   });
-  await expect(capsule.getByText("Avanzel can't see the screen yet.")).toBeVisible();
-  await expect(
-    capsule.getByText("Allow it in System Settings, under Screen Recording, then quit and reopen Avanzel.", { exact: true }),
-  ).toBeVisible();
-  await expect(capsule.getByRole("button", { name: "Open System Settings", exact: true })).toBeVisible();
-  await expect(capsule.getByRole("button", { name: "Open Settings", exact: true })).toHaveCount(0);
+  await expectProblem(capsule, {
+    title: "Avanzel can't see the screen yet.",
+    lines: ["Allow it in System Settings, under Screen Recording, then quit and reopen Avanzel."],
+    fix: "Open System Settings",
+  });
   await snap(capsule, "screen-denied");
   expect(saved(library)).toEqual(before);
   await capsule.getByRole("button", { name: "Open System Settings", exact: true }).click();
@@ -86,7 +87,11 @@ test("a blank first screen capture asks for Screen Recording and a relaunch, and
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleCapture");
   await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("error");
-  await expect(capsule.getByText(/then quit and reopen Avanzel\.$/)).toBeVisible();
+  await expectProblem(capsule, {
+    title: "Avanzel can't see the screen yet.",
+    lines: ["Allow it in System Settings, under Screen Recording, then quit and reopen Avanzel."],
+    fix: "Open System Settings",
+  });
   expect(await call(app, "capsuleStateForTests")).toMatchObject({
     message: "Avanzel can't see the screen yet.",
     action: "open-screen-settings",

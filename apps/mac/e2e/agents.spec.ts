@@ -9,6 +9,7 @@ import path from "node:path";
 import { loadSettings, saveSettings, writeWav } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import { agentCalls, agentPath, alive, call, capsuleKind, filesUnder, launch, makeLibrary, noAgents, openSettings, SIGNED_OUT_CLAUDE, snap, UNREADABLE_CLAUDE, windowFor } from "./helpers.ts";
+import { expectProblem } from "./capsule-helpers.ts";
 
 /** Opens Settings → Agents and returns the fake agent's row, a group named for its agent. */
 const fakeAgentRow = async (app: ElectronApplication) => (await openSettings(app, "Agents")).getByRole("group", { name: "fake" });
@@ -292,9 +293,11 @@ test("Open Settings on a filing with no agent to run opens Settings → Agents",
   await thought.press("Enter");
   const capsule = await windowFor(app, "capsule");
   await expect(capsule.getByRole("alert")).toContainText("Avanzel needs an AI agent to do the filing.", { timeout: 60_000 });
-  await expect(
-    capsule.getByText("Your note is safe in the inbox. Claude Code works best, and Settings → Agents has its install command.", { exact: true }),
-  ).toBeVisible();
+  await expectProblem(capsule, {
+    title: "Avanzel needs an AI agent to do the filing.",
+    lines: ["Your note is safe in the inbox. Claude Code works best, and Settings → Agents has its install command."],
+    fix: "Open Settings",
+  });
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "error", action: "open-settings:agents", actionLabel: "Open Settings" });
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings"); // a new window: it opens on the pane its address names
@@ -339,13 +342,6 @@ async function dictateUntilCard(audio: string, error: string | RegExp): Promise<
   return { app, capsule };
 }
 
-/** Dictates once with `audio` standing in for the microphone, then clicks Open Settings on the error card it ends in. */
-async function openSettingsAfterDictating(audio: string, error: string | RegExp): Promise<{ app: ElectronApplication; settings: Page }> {
-  const { app, capsule } = await dictateUntilCard(audio, error);
-  await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
-  return { app, settings: await windowFor(app, "settings") };
-}
-
 const scratchDir = () => mkdtempSync(path.join(tmpdir(), "avz-e2e-audio-"));
 
 test("a recording too short to hold speech says nothing was heard or saved, and Choose microphone opens Settings → Voice", async () => {
@@ -360,19 +356,26 @@ test("a recording too short to hold speech says nothing was heard or saved, and 
     action: "open-settings:voice",
     actionLabel: "Choose microphone",
   });
-  await expect(capsule.getByText("Is the right microphone selected? Nothing was saved.", { exact: true })).toBeVisible();
-  await expect(capsule.getByRole("button", { name: "Open Settings", exact: true })).toHaveCount(0);
+  await expectProblem(capsule, { title: "Nothing was heard.", lines: ["Is the right microphone selected? Nothing was saved."], fix: "Choose microphone" });
   await capsule.getByRole("button", { name: "Choose microphone", exact: true }).click();
   const settings = await windowFor(app, "settings");
   await expect(paneRadio(settings, "Voice")).toHaveAttribute("aria-checked", "true");
   await app.close();
 });
 
-test("Open Settings on a recording that can't be read opens Settings → Voice", async () => {
+test("a recording that can't be read says it couldn't be turned into words, why, and that nothing was saved", async () => {
   const notAudio = path.join(scratchDir(), "speech.wav");
   writeFileSync(notAudio, "this is not a recording");
-  const { app, settings } = await openSettingsAfterDictating(notAudio, /is not a PCM WAV file/);
-  await expect(paneRadio(settings, "Voice")).toHaveAttribute("aria-checked", "true");
+  const { app, capsule } = await dictateUntilCard(notAudio, /is not a PCM WAV file/);
+  // The file never reached the library, so there is no recording to say where it is; and no fix: the next recording is the way on.
+  // The reason is Avanzel's own, told whole, as a sentence: with a capital, as any line of a card is.
+  const why = /^Speech\.wav is not a PCM WAV file \(.+\)\. Nothing was saved\.$/;
+  await expectProblem(capsule, { title: "The recording couldn't be turned into words.", lines: [why] });
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: "The recording couldn't be turned into words.",
+    detail: expect.stringMatching(why),
+  });
   await app.close();
 });
 
@@ -393,8 +396,11 @@ test("a microphone that didn't start says why and that nothing was recorded, and
     action: "open-settings:voice",
     actionLabel: "Open Settings",
   });
-  await expect(capsule.getByText("The microphone didn't start.")).toBeVisible();
-  await expect(capsule.getByText("Requested device not found. Nothing was recorded. Check the microphone in Settings → Voice.", { exact: true })).toBeVisible();
+  await expectProblem(capsule, {
+    title: "The microphone didn't start.",
+    lines: ["Requested device not found. Nothing was recorded. Check the microphone in Settings → Voice."],
+    fix: "Open Settings",
+  });
   expect(filesUnder(library, "inbox")).toEqual([]);
   expect(filesUnder(library, "raw/audio")).toEqual([]);
   // A microphone that gives no reason leaves the body with what is true, and no stray space before it.
@@ -405,6 +411,11 @@ test("a microphone that didn't start says why and that nothing was recorded, and
     kind: "error",
     message: "The microphone didn't start.",
     detail: "Nothing was recorded. Check the microphone in Settings → Voice.",
+  });
+  await expectProblem(capsule, {
+    title: "The microphone didn't start.",
+    lines: ["Nothing was recorded. Check the microphone in Settings → Voice."],
+    fix: "Open Settings",
   });
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings");

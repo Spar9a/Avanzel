@@ -71,11 +71,19 @@ import {
   filingProblem,
   NO_GIT_LINE,
   ownLine,
-  shortened,
+  recordingLost,
+  screenCaptureProblem,
+  stopFailedProblem,
+  stopRefused,
+  stoppedNotice,
   takeBackRefused,
   takeBackRefusedProblem,
+  thoughtNotSavedProblem,
   tooBroadLine,
   undoRefused,
+  unheardProblem,
+  unsavedProblem,
+  voiceSettingsProblem,
   type AgentFailure,
   type FailureKind,
   type FilingProblemOptions,
@@ -164,10 +172,18 @@ const STOPPED_SHOW_MS = 6_000;
 // The listening card names the shortcut that finishes a recording until the library has kept this many recordings: the first ones
 // teach the keys.
 const HINT_CAPTURES = 10;
-// How many characters of an agent's own line (or of the error's lines, on the card of corrected words that weren't saved) the
-// capsule's failure card, and the notification of the same words, keep: the legacy card shows about four lines of its body, and
-// the sentence that says what is safe must not be among those it cuts off. The windows don't clip, and tell the whole line.
+// How many characters of an agent's own line, or of a system error's message (Node's, the speech engine's), a problem of the
+// capsule keeps in its card and in the notification of the same words: the card is a notice in a panel 300 px tall, and a
+// notification shows a few lines, so a line that went on would push out the sentence that says what is safe, and the button.
+// The windows don't clip, and tell the whole line.
 const CAPSULE_LINE_MAX = 100;
+
+/**
+ * How much of `error`'s message a problem's card keeps: the whole of an AvanzelError, which Avanzel wrote for the person and which
+ * says what to mend (a folder that is a link, a settings file that can't be read), and `CAPSULE_LINE_MAX` characters of any other,
+ * which names paths and says little that a person can use.
+ */
+const reasonMax = (error: unknown): number | undefined => (error instanceof AvanzelError ? undefined : CAPSULE_LINE_MAX);
 
 /** How long quitting waits for stopped agent runs: QUIT_WAIT_MS, or in tests the positive number of ms in AVANZEL_QUIT_WAIT_MS. */
 function quitWaitMs(): number {
@@ -725,30 +741,30 @@ export class Controller {
   }
 
   /**
-   * The capsule's card of what went wrong: `message` says what happened and `detail` what is safe. Its one button does
-   * `action` and says `actionLabel` (Open Settings when it names none). `capture`: the note the card is about, if it is
-   * about one, which the card keeps for as long as it shows. `unkept`: for a card that promises its note's filing at a
-   * limit's reset, what it says without that promise (`cardUnkept`).
+   * The capsule's card of what went wrong: `problem`'s title says what happened and its body what is safe, with the command it
+   * names, if it names one, which the card sets in code. Its one button does `action` and says `actionLabel` (Open Settings when it
+   * names none); a card with no action has Hide alone. `capture`: the note the card is about, if it is about one, which the card
+   * keeps for as long as it shows. `unkept`: for a card that promises its note's filing at a limit's reset, what it says without
+   * that promise (`cardUnkept`).
    */
-  private fail(message: string, detail?: string, action?: ErrorAction, actionLabel?: string, capture?: string, unkept?: Problem): void {
-    this.setCapsule({ kind: "error", message, detail, action, actionLabel }, undefined, capture);
+  private fail({ title, body, command }: Problem, action?: ErrorAction, actionLabel?: string, capture?: string, unkept?: Problem): void {
+    this.setCapsule({ kind: "error", message: title, detail: body, ...(command ? { command } : {}), action, actionLabel }, undefined, capture);
     this.cardUnkept = unkept ?? null;
   }
 
   /**
-   * `recording` went wrong: the capsule's card says so (`message`, `detail`, and its button: `action` and `actionLabel`),
-   * unless it is setup's first spoken thought, which the setup window says in its own words instead (`setup.lost`): the
-   * `problem`, and whether the recording is `kept` in the library, which nothing else of it is.
+   * `recording` went wrong: the capsule's card says so (`card`, and its button: `action` and `actionLabel`), unless it is setup's
+   * first spoken thought, which the setup window says in its own words instead (`setup.lost`): the `problem`, and whether the
+   * recording is `kept` in the library, which nothing else of it is.
    */
   private recordingFailed(
     recording: Recording,
     { problem, kept = false }: { problem: RecordingProblem; kept?: boolean },
-    message: string,
-    detail?: string,
+    card: Problem,
     action?: ErrorAction,
     actionLabel?: string,
   ): void {
-    if (!this.setup.lost(recording, { kind: "failed", problem, kept })) this.fail(message, detail, action, actionLabel);
+    if (!this.setup.lost(recording, { kind: "failed", problem, kept })) this.fail(card, action, actionLabel);
   }
 
   // ---------------------------------------------------------------- recording
@@ -777,24 +793,26 @@ export class Controller {
     const vault = this.requireVault();
     if (this.capsule.isVisible()) this.setCapsule({ kind: "hidden" });
     await new Promise((r) => setTimeout(r, 80)); // let the capsule leave the screen before the shot
+    let shotPath: string | null = null;
     try {
       // Not asked yet: this capture is what makes macOS ask. Without the grant it comes back blank.
       const [image, context] = await Promise.all([captureDisplay(), this.screenContext()]);
       if (looksBlank(image)) return this.cantSeeScreen();
-      const shotPath = vault.newAttachmentPath(new Date(), ".png");
+      shotPath = vault.newAttachmentPath(new Date(), ".png");
       writeFileSync(shotPath, image.toPNG());
       const thumbnail = image.resize({ width: 208 }).toDataURL();
       await this.startRecording("comment", { path: shotPath, thumbnail, context });
     } catch (error) {
-      this.fail("Couldn't capture the screen", errorMessage(error));
+      // The card says nothing was saved, so a screenshot that was claimed goes.
+      if (shotPath !== null) rmSync(shotPath, { force: true });
+      this.fail(screenCaptureProblem(errorMessage(error), reasonMax(error)));
     }
   }
 
   /** macOS applies a Screen Recording grant only when the app starts again. */
   private cantSeeScreen(): void {
     this.fail(
-      "Avanzel can't see the screen yet.",
-      "Allow it in System Settings, under Screen Recording, then quit and reopen Avanzel.",
+      { title: "Avanzel can't see the screen yet.", body: "Allow it in System Settings, under Screen Recording, then quit and reopen Avanzel." },
       "open-screen-settings",
       "Open System Settings",
     );
@@ -831,7 +849,7 @@ export class Controller {
       return false;
     }
     if (!(await requestMicrophone())) {
-      this.fail("Avanzel can't hear you yet.", "Allow it in System Settings, under Microphone.", "open-microphone-settings", "Open System Settings");
+      this.fail({ title: "Avanzel can't hear you yet.", body: "Allow it in System Settings, under Microphone." }, "open-microphone-settings", "Open System Settings");
       return false;
     }
     return true;
@@ -946,13 +964,7 @@ export class Controller {
       this.audioTimeout = null;
       if (this.recording !== recording) return; // only ever this recording, never a newer one
       this.abandonRecording(recording);
-      this.recordingFailed(
-        recording,
-        { problem: "lost" },
-        "The recording didn't arrive",
-        "Try again; if it keeps happening, check the microphone in Settings → Voice.",
-        "open-settings:voice",
-      );
+      this.recordingFailed(recording, { problem: "lost" }, recordingLost, "open-settings:voice", "Choose microphone");
     }, AUDIO_TIMEOUT_MS);
   }
 
@@ -980,8 +992,10 @@ export class Controller {
     this.recordingFailed(
       recording,
       { problem: "microphone" },
-      "The microphone didn't start.",
-      [ownLine(message), "Nothing was recorded. Check the microphone in Settings → Voice."].filter(Boolean).join(" "),
+      {
+        title: "The microphone didn't start.",
+        body: [ownLine(message), "Nothing was recorded. Check the microphone in Settings → Voice."].filter(Boolean).join(" "),
+      },
       "open-settings:voice",
       "Open Settings",
     );
@@ -1009,9 +1023,11 @@ export class Controller {
     this.recording = null;
     const vault = this.requireVault();
     const now = new Date();
-    // What a failure can say is safe: the recording, once written to the library, and whether its words were made.
+    // What a failure can say is safe: the recording, once written to the library, whether its words were made, and, for a screen
+    // comment, whether its note (which holds the screenshot) was written.
     let written: string | null = null;
     let text = "";
+    let captured = false;
     try {
       const samples = process.env.AVANZEL_FAKE_AUDIO ? await this.fakeAudio(process.env.AVANZEL_FAKE_AUDIO) : received;
       const { audioPath, unkept } = this.claimRecording(vault, now);
@@ -1039,6 +1055,7 @@ export class Controller {
           ...(text ? { audio: audioPath, transcriber: engine } : {}),
           context: recording.shot.context,
         });
+        captured = true;
         this.captureCount.add(); // the screenshot is kept, with or without a comment
         this.setCapsule(
           {
@@ -1058,8 +1075,7 @@ export class Controller {
         return this.recordingFailed(
           recording,
           { problem: "silence" },
-          "Nothing was heard.",
-          "Is the right microphone selected? Nothing was saved.",
+          { title: "Nothing was heard.", body: "Is the right microphone selected? Nothing was saved." },
           "open-settings:voice",
           "Choose microphone",
         );
@@ -1069,12 +1085,15 @@ export class Controller {
       this.afterCapture(capture.path, text, seconds, unkept, recording);
     } catch (error) {
       console.error("recording", error);
+      // The card says what is kept, and a screenshot that no note holds is not: it goes, as one of a recording given up does
+      // (`abandonRecording`). The recording is the person's voice, and is kept where it was written.
+      if (recording.shot && !captured) rmSync(recording.shot.path, { force: true });
+      const kept = written !== null && existsSync(written) ? vault.relativePath(written) : null;
+      const why = errorMessage(error);
       this.recordingFailed(
         recording,
-        { problem: text ? "unsaved" : "unheard", kept: written !== null && existsSync(written) },
-        error instanceof AvanzelError ? error.message : "Couldn't transcribe that",
-        error instanceof AvanzelError ? undefined : errorMessage(error),
-        "open-settings:voice",
+        { problem: text ? "unsaved" : "unheard", kept: kept !== null },
+        text ? unsavedProblem(why, kept, recording.mode === "comment", reasonMax(error)) : unheardProblem(why, kept, reasonMax(error)),
       );
     }
   }
@@ -1164,10 +1183,10 @@ export class Controller {
       this.keepInInbox(transcribing);
     } catch (error) {
       console.error("stop transcribing", error);
-      return this.fail(
-        "Avanzel couldn't move the recording to your inbox.",
-        `${shortened(ownLine(errorMessage(error)), CAPSULE_LINE_MAX)} The transcription goes on, and your recording stays where it is.`,
-      );
+      // The card says where the recording is now. It is not promised to stay: the transcription goes on, and one that finds no words
+      // removes the recording it was made from (`onAudio`).
+      const { vault, audioPath } = transcribing;
+      return this.fail(stopFailedProblem(errorMessage(error), audioPath === null ? null : vault.relativePath(audioPath), CAPSULE_LINE_MAX));
     }
     transcribing.stopped = true;
     this.captureCount.add(); // the library keeps the recording now, whatever the evening review makes of it
@@ -1459,7 +1478,7 @@ export class Controller {
       ...(outcome?.savedOriginal ? { where: outcome.savedOriginal } : {}),
       partial,
       eveningReview: this.eveningReviewOn(library),
-      lineMax: CAPSULE_LINE_MAX, // the card is the legacy one, which clips its body; so is the notification's twin of it
+      lineMax: CAPSULE_LINE_MAX, // the card is a notice in a small panel, and the notification says the same words
     };
     const unkept = unwatched(failure, now, options);
     const kept = this.keepPromise(job, failure, harness, now, unkept);
@@ -1467,7 +1486,7 @@ export class Controller {
     if ((this.job === job && this.capsuleState.kind === "filing") || this.cardCapture === job.capturePath) {
       const fix = this.cardFix(failure, harness);
       const offered = fix?.action.startsWith("refile:") && !this.inOpenInbox(job.capturePath) ? null : fix;
-      this.fail(problem.title, problem.body, offered?.action, offered?.label, job.capturePath, kept === "wait" ? unkept : undefined);
+      this.fail(problem, offered?.action, offered?.label, job.capturePath, kept === "wait" ? unkept : undefined);
     } else {
       this.notify(problem.title, problem.body);
     }
@@ -1831,7 +1850,7 @@ export class Controller {
     const state = this.capsuleState;
     const unkept = card === null ? undefined : watch?.notes.get(card);
     if (card === null || !unkept || this.quitting || this.checksStopped || state.kind !== "error" || state.message !== unkept.title) return;
-    this.fail(unkept.title, unkept.body, state.action, state.actionLabel, card);
+    this.fail(unkept, state.action, state.actionLabel, card);
   }
 
   /**
@@ -1858,8 +1877,8 @@ export class Controller {
     const unkept = this.cardUnkept;
     const refile = state.action?.startsWith("refile:") ?? false;
     if (!unkept && !refile) return;
-    const words = unkept ?? { title: state.message, body: state.detail };
-    this.fail(words.title, words.body, refile ? undefined : state.action, refile ? undefined : state.actionLabel, card);
+    const words: Problem = unkept ?? { title: state.message, body: state.detail ?? "", ...(state.command ? { command: state.command } : {}) };
+    this.fail(words, refile ? undefined : state.action, refile ? undefined : state.actionLabel, card);
   }
 
   /**
@@ -1900,25 +1919,29 @@ export class Controller {
    * ends. A run that had filed with no commit to take back stands (`afterStop`): `runFiling` has shown it filed already. Anything
    * else is taken back, which puts the words in the inbox, and the capsule says Stopped: `partial` when taking it back failed
    * (what the run did stays as its own commit), and `leftovers`, how many files it changed that no commit holds. A finished
-   * filing that git refuses to take back stays filed, and the card says it can't be undone (`undoRefused`), never that the words
-   * are back in the inbox. A card that has gone meanwhile (hidden, or replaced by a newer capture's) is left as it is.
+   * filing that git refuses to take back stays filed, and the card says Stop couldn't take it back (`stopRefused`), never that the
+   * words are back in the inbox. A card that has gone meanwhile (hidden, or replaced by a newer capture's) is left as it is, and
+   * a notification says the same when there is something to tell (`stoppedNotice`): the filing stands, or the run's edits stay.
+   * `runFiling` shows no Filed card or notification once Stop was pressed, so for a filing that stands this is the only word.
    */
   private async settleStop(job: FilingJob): Promise<void> {
     if (afterStop(job.outcome) === "filed") return;
     const problem = await this.takeBack(job);
-    if (this.job !== job || this.capsuleState.kind !== "filing") return;
-    if (problem !== null && job.outcome?.ok) return this.fail(undoRefused.title, undoRefused.body);
-    this.setCapsule(
-      {
-        kind: "cancelled",
-        text: job.text,
-        agent: job.agent,
-        partial: problem !== null,
-        leftovers: unrecordedEdits(job.outcome),
-        review: reviewTime(this.openReview()),
-      },
-      STOPPED_SHOW_MS,
-    );
+    const showing = this.job === job && this.capsuleState.kind === "filing";
+    if (problem !== null && job.outcome?.ok) {
+      if (showing) this.fail(stopRefused);
+      else this.notify(stopRefused.title, stopRefused.body);
+      return;
+    }
+    const partial = problem !== null;
+    const leftovers = unrecordedEdits(job.outcome);
+    const review = reviewTime(this.openReview());
+    if (showing) {
+      this.setCapsule({ kind: "cancelled", text: job.text, agent: job.agent, partial, leftovers, review }, STOPPED_SHOW_MS);
+      return;
+    }
+    const notice = stoppedNotice(job.agent, partial, leftovers, review);
+    if (notice) this.notify(notice.title, notice.body);
   }
 
   /** The editor's text, sent as the owner types: what `keepEdit` saves if neither File nor Cancel comes first. */
@@ -1980,20 +2003,19 @@ export class Controller {
       if (problem === null) return this.runFiling(next);
       if (this.job === next && this.capsuleState.kind === "filing") {
         // The card says where the corrected words wait, and promises the evening review only while the library's is on.
-        const refused = takeBackRefusedProblem(existsSync(next.capturePath), this.eveningReviewOn());
-        this.fail(refused.title, refused.body);
+        this.fail(takeBackRefusedProblem(existsSync(next.capturePath), this.eveningReviewOn()));
       }
     });
   }
 
   /**
    * The corrected words of `job` (File after Edit) couldn't be written to the inbox yet. That isn't an agent's failure, so
-   * the card is its own, with OK alone: another try would file the misheard capture. A capsule that no longer shows `job`
+   * the card is its own, with Hide alone: another try would file the misheard capture. A capsule that no longer shows `job`
    * gets a notification with the same words. `originalKept`: the note they correct is still in the inbox.
    */
   private correctedWordsNotSaved(job: FilingJob, error: unknown, originalKept: boolean): void {
     const problem = correctedWordsProblem(lastLines(errorMessage(error)), originalKept, CAPSULE_LINE_MAX);
-    if (this.job === job && this.capsuleState.kind === "filing") this.fail(problem.title, problem.body);
+    if (this.job === job && this.capsuleState.kind === "filing") this.fail(problem);
     else this.notify(problem.title, problem.body);
     this.refreshMenu();
   }
@@ -2032,8 +2054,9 @@ export class Controller {
         this.saveDraft(job, (words) => this.recapture(job, words));
         if (problem !== null) this.notify(takeBackRefused.title, takeBackRefused.body);
       } catch (error) {
-        // The edit stays in `kept`, so quitting saves it.
-        this.notify("Couldn't save your edit yet", `${errorMessage(error)}\nYour corrected words are saved to your inbox when you quit.`);
+        // The edit stays in `kept`, so quitting saves it. The words are the card's, which says the same when File can't write them.
+        const problem = correctedWordsProblem(lastLines(errorMessage(error)), existsSync(job.capturePath), CAPSULE_LINE_MAX);
+        this.notify(problem.title, problem.body);
       } finally {
         this.editing.delete(job.capturePath);
       }
@@ -2156,12 +2179,8 @@ export class Controller {
       console.warn("undo", error); // a revert that threw is a refusal to the card: it would otherwise wait on its Undo for ever
       return false;
     });
-    this.setCapsule(
-      undone
-        ? { kind: "saved", text: job.text, note: undoneNote(this.openReview()), undone: true }
-        : { kind: "error", message: undoRefused.title, detail: undoRefused.body },
-      undone ? 3500 : undefined,
-    );
+    if (undone) this.setCapsule({ kind: "saved", text: job.text, note: undoneNote(this.openReview()), undone: true }, 3500);
+    else this.fail(undoRefused);
   }
 
   openFiled(): void {
@@ -2293,7 +2312,7 @@ export class Controller {
       capture = this.requireVault().newCapture(trimmed, { source: "text", now: new Date() });
     } catch (error) {
       // The words stay in the type-a-thought box for another try.
-      this.fail("Couldn't save that thought", `${errorMessage(error)}\nIt is still in the box: press ${prettyAccelerator(this.store.get().shortcuts.type)} to try again.`);
+      this.fail(thoughtNotSavedProblem(errorMessage(error), prettyAccelerator(this.store.get().shortcuts.type), reasonMax(error)));
       throw error;
     }
     this.afterCapture(capture.path, trimmed, null);
@@ -3025,7 +3044,7 @@ export class Controller {
     const model = this.model;
     if (model.kind === "downloading") this.setCapsule({ kind: "preparing", receivedBytes: model.receivedBytes, totalBytes: model.totalBytes }, PREPARING_SHOW_MS);
     else if (model.kind === "error" && model.cause === "download") this.setCapsule({ kind: "model-failed", reason: model.message, resumable: model.resumable });
-    else if (model.kind === "error") this.fail("Avanzel can't use these voice settings", model.message);
+    else if (model.kind === "error") this.fail(voiceSettingsProblem(model.message), "open-settings:voice", "Open Settings"); // fixed in the config file, which Voice names
     else this.setCapsule({ kind: "hidden" }); // ready: nothing to wait for (missing never gets here: downloadModel() runs first)
   }
 

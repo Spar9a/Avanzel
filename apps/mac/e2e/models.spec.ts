@@ -8,6 +8,7 @@ import path from "node:path";
 import { loadSettings, MODELS, saveSettings } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import { ownLine } from "../src/shared/problems.ts";
+import { expectProblem } from "./capsule-helpers.ts";
 import { call, capsuleKind, closeModelHubs, emptyHfCache, fakeModelHub, hfSnapshot, launch, makeLibrary, openSettings, shown, snap, windowFor } from "./helpers.ts";
 
 const PARAKEET = "nemo-parakeet-tdt-0.6b-v3";
@@ -298,16 +299,27 @@ test("voice settings Avanzel can't use are named at the shortcut, and nothing do
   expect(await modelStatus(app)).toMatchObject({ kind: "error", cause: "settings" });
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
-  await expect(capsule.getByText("Avanzel can't use these voice settings")).toBeVisible();
-  await expect(capsule.getByText(/Speech model 'parakeet-v9' is not supported/)).toBeVisible();
-  await call(app, "showSettings");
+  // What happened, where; then why, and what still works meanwhile. The one fix is Settings → Voice, where the config file's
+  // [voice] settings are named (Try again can't help: nothing downloads).
+  const title = "Avanzel can't use the voice settings in this library's config file.";
+  const why = /^Speech model 'parakeet-v9' is not supported; .*\. Typing a thought works meanwhile\.$/;
+  await expectProblem(capsule, { title, lines: [why], fix: "Open Settings" });
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: title,
+    detail: expect.stringMatching(why),
+    action: "open-settings:voice",
+    actionLabel: "Open Settings",
+  });
+  // Its button opens Settings on the Voice pane, which tells it in the same words, and the card goes.
+  await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings");
-  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
-  // What happened, where; then why, and what still works meanwhile.
+  await expect(settings.getByRole("radio", { name: "Voice", exact: true })).toHaveAttribute("aria-checked", "true");
   const alert = settings.getByRole("alert");
-  await expect(alert).toContainText("Avanzel can't use the voice settings in this library's config file.");
-  await expect(alert).toContainText(/Speech model 'parakeet-v9' is not supported; .*\. Typing a thought works meanwhile\.$/);
+  await expect(alert).toContainText(title);
+  await expect(alert).toContainText(/Speech model 'parakeet-v9' is not supported; .*\. Typing a thought works meanwhile\.$/); // the title comes first in its text
   await expect(settings.getByRole("button", { name: "Try again" })).toHaveCount(0); // trying again can't help
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
   expect(hub.requests).toEqual([]);
   await app.close();
 });
@@ -320,7 +332,7 @@ test("a fixed [voice] setting works on the next press", async () => {
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
-  await expect(capsule.getByText("Avanzel can't use these voice settings")).toBeVisible();
+  await expect(capsule.getByRole("alert").getByText("Avanzel can't use the voice settings in this library's config file.")).toBeVisible();
   expect(hub.requests).toEqual([]);
   saveSettings(library, config); // fixed by hand, with Avanzel running
   await call(app, "toggleDictate");

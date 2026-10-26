@@ -1,7 +1,7 @@
 // The setup window's words that are made from values: sizes, dates, what an agent's check found, what went wrong with a
 // recording and how a filing went, as its copy table writes them, and which of those findings is a problem for the
 // person to fix.
-import { SHELVES, type ReceiptPage, type Shelf } from "@avanzel/ui";
+import type { ReceiptPage } from "@avanzel/ui";
 import {
   NOTE_GONE,
   type AgentProblem,
@@ -13,23 +13,30 @@ import {
   type SetupAnswer,
   type SetupFiling,
 } from "../../shared/ipc.ts";
-import { askProblem, avanzelFailure, filingProblem, NO_GIT_LINE, ownLine, tooBroadLine, type AskProblem, type Problem } from "../../shared/problems.ts";
+import {
+  askProblem,
+  avanzelFailure,
+  cancelledLine,
+  filingProblem,
+  NO_GIT_LINE,
+  ownLine,
+  tooBroadLine,
+  type AskProblem,
+  type Problem,
+} from "../../shared/problems.ts";
+import { isShelf } from "../common/shelf.ts";
+import { stampDate } from "../common/stamp.ts";
 
-// An agent's own line as a sentence, and the line under a place too broad for a library, are shared with the main process (its
-// cards, notifications and refusals say them too); the windows that import them from here keep doing so.
-export { ownLine, tooBroadLine };
+// An agent's own line as a sentence, the line under a place too broad for a library, and what a Stopped filing says of the words and
+// the library are shared with the main process (its cards, notifications and refusals say them too); the stamp's day and which folders
+// are shelves are shared with the capsule (renderer/common). The windows that import them from here keep doing so.
+export { cancelledLine, isShelf, ownLine, stampDate, tooBroadLine };
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
-const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"] as const;
 
 /** Whole megabytes, as macOS counts them (a million bytes each): 672,807,563 bytes are 673 MB. */
 export function megabytes(bytes: number): number {
   return Math.round(bytes / 1e6);
-}
-
-/** The day as a stamp prints it (in its own capitals): "21 Oct 2026". */
-export function stampDate(day: Date): string {
-  return `${day.getDate()} ${MONTHS[day.getMonth()]?.slice(0, 3)} ${day.getFullYear()}`;
 }
 
 /**
@@ -182,17 +189,6 @@ export function filedHeading(agent: string, seconds: number): string {
 }
 
 /**
- * What a cancelled filing says of the words and the library. `partial`: the stopped run's edits stay, as their own commit,
- * because taking them back failed. `leftovers`: how many files the run changed that nothing recorded (a library without git,
- * or with automatic commits off), which stay as they are; it doesn't say how many. A run that changed nothing says so.
- */
-export function cancelledLine(agent: string, partial: boolean, leftovers: number): string {
-  if (partial) return `Your words are back in the inbox, untouched. ${agent}'s partial edits are kept as their own commit in the library's history.`;
-  if (leftovers > 0) return "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them.";
-  return "Your words are back in the inbox, untouched, and nothing else changed.";
-}
-
-/**
  * A failed filing's Notice in the setup window: what happened, what is safe, and for a sign-in the command to run, as the
  * capsule tells the same failure (`filingProblem`) except that setup starts neither a wait nor a watch, so it says to try
  * again (`after: "retry"`). The evening review is promised only while the library's is on (`eveningReview`). A note gone
@@ -232,9 +228,6 @@ export function pagesLine(created: number, updated: number, where: string): stri
 export function othersLine(count: number): string | null {
   return count ? `${counted(count, "more")} in other folders.` : null;
 }
-
-/** Whether a page's folder is one of the six shelves, which a ShelfTag can show. */
-export const isShelf = (shelf: string): shelf is Shelf => (SHELVES as readonly string[]).includes(shelf);
 
 /** A filing's pages as its receipt lists them: those on the six shelves, in order, and how many others it wrote. */
 export function receiptPages(pages: readonly FiledPage[]): { pages: ReceiptPage[]; others: number } {

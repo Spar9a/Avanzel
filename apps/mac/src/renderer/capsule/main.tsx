@@ -10,6 +10,7 @@ import { Editor } from "./editor.tsx";
 import { Filed } from "./filed.tsx";
 import { Filing } from "./filing.tsx";
 import { Listening } from "./listening.tsx";
+import { Problem } from "./problem.tsx";
 import { Recorder } from "./recorder.ts";
 import { Saved } from "./saved.tsx";
 import { Recorded, Stopped } from "./stopped.tsx";
@@ -30,10 +31,6 @@ function useLevels(listening: boolean, fake: boolean) {
     return () => clearInterval(timer);
   }, [listening, fake]);
   return { levels, push };
-}
-
-function Close() {
-  return <button className="close" aria-label="Dismiss" onClick={() => api.dismiss()}>×</button>;
 }
 
 function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
@@ -57,17 +54,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
     case "recorded":
       return <Recorded state={state} />;
     case "error":
-      return (
-        <div className="hud card" role="alert">
-          <Close />
-          <div className="row"><span className="warn">!</span>{state.message}</div>
-          {state.detail && <p className="detail">{state.detail}</p>}
-          <div className="actions">
-            {state.action && <button className="btn" onClick={() => api.openSettingsFor(state.action ?? "")}>{state.actionLabel ?? "Open Settings"}</button>}
-            <button className="btn primary" onClick={() => api.dismiss()}>OK</button>
-          </div>
-        </div>
-      );
+      return <Problem state={state} />;
     case "preparing":
       // Zel idles: no agent runs. Only the headline is a live region, so VoiceOver hears the start once, not each step.
       return (
@@ -181,8 +168,10 @@ function App() {
     }
   }), []);
 
+  // The panel is click-through where nothing is drawn: the pointer entering a piece that is drawn makes the window take it (and hold
+  // a card up), and leaving it gives it back. The wrapper takes no pointer itself (see `.app` in styles.css), only the pieces in it do.
   return (
-    <div onMouseEnter={() => { api.setInteractive(true); api.keepOpen(true); }} onMouseLeave={() => { api.setInteractive(false); api.keepOpen(false); }}>
+    <div className="app" onMouseEnter={() => { api.setInteractive(true); api.keepOpen(true); }} onMouseLeave={() => { api.setInteractive(false); api.keepOpen(false); }}>
       <Capsule state={state} levels={levels} />
     </div>
   );
