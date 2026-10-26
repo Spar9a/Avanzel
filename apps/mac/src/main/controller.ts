@@ -886,6 +886,7 @@ export class Controller {
       fakeMic: !!process.env.AVANZEL_FAKE_AUDIO,
       microphoneId: this.store.get().microphoneId,
       fileMode: recording.fileMode,
+      review: reviewTime(this.openReview()),
       hint: this.hintFor(mode),
       ...(shot ? { thumbnail: shot.thumbnail, context: shot.context } : {}),
     });
@@ -1214,8 +1215,13 @@ export class Controller {
     });
   }
 
-  /** Filing starts right away; Edit can stop it until it ends. */
+  /**
+   * Filing starts right away; Edit can stop it until it ends. While another run of the app's own has its queue (a filing, a
+   * review, a take-back: one agent runs at a time), the card says it waits (`waiting`), as it does for the library's lock, until
+   * its turn comes and `runFiling` starts the run (`startRun`): it is not working yet, and its seconds have not begun.
+   */
   private beginFiling(job: FilingJob): void {
+    if (this.queued > 0) job.waiting = true;
     this.showFiling(job);
     this.queuedToFile.add(job.capturePath);
     void this.enqueue(() => this.runFiling(job));
@@ -1315,9 +1321,11 @@ export class Controller {
 
   /**
    * `job`'s seconds start now, as its run has the library (the wait for it, in the queue or at the engine's lock, is no
-   * filing's time), and its card, if it shows, is told. Before its first step, the agent is as quiet as it ever was.
+   * filing's time), and its card, if it shows, is told. The wait for its turn in the queue (`beginFiling`) is over. Before its
+   * first step, the agent is as quiet as it ever was.
    */
   private startRun(job: FilingJob): void {
+    job.waiting = false;
     job.startedAt = Date.now();
     job.stepAt = job.startedAt;
     this.refreshFiling(job);
@@ -1954,6 +1962,7 @@ export class Controller {
       stepAt: now,
       correction: correction ?? job.correction,
     };
+    if (this.queued > 0) next.waiting = true; // behind the stopped run, if it is not over: as `beginFiling` says
     this.showFiling(next);
     void this.enqueue(async () => {
       const problem = await this.takeBack(job); // first: undoing a finished filing puts the misheard capture back in the inbox

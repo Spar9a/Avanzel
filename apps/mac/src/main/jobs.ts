@@ -50,7 +50,10 @@ export interface FilingJob {
   correction?: Correction;
   /** A line under the words on the filing card, e.g. why the recording itself wasn't kept. */
   detail?: string;
-  /** Its run waits for the library (another run has it); the filing card says so until the run starts. */
+  /**
+   * Its run waits: for its turn in the app's queue (another run of Avanzel's own has it: `beginFiling`), or for the library (another
+   * run has it, which the engine tells: `filingProgress`). The filing card says so until the run starts (`startRun`).
+   */
   waiting?: boolean;
   /**
    * Filed in the background, with no card (`fileInBackground`): by the wait for a usage limit's reset, which was due at `until`

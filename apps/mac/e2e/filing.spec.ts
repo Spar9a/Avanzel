@@ -186,6 +186,9 @@ test("the editor is a card of paper with the words in a text area, and Cancel an
   const words = card.getByRole("textbox", { name: "Your words" });
   await expect(words).toHaveValue("Plant tulips in October");
   await expect(words).toBeFocused();
+  // The field is where the words are written, so the card has no ruling under it: its lines would show through the field and drift
+  // across the words, which don't stand on them.
+  await expect(card).not.toHaveAttribute("data-ruled");
   // Cancel is quiet and File is the moment's one primary. There is no bar, so no live region and no Hide.
   await expect(card.getByRole("button")).toHaveText(["Cancel", "File"]);
   await expect(card.getByRole("button", { name: "Cancel", exact: true })).toHaveAttribute("data-variant", "quiet");
@@ -1584,7 +1587,7 @@ for (const [name, onThisMac] of [["the engine's model", true], ["a command", fal
     const capsule = await windowFor(app, "capsule");
     await dictate(app);
     await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
-    await expect(capsule.getByText(onThisMac ? /^Transcribed on this Mac in \d+\.\d seconds$/ : /^Transcribed in \d+\.\d seconds$/)).toBeVisible();
+    await expect(capsule.getByText(onThisMac ? /^Transcribed on this Mac in \d+\.\d s$/ : /^Transcribed in \d+\.\d s$/)).toBeVisible();
     expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filing", onThisMac });
     await app.close();
   });
@@ -1933,11 +1936,22 @@ test("the seconds a filing took leave out the time it waited behind another", as
     FAKE_AGENT_DELAY_TASK: "file",
     ...onlyAgentsIn(agentStubs()),
   });
+  const capsule = await windowFor(app, "capsule");
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
   // A second thought, typed, is filed after the first: the app runs one agent at a time, so it waits its turn in the queue,
   // which the engine's wait for the library doesn't tell.
   await call(app, "submitQuick", "Call the plumber on Monday");
+  // Its card says so at once, as it does for the library's wait: the same line, and no seconds to count, until its turn.
+  await expect.poll(() => factsOf(app), { timeout: 10_000 }).toMatchObject({ kind: "filing", text: "Call the plumber on Monday", waiting: true });
+  const card = capsule.getByRole("article");
+  await expect(card.getByText("Waiting for another Avanzel run to finish…", { exact: true })).toBeVisible();
+  await expect(capsule.getByText(/^\d+ s( of about \d+)?$/)).toHaveCount(0);
+  // Its turn ends the wait and starts its seconds: its card is the one that counts, with its own run.
+  await expect.poll(async () => (await factsOf(app)).waiting ?? false, { timeout: 30_000, intervals: [100] }).toBe(false);
+  expect(await factsOf(app)).toMatchObject({ kind: "filing", text: "Call the plumber on Monday" });
+  await expect(card.getByText(/^\d+ s of about \d+$/)).toBeVisible();
+  await expect(card.getByText("Waiting for another Avanzel run to finish…", { exact: true })).toHaveCount(0);
   await expect.poll(() => durationsKept(userData, library).fake?.length, { timeout: 60_000 }).toBe(2);
   // Each took about its own pause (4 s) and a little. Were the second's wait for the first in its seconds, it would have taken
   // about 8. The limit sits between them, with a margin of about 2 s on each side for a Mac that is slow or busy.
@@ -2603,7 +2617,8 @@ test("a filing's card is the words on paper over a bar with Hide, Edit and Stop,
   const card = capsule.getByRole("article");
   await expect(card.getByText("Thought", { exact: true })).toBeVisible();
   await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
-  await expect(card.getByText(/^Transcribed on this Mac in \d+\.\d seconds$/)).toBeVisible();
+  await expect(card.getByText(/^Transcribed on this Mac in \d+\.\d s$/)).toBeVisible();
+  await expect(card).toHaveAttribute("data-ruled", ""); // the words are written on the card's ruling
   const seconds = card.getByText(/^\d+ s of about 15$/);
   await expect(seconds).toBeVisible();
   // None of it is in the bar's live region, so VoiceOver hears a filing start and end, and not each second or each step.
@@ -2625,7 +2640,8 @@ test("a filing card counts its seconds on the paper, towards the estimate and pa
   // Towards the estimate: whole seconds, and about how many it is. The card goes on counting by itself.
   await call(app, "setCapsule", filingCard({ startedAt: Date.now() - 6_000 }));
   await expect(card.getByText(/^[67] s of about 15$/)).toBeVisible();
-  await expect(card.getByText("8 s of about 15", { exact: true })).toBeVisible({ timeout: 6_000 });
+  // (Any later count will do: the poll that reads it comes once a second, and a Mac that is busy may read it a second late.)
+  await expect(card.getByText(/^(8|9|1[0-4]) s of about 15$/)).toBeVisible({ timeout: 8_000 });
   // Past it, it just counts.
   await call(app, "setCapsule", filingCard({ startedAt: Date.now() - 18_000 }));
   await expect(card.getByText(/^(18|19) s$/)).toBeVisible();
@@ -2659,7 +2675,7 @@ test("a filing card's line is the agent's newest step, or says it is still worki
   const working = card.getByText("Claude Code is still working…", { exact: true });
   // Before the first step there is no line, only how the words were made.
   await call(app, "setCapsule", filingCard({ transcribedIn: 1.4 }));
-  await expect(card.getByText("Transcribed on this Mac in 1.4 seconds", { exact: true })).toBeVisible();
+  await expect(card.getByText("Transcribed on this Mac in 1.4 s", { exact: true })).toBeVisible();
   await expect(card.getByText(/Reading|New idea|Updated|Added|still working|Waiting/)).toHaveCount(0);
   // Then the newest step, and only it, over how the words were made.
   await call(app, "setCapsule", filingCard({ rows }));
@@ -2702,9 +2718,11 @@ test("a long thought is cut off after four lines and keeps its line breaks, and 
   const card = capsule.getByRole("article");
   const words = card.getByText(long, { exact: true });
   await expect(words).toBeVisible();
-  // All the words are in the page (to select and to read aloud), and four lines of the card's ruling (21 px each) show.
-  expect(await words.evaluate((el) => ({ shown: el.clientHeight, whole: el.scrollHeight }))).toMatchObject({ shown: 84 });
-  expect(await words.evaluate((el) => el.scrollHeight)).toBeGreaterThan(84);
+  // All the words are in the page (to select and to read aloud), and four lines of the card's ruling show: the box is as tall as
+  // four of the card's own lines (21 px each now), whatever its line pitch is.
+  const cut = await words.evaluate((el) => ({ shown: el.clientHeight, whole: el.scrollHeight, pitch: parseFloat(getComputedStyle(el).lineHeight) }));
+  expect(cut.shown).toBe(4 * cut.pitch);
+  expect(cut.whole).toBeGreaterThan(cut.shown);
   // A step with a long title stays on one line: it is cut off, and the card is no wider than the bar.
   const step = card.getByText(`New idea page: ${title}`, { exact: true });
   await expect(step).toBeVisible();
@@ -2727,10 +2745,11 @@ test("a long thought is cut off after four lines and keeps its line breaks, and 
 });
 
 test("a filing card says the agent is still working once eight seconds pass with no step", async () => {
-  // The stand-in takes nine seconds before it does anything (FAKE_AGENT_DELAY_MS), and then files at once. Not FAKE_AGENT_STEP_MS:
-  // that pauses before every step, which would pass the library's 30 s limit.
+  // The stand-in takes twelve seconds before it does anything (FAKE_AGENT_DELAY_MS), and then files at once, so the line shows for
+  // about four seconds, from the eighth: long enough for a once-a-second poll on a busy Mac. Not FAKE_AGENT_STEP_MS: that pauses
+  // before every step, which would pass the library's 30 s limit.
   const bin = agentStubs({ claude: filingClaude() });
-  const { app, capsule } = await claudeLibrary(bin, { env: { FAKE_AGENT_DELAY_MS: "9000", FAKE_AGENT_DELAY_TASK: "file" } });
+  const { app, capsule } = await claudeLibrary(bin, { env: { FAKE_AGENT_DELAY_MS: "12000", FAKE_AGENT_DELAY_TASK: "file" } });
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
   const began = Date.now();
@@ -2773,5 +2792,33 @@ test("Stop on the filing card is busy while the stop waits for the library, and 
   }
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("cancelled");
   expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
+  await app.close();
+});
+
+test("a filing queued behind a long one says it waits, however long, and never that it is still working", async () => {
+  // The first filing takes twelve seconds. The second waits for it in the app's queue, with no step and no run of its own, for
+  // longer than the eight quiet seconds after which a card says its agent is still working: it is not working yet.
+  const { app, capsule } = await launchOn(await makeLibrary(), { FAKE_AGENT_DELAY_MS: "12000", FAKE_AGENT_DELAY_TASK: "file" });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  await call(app, "submitQuick", "Call the plumber on Monday");
+  await expect.poll(() => factsOf(app), { timeout: 10_000 }).toMatchObject({ kind: "filing", text: "Call the plumber on Monday", waiting: true });
+  const card = capsule.getByRole("article");
+  const watched = Date.now();
+  let looks = 0;
+  while (Date.now() - watched < 8_600) {
+    // Through the eighth second and a little past it: the card, as a person reads it, and the state it is drawn from.
+    expect(await card.getByText(/is still working/).count()).toBe(0);
+    expect(await card.getByText("Waiting for another Avanzel run to finish…", { exact: true }).count()).toBe(1);
+    expect(await factsOf(app)).toMatchObject({ kind: "filing", text: "Call the plumber on Monday", waiting: true });
+    looks++;
+    await sleep(250);
+  }
+  expect(looks).toBeGreaterThan(10);
+  // Its turn comes when the first is filed: the wait is over, and its own run has begun.
+  await expect.poll(async () => (await factsOf(app)).waiting ?? false, { timeout: 30_000, intervals: [100] }).toBe(false);
+  expect(await factsOf(app)).toMatchObject({ kind: "filing", text: "Call the plumber on Monday" });
+  await stop(capsule); // the second filing is given up: there is no need to wait twelve seconds more for it
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("cancelled");
   await app.close();
 });

@@ -63,6 +63,12 @@ export type CapsuleState =
       /** When its words are filed, now or at the evening review; null where there is nothing to switch (the controller's `toggleFileMode`). */
       fileMode: FileMode | null;
       /**
+       * When the open library's evening review files a capture saved for it, worded as for `cancelled`'s `review` (`reviewTime`): "at
+       * 21:00", "on Sundays at 18:00"; "" when its schedule can't be read; null while the review is off. Read when the recording
+       * starts. The file-mode button names it (`fileModeLabel`), so that it promises no review that won't come.
+       */
+      review: string | null;
+      /**
        * The shortcut that finishes this recording, for the card to name while the first recordings teach the keys: Record a
        * thought's, or Capture screen with a comment's for a screen comment. Set until the controller's `HINT_CAPTURES` recordings
        * have been kept, and while that shortcut is registered; null otherwise.

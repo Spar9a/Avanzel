@@ -162,13 +162,33 @@ function capsuleStates(): [string, CapsuleState, string][] {
   ];
   const context = { app: "Safari", title: "Shure MV7+ Podcast Microphone", url: "https://www.shure.com/mv7" };
   return [
-    // The hint's card above the bar, and the bar's one button: this capture's file mode.
-    ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", hint: "Alt+Space" }, "Files now"],
-    ["listening, tonight", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null }, "Files tonight"],
+    // The hint's card above the bar, and the bar's one button: this capture's file mode, worded from the evening review.
+    [
+      "listening",
+      { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", hint: "Alt+Space", review: "at 21:00" },
+      "Files now",
+    ],
+    [
+      "listening, filing at the review",
+      { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null, review: "at 21:00" },
+      "Files at 21:00",
+    ],
+    // The longest label: a weekly review's day and time.
+    [
+      "listening, filing at a weekly review",
+      { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null, review: "on Sundays at 18:00" },
+      "Files on Sundays at 18:00",
+    ],
+    // With the review off nothing files the capture, so the button says where it stays.
+    [
+      "listening, review off",
+      { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null, review: null },
+      "Stays in your inbox",
+    ],
     // A screen comment: the screenshot on a card labelled with the app, the key that finishes it, and no file mode to switch.
     [
       "listening, a screen comment",
-      { kind: "listening", mode: "comment", startedAt: Date.now(), fakeMic: true, microphoneId: null, thumbnail, context, fileMode: null, hint: "Alt+Shift+S" },
+      { kind: "listening", mode: "comment", startedAt: Date.now(), fakeMic: true, microphoneId: null, thumbnail, context, fileMode: null, hint: "Alt+Shift+S", review: "at 21:00" },
       "Safari",
     ],
     ["transcribing", { kind: "transcribing", mode: "dictate", onThisMac: true }, "Transcribing on this Mac…"],
@@ -246,7 +266,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
     ],
     ["editing", { kind: "editing", text: said }, "Edit before filing"],
     ["filed", { kind: "filed", agent: "Claude Code", seconds: 23, pages, canUndo: true, message: "Filed.", noted: false }, "Filed by Claude Code"],
-    ["saved", { kind: "saved", text: "This mic looks right for the podcast", thumbnail, context, note: "Saved to your inbox for tonight's review" }, "Saved to your inbox"],
+    ["saved", { kind: "saved", text: "This mic looks right for the podcast", thumbnail, context, note: "Saved to your inbox for the evening review at 21:00." }, "Saved to your inbox"],
     ["error", { kind: "error", message: "Claude Code couldn't file this note", detail: "Error: rate limited\nThe note is still in your inbox; the evening review will try again.", action: "open-settings:agents" }, "Claude Code couldn't file this note"],
     ["preparing", { kind: "preparing", receivedBytes: 412_000_000, totalBytes: 672_807_563 }, "The speech model is still downloading"],
     [

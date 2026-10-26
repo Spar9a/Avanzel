@@ -3,19 +3,16 @@ import { Actions, Button, CapsuleBar, CapsuleNotice, Hud, Progress, Row, Stack, 
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
-import type { AvanzelBridge, CapsuleState, FiledPage } from "../../shared/ipc.ts";
+import type { CapsuleState, FiledPage } from "../../shared/ipc.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
-import { Editor, Filing, Listening, Transcribing } from "./progress.tsx";
+import { api } from "./api.ts";
+import { Editor } from "./editor.tsx";
+import { Filing } from "./filing.tsx";
+import { Listening } from "./listening.tsx";
 import { Recorder } from "./recorder.ts";
+import { Transcribing } from "./transcribing.tsx";
 import "./styles.css";
 
-declare global {
-  interface Window {
-    avanzel: AvanzelBridge;
-  }
-}
-
-const api = window.avanzel.capsule;
 const BARS = 16;
 
 /** Whole megabytes, as macOS counts them. */

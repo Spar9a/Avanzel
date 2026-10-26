@@ -15,7 +15,7 @@ body {
   user-select: none;
 }
 
-/* A bar with a card above it (progress.tsx): all as wide as the notices below. */
+/* A bar with a card above it (listening, transcribing, filing and editor): all as wide as the notices below. */
 .stack {
   display: flex;
   flex-direction: column;
@@ -27,26 +27,31 @@ body {
 .hint {
   align-self: center;
 }
-/* The person's words are cut off after four lines of the card's ruling (21 px each): the panel is 300 px tall, and a card with
-   its footer's four lines, the bar and the gaps leave room for no more. */
+/* The person's words are cut off after four lines of the card's ruling (4lh, whatever its line pitch is): the panel is 300 px
+   tall, and a card with its footer's four lines, the bar and the gaps leave room for no more. */
 .words {
-  max-height: 84px;
+  max-height: 4lh;
   overflow: hidden;
   white-space: pre-wrap;
 }
-/* A screen comment's screenshot, a thumbnail on its card, in the 16:10 of a display. */
+/* A screen comment's screenshot, a thumbnail on its card, in the 16:10 of a display, with room above it, under the card's red
+   rule, as below it. */
 .thumbnail {
   display: block;
   width: 192px;
   max-width: 100%;
   height: 120px;
-  margin-bottom: var(--av-space-8);
+  margin: var(--av-space-8) 0;
   object-fit: cover;
 }
 /* The editor's text area, with room above and below it on the paper. */
 .editor {
   padding: var(--av-space-8) 0;
 }
+/* A notice or a card from @avanzel/ui in a state that isn't one of the above (preparing, a failed download, a taken shortcut), as
+   wide as the cards above; .fill takes the rest of its row. */
+.slot { width: 420px; max-width: 100%; }
+.slot .fill { flex: 1; min-width: 0; }
 
 /* Legacy cards. */
 :root {
@@ -97,7 +102,3 @@ button.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px
 .ctx .meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .ctx .meta small { color: rgba(255, 255, 255, 0.6); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctx .meta b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* A card from @avanzel/ui, as wide as the cards above; .fill takes the rest of its row. */
-.slot { width: 420px; max-width: 100%; }
-.slot .fill { flex: 1; min-width: 0; }
