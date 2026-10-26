@@ -106,6 +106,17 @@ export function unrecordedEdits(outcome: Pick<FileOutcome, "commit" | "changes">
 }
 
 /**
+ * What to do with a filing that was stopped, once its run is over, given what the run left (`outcome`; undefined when there was
+ * no run: Stop came before its turn, or the wait for the library ended with the run stopped). Stop may come after the agent has
+ * finished and before the result is shown. A run that filed (`ok`) and left no commit stands as "filed": nothing records it
+ * (the library has no git, or automatic commits off), so there is nothing to take back, and the note is archived. Anything else is
+ * "take-back": the commit the run left, if any, is undone, which puts the words back in the inbox.
+ */
+export function afterStop(outcome: Pick<FileOutcome, "ok" | "commit"> | undefined): "filed" | "take-back" {
+  return outcome?.ok && !outcome.commit ? "filed" : "take-back";
+}
+
+/**
  * What is at the library's place now: nothing ("missing"), an Avanzel library, a folder holding nothing but Finder's
  * .DS_Store ("empty"), or anything else ("has-files"), a file in the folder's place included.
  */

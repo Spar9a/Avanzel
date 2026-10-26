@@ -6,6 +6,7 @@ import {
   markRan,
   normalizeRunState,
   resetMarginMs,
+  reviewTime,
   savedNote,
   signInPollMs,
   signInWatchMs,
@@ -179,6 +180,15 @@ describe("the times tests can shorten", () => {
   });
 });
 
+/**
+ * Schedules neither sentence can word. Main sends only what the engine formats, but a task a person edits may leave one. A day
+ * that is no day's short name is among them, and so are "constructor" and "toString", which every object has as a property.
+ */
+const UNREADABLE = [
+  "", "every day", "monthly 1 10:00", "daily 9pm", "daily 21:00 sharp", "weekly sun", "weekly funday 18:00",
+  "weekly constructor 18:00", "weekly toString 18:00",
+];
+
 describe("what a thought saved for the evening review says", () => {
   it("names the review's own time while it is on, as General says when it runs", () => {
     expect(savedNote({ schedule: "daily 21:00", enabled: true })).toBe("Saved to your inbox for the evening review at 21:00.");
@@ -189,5 +199,38 @@ describe("what a thought saved for the evening review says", () => {
   it("promises no review while it is off, or when the library has none: nothing files the thought by itself", () => {
     expect(savedNote({ schedule: "daily 21:00", enabled: false })).toBe("Saved to your inbox.");
     expect(savedNote(null)).toBe("Saved to your inbox.");
+  });
+
+  it("names no time for a review whose schedule it can't read, and still promises the review", () => {
+    for (const schedule of UNREADABLE) expect(savedNote({ schedule, enabled: true }), schedule).toBe("Saved to your inbox for the evening review.");
+  });
+});
+
+describe("when the evening review files a note that Stop left in the inbox", () => {
+  it("words the review's own time while it is on: at the hour, and on its day for a weekly one", () => {
+    expect(reviewTime({ schedule: "daily 21:00", enabled: true })).toBe("at 21:00");
+    expect(reviewTime({ schedule: "daily 07:30", enabled: true })).toBe("at 07:30");
+    expect(reviewTime({ schedule: "weekly sun 18:00", enabled: true })).toBe("on Sundays at 18:00");
+    expect(reviewTime({ schedule: "weekly mon 09:15", enabled: true })).toBe("on Mondays at 09:15");
+  });
+
+  it("is empty for a schedule it can't read, so that the sentence names no time", () => {
+    for (const schedule of UNREADABLE) expect(reviewTime({ schedule, enabled: true }), schedule).toBe("");
+  });
+
+  it("is null while the review is off, or when the library has none: nothing files the note by itself", () => {
+    expect(reviewTime({ schedule: "daily 21:00", enabled: false })).toBeNull();
+    expect(reviewTime({ schedule: "weekly sun 18:00", enabled: false })).toBeNull();
+    expect(reviewTime({ schedule: "not a schedule", enabled: false })).toBeNull(); // off wins over a schedule nobody reads
+    expect(reviewTime(null)).toBeNull();
+  });
+
+  it("reads a schedule as savedNote does: the same time, worded for its own sentence", () => {
+    // The days and hours savedNote names are the ones reviewTime names, for every day of the week.
+    for (const [short, long] of Object.entries({ mon: "Mondays", tue: "Tuesdays", wed: "Wednesdays", thu: "Thursdays", fri: "Fridays", sat: "Saturdays", sun: "Sundays" })) {
+      const review = { schedule: `weekly ${short} 06:05`, enabled: true };
+      expect(reviewTime(review)).toBe(`on ${long} at 06:05`);
+      expect(savedNote(review)).toBe(`Saved to your inbox for the evening review, ${long} at 06:05.`);
+    }
   });
 });

@@ -1,7 +1,7 @@
 // When things happen: which shadow tasks should run now (a task seen for the first time is only remembered, so a fresh
 // install never fires yesterday's run; a run missed while the Mac slept happens once), when a note that a usage limit
-// stopped is filed again, and when a thought saved for the evening review is filed, as the capsule tells it. And how long a
-// filing takes, as the last ones of each agent tell it: the estimate the filing card shows.
+// stopped is filed again, and when a thought saved for the evening review, or a note that Stop left in the inbox, is filed, as
+// the capsule tells it. And how long a filing takes, as the last ones of each agent tell it: the estimate the filing card shows.
 
 export interface SchedulableTask {
   id: string;
@@ -15,6 +15,19 @@ const DAY_NAMES: Readonly<Record<string, string>> = {
 };
 
 /**
+ * When a review runs, read from its schedule as main sends it ("daily 21:00", "weekly sun 18:00"): its time, and for a weekly
+ * review the name of its day ("Sunday"; null for a daily one). Null for a schedule it can't read, and for a weekly one whose day
+ * isn't a day's short name (`DAY_NAMES`' own keys: "constructor" is no day).
+ */
+function readSchedule(schedule: string): { time: string; day: string | null } | null {
+  const daily = /^daily (\d\d:\d\d)$/.exec(schedule);
+  if (daily) return { time: daily[1] ?? "", day: null };
+  const weekly = /^weekly (\w+) (\d\d:\d\d)$/.exec(schedule);
+  const key = weekly?.[1] ?? "";
+  return weekly && Object.hasOwn(DAY_NAMES, key) ? { time: weekly[2] ?? "", day: DAY_NAMES[key] ?? null } : null;
+}
+
+/**
  * What the capsule says of a thought saved for the evening review to file (Tonight, and every screen capture). While the
  * library's evening review is on, it names when that review runs, as Settings → General does: "at 21:00" for a daily one, and
  * by its day for a weekly one. `review` is that review, its schedule as main sends it ("daily 21:00", "weekly sun 18:00"); with
@@ -22,11 +35,25 @@ const DAY_NAMES: Readonly<Record<string, string>> = {
  */
 export function savedNote(review: { schedule: string; enabled: boolean } | null): string {
   if (!review?.enabled) return "Saved to your inbox.";
-  const daily = /^daily (\d\d:\d\d)$/.exec(review.schedule);
-  if (daily) return `Saved to your inbox for the evening review at ${daily[1]}.`;
-  const weekly = /^weekly (\w+) (\d\d:\d\d)$/.exec(review.schedule);
-  const day = weekly ? DAY_NAMES[weekly[1] ?? ""] : undefined;
-  return weekly && day ? `Saved to your inbox for the evening review, ${day}s at ${weekly[2]}.` : "Saved to your inbox for the evening review.";
+  const when = readSchedule(review.schedule);
+  if (!when) return "Saved to your inbox for the evening review.";
+  return when.day
+    ? `Saved to your inbox for the evening review, ${when.day}s at ${when.time}.`
+    : `Saved to your inbox for the evening review at ${when.time}.`;
+}
+
+/**
+ * When the evening review files a note that Stop left in the inbox, worded to follow "files it" (the capsule's Stopped card): "at
+ * 21:00" for a daily review, "on Sundays at 18:00" for a weekly one, read from its schedule as `savedNote` reads it. "" for a
+ * schedule it can't read, so that the sentence names no time. Null while the review is off, or the library has none: nothing
+ * files the note by itself then, and the sentence that names the review is left out. It never says "tonight": a weekly review
+ * isn't tonight's.
+ */
+export function reviewTime(review: { schedule: string; enabled: boolean } | null): string | null {
+  if (!review?.enabled) return null;
+  const when = readSchedule(review.schedule);
+  if (!when) return "";
+  return when.day ? `on ${when.day}s at ${when.time}` : `at ${when.time}`;
 }
 
 export function dueTasks(

@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { Changes, loadSettings, saveSettings, Vault } from "@avanzel/engine";
 import {
+  afterStop,
   answerSources,
   bestAgent,
   flightTarget,
@@ -161,6 +162,16 @@ describe("setup model", () => {
     expect(unrecordedEdits({ commit: null, changes: new Changes([], [], []) })).toBe(0); // it changed nothing
     expect(unrecordedEdits({ commit: "9f2c1d0e", changes })).toBe(0); // a commit holds them: taking it back is `partial`'s
     expect(unrecordedEdits(undefined)).toBe(0); // Cancel came before the run had its turn
+  });
+
+  it("afterStop lets a filing that finished with no commit to take back stand, and takes everything else back", () => {
+    // Stop came after the agent had finished, before the result was shown. Nothing records such a filing (no git, or automatic
+    // commits off), so there is nothing to take back: the capture is archived and the pages are written, and it is filed.
+    expect(afterStop({ ok: true, commit: null })).toBe("filed");
+    expect(afterStop({ ok: true, commit: "9f2c1d0e" })).toBe("take-back"); // a commit holds it: taking it back puts the words in the inbox
+    expect(afterStop({ ok: false, commit: null })).toBe("take-back"); // the run was stopped, or failed on its own: it filed nothing
+    expect(afterStop({ ok: false, commit: "9f2c1d0e" })).toBe("take-back"); // ... leaving a commit of its leftovers
+    expect(afterStop(undefined)).toBe("take-back"); // no run: Stop came before its turn, or the lock wait ended with the run stopped
   });
 
   it("libraryAgent reads the agent a library files with, and nothing from a config that doesn't load", async () => {

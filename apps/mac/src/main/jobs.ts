@@ -83,7 +83,11 @@ export interface FilingJob {
    * `job`), and once the window has closed, by notification, as any filing whose card isn't showing does.
    */
   setup?: boolean;
-  /** Cancel, in setup, stopped the run: what it did is taken back (`cancelSetupFiling`), not shown. */
+  /**
+   * Cancel, in setup, or Stop, in the capsule, stopped the run: what it did is taken back (`cancelSetupFiling`, `cancelFiling`),
+   * not shown. Except a filing that Stop caught as it filed with no commit to take back, which stands (`afterStop`). While this is
+   * set the capsule's card says the filing is stopping (`filingState`).
+   */
   cancelled?: boolean;
 }
 

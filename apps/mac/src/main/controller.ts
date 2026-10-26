@@ -115,6 +115,7 @@ import {
   markChecked,
   markRan,
   resetMarginMs,
+  reviewTime,
   savedNote,
   signInPollMs,
   signInWatchMs,
@@ -126,7 +127,7 @@ import {
 } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
-import { defaultLibraryPath, tildePath, tooBroad } from "./setup-model.ts";
+import { afterStop, defaultLibraryPath, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
@@ -149,6 +150,8 @@ const AUDIO_TIMEOUT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env
 const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PREPARING_SHOW_MS)) || 8_000;
 // How long the capsule says that a shortcut picked on its notice works.
 const PICKED_SHOW_MS = 3_000;
+// How long the capsule says that a filing is stopped (hovering over it keeps it longer, as it does any card that hides itself).
+const STOPPED_SHOW_MS = 6_000;
 // How many characters of an agent's own line (or of the error's lines, on the card of corrected words that weren't saved) the
 // capsule's failure card, and the notification of the same words, keep: the legacy card shows about four lines of its body, and
 // the sentence that says what is safe must not be among those it cuts off. The windows don't clip, and tell the whole line.
@@ -1072,9 +1075,10 @@ export class Controller {
 
   /**
    * What the capsule's card says of `job`'s filing: its words, the steps the agent has taken, the seconds it has run for and
-   * about how many it takes (`estimate`, fixed when the card first showed, `showFiling`). `onThisMac` is where the words were
-   * made, as the card first said (`transcribesOnThisMac`), which a later state keeps rather than read the library's settings
-   * again at each step.
+   * about how many it takes (`estimate`, fixed when the card first showed, `showFiling`), and that it is stopping once Stop was
+   * pressed (`cancelling`). All of it is read from the job, so that a step or a wait that rebuilds the state can't undo any of
+   * it. `onThisMac` is where the words were made, as the card first said (`transcribesOnThisMac`), which a later state keeps
+   * rather than read the library's settings again at each step.
    */
   private filingState(job: FilingJob, onThisMac: boolean): FilingState {
     return {
@@ -1090,6 +1094,7 @@ export class Controller {
       startedAt: job.startedAt,
       estimate: job.estimate ?? DEFAULT_ESTIMATE_SECONDS, // set by showFiling, before any card shows
       stepAt: job.stepAt,
+      ...(job.cancelled ? { cancelling: true as const } : {}), // Stop is the job's to remember: no step or wait takes it off the card
     };
   }
 
@@ -1204,7 +1209,7 @@ export class Controller {
 
   private async runFiling(job: FilingJob): Promise<void> {
     this.queuedToFile.delete(job.capturePath); // its turn: should it not file the capture, a review may
-    if (job.abort.signal.aborted) return; // Edit, or Cancel in setup, stopped it before its turn came
+    if (job.abort.signal.aborted) return; // Edit, Cancel in setup or Stop in the capsule stopped it before its turn came
     if (!existsSync(job.capturePath)) return this.noteGone(job); // already filed meanwhile (e.g. by another Avanzel on this library)
     const library = this.vault; // the note's own: another library may open while the agent runs
     this.startRun(job); // its turn: the seconds count from here, not from when the queue took it in
@@ -1226,17 +1231,21 @@ export class Controller {
       tell.cancel(); // the run is over: the state that ends it is shown at once, and no step is left to tell
     }
     job.outcome = outcome;
-    // Edit takes back what this run did (`refile`), and so does Cancel in setup (`cancelSetupFiling`).
-    if (job.edited || job.cancelled || this.quitting) return;
+    // Edit takes back what this run did (`refile`), and so does Cancel in setup (`cancelSetupFiling`) and Stop in the capsule
+    // (`settleStop`). Except a filing that Stop caught as it filed, with no commit to take back: it stands (`afterStop`).
+    const stopped = job.cancelled && (job.setup || afterStop(outcome) === "take-back");
+    if (job.edited || stopped || this.quitting) return;
     const seconds = Math.max(0, (Date.now() - job.startedAt) / 1000);
     // No outcome at all: the capture left the inbox while the run waited for the library, and another Avanzel filed it. As when
     // the note was gone before the run's turn, setup's window says so while it is open, and there is nothing else to tell: the
     // agent didn't stop without filing, and its card or notification would say that, and that the note is in the inbox.
-    if (!outcome) return this.noteGone(job);
+    if (!outcome || !library) return this.noteGone(job); // (an outcome comes from a run made with `library`: this only narrows its type)
     if (!outcome.ok) return this.filingFailed(job, outcome.error || outcome.message || "The agent stopped without filing.", outcome, library);
-    const vault = this.requireVault();
-    job.pages = filedPages(vault.root, outcome.changes);
-    this.recent = [...job.pages, ...this.recent.filter((p) => !job.pages?.some((q) => q.path === p.path))].slice(0, 3);
+    // The pages are the note's own library's, the one it was filed in. The menu lists the open library's recent pages, so it
+    // takes them only while that library is the open one: not once it has closed, or another has opened.
+    const pages = filedPages(library.root, outcome.changes);
+    job.pages = pages;
+    if (this.vault?.root === library.root) this.recent = [...pages, ...this.recent.filter((p) => !pages.some((q) => q.path === p.path))].slice(0, 3);
     this.keepDuration(job, library, seconds);
     this.noteFiled((capture) => capture === job.capturePath);
     // Setup's thought is filed, which counts whether its window is still there to show it or has closed (§5.4).
@@ -1409,9 +1418,14 @@ export class Controller {
    * while it is on; only that the thought is saved, while it is off.
    */
   private savedLine(): string {
+    return savedNote(this.openReview());
+  }
+
+  /** The open library's evening review while it is on, its schedule as main sends it ("daily 21:00"): what the capsule words of it. Null while it is off. */
+  private openReview(): { schedule: string; enabled: boolean } | null {
     const vault = this.vault;
     const review = vault ? this.safeTasks(vault).find((task) => task.kind === "evening-review" && task.enabled) : undefined;
-    return savedNote(review ? { schedule: formatSchedule(review.schedule), enabled: true } : null);
+    return review ? { schedule: formatSchedule(review.schedule), enabled: true } : null;
   }
 
   /** How long a library lets an agent run, in seconds: the open library's unless `vault` (a note's own) is given. */
@@ -1685,16 +1699,60 @@ export class Controller {
 
   /**
    * Stops the agent at once and shows the words; Submit or Cancel then takes back what it did
-   * (`refile`). Not while quitting: the editor would close with the app, and its words with it.
+   * (`refile`). Not while quitting: the editor would close with the app, and its words with it. Nor once Stop has stopped the
+   * filing (`cancelFiling`): the card is on its way to Stopped, and the editor would open on a note that is being taken back.
    */
   edit(): void {
     const job = this.job;
-    if (!job || job.edited || this.quitting || this.capsuleState.kind !== "filing") return;
+    if (!job || job.edited || job.cancelled || this.quitting || this.capsuleState.kind !== "filing") return;
     job.edited = true;
     job.abort.abort();
     this.editing.add(job.capturePath);
     this.inEditor = job;
     this.setCapsule({ kind: "editing", text: job.text });
+  }
+
+  /**
+   * Stop, on the card of a filing: its agent is stopped at once, and once the stopped run is over (queue order) what it did is
+   * taken back and the card says it is Stopped (`settleStop`), as Cancel does in setup (`cancelSetupFiling`). The note stays in
+   * the inbox. Until then the card says it is stopping (`cancelling`, which `filingState` reads from the job): that can be a
+   * while, as a filing in the wait for the library can't leave it. Only the capsule's own page is heard (`sender` is the page the
+   * message came from, `event.sender`), and only while it shows a filing that neither Stop nor Edit has taken yet: a second Stop
+   * does nothing, nor does one after Edit, or once the filing is filed. Not while quitting, which has stopped every run already.
+   */
+  cancelFiling(sender: WebContents): void {
+    const job = this.job;
+    if (!isPageOf(sender, this.capsule) || !job || job.cancelled || job.edited || this.quitting || this.capsuleState.kind !== "filing") return;
+    job.cancelled = true;
+    job.abort.abort();
+    this.refreshFiling(job);
+    void this.enqueue(() => this.settleStop(job));
+  }
+
+  /**
+   * The run of `job`, which Stop stopped, is over (this was queued behind it, so `job.outcome` is what it left), and the stop
+   * ends. A run that had filed with no commit to take back stands (`afterStop`): `runFiling` has shown it filed already. Anything
+   * else is taken back, which puts the words in the inbox, and the capsule says Stopped: `partial` when taking it back failed
+   * (what the run did stays as its own commit), and `leftovers`, how many files it changed that no commit holds. A finished
+   * filing that git refuses to take back stays filed, and the card says it can't be undone (`undoRefused`), never that the words
+   * are back in the inbox. A card that has gone meanwhile (hidden, or replaced by a newer capture's) is left as it is.
+   */
+  private async settleStop(job: FilingJob): Promise<void> {
+    if (afterStop(job.outcome) === "filed") return;
+    const problem = await this.takeBack(job);
+    if (this.job !== job || this.capsuleState.kind !== "filing") return;
+    if (problem !== null && job.outcome?.ok) return this.fail(undoRefused.title, undoRefused.body);
+    this.setCapsule(
+      {
+        kind: "cancelled",
+        text: job.text,
+        agent: job.agent,
+        partial: problem !== null,
+        leftovers: unrecordedEdits(job.outcome),
+        review: reviewTime(this.openReview()),
+      },
+      STOPPED_SHOW_MS,
+    );
   }
 
   /** The editor's text, sent as the owner types: what `keepEdit` saves if neither File nor Cancel comes first. */

@@ -80,6 +80,12 @@ export type CapsuleState =
       estimate: number;
       /** Date.now() when the filing last took a step, or when its run began before the first: the card says the agent is still working once this is old. */
       stepAt: number;
+      /**
+       * Stop was pressed, and the filing is stopping (`cancelFiling`): its run is stopped, and once that is over what it did is
+       * taken back. It stays until the stop is over, which can take a while: the wait for the library, if the filing is in it,
+       * can't be left. Every state of the filing says it from Stop on, whichever step or wait brings it. Absent otherwise.
+       */
+      cancelling?: true;
     }
   | { kind: "editing"; text: string }
   | {
@@ -92,6 +98,30 @@ export type CapsuleState =
       message: string;
       /** The agent filed nothing: it ended well and wrote no page, only a line in the log. */
       noted: boolean;
+    }
+  /**
+   * Stop ended a filing (`cancelFiling`): the note is in the inbox, as setup's cancelled filing has it (`SetupFiling`). It is the
+   * state of a stop that took the filing back; a stop whose take-back git refused for a filing that had finished is an error card
+   * instead (`undoRefused`), and one that came as the run filed with no commit to take back leaves the filing filed.
+   */
+  | {
+      kind: "cancelled";
+      /** The note's words. */
+      text: string;
+      /** Whose run was stopped: the copy names it when its partial edits stay. */
+      agent: string;
+      /** What the stopped run did stays, as its own commit, because taking it back failed. */
+      partial: boolean;
+      /**
+       * How many files the stopped run changed that nothing recorded, in a library without git or with automatic commits off:
+       * there is no commit to take them back from, so they stay as they are. 0 when it changed nothing, and when it was taken back.
+       */
+      leftovers: number;
+      /**
+       * When the evening review files the note, as the open library's review runs (`reviewTime`): "at 21:00", "on Sundays at
+       * 18:00"; "" when its schedule can't be read, so that the sentence names no time; null while the review is off.
+       */
+      review: string | null;
     }
   | { kind: "saved"; text: string; thumbnail?: string; context?: ScreenContext; note: string; detail?: string }
   /**
@@ -593,6 +623,13 @@ export interface AvanzelBridge {
     editDraft(text: string): void;
     submitEdit(text: string): void;
     cancelEdit(): void;
+    /**
+     * Stop, on the card of a filing: its agent is stopped at once, and once it has stopped what it did is taken back, the
+     * words staying in the inbox. The card says it is stopping (`cancelling`) and then that it is stopped (`cancelled`). Only the
+     * capsule's own page is heard, and only while it shows a filing that Stop and Edit have not taken: a second Stop does
+     * nothing, and neither does Stop once the filing is filed.
+     */
+    cancelFiling(): void;
     undo(): void;
     open(): void;
     dismiss(): void;

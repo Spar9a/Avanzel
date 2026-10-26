@@ -1,4 +1,4 @@
-// Filing with the agent: Edit while it runs, quitting while it runs, and runs that fail.
+// Filing with the agent: Edit or Stop while it runs, quitting while it runs, and runs that fail.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,6 +24,7 @@ import {
   onceMarker,
   onlyAgentsIn,
   read,
+  recentlyFiled,
   resetReported,
   shown,
   SIGNED_IN,
@@ -1569,6 +1570,7 @@ type Facts = {
   estimate?: number;
   stepAt?: number;
   seconds?: number;
+  cancelling?: boolean;
 };
 const factsOf = async (app: ElectronApplication) => (await call(app, "capsuleStateForTests")) as Facts;
 /** The kinds of the rows the capsule's state holds, oldest first: none while it shows anything but a filing. */
@@ -1961,5 +1963,546 @@ test("a filing's steps name their pages from the note's own library when another
     .poll(async () => ((await factsOf(app)).rows ?? []).find((row) => row.kind === "new")?.title, { timeout: 30_000, intervals: [100] })
     .toBe("Plant tulips in October");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await app.close();
+});
+
+// ---- Stop: a capsule filing ends, and its words go back to the inbox ----
+//
+// Stop stops the agent's run at once, and once that run is over (queue order) takes back what it did, as Cancel does in setup. The
+// note stays in the inbox. The card has no Stop button yet, so these press it as the button will: through the capsule page's bridge,
+// `window.avanzel.capsule.cancelFiling()`, which `call()` can't do, since the channel answers only the page that sends it.
+
+/** Stop, pressed on `page`, as the card's Stop will press it. */
+const stop = (page: Page) => page.evaluate(() => window.avanzel.capsule.cancelFiling());
+
+/** From now on, notes each state sent to the capsule's page (`statesSent`), oldest first. */
+async function watchStates(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ BrowserWindow }) => {
+    const capsule = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/capsule/"));
+    if (!capsule) throw new Error("There is no capsule window to watch.");
+    const sent: unknown[] = [];
+    Object.assign(globalThis, { statesSent: sent });
+    const send = capsule.webContents.send.bind(capsule.webContents);
+    capsule.webContents.send = (channel: string, ...args: unknown[]) => {
+      if (channel === "capsule:state") sent.push(JSON.parse(JSON.stringify(args[0])));
+      send(channel, ...args);
+    };
+  });
+}
+
+const statesSent = (app: ElectronApplication) => app.evaluate(() => (globalThis as { statesSent?: Facts[] }).statesSent ?? []);
+/** The kinds of the states `watchStates` noted, oldest first. */
+const kindsSent = async (app: ElectronApplication) => (await statesSent(app)).map((state) => state.kind);
+
+/** The controller as the e2e tests reach it in the main process, with the parts these tests wrap: the librarian made for each run. */
+type Wrappable = {
+  librarian(harness?: string): Promise<{ file(...args: unknown[]): Promise<unknown>; undo(...args: unknown[]): Promise<unknown> }>;
+  cancelFiling(sender: unknown): void;
+};
+/** What the wrappers leave in the main process for a test to read or call. */
+type Left = {
+  atTheEnd?: boolean;
+  letItEnd?: () => void;
+  atUndo?: boolean;
+  letUndoIn?: () => void;
+  undoCalls?: number;
+  stepsOf?: (step: unknown) => void;
+};
+const reachedTheEnd = (app: ElectronApplication) => app.evaluate(() => (globalThis as Left).atTheEnd === true);
+const reachedUndo = (app: ElectronApplication) => app.evaluate(() => (globalThis as Left).atUndo === true);
+const undoCalls = (app: ElectronApplication) => app.evaluate(() => (globalThis as Left).undoCalls ?? 0);
+
+/**
+ * From now on, Stop is pressed the moment the engine hands a filing's result back: the agent has finished, and the app has not yet
+ * looked at what it did. With `hold`, the result waits first (`atTheEnd` says that it does, `letItEnd` lets it go), so that the
+ * test can change the library in between.
+ */
+async function stopAtTheEnd(app: ElectronApplication, { hold = false } = {}): Promise<void> {
+  await app.evaluate(({ BrowserWindow }, holding) => {
+    const capsule = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/capsule/"));
+    if (!capsule) throw new Error("There is no capsule window.");
+    const controller = (globalThis as unknown as { __avanzel: Wrappable }).__avanzel;
+    const librarian = controller.librarian.bind(controller);
+    controller.librarian = async (harness) => {
+      const made = await librarian(harness);
+      const file = made.file.bind(made);
+      made.file = async (...args) => {
+        const outcomes = await file(...args);
+        if (holding) {
+          Object.assign(globalThis, { atTheEnd: true });
+          await new Promise<void>((resolve) => Object.assign(globalThis, { letItEnd: resolve }));
+        }
+        controller.cancelFiling(capsule.webContents);
+        return outcomes;
+      };
+      return made;
+    };
+  }, hold);
+}
+
+/**
+ * From now on, counts the take-backs the app asks the library for (`undoCalls`). With `hold`, each waits at its door (`atUndo`)
+ * until the test lets it in (`letUndoIn`).
+ */
+async function watchUndos(app: ElectronApplication, { hold = false } = {}): Promise<void> {
+  await app.evaluate((_electron, holding) => {
+    const controller = (globalThis as unknown as { __avanzel: Wrappable }).__avanzel;
+    const librarian = controller.librarian.bind(controller);
+    Object.assign(globalThis, { undoCalls: 0 });
+    controller.librarian = async (harness) => {
+      const made = await librarian(harness);
+      const undo = made.undo.bind(made);
+      made.undo = async (...args) => {
+        const kept = globalThis as { undoCalls?: number };
+        kept.undoCalls = (kept.undoCalls ?? 0) + 1;
+        if (holding) {
+          Object.assign(globalThis, { atUndo: true });
+          await new Promise<void>((resolve) => Object.assign(globalThis, { letUndoIn: resolve }));
+        }
+        return undo(...args);
+      };
+      return made;
+    };
+  }, hold);
+}
+
+/** From now on, keeps the function the controller hands the engine to tell a filing's steps (`stepsOf`), for a test to tell one itself. */
+async function keepSteps(app: ElectronApplication): Promise<void> {
+  await app.evaluate(() => {
+    const controller = (globalThis as unknown as { __avanzel: Wrappable }).__avanzel;
+    const librarian = controller.librarian.bind(controller);
+    controller.librarian = async (harness) => {
+      const made = await librarian(harness);
+      const file = made.file.bind(made);
+      made.file = (...args) => {
+        Object.assign(globalThis, { stepsOf: (args[1] as { steps?: unknown } | undefined)?.steps });
+        return file(...args);
+      };
+      return made;
+    };
+  });
+}
+
+/** `library`, opened by an app that hears "Plant tulips in October" and files with the engine's fake agent; `env` steers them. */
+async function launchOn(library: string, env: Record<string, string> = {}) {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_USER_DATA: userData,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
+    ...onlyAgentsIn(agentStubs()),
+    ...env,
+  });
+  return { app, library, userData, capsule: await windowFor(app, "capsule") };
+}
+
+/** The commits that took a filing or its leftovers back, newest first. */
+const undone = (library: string) => gitOut(library, "log", "--format=%s").split("\n").filter((subject) => subject.startsWith("avanzel: undo"));
+
+test("Stop ends the filing and the note stays in the inbox", async () => {
+  const runs = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-runs-")), "runs.jsonl");
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const { library, app, capsule } = await dictateToStallingAgent("Plant tulips in October", { FAKE_AGENT_RECORD: runs, AVANZEL_USER_DATA: userData });
+  const { pid } = JSON.parse(readFileSync(runs, "utf8").trim().split("\n")[0]!) as { pid: number };
+  expect(alive(pid)).toBe(true);
+  await watchStates(app);
+  await stop(capsule);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("cancelled");
+  // Stopped: its words, whose agent it was, that taking back the run's edits worked (nothing is `partial`, nothing is left over),
+  // and when the evening review files the note, which for a new library is every day at 21:00.
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "cancelled",
+    text: "Plant tulips in October",
+    agent: "fake",
+    partial: false,
+    leftovers: 0,
+    review: "at 21:00",
+  });
+  // The agent is gone, the note waits in the inbox, and what the stopped run did is taken back.
+  expect(alive(pid)).toBe(false);
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
+  expect(archived(library)).toEqual([]);
+  expect(exists(library, "goals/half.md")).toBe(false);
+  expect(read(library, "index.md")).not.toContain("left by a stalled run");
+  expect(gitOut(library, "status", "--porcelain")).toBe("");
+  // On the way the card said that it was stopping, and kept saying it until the stop was over; it never showed a failure.
+  const sent = await statesSent(app);
+  expect(sent.at(-1)?.kind).toBe("cancelled");
+  const stopping = sent.slice(0, -1);
+  expect(stopping.length).toBeGreaterThan(0);
+  expect(stopping.map((state) => [state.kind, state.cancelling])).toEqual(stopping.map(() => ["filing", true]));
+  // A stopped filing says nothing of how long a filing takes; the next one that files keeps its own seconds, so the stop left
+  // nothing out but its own.
+  await call(app, "idleForTests");
+  expect(durationsKept(userData, library)).toEqual({});
+  await call(app, "submitQuick", "Call the plumber on Monday");
+  await expect.poll(() => durationsKept(userData, library).fake?.length, { timeout: 60_000 }).toBe(1);
+  await app.close();
+});
+
+test("Stop as the run ends doesn't take back a finished filing", async () => {
+  // Stop arrives after the result: the card shows the filing as filed, and there is nothing to stop.
+  const { app, capsule, library } = await launchOn(await makeLibrary({ git: true }));
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  const filed = await call(app, "capsuleStateForTests");
+  const history = gitOut(library, "log", "--format=%s");
+  await watchStates(app);
+  await stop(capsule);
+  await call(app, "idleForTests");
+  // The filed state stays, the card is told nothing, and no commit takes the filing back ...
+  expect(await call(app, "capsuleStateForTests")).toEqual(filed);
+  expect(await statesSent(app)).toEqual([]);
+  expect(gitOut(library, "log", "--format=%s")).toBe(history);
+  // ... so the page is where the agent wrote it, and the note is archived, not back in the inbox.
+  expect(filesUnder(library, "ideas")).toHaveLength(1);
+  expect(archived(library)).toHaveLength(1);
+  expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("a second Stop does nothing", async () => {
+  const { library, app, capsule } = await dictateToStallingAgent("Plant tulips in October");
+  await watchUndos(app);
+  // Two Stops one straight after the other (a page's messages reach main in the order they were sent) ...
+  await capsule.evaluate(() => {
+    window.avanzel.capsule.cancelFiling();
+    window.avanzel.capsule.cancelFiling();
+  });
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("cancelled");
+  // ... and a third once the stop is over.
+  await stop(capsule);
+  await call(app, "idleForTests");
+  // The run was taken back once, and cleanly: a second take-back would find its commit undone already, and git would refuse it.
+  expect(await undoCalls(app)).toBe(1);
+  expect(undone(library)).toHaveLength(1);
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "cancelled", partial: false, leftovers: 0 });
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
+  expect(exists(library, "goals/half.md")).toBe(false);
+  await app.close();
+});
+
+test("Edit after Stop does nothing", async () => {
+  const { library, app, capsule } = await dictateToStallingAgent("Plant tulips in October");
+  await watchStates(app);
+  // Edit straight after Stop: the filing is stopping, and the editor does not open on it.
+  await capsule.evaluate(() => {
+    window.avanzel.capsule.cancelFiling();
+    window.avanzel.capsule.edit();
+  });
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("cancelled");
+  await call(app, "idleForTests");
+  expect(await kindsSent(app)).not.toContain("editing");
+  expect(await call(app, "draftForTests")).toBeNull();
+  expect(await call(app, "busy")).toBe(false); // no note is held for an edit that never opened
+  // The stop went as it would have without the Edit.
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "cancelled", partial: false, leftovers: 0 });
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
+  expect(exists(library, "goals/half.md")).toBe(false);
+  await app.close();
+});
+
+test("Stop after Edit does nothing: the note is still in the editor, and File files the corrected words", async () => {
+  const { library, app, capsule } = await dictateToStallingAgent("misheard words");
+  await editTo(app, capsule, "corrected words");
+  await watchStates(app);
+  await stop(capsule);
+  await call(app, "idleForTests");
+  expect(await capsuleKind(app)).toBe("editing");
+  expect(await call(app, "draftForTests")).toBe("corrected words");
+  expect(await statesSent(app)).toEqual([]); // the card was sent nothing
+  // File files the corrected words, as it does without the Stop.
+  await capsule.getByRole("button", { name: "File" }).click();
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  const [capture, ...others] = archived(library);
+  expect(others).toEqual([]);
+  expect(readFileSync(capture!, "utf8")).toContain("corrected words");
+  expect(mentioning(library, "misheard")).toEqual([]);
+  expect(exists(library, "goals/half.md")).toBe(false);
+  expect(inbox(library)).toEqual([]);
+  expect(await kindsSent(app)).not.toContain("cancelled");
+  await app.close();
+});
+
+test("Stop is heard from the capsule's page alone: another window's page stops no filing", async () => {
+  const runs = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-runs-")), "runs.jsonl");
+  const { app, capsule } = await dictateToStallingAgent("Plant tulips in October", { FAKE_AGENT_RECORD: runs });
+  const { pid } = JSON.parse(readFileSync(runs, "utf8").trim().split("\n")[0]!) as { pid: number };
+  // Every window has the same bridge, so Settings' page can send capsule:cancel-filing. A page's messages reach main in the order
+  // they were sent: the answer to the call after it comes once main has handled the Stop.
+  await call(app, "showSettings");
+  const settings = await windowFor(app, "settings");
+  await settings.evaluate(async () => {
+    window.avanzel.capsule.cancelFiling();
+    await window.avanzel.settings.get();
+  });
+  // Had it been heard, the agent would be gone and the card stopping by now.
+  await settings.waitForTimeout(1_500);
+  expect(alive(pid)).toBe(true);
+  expect(await factsOf(app)).toMatchObject({ kind: "filing" });
+  expect((await factsOf(app)).cancelling).toBeUndefined();
+  // The capsule's own Stop is heard.
+  await stop(capsule);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("cancelled");
+  expect(alive(pid)).toBe(false);
+  await app.close();
+});
+
+test("Stop while the filing waits for the library says it is stopping until the library is free, and a late step doesn't take that away", async () => {
+  const runs = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-runs-")), "runs.jsonl");
+  const library = await makeLibrary();
+  const { app, capsule } = await launchOn(library, { FAKE_AGENT_RECORD: runs });
+  await keepSteps(app);
+  await watchStates(app);
+  // Another process has the library, so the filing waits for it, and the engine's wait for it can't be left.
+  let letGo = () => {};
+  const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
+  try {
+    await dictate(app);
+    await expect.poll(() => factsOf(app), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
+    await stop(capsule);
+    await expect.poll(() => factsOf(app), { timeout: 10_000 }).toMatchObject({ kind: "filing", waiting: true, cancelling: true });
+    // A step is told meanwhile, as the agent's last might be (through the function the app handed the engine). The card is sent it
+    // from the job, which knows that Stop was pressed, not from what the card showed before.
+    await app.evaluate(() => (globalThis as Left).stepsOf?.({ kind: "read", path: "index.md" }));
+    expect(await factsOf(app)).toMatchObject({ kind: "filing", cancelling: true, rows: [{ kind: "read", path: "index.md" }] });
+    // The stop is not over while the library is held.
+    await sleep(1_500);
+    expect(await factsOf(app)).toMatchObject({ kind: "filing", waiting: true, cancelling: true });
+  } finally {
+    letGo();
+    await held;
+  }
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("cancelled");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "cancelled", text: "Plant tulips in October", partial: false, leftovers: 0 });
+  // Every filing state the card was sent from Stop on said that it was stopping; and the agent never ran for the note.
+  const sent = await statesSent(app);
+  const fromStop = sent.slice(sent.findIndex((state) => state.cancelling)).filter((state) => state.kind === "filing");
+  expect(fromStop.length).toBeGreaterThanOrEqual(2); // Stop's own, and the late step's
+  expect(fromStop.every((state) => state.cancelling === true)).toBe(true);
+  expect(exists(path.dirname(runs), "runs.jsonl")).toBe(false);
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
+  await app.close();
+});
+
+test("a Stop that is still stopping when another thought takes the card leaves that card alone", async () => {
+  const library = await makeLibrary();
+  const { app, capsule } = await launchOn(library);
+  await watchStates(app);
+  let letGo = () => {};
+  const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
+  try {
+    await dictate(app);
+    await expect.poll(() => factsOf(app), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
+    await stop(capsule);
+    await expect.poll(() => factsOf(app), { timeout: 10_000 }).toMatchObject({ kind: "filing", cancelling: true });
+    // A second thought, typed, takes the card while the first is still stopping. It is the second's own filing, and nobody stopped it.
+    await call(app, "submitQuick", "Call the plumber on Monday");
+    const second = await factsOf(app);
+    expect(second).toMatchObject({ kind: "filing", text: "Call the plumber on Monday" });
+    expect(second.cancelling).toBeUndefined();
+  } finally {
+    letGo();
+    await held;
+  }
+  // The first stop ends behind the scenes and puts nothing over the second's card, which files its note.
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await call(app, "idleForTests");
+  expect(await kindsSent(app)).not.toContain("cancelled");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", pages: [{ title: "Call the plumber on Monday" }] });
+  // Nobody's words were lost: the stopped one waits in the inbox, and the other is filed.
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
+  expect(archived(library)).toHaveLength(1);
+  await app.close();
+});
+
+test("Stop before the filing's turn: the agent never starts, and the note stays in the inbox", async () => {
+  const runs = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-runs-")), "runs.jsonl");
+  const library = await makeLibrary();
+  const { app, capsule } = await launchOn(library, { FAKE_AGENT_DELAY_MS: "4000", FAKE_AGENT_DELAY_TASK: "file", FAKE_AGENT_RECORD: runs });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  // The app runs one agent at a time: a second thought, typed, waits for the first to be filed, and Stop comes while it waits.
+  await call(app, "submitQuick", "Call the plumber on Monday");
+  await stop(capsule);
+  await expect.poll(() => factsOf(app), { timeout: 10_000 }).toMatchObject({ kind: "filing", text: "Call the plumber on Monday", cancelling: true });
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("cancelled");
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "cancelled",
+    text: "Call the plumber on Monday",
+    agent: "fake",
+    partial: false,
+    leftovers: 0,
+    review: "at 21:00",
+  });
+  // The agent ran for the first note alone; the first is filed, and the second waits in the inbox.
+  expect(readFileSync(runs, "utf8").trim().split("\n")).toHaveLength(1);
+  expect(archived(library)).toHaveLength(1);
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Call the plumber on Monday")]);
+  await app.close();
+});
+
+test("Stop in a library without git leaves the stopped run's edits as they are, and says nothing recorded them", async () => {
+  // No git, so the run's edits have no commit to be taken back from. "slow-messy" writes a page, then never finishes.
+  const library = await makeLibrary();
+  const { app, capsule } = await launchOn(library, { FAKE_AGENT_MODE: "slow-messy" });
+  await dictate(app);
+  await expect.poll(() => exists(library, "goals/half.md"), { timeout: 30_000 }).toBe(true);
+  await stop(capsule);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("cancelled");
+  const stopped = Date.now();
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "cancelled", partial: false, leftovers: 1 });
+  // What the run wrote stays, as the state says; the words are in the inbox.
+  expect(exists(library, "goals/half.md")).toBe(true);
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
+  // The card hides itself after 6 s, as a card that is filed does after 8.
+  await expect.poll(() => capsuleKind(app), { timeout: 15_000, intervals: [100] }).toBe("hidden");
+  expect(Date.now() - stopped).toBeGreaterThanOrEqual(5_000);
+  await app.close();
+});
+
+test("Stop while Avanzel is quitting does nothing: the quit has stopped the run already", async () => {
+  await quitWhileHeld(
+    (app) => watchStates(app),
+    SHORT_QUIT_WAIT,
+    async (app) => {
+      await stop(await windowFor(app, "capsule"));
+      await sleep(500);
+      expect(await statesSent(app)).toEqual([]); // the card is told nothing: it is not stopping, and nothing is taken back
+    },
+  );
+});
+
+test("Stop whose take-back git refuses says the stopped run's edits stay as their own commit", async () => {
+  const { library, app, capsule } = await dictateToStallingAgent("Plant tulips in October");
+  await watchUndos(app, { hold: true });
+  await stop(capsule);
+  // The stopped run is over, and its leftovers are committed, when the take-back is at the door.
+  await expect.poll(() => reachedUndo(app), { timeout: 30_000 }).toBe(true);
+  expect(gitOut(library, "log", "-1", "--format=%s")).toMatch(/^avanzel: leftovers of failed filing /);
+  // A change by hand to the page the run started is committed after them: taking them back would take it with them, so git refuses.
+  writeFileSync(path.join(library, "goals", "half.md"), "# Half done, by hand\n");
+  expect(await git.commitAll(library, "An edit by hand")).not.toBeNull();
+  await app.evaluate(() => (globalThis as Left).letUndoIn?.());
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("cancelled");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "cancelled", partial: true, leftovers: 0 });
+  expect(read(library, "goals/half.md")).toBe("# Half done, by hand\n");
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]); // the words are safe all the same
+  await app.close();
+});
+
+// Stop can come between the agent's end and the result: the engine has handed the result back, and the app has not yet looked at
+// it. These make it come then (`stopAtTheEnd`), which no press of a button can time.
+
+test("Stop just as the run ends leaves a filing that no commit holds standing, and the card says filed", async () => {
+  // No git, so the filing has no commit: nothing could take it back, and the note is archived and the page written.
+  const library = await makeLibrary();
+  const { app, userData } = await launchOn(library);
+  await stopAtTheEnd(app);
+  await watchStates(app);
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await call(app, "idleForTests");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", canUndo: false, noted: false, pages: [{ shelf: "ideas", created: true }] });
+  // Stop reached the card, which said it was stopping, and the filing stood: the card was never Stopped.
+  const sent = await statesSent(app);
+  expect(sent.some((state) => state.kind === "filing" && state.cancelling === true)).toBe(true);
+  expect(sent.map((state) => state.kind)).not.toContain("cancelled");
+  expect(sent.at(-1)?.kind).toBe("filed");
+  expect(filesUnder(library, "ideas")).toHaveLength(1);
+  expect(archived(library)).toHaveLength(1);
+  expect(inbox(library)).toEqual([]);
+  // It is a filing that ended well, so its seconds are kept.
+  expect(durationsKept(userData, library).fake).toHaveLength(1);
+  await app.close();
+});
+
+test("Stop just as the run ends takes back a filing that left a commit, and the note is back in the inbox", async () => {
+  const library = await makeLibrary({ git: true });
+  const { app, userData } = await launchOn(library);
+  await stopAtTheEnd(app);
+  await watchStates(app);
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("cancelled");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "cancelled", text: "Plant tulips in October", partial: false, leftovers: 0 });
+  // The filing was whole when Stop came; it is taken back, so its page is gone and the note is in the inbox, not archived.
+  expect(filesUnder(library, "ideas")).toEqual([]);
+  expect(archived(library)).toEqual([]);
+  expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
+  expect(gitOut(library, "log", "-1", "--format=%s")).toMatch(/^avanzel: undo file /);
+  expect(gitOut(library, "status", "--porcelain")).toBe("");
+  expect(await kindsSent(app)).not.toContain("filed"); // never shown as filed
+  await call(app, "idleForTests");
+  expect(durationsKept(userData, library)).toEqual({}); // and a filing taken back says nothing of how long a filing takes
+  await app.close();
+});
+
+test("Stop just as the run ends, when git won't take the finished filing back, says so and leaves it filed", async () => {
+  const library = await makeLibrary({ git: true });
+  const { app } = await launchOn(library);
+  await stopAtTheEnd(app, { hold: true });
+  await watchStates(app);
+  await dictate(app);
+  await expect.poll(() => reachedTheEnd(app), { timeout: 60_000 }).toBe(true);
+  // The agent has filed, and the filing is committed. A change by hand to its page is committed after it, so git can't take it back.
+  const [page] = filesUnder(library, "ideas");
+  writeFileSync(path.join(library, "ideas", page!), "# Changed by hand\n");
+  expect(await git.commitAll(library, "An edit by hand")).not.toBeNull();
+  await app.evaluate(() => (globalThis as Left).letItEnd?.());
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+  // The card says it can't be undone, never that the words are back in the inbox: the filing stands.
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: "This one can't be undone automatically.",
+    detail: "Usually a later change touched the same lines. The library's history keeps both versions.",
+  });
+  expect(await kindsSent(app)).not.toContain("cancelled");
+  expect(read(library, `ideas/${page}`)).toBe("# Changed by hand\n");
+  expect(archived(library)).toHaveLength(1);
+  expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+// ---- A filing that ends after its library has been replaced or has closed ----
+
+test("a filing's receipt names its pages from the note's own library when another opens meanwhile, and leaves the menu to the open one", async () => {
+  // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
+  const { app } = await launchOn(await makeLibrary(), {
+    XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")),
+    FAKE_AGENT_DELAY_MS: "3000",
+    FAKE_AGENT_DELAY_TASK: "file",
+  });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  await stubPicker(app, await makeLibrary());
+  await call(app, "chooseLibrary");
+  expect(await capsuleKind(app)).toBe("filing");
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  // The page is titled by the library the note was filed in, which only that library can tell: from the one that is open now, it
+  // would be named by its file name ("idea-2026-…").
+  expect(await factsOf(app)).toMatchObject({ kind: "filed", pages: [{ title: "Plant tulips in October", shelf: "ideas", created: true }] });
+  // The menu lists the open library's recent pages, and this filing is not one of them.
+  expect(await recentlyFiled(app)).toEqual([]);
+  await app.close();
+});
+
+test("a filing that ends after its library has closed still shows its receipt", async () => {
+  // A library chosen (or here, closed) is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
+  const { app, library, userData } = await launchOn(await makeLibrary(), {
+    XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")),
+    FAKE_AGENT_DELAY_MS: "3000",
+    FAKE_AGENT_DELAY_TASK: "file",
+  });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  // The library closes while the agent works (a folder that isn't a library is chosen, as when a disk goes away): none is open.
+  await call(app, "useLibrary", path.join(tmpdir(), "avz-e2e-no-such-library"));
+  expect(await capsuleKind(app)).toBe("filing");
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  expect(await factsOf(app)).toMatchObject({ kind: "filed", pages: [{ title: "Plant tulips in October", shelf: "ideas", created: true }] });
+  expect(await recentlyFiled(app)).toEqual([]); // no library is open to list it
+  // The filing ended well, so its seconds are kept, in the run state of the library it was filed in.
+  expect(durationsKept(userData, library).fake).toHaveLength(1);
   await app.close();
 });
