@@ -66,8 +66,12 @@ export type CapsuleState =
        */
       hint: string | null;
     }
-  /** `onThisMac`: the library's speech-to-text runs on this Mac, which the card then says; a command can run anywhere. */
-  | { kind: "transcribing"; mode: CapsuleMode; onThisMac: boolean }
+  /**
+   * `onThisMac`: the library's speech-to-text runs on this Mac, which the card then says; a command can run anywhere. `slow`: it has run
+   * past the controller's TRANSCRIBE_STOP_MS, so the card offers Stop (the controller's `stopTranscribing` tells the rest). Absent
+   * before then, and always for a screen comment and for setup's first spoken thought, which have no Stop.
+   */
+  | { kind: "transcribing"; mode: CapsuleMode; onThisMac: boolean; slow?: true }
   | {
       kind: "filing";
       text: string;
@@ -129,6 +133,12 @@ export type CapsuleState =
        * When the evening review files the note, as the open library's review runs (`reviewTime`): "at 21:00", "on Sundays at
        * 18:00"; "" when its schedule can't be read, so that the sentence names no time; null while the review is off.
        */
+      review: string | null;
+    }
+  /** Stop ended a transcription, and its recording waits in the inbox. The controller's `stopTranscribing` tells the rest. */
+  | {
+      kind: "recorded";
+      /** When the evening review turns the recording into words and files it, worded as for `cancelled`'s `review`. */
       review: string | null;
     }
   | { kind: "saved"; text: string; thumbnail?: string; context?: ScreenContext; note: string; detail?: string }
@@ -635,6 +645,8 @@ export interface AvanzelBridge {
     cancelFiling(): void;
     /** The file-mode switch, while a recording listens. The controller's `toggleFileMode` tells what it does and when it is heard. */
     toggleFileMode(): void;
+    /** Stop, on the card of a transcription that has run long (`slow`). The controller's `stopTranscribing` tells what it does. */
+    stopTranscribing(): void;
     undo(): void;
     open(): void;
     dismiss(): void;

@@ -128,7 +128,7 @@ export interface FilingProblemOptions {
  * that ends in the last 40% of what fits, or at the character when there is none, and ended with "…" with no space or stop
  * before it. Whole when `max` is not given.
  */
-function shortened(text: string, max: number | undefined): string {
+export function shortened(text: string, max: number | undefined): string {
   if (max === undefined) return text;
   const chars = Array.from(text);
   if (chars.length <= max) return text;

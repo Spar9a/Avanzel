@@ -236,9 +236,10 @@ export class FirstRunLog {
  * How many recordings the library has kept, in a file of the app's own on this Mac (userData/captures.json): never in the
  * library, and nothing reports it. Its one reader is the listening card's hint, which the first recordings get. A recording
  * counts once the library keeps something of it: its words, its screenshot (a screen comment) or its audio. What becomes of it
- * after (filed, saved for the evening review, stopped) changes nothing. An Esc, a recording with no speech and one that fails
- * keep nothing, so they don't count, nor does a typed thought, which is no recording. A missing or broken file reads as none
- * kept. Counting is best effort: a file that can't be written costs a count, never the recording.
+ * after (filed, saved for the evening review, stopped) changes nothing. An Esc doesn't count, nor does a dictation with no
+ * speech, nor a typed thought, which is no recording. A failed recording doesn't count either, even when its audio stays in
+ * raw/audio/. A recording that Stop keeps in the inbox does. A missing or broken file reads as none kept. Counting is best
+ * effort: a file that can't be written costs a count, never the recording.
  */
 export class CaptureCount {
   constructor(private readonly file: string) {}

@@ -12,7 +12,7 @@ import {
   type WebContents,
 } from "electron";
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -34,6 +34,7 @@ import {
   formatSchedule,
   git,
   harnesses as listHarnesses,
+  idStamp,
   installHook,
   lastDue,
   loadSettings,
@@ -70,6 +71,7 @@ import {
   filingProblem,
   NO_GIT_LINE,
   ownLine,
+  shortened,
   takeBackRefused,
   takeBackRefusedProblem,
   tooBroadLine,
@@ -146,6 +148,10 @@ import {
 const QUIT_WAIT_MS = 10_000;
 // How long a stopped recording's audio may take to arrive from the capsule (tests shorten it).
 const AUDIO_TIMEOUT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_AUDIO_TIMEOUT_MS)) || 15_000;
+// How long a transcription runs before the capsule's card turns slow and offers Stop (tests shorten it).
+const TRANSCRIBE_STOP_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_TRANSCRIBE_STOP_MS)) || 20_000;
+// How long AVANZEL_FAKE_TRANSCRIPT, the stand-in for the speech model, takes to give its words: a test sets it to have one run long.
+const FAKE_TRANSCRIPT_DELAY_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_FAKE_TRANSCRIPT_DELAY_MS)) || 0;
 // How long the download's progress stays in the capsule by itself; Settings → Voice keeps showing it (tests change it).
 const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PREPARING_SHOW_MS)) || 8_000;
 // How long the capsule says that a shortcut picked on its notice works.
@@ -204,6 +210,36 @@ interface SignInWatch {
   notes: Map<string, Problem>;
   endsAt: number;
   timer: NodeJS.Timeout | null;
+}
+
+/**
+ * The transcription of a dictation while it runs (`transcribeWithStop`), with what Stop needs to keep its recording
+ * (`stopTranscribing`). `vault`: the library the recording was made in, which another may replace meanwhile. `audioPath`: where
+ * that library keeps the recording under raw/audio/, null when it keeps none (`claimRecording`). `now`: when its audio arrived, which
+ * names a recording that has no `audioPath`. `stopped`: Stop has kept the recording, so whatever the transcription gives is dropped.
+ */
+interface Transcribing {
+  vault: Vault;
+  audioPath: string | null;
+  now: Date;
+  samples: Float32Array;
+  stopped: boolean;
+}
+
+/**
+ * `name` in `folder`, or when the folder has it, the first of `name-2`, `name-3` … (before the extension) that it has not: nothing
+ * there is replaced.
+ */
+function freeName(folder: string, name: string): string {
+  const { name: stem, ext } = path.parse(name);
+  for (let n = 1; ; n++) {
+    const candidate = path.join(folder, n === 1 ? name : `${stem}-${n}${ext}`);
+    try {
+      lstatSync(candidate); // lstat, so that a link with nothing at its end is a name taken as well
+    } catch {
+      return candidate; // nothing there; or nothing that can be told, which what is done with the name then reports
+    }
+  }
 }
 
 /** What a failed filing's run left behind in the library: its edits as their own commit, or outside any history; null when it left none. */
@@ -272,6 +308,11 @@ export class Controller {
    */
   private cardUnkept: Problem | null = null;
   private recording: Recording | null = null;
+  /**
+   * The transcription whose recording Stop can keep while it runs, as long as the capsule's card is its card (`transcribeWithStop`,
+   * and `stopRecording`, which takes the card for a newer recording).
+   */
+  private transcribing: Transcribing | null = null;
   private job: FilingJob | null = null;
   /** The job whose words are in the capsule's editor: from Edit until File or Cancel (`refile`), or `keepEdit`. */
   private inEditor: FilingJob | null = null;
@@ -827,7 +868,10 @@ export class Controller {
     }
   }
 
-  /** `forSetup`: setup's first spoken thought (`Setup.recordThought`), which has no file mode to switch (`toggleFileMode` tells why). */
+  /**
+   * `forSetup`: setup's first spoken thought (`Setup.recordThought`), which has no file mode to switch (`toggleFileMode` tells why)
+   * and is offered no Stop while its words are made (`transcribeWithStop` tells why).
+   */
   private async startRecording(mode: CapsuleMode, shot?: Recording["shot"], { forSetup = false } = {}): Promise<void> {
     if (mode === "dictate" && !(await this.readyToListen())) return;
     if (this.recording) {
@@ -840,6 +884,7 @@ export class Controller {
     const recording: Recording = {
       mode,
       fileMode: mode === "dictate" && !forSetup ? this.store.get().fileMode : null,
+      forSetup,
       startedAt: Date.now(),
       shot,
       stopping: false,
@@ -902,6 +947,9 @@ export class Controller {
     clearTimeout(recording.maxTimer);
     globalShortcut.unregister("Escape");
     const onThisMac = this.transcribesOnThisMac();
+    // This card is the capsule's now: an older transcription still running no longer has it, so neither its slow state nor Stop can
+    // reach this recording's card (`slowTranscription`, `stopTranscribing`).
+    this.transcribing = null;
     this.setCapsule({ kind: "transcribing", mode: recording.mode, onThisMac });
     this.setup.moveThought(recording, { kind: "transcribing", startedAt: Date.now(), onThisMac });
     this.capsuleCommand("stop");
@@ -987,7 +1035,9 @@ export class Controller {
           written = audioPath;
         }
         const started = performance.now();
-        const transcript = await this.transcribe(samples);
+        const stoppable = recording.mode === "dictate" && !recording.forSetup;
+        const transcript = await this.transcribeWithStop(samples, stoppable ? { vault, audioPath, now, samples, stopped: false } : null);
+        if (!transcript) return; // Stop kept the recording in the inbox meanwhile: the words it made, or its failure, are dropped
         seconds = (performance.now() - started) / 1000;
         text = transcript.text.trim();
         engine = transcript.engine;
@@ -1066,9 +1116,85 @@ export class Controller {
 
   private async transcribe(samples: Float32Array): Promise<{ text: string; engine: string }> {
     const fake = process.env.AVANZEL_FAKE_TRANSCRIPT;
-    if (fake !== undefined) return { text: fake, engine: "fake" };
+    if (fake !== undefined) {
+      if (FAKE_TRANSCRIPT_DELAY_MS) await new Promise((resolve) => setTimeout(resolve, FAKE_TRANSCRIPT_DELAY_MS));
+      return { text: fake, engine: "fake" };
+    }
     const transcriber = await this.transcriberFor(loadSettings(this.requireVault().root).voice);
     return transcriber.transcribe(samples, 16000);
+  }
+
+  /**
+   * The words of `samples`. Once the transcription has run for TRANSCRIBE_STOP_MS its card turns slow (`slowTranscription`), and
+   * Stop can keep the recording for the evening review while the words are made (`stopTranscribing`). `transcribing` says what Stop
+   * needs; it is null for a recording that has no Stop: a screen comment, whose words and screenshot are saved together, and
+   * setup's first spoken thought, whose window shows its own progress. The transcription itself can't be stopped (a `Transcriber`
+   * takes no signal), so it runs on; once Stop has kept the recording, whatever it gives is dropped, words or failure: null.
+   */
+  private async transcribeWithStop(samples: Float32Array, transcribing: Transcribing | null): Promise<{ text: string; engine: string } | null> {
+    if (!transcribing) return this.transcribe(samples);
+    this.transcribing = transcribing;
+    const slow = setTimeout(() => this.slowTranscription(transcribing), TRANSCRIBE_STOP_MS);
+    try {
+      const transcript = await this.transcribe(samples);
+      return transcribing.stopped ? null : transcript;
+    } catch (error) {
+      if (!transcribing.stopped) throw error;
+      console.error("stopped transcription", error); // the recording is kept, as the card said: that is all there is to tell
+      return null;
+    } finally {
+      clearTimeout(slow);
+      if (this.transcribing === transcribing) this.transcribing = null;
+    }
+  }
+
+  /** `transcribing` has run for TRANSCRIBE_STOP_MS: its card turns slow, and offers Stop, if the capsule still shows it. */
+  private slowTranscription(transcribing: Transcribing): void {
+    const state = this.capsuleState;
+    if (this.transcribing === transcribing && state.kind === "transcribing") this.setCapsule({ ...state, slow: true });
+  }
+
+  /**
+   * Stop, on the card of a transcription that has run long (`slow`): the recording is kept in the inbox of the library it was made
+   * in, where the engine's queue finds audio, so the evening review turns it into words and files it, and the card says it is
+   * recorded (`recorded`, for 6 s, longer while hovered). The recording is moved, never copied or removed: from raw/audio/, under its
+   * own name or the next free one (`keepInInbox`). It counts toward the first ten (`hintFor`). The transcription itself can't be
+   * stopped, so it goes on, and what it returns is dropped, words or failure (`transcribeWithStop`): no note, no card, and the
+   * recording is left where it is. When the inbox can't take the recording, none of that happens: an error card says so, the
+   * recording stays where it was, and the transcription goes on as if Stop had not been pressed. Only the capsule's own page is
+   * heard (`sender` is the page the message came from, `event.sender`), and only while the capsule shows that transcription's
+   * slow card: a press before then, a second one, one after the transcription has ended, and one on the card of a screen comment
+   * or of setup's first spoken thought (which never turn slow) do nothing.
+   */
+  stopTranscribing(sender: WebContents): void {
+    const transcribing = this.transcribing;
+    const state = this.capsuleState;
+    if (!isPageOf(sender, this.capsule) || !transcribing || transcribing.stopped || state.kind !== "transcribing" || !state.slow) return;
+    try {
+      this.keepInInbox(transcribing);
+    } catch (error) {
+      console.error("stop transcribing", error);
+      return this.fail(
+        "Avanzel couldn't move the recording to your inbox.",
+        `${shortened(ownLine(errorMessage(error)), CAPSULE_LINE_MAX)} The transcription goes on, and your recording stays where it is.`,
+      );
+    }
+    transcribing.stopped = true;
+    this.captureCount.add(); // the library keeps the recording now, whatever the evening review makes of it
+    this.setCapsule({ kind: "recorded", review: reviewTime(this.openReview(transcribing.vault)) }, STOPPED_SHOW_MS);
+  }
+
+  /**
+   * Moves the recording of `transcribing` into its library's inbox, as audio the evening review finds (`Vault.pending`), under the
+   * name it has in raw/audio/, or the next free one: a rename replaces what it finds there, so the name is looked for first
+   * (`freeName`). A recording the library kept no copy of (`audioPath` null) is written there from its samples instead. Throws when
+   * the inbox can't take it, with the recording as it was.
+   */
+  private keepInInbox({ vault, audioPath, now, samples }: Transcribing): void {
+    mkdirSync(vault.inbox, { recursive: true });
+    const to = freeName(vault.inbox, audioPath ? path.basename(audioPath) : `${idStamp(now)}.wav`);
+    if (audioPath) renameSync(audioPath, to);
+    else writeWav(to, samples, 16000);
   }
 
   // ---------------------------------------------------------------- filing
@@ -1463,9 +1589,11 @@ export class Controller {
     return savedNote(this.openReview());
   }
 
-  /** The open library's evening review while it is on, its schedule as main sends it ("daily 21:00"): what the capsule words of it. Null while it is off. */
-  private openReview(): { schedule: string; enabled: boolean } | null {
-    const vault = this.vault;
+  /**
+   * The evening review of the open library (or of `vault`, a recording's own) while it is on, its schedule as main sends it
+   * ("daily 21:00"): what the capsule words of it. Null while it is off.
+   */
+  private openReview(vault: Vault | null = this.vault): { schedule: string; enabled: boolean } | null {
     const review = vault ? this.safeTasks(vault).find((task) => task.kind === "evening-review" && task.enabled) : undefined;
     return review ? { schedule: formatSchedule(review.schedule), enabled: true } : null;
   }

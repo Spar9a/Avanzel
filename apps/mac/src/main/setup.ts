@@ -116,7 +116,10 @@ export interface SetupHost {
   setLibrarySettings(patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }): Promise<SettingsSnapshot>;
   changeApp(patch: Partial<AppSettings>, picked?: keyof Shortcuts): Promise<SettingsSnapshot>;
   useShortcut(key: keyof Shortcuts, accelerator: string): Promise<void>;
-  /** Setup's first spoken thought is recorded as any dictation is, except that it has no file mode to switch (`Recording.fileMode`). */
+  /**
+   * Setup's first spoken thought is recorded as any dictation is, except that it has no file mode to switch (`Recording.fileMode`)
+   * and is offered no Stop while its words are made (`Recording.forSetup`).
+   */
   startRecording(mode: CapsuleMode, shot?: Recording["shot"]): Promise<void>;
   /** The capsule hides (`setCapsule`). */
   hideCapsule(): void;

@@ -16,6 +16,11 @@ export interface Recording {
   mode: CapsuleMode;
   /** The file mode the capsule's switch changes, null where it has none; the controller's `toggleFileMode` tells the rest. */
   fileMode: FileMode | null;
+  /**
+   * Setup's first spoken thought (`startRecording`'s `forSetup`): its window shows its progress, so the capsule offers it no Stop
+   * (`transcribeWithStop`).
+   */
+  forSetup: boolean;
   startedAt: number;
   shot?: { path: string; thumbnail: string; context: ScreenContext };
   maxTimer: NodeJS.Timeout;
