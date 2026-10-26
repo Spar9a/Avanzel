@@ -1,6 +1,6 @@
 // App-level preferences (not per library): where the library is, shortcuts, how notes are filed. And, apart from
 // them, the taken shortcuts the capsule has named, the times a first run reached setup's milestones, and how many
-// captures the library has kept.
+// recordings the library has kept.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isSetupStep, SETUP_STEPS, type AppSettings, type SetupStep, type Shortcuts } from "../shared/ipc.ts";
@@ -233,11 +233,12 @@ export class FirstRunLog {
 }
 
 /**
- * How many captures the library has kept, in a file of the app's own on this Mac (userData/captures.json): never in the
- * library, and nothing reports it. The first ones teach the keys (the capsule's hint). A capture counts once the library keeps
- * it, when its words (or, for a screen comment, its screenshot) are written, whatever becomes of it next: filed, saved for the
- * evening review, stopped. An Esc, a recording with no speech and one that fails write nothing, so they don't count. A missing
- * or broken file reads as none kept. Counting is best effort: a file that can't be written costs a count, never the capture.
+ * How many recordings the library has kept, in a file of the app's own on this Mac (userData/captures.json): never in the
+ * library, and nothing reports it. Its one reader is the listening card's hint, which the first recordings get. A recording
+ * counts once the library keeps something of it: its words, its screenshot (a screen comment) or its audio. What becomes of it
+ * after (filed, saved for the evening review, stopped) changes nothing. An Esc, a recording with no speech and one that fails
+ * keep nothing, so they don't count, nor does a typed thought, which is no recording. A missing or broken file reads as none
+ * kept. Counting is best effort: a file that can't be written costs a count, never the recording.
  */
 export class CaptureCount {
   constructor(private readonly file: string) {}
@@ -252,7 +253,7 @@ export class CaptureCount {
     }
   }
 
-  /** One more capture is kept: whatever leaves a capture in the library calls this as soon as it is there. */
+  /** One more recording is kept: whatever keeps one calls this as soon as the library has what it made (its words, screenshot or audio). */
   add(): void {
     try {
       writeJsonAtomic(this.file, { version: 1, kept: this.get() + 1 });

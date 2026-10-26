@@ -14,12 +14,7 @@ export const harnessName = (name: string) => HARNESS_NAMES[name] ?? name;
 
 export interface Recording {
   mode: CapsuleMode;
-  /**
-   * When this capture is filed: now, or at the evening review. It starts as the setting says, and the capsule's switch changes
-   * this capture's alone (`toggleFileMode`); the stop reads it (`afterCapture`). Null where there is nothing to switch: a screen
-   * comment is always saved, and setup's first spoken thought is filed by its step, whatever the mode; words spoken in such a
-   * recording that setup does not take are filed as the setting says.
-   */
+  /** The file mode the capsule's switch changes, null where it has none; the controller's `toggleFileMode` tells the rest. */
   fileMode: FileMode | null;
   startedAt: number;
   shot?: { path: string; thumbnail: string; context: ScreenContext };

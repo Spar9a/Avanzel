@@ -220,7 +220,7 @@ describe("FirstRunLog", () => {
 });
 
 describe("CaptureCount", () => {
-  it("counts the captures the library has kept, from one app run to the next", () => {
+  it("counts the recordings the library has kept, from one app run to the next", () => {
     const file = path.join(tmp(), "captures.json");
     const count = new CaptureCount(file);
     expect(count.get()).toBe(0); // no file yet
@@ -243,7 +243,7 @@ describe("CaptureCount", () => {
     expect(new CaptureCount(file).get()).toBe(11);
   });
 
-  it("reads a broken file, or one of the wrong shape, as none kept, and the next capture starts it over", () => {
+  it("reads a broken file, or one of the wrong shape, as none kept, and the next recording starts it over", () => {
     const file = path.join(tmp(), "captures.json");
     const count = new CaptureCount(file);
     const unreadable = [
@@ -262,7 +262,7 @@ describe("CaptureCount", () => {
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ version: 1, kept: 1 });
   });
 
-  it("never throws when it can't write: the capture it counts is kept all the same", () => {
+  it("never throws when it can't write: the recording it counts is kept all the same", () => {
     const blocker = path.join(tmp(), "in-the-way");
     writeFileSync(blocker, "a file where the count's folder should be");
     const count = new CaptureCount(path.join(blocker, "captures.json"));

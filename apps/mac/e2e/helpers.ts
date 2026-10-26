@@ -543,6 +543,11 @@ export function exists(root: string, rel: string): boolean {
   return existsSync(path.join(root, rel));
 }
 
+/** How many recordings the app has counted as kept (captures.json in its data folder, `userData`); none while there is no such file. */
+export function capturesKept(userData: string): number {
+  return exists(userData, "captures.json") ? (JSON.parse(read(userData, "captures.json")) as { kept: number }).kept : 0;
+}
+
 /** Every file under `rel` (none when it is missing), relative to it, hidden ones left out. */
 export function filesUnder(root: string, rel: string): string[] {
   const dir = path.join(root, rel);

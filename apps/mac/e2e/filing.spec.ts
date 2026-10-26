@@ -11,6 +11,7 @@ import {
   answerAs,
   call,
   capsuleKind,
+  capturesKept,
   exists,
   filesUnder,
   filingClaude,
@@ -131,7 +132,9 @@ async function fileEdit(app: ElectronApplication, capsule: Page, words: string):
 }
 
 test("Edit stops the agent mid-run, takes back what it did, and files the corrected words", async () => {
-  const { library, app, capsule } = await dictateToStallingAgent("Remember to email Mark the hygienic plan");
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const { library, app, capsule } = await dictateToStallingAgent("Remember to email Mark the hygienic plan", { AVANZEL_USER_DATA: userData });
+  expect(capturesKept(userData)).toBe(1); // the dictation
   await capsule.getByRole("button", { name: "Edit" }).click();
   await expect.poll(() => capsuleKind(app)).toBe("editing");
   const box = capsule.getByRole("textbox");
@@ -152,6 +155,8 @@ test("Edit stops the agent mid-run, takes back what it did, and files the correc
   expect(exists(library, "goals/half.md")).toBe(false);
   expect(read(library, "index.md")).not.toContain("left by a stalled run");
   expect(inbox(library)).toEqual([]);
+  // The corrected words are the dictation written again, not a second recording: the count is what it was before Edit.
+  expect(capturesKept(userData)).toBe(1);
   await app.close();
 });
 
@@ -290,13 +295,16 @@ test("quitting with the editor open keeps the edit in the inbox", async () => {
 });
 
 test("quitting with the editor open still saves the edit when the wait runs out", async () => {
-  const words = await quitWhileHeld((app, capsule) => editTo(app, capsule, "corrected words"), SHORT_QUIT_WAIT);
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const words = await quitWhileHeld((app, capsule) => editTo(app, capsule, "corrected words"), { ...SHORT_QUIT_WAIT, AVANZEL_USER_DATA: userData });
   // The corrected words are written anyway, with the recording and transcriber of the misheard ones, which stay too.
   expect(words).toHaveLength(2);
   expect(words.filter((text) => text.includes("misheard words"))).toHaveLength(1);
   const [corrected] = words.filter((text) => text.includes("corrected words"));
   expect(corrected).toContain("\ntranscriber: fake\n");
   expect(corrected).toMatch(/\naudio: raw\/audio\/.+\.wav\n/);
+  // Two notes in the inbox, one recording: the corrected words are the dictation written again.
+  expect(capturesKept(userData)).toBe(1);
 });
 
 test("words filed after an edit are saved when the quit wait runs out before their turn", async () => {
@@ -391,7 +399,8 @@ test("a second Edit on a refiled note keeps its words when the quit wait runs ou
 });
 
 test("starting a new dictation with the editor open keeps the edit", async () => {
-  const { library, app, capsule } = await dictateToStallingAgent("misheard words");
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const { library, app, capsule } = await dictateToStallingAgent("misheard words", { AVANZEL_USER_DATA: userData });
   await editTo(app, capsule, "corrected words");
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
@@ -400,6 +409,8 @@ test("starting a new dictation with the editor open keeps the edit", async () =>
   expect(inboxWords(library)).toEqual([expect.stringContaining("corrected words")]);
   expect(mentioning(library, "misheard")).toEqual([]);
   expect(exists(library, "goals/half.md")).toBe(false);
+  // The kept edit is the first dictation written again, and the one given up with Esc kept nothing: one recording in all.
+  expect(capturesKept(userData)).toBe(1);
   await app.close();
 });
 

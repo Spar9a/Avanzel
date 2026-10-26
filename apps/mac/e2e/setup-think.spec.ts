@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { NarrationRow } from "../src/shared/ipc.ts";
-import { call, capsuleKind, filesUnder, filingClaude, firstRun, launch, throughFound, typeFirstThought, windowFor } from "./helpers.ts";
+import { call, capsuleKind, capturesKept, filesUnder, filingClaude, firstRun, launch, throughFound, typeFirstThought, windowFor } from "./helpers.ts";
 import {
   inbox,
   INSTRUCTION,
@@ -223,14 +223,15 @@ test("a typed first thought is filed in the window, with the time shown", async 
   await app.close();
 });
 
-test("a typed first thought is a kept capture, and counts", async () => {
+test("a typed first thought is not counted: only a recording is", async () => {
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
   const { env } = firstRun({ claude: filingClaude() });
   const app = await launch({ ...env, AVANZEL_USER_DATA: userData });
   const setup = await throughFound(app);
   await typeFirstThought(setup, "Plant tulips in October");
   await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
-  expect(JSON.parse(readFileSync(path.join(userData, "captures.json"), "utf8"))).toEqual({ version: 1, kept: 1 });
+  // It is kept and filed like any thought, but the count is the recording card's hint, which a typed thought never shows.
+  expect(capturesKept(userData)).toBe(0);
   await app.close();
 });
 

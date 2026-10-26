@@ -11,6 +11,7 @@ import {
   answerAs,
   call,
   capsuleKind,
+  capturesKept,
   exists,
   filesUnder,
   filingClaude,
@@ -1013,7 +1014,7 @@ test("the speech engine that other [voice] settings or another library replace i
   await app.close();
 });
 
-// ---- A capture's file mode, and the hint of the first ten captures ----
+// ---- A capture's file mode, and the hint of the first ten recordings ----
 //
 // What the switch does is told at the controller's `toggleFileMode`. The listening card has no switch yet, so these press it as the
 // button will: through the capsule page's bridge, `window.avanzel.capsule.toggleFileMode()`, which `call()` can't do, since the
@@ -1049,11 +1050,7 @@ async function startListening(app: ElectronApplication): Promise<void> {
   await expect.poll(() => capsuleKind(app)).toBe("listening");
 }
 
-/** How many captures the app has counted as kept (captures.json in its own data folder); none while there is no such file. */
-const capturesKept = (userData: string): number =>
-  exists(userData, "captures.json") ? (JSON.parse(read(userData, "captures.json")) as { kept: number }).kept : 0;
-
-/** Makes `userData` the data folder of an app that has kept `kept` captures already. */
+/** Makes `userData` the data folder of an app that has kept `kept` recordings already. */
 const keptAlready = (userData: string, kept: number) =>
   writeFileSync(path.join(userData, "captures.json"), JSON.stringify({ version: 1, kept }));
 
@@ -1137,7 +1134,7 @@ test("a screen comment has no file mode to switch, and the key that finishes it 
   await call(app, "toggleCapture");
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
   expect(inbox(library)).toHaveLength(1);
-  expect(capturesKept(userData)).toBe(1); // a kept capture like any other
+  expect(capturesKept(userData)).toBe(1); // a kept recording like any other
   await app.close();
 });
 
@@ -1157,10 +1154,12 @@ test("the file mode's switch is heard from the capsule's page alone, and only wh
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ fileMode: "evening" });
   // A typed thought takes the card meanwhile, and the recording goes on out of sight: a press now finds no listening card to switch.
   await call(app, "submitQuick", "A thought typed meanwhile");
-  const typed = await call(app, "capsuleStateForTests");
-  expect(typed).toMatchObject({ kind: "saved", text: "A thought typed meanwhile" });
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", text: "A thought typed meanwhile" });
   await toggleFileMode(capsule);
-  expect(await call(app, "capsuleStateForTests")).toEqual(typed);
+  // Whatever card is in front now (the saved one hides itself after 4 s), it is not a listening one and has been given no mode.
+  const inFront = (await call(app, "capsuleStateForTests")) as { kind: string };
+  expect(inFront.kind).not.toBe("listening");
+  expect(inFront).not.toHaveProperty("fileMode");
   // The recording is still tonight's: stopped, it is saved for the evening, not filed.
   await call(app, "toggleDictate");
   await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "saved", text: "Plant tulips in October" });
@@ -1206,13 +1205,13 @@ test("the card names no key for a shortcut that isn't registered", async () => {
   await app.close();
 });
 
-test("the first ten kept captures name the key that finishes them, the eleventh doesn't, and a restart keeps the count", async () => {
+test("the first ten kept recordings name the key that finishes them, the eleventh doesn't, and a restart keeps the count", async () => {
   const library = await makeLibrary();
   const userData = newUserData();
   keptAlready(userData, 9);
   const first = await launchHearing(library, userData);
   await call(first.app, "setApp", { fileMode: "evening" }); // saved, not filed: the agent has no part in this
-  // The tenth capture's card still teaches the key ...
+  // The tenth recording's card still teaches the key ...
   await startListening(first.app);
   expect(await call(first.app, "capsuleStateForTests")).toMatchObject({ kind: "listening", hint: "Alt+Space" });
   await call(first.app, "toggleDictate");
@@ -1231,7 +1230,7 @@ test("the first ten kept captures name the key that finishes them, the eleventh 
   await second.app.close();
 });
 
-test("a capture counts once the library keeps it: saved for tonight, stopped, filed or typed, but not an Esc", async () => {
+test("a recording counts once the library keeps it: saved for tonight, stopped or filed, but not an Esc, and a typed thought is none", async () => {
   const library = await makeLibrary({ git: true });
   const userData = newUserData();
   // The first filing stalls, and the ones after it file.
@@ -1262,17 +1261,18 @@ test("a capture counts once the library keeps it: saved for tonight, stopped, fi
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   expect(capturesKept(userData)).toBe(3);
-  // Typed in Quick.
+  // A thought typed in Quick is no recording: it is kept and filed, and counts for nothing.
   await call(app, "submitQuick", "Call the plumber on Monday");
-  expect(capturesKept(userData)).toBe(4);
+  expect(capturesKept(userData)).toBe(3);
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  expect(capturesKept(userData)).toBe(3);
   await app.close();
 });
 
 test("an Esc, a recording with no speech and one that fails keep nothing, so none of them counts", async () => {
   const library = await makeLibrary();
   const userData = newUserData();
-  keptAlready(userData, 9); // the next capture the library keeps is the tenth
+  keptAlready(userData, 9); // the next recording the library keeps is the tenth
   const { app } = await launchHearing(library, userData, { AVANZEL_FAKE_AUDIO: blip() });
   // An Esc.
   await startListening(app);
@@ -1289,7 +1289,7 @@ test("an Esc, a recording with no speech and one that fails keep nothing, so non
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "error", message: "The microphone didn't start." });
   expect(capturesKept(userData)).toBe(9);
   expect(inbox(library)).toEqual([]);
-  // So the next card still names the key: it is the tenth capture.
+  // So the next card still names the key: it is the tenth recording.
   await startListening(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "listening", hint: "Alt+Space" });
   await call(app, "cancelRecording");

@@ -152,7 +152,8 @@ const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.en
 const PICKED_SHOW_MS = 3_000;
 // How long the capsule says that a filing is stopped (hovering over it keeps it longer, as it does any card that hides itself).
 const STOPPED_SHOW_MS = 6_000;
-// For this many kept captures, the listening card names the shortcut that finishes the recording: the first ones teach the keys.
+// The listening card names the shortcut that finishes a recording until the library has kept this many recordings: the first ones
+// teach the keys.
 const HINT_CAPTURES = 10;
 // How many characters of an agent's own line (or of the error's lines, on the card of corrected words that weren't saved) the
 // capsule's failure card, and the notification of the same words, keep: the legacy card shows about four lines of its body, and
@@ -307,7 +308,7 @@ export class Controller {
   private readonly noticed: NoticedShortcuts;
   /** When a first run reached each of setup's milestones (§5.4): kept on this Mac, never sent anywhere. */
   private readonly firstRun: FirstRunLog;
-  /** How many captures the library has kept, in the app's own folder: the first ones get the listening card's hint (`hintFor`). */
+  /** How many recordings the library has kept, in the app's own folder: the first ones get the listening card's hint (`hintFor`). */
   private readonly captureCount: CaptureCount;
   /** What each agent's check found in this app run, by harness name, for Settings → Agents. */
   private readonly agentChecks = new Map<string, AgentStatus>();
@@ -826,10 +827,7 @@ export class Controller {
     }
   }
 
-  /**
-   * `forSetup`: the recording is setup's first spoken thought (`Setup.recordThought`), which setup files in its own window
-   * whatever the mode, so it has no file mode to switch. A screen comment has none either, since it is always saved.
-   */
+  /** `forSetup`: setup's first spoken thought (`Setup.recordThought`), which has no file mode to switch (`toggleFileMode` tells why). */
   private async startRecording(mode: CapsuleMode, shot?: Recording["shot"], { forSetup = false } = {}): Promise<void> {
     if (mode === "dictate" && !(await this.readyToListen())) return;
     if (this.recording) {
@@ -869,8 +867,8 @@ export class Controller {
   }
 
   /**
-   * The shortcut that finishes a recording in `mode`, for the listening card to name while the first captures teach the keys:
-   * Record a thought's, or Capture screen with a comment's for a screen comment. Null once HINT_CAPTURES captures have been kept
+   * The shortcut that finishes a recording in `mode`, for the listening card to name while the first recordings teach the keys:
+   * Record a thought's, or Capture screen with a comment's for a screen comment. Null once HINT_CAPTURES recordings have been kept
    * (`captureCount`), and while that shortcut isn't registered (`shortcutProblems` names it: another app holds it, or it can't
    * work): there is no key to name then.
    */
@@ -881,12 +879,13 @@ export class Controller {
   }
 
   /**
-   * The capsule's file-mode switch, while a capture listens: this capture is filed now, or at the evening review, the other way
-   * round from what the card shows. It changes this capture alone: the setting stays as it is, and the next capture starts from it
-   * again. The stop reads the mode (`afterCapture`), so the switch ends with the card that listens: it does nothing once the
-   * recording is stopped (the card says it is transcribing), nor while another card has replaced the listening one (a typed
-   * thought's, say), nor where there is nothing to switch (`Recording.fileMode` is null). Only the capsule's own page is heard
-   * (`sender` is the page the message came from, `event.sender`).
+   * The capsule's file-mode switch, while a recording listens: its words are filed now, or at the evening review, the other way
+   * round from what the card shows (`Recording.fileMode`). The mode starts as the setting says, and a press changes this
+   * recording's alone: the setting stays as it is, and the next recording starts from it again. The stop reads the mode
+   * (`afterCapture`), so the switch ends with the card that listens: a press does nothing once the recording is stopped (the card
+   * says it is transcribing), nor while another card has replaced the listening one (a typed thought's, say). There is nothing to
+   * switch (`fileMode` is null) for a screen comment, which is always saved, and for setup's first spoken thought, which its step
+   * files whatever the mode. Only the capsule's own page is heard (`sender` is the page the message came from, `event.sender`).
    */
   toggleFileMode(sender: WebContents): void {
     const recording = this.recording;
@@ -2146,7 +2145,6 @@ export class Controller {
       this.fail("Couldn't save that thought", `${errorMessage(error)}\nIt is still in the box: press ${prettyAccelerator(this.store.get().shortcuts.type)} to try again.`);
       throw error;
     }
-    this.captureCount.add(); // its words are in the inbox: kept, whatever becomes of them next
     this.afterCapture(capture.path, trimmed, null);
   }
 
@@ -2642,11 +2640,7 @@ export class Controller {
       takeBack: (job) => this.takeBack(job),
       revert: (commit) => this.revertFiling(commit),
       answer: (question, abort, progress) => this.answerQuestion(question, abort, progress),
-      newCapture: (text, options) => {
-        const capture = this.requireVault().newCapture(text, options);
-        this.captureCount.add(); // setup's typed thought is a kept capture like any other
-        return capture;
-      },
+      newCapture: (text, options) => this.requireVault().newCapture(text, options),
       firstRun: this.firstRun,
       queuedToFile: this.queuedToFile,
       noticed: this.noticed,

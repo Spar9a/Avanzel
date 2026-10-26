@@ -94,7 +94,7 @@ test("the first press asks about the microphone behind one Continue, then record
   await app.close();
 });
 
-test("the first spoken thought has no file mode to switch: setup files it whatever the setting says, and it is a kept capture", async () => {
+test("the first spoken thought has no file mode to switch: setup files it whatever the setting says, and it is a kept recording", async () => {
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
   const { env, home } = spokenRun({ AVANZEL_USER_DATA: userData, AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October" });
   const app = await launch(env);
