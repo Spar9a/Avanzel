@@ -43,6 +43,7 @@ import type {
 import type { AgentFailure, PartialEdits } from "../shared/problems.ts";
 import { errorMessage, harnessName, LIBRARY_PICKER, type Answered, type FilingJob, type Recording } from "./jobs.ts";
 import { answeredFrom, captureMeta, obsidianUrl } from "./library-info.ts";
+import { stepThrottle } from "./narration.ts";
 import { permissionStatus, requestMicrophone } from "./permissions.ts";
 import { runningAppNames } from "./running-apps.ts";
 import type { RunState } from "./schedule.ts";
@@ -155,11 +156,6 @@ const PRESS_WAIT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AV
  * place and its tasks afresh, so not at each of the download's ticks (Settings gets those).
  */
 const SETUP_PROGRESS_MS = 1_000;
-/**
- * At most how often the steps of the first thought's filing reach the setup window (`stepped`): a burst of steps is a few
- * updates rather than one each, and the newest is never more than this far behind.
- */
-const STEP_MS = 250;
 
 /** The setup window and what it is doing, from the moment it opens until it closes. */
 interface SetupSession {
@@ -244,10 +240,18 @@ export class Setup {
   private upHereWindow: BrowserWindow | null = null;
   /** When the setup window was last sent the download's progress (`publishProgress`). */
   private setupProgressAt = 0;
-  /** When the setup window was last sent a filing's steps, by `performance.now()` (`stepped`). */
-  private steppedAt = -Infinity;
-  /** The filing whose newest steps wait out STEP_MS before they are sent, and the timer that sends them (`stepped`). */
-  private stepWait: { job: FilingJob; timer: NodeJS.Timeout } | null = null;
+  /** The filing whose steps the setup window is being sent (`stepped`). */
+  private steppedJob: FilingJob | null = null;
+  /**
+   * Sends the setup window the steps of `steppedJob`, at most once every STEP_MS (`stepThrottle`), the way the capsule's card
+   * is sent a filing's. A send that has waited asks again whether the window still shows that filing running: if it has ended,
+   * or another has taken its place, the window was told of that at once (`broadcast`), and the send is dropped. It sends only
+   * `setup:changed`, as `publishProgress` does: no Settings snapshot, and no menu.
+   */
+  private readonly sendSteps = stepThrottle(() => {
+    const job = this.steppedJob;
+    if (job && this.showsRunning(job)) this.session?.window.webContents.send("setup:changed", this.snapshot());
+  });
 
   constructor(private readonly host: SetupHost) {}
 
@@ -937,6 +941,7 @@ export class Setup {
     session.thought = { kind: "waiting" };
     session.testCapture = null;
     this.enterSetupStep("filing");
+    const now = Date.now();
     const job: FilingJob = {
       capturePath,
       text: words,
@@ -947,10 +952,12 @@ export class Setup {
       edited: false,
       rows: [],
       written: [],
+      startedAt: now,
+      stepAt: now,
       setup: true,
     };
     session.job = job;
-    session.filing = { kind: "running", words, agent: job.agent, startedAt: Date.now(), waiting: false, cancelling: false, rows: job.rows, written: job.written };
+    session.filing = { kind: "running", words, agent: job.agent, startedAt: now, waiting: false, cancelling: false, rows: job.rows, written: job.written };
     this.host.queuedToFile.add(capturePath);
     this.host.file(job);
     this.host.broadcast();
@@ -1029,27 +1036,15 @@ export class Setup {
 
   /**
    * `job`, the first thought's filing, has taken another step, and its `rows` and `written` have it (`filingStep`): the
-   * setup window is sent them, at most once every STEP_MS. A step that comes sooner after the last send waits, and the
-   * steps that come meanwhile go in the one send that ends the wait, so the window is never more than STEP_MS behind.
-   * When a wait ends, it is asked again whether the window still shows this filing running; if the filing has ended, or
-   * another has taken its place, the send is dropped, since the window was told of that at once (`broadcast`). It sends
-   * only `setup:changed`, as `publishProgress` does: no Settings snapshot, and no menu.
+   * setup window is sent them, at most once every STEP_MS (`sendSteps`). A step that comes sooner after the last send waits,
+   * and the steps that come meanwhile go in the one send that ends the wait, so the window is never more than STEP_MS behind.
+   * Another filing's wait is dropped: the window no longer shows that filing.
    */
   stepped(job: FilingJob): void {
-    if (!this.showsRunning(job) || this.stepWait?.job === job) return; // its newest steps go in the send that waits
-    if (this.stepWait) clearTimeout(this.stepWait.timer); // another filing's wait, which the window no longer shows
-    this.stepWait = null;
-    const wait = this.steppedAt + STEP_MS - performance.now();
-    if (wait > 0) {
-      const timer = setTimeout(() => {
-        this.stepWait = null;
-        this.stepped(job);
-      }, wait);
-      this.stepWait = { job, timer };
-      return;
-    }
-    this.steppedAt = performance.now();
-    this.session?.window.webContents.send("setup:changed", this.snapshot());
+    if (!this.showsRunning(job)) return;
+    if (this.steppedJob !== job) this.sendSteps.cancel();
+    this.steppedJob = job;
+    this.sendSteps();
   }
 
   /** The setup window shows `job`'s filing, and it is running. */

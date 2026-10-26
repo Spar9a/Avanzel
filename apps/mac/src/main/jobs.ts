@@ -54,16 +54,30 @@ export interface FilingJob {
   outcome?: FileOutcome;
   pages?: FiledPage[];
   /**
-   * What the agent has done so far, a row for each step it takes (`withStep`), oldest first. Only setup's first thought
-   * is narrated (`filingStep`); any other filing's stay empty.
+   * What the agent has done so far, a row for each step it takes (`withStep`), oldest first. Every filing that has a card or
+   * a window is narrated (`filingStep`): setup's first thought tells its window, and a capsule filing its card. One in the
+   * background (`background`) has neither, and its rows stay empty. They belong to this job: a newer job starts with none.
    */
   rows: NarrationRow[];
   /**
    * The Markdown pages the agent has written so far, new or updated, each once, as library paths (`withWritten`); the
    * shelf tabs count them. Unlike `rows`, it is not cut to the newest fifty, so a long filing's count doesn't fall as its
-   * early rows go. Like the rows, it is kept for setup's first thought only.
+   * early rows go. Only setup's tabs use it.
    */
   written: string[];
+  /**
+   * Date.now() when the job's seconds start: when the job was made, then when its run has the library (it moves to its turn in
+   * the queue, `runFiling`, and again to the end of a wait for the library, `filingProgress`). The card counts its seconds
+   * from here, and the seconds kept to estimate later filings (`RunState.durations`) run from here to the outcome.
+   */
+  startedAt: number;
+  /** Date.now() when the agent last took a step, or `startedAt` before its first: how long the card has been quiet. */
+  stepAt: number;
+  /**
+   * About how many seconds a filing with this job's agent takes (`estimateSeconds`), fixed when its card first shows so that
+   * it doesn't change under the person's eyes as another filing ends. Unset until then.
+   */
+  estimate?: number;
   /**
    * Setup's first thought (`takeThought`): it reports to the setup window while the window shows it (its session's
    * `job`), and once the window has closed, by notification, as any filing whose card isn't showing does.

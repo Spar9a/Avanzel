@@ -1,7 +1,7 @@
-// What setup's first filing says the agent is doing: each step it takes (the engine's `FilingStep`) becomes a row of the
-// Filing step, and a page it writes joins the list the shelf tabs count. `withStep` and `withWritten` are pure, so their
-// tests reach them; the controller hands each of them every step, `withStep` with `rowPage` to name the pages, and setup
-// sends the rows and the list to its window.
+// What a filing says the agent is doing: each step it takes (the engine's `FilingStep`) becomes a row, and a page it writes
+// joins the list the shelf tabs count. `withStep` and `withWritten` are pure, so their tests reach them; the controller hands
+// each of them every step, `withStep` with `rowPage` to name the pages. Setup sends the rows and the list to its window, and
+// the capsule sends its card the rows; either at the pace `stepThrottle` keeps.
 import { posix } from "node:path";
 import type { FilingStep } from "@avanzel/engine";
 import type { FiledPage, NarrationRow } from "../shared/ipc.ts";
@@ -9,6 +9,55 @@ import { pageInfo } from "./library-info.ts";
 
 /** How many rows a filing keeps: the newest. */
 export const MAX_ROWS = 50;
+
+/**
+ * At most how often the steps of a filing reach a window (`stepThrottle`): a burst of steps is a few updates rather than one
+ * each, and the newest is never more than this far behind. Setup's window and the capsule's card are sent them at this pace.
+ */
+export const STEP_MS = 250;
+
+/** The function a filing calls at each step it takes, to have its window sent them; `cancel` drops the send that waits. */
+export interface StepThrottle {
+  (): void;
+  /** The send that waits, if one does, is dropped. The time of the last send is kept: a step right after it still waits. */
+  cancel(): void;
+}
+
+/**
+ * Spaces out the sends of a filing's steps: `send` runs at the first step at once, and then at most once every STEP_MS. A step
+ * that comes sooner after the last send waits, and the steps that come meanwhile go in the one send that ends the wait, so the
+ * window is never more than STEP_MS behind. `send` reads what the steps changed (the job's rows) when it runs, and is the one
+ * to ask whether anything still shows them: a send that has waited may find the filing over. Narration is best effort: a
+ * `send` that throws at the first step throws to the step's caller, who notes it, and one that throws once a wait has ended is
+ * noted here, since no one is there to catch it, and never takes the app down.
+ */
+export function stepThrottle(send: () => void): StepThrottle {
+  let sentAt = -Infinity;
+  let timer: NodeJS.Timeout | null = null;
+  const step = (): void => {
+    if (timer) return; // its newest steps go in the send that waits
+    const wait = sentAt + STEP_MS - performance.now();
+    if (wait > 0) {
+      timer = setTimeout(() => {
+        timer = null;
+        try {
+          step();
+        } catch (error) {
+          console.warn("narration", error);
+        }
+      }, wait);
+      return;
+    }
+    sentAt = performance.now();
+    send();
+  };
+  return Object.assign(step, {
+    cancel: () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
+  });
+}
 
 /** The first folder of a library path; "" for a file at the library's root. */
 const shelfOf = (rel: string) => (rel.includes("/") ? rel.slice(0, rel.indexOf("/")) : "");

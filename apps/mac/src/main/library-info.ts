@@ -20,11 +20,15 @@ export function pageInfo(root: string, rel: string): FiledPage {
   return { title, shelf, path: rel };
 }
 
-/** Pages an agent run wrote: Markdown inside a shelf folder, new pages before updated ones. */
+/**
+ * Pages an agent run wrote: Markdown inside a shelf folder, new pages before updated ones. Each says which it is (`created`):
+ * a page the run made, or one the library had that the run changed.
+ */
 export function filedPages(root: string, changes: { created: string[]; modified: string[] }): FiledPage[] {
   const isPage = (rel: string) => rel.endsWith(".md") && rel.includes("/") && !NOT_PAGES.has(rel.split("/")[0] ?? "");
+  const made = new Set(changes.created);
   const ordered = [...changes.created.filter(isPage), ...changes.modified.filter(isPage)];
-  return [...new Set(ordered)].map((rel) => pageInfo(root, rel));
+  return [...new Set(ordered)].map((rel) => ({ ...pageInfo(root, rel), created: made.has(rel) }));
 }
 
 function walk(dir: string, rel = ""): string[] {

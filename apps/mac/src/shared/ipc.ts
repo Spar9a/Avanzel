@@ -7,6 +7,12 @@ export interface FiledPage {
   shelf: string;
   /** Library-relative path, e.g. "goals/run-a-marathon.md". */
   path: string;
+  /**
+   * The filing that wrote the page made it (true), or changed a page the library had (false). Only a filing's own pages say
+   * so (`filedPages`); a page looked up on its own (an answer's, a step's, one the menu lists from the log) leaves it unset,
+   * and setup and Ask have no use for it. The capsule reads a page without it as updated.
+   */
+  created?: boolean;
 }
 
 export interface ScreenContext {
@@ -59,9 +65,34 @@ export type CapsuleState =
       detail?: string;
       /** Waiting for the library: another run (a question, a review, another Avanzel) has it. */
       waiting?: boolean;
+      /**
+       * What the agent has done so far in this filing, oldest first and the newest fifty at most (`withStep`); the card's
+       * newest line is the last row. Empty until its first step. A row belongs to the filing that took the step: a newer
+       * capture's card never carries an older filing's.
+       */
+      rows: NarrationRow[];
+      /**
+       * Date.now() when the run had the library: the card counts its seconds from it. It moves forward when the filing's turn
+       * in the queue comes, and again when a wait for the library ends, so those waits are in no filing's seconds.
+       */
+      startedAt: number;
+      /** About how many seconds a filing with this agent takes, from its last ones (`estimateSeconds`); 15 until it has done three. */
+      estimate: number;
+      /** Date.now() when the filing last took a step, or when its run began before the first: the card says the agent is still working once this is old. */
+      stepAt: number;
     }
   | { kind: "editing"; text: string }
-  | { kind: "filed"; agent: string; seconds: number; pages: FiledPage[]; canUndo: boolean; message: string }
+  | {
+      kind: "filed";
+      agent: string;
+      /** How long the run took, from when it had the library. */
+      seconds: number;
+      pages: FiledPage[];
+      canUndo: boolean;
+      message: string;
+      /** The agent filed nothing: it ended well and wrote no page, only a line in the log. */
+      noted: boolean;
+    }
   | { kind: "saved"; text: string; thumbnail?: string; context?: ScreenContext; note: string; detail?: string }
   /**
    * `message` says what happened and `detail` what is safe. `action`: what the card's one button does (see CardAction), and

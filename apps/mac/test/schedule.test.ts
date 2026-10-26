@@ -60,20 +60,20 @@ describe("run state", () => {
 
   it("remembers a first sighting without pretending the task ran", () => {
     const now = new Date(2026, 9, 20, 23, 0);
-    const state = markChecked({ checked: {}, ran: {}, waiting: [] }, ["evening-review"], now);
+    const state = markChecked({ checked: {}, ran: {}, waiting: [], durations: {} }, ["evening-review"], now);
     expect(state.checked["evening-review"]).toBe(now.toISOString());
     expect(state.ran).toEqual({});
   });
 
   it("records a real run as both checked and ran", () => {
     const now = new Date(2026, 9, 20, 21, 0);
-    const state = markRan({ checked: {}, ran: {}, waiting: [] }, "evening-review", now);
-    expect(state).toEqual({ checked: { "evening-review": now.toISOString() }, ran: { "evening-review": now.toISOString() }, waiting: [] });
+    const state = markRan({ checked: {}, ran: {}, waiting: [], durations: {} }, "evening-review", now);
+    expect(state).toEqual({ checked: { "evening-review": now.toISOString() }, ran: { "evening-review": now.toISOString() }, waiting: [], durations: {} });
   });
 
   it("keeps the usage-limit waits when a task is checked or ran", () => {
     // tick() and runTask write these back whole: a state that loses its waits would lose the notes' promise.
-    const before: RunState = { checked: {}, ran: {}, waiting };
+    const before: RunState = { checked: {}, ran: {}, waiting, durations: {} };
     const now = new Date(2026, 9, 20, 21, 0);
     expect(markChecked(before, ["evening-review"], now).waiting).toEqual(waiting);
     expect(markRan(before, "evening-review", now).waiting).toEqual(waiting);
@@ -87,13 +87,14 @@ describe("run state", () => {
       checked: { a: "2026-10-19T21:00:00.000Z" },
       ran: { a: "2026-10-19T21:00:00.000Z" },
       waiting: [],
+      durations: {},
     });
-    expect(normalizeRunState("junk")).toEqual({ checked: {}, ran: {}, waiting: [] });
+    expect(normalizeRunState("junk")).toEqual({ checked: {}, ran: {}, waiting: [], durations: {} });
   });
 
   it("reads the waits it is given, keeping good entries and dropping malformed ones", () => {
     const [one, two] = waiting;
-    expect(normalizeRunState({ checked: {}, ran: {}, waiting })).toEqual({ checked: {}, ran: {}, waiting });
+    expect(normalizeRunState({ checked: {}, ran: {}, waiting })).toEqual({ checked: {}, ran: {}, waiting, durations: {} });
     expect(
       normalizeRunState({
         checked: { a: "2026-10-19T21:00:00.000Z" },
@@ -110,7 +111,7 @@ describe("run state", () => {
           { ...two, extra: "dropped" }, // a good wait with something more: only what a wait is stays
         ],
       }),
-    ).toEqual({ checked: { a: "2026-10-19T21:00:00.000Z" }, ran: {}, waiting: [one, two] });
+    ).toEqual({ checked: { a: "2026-10-19T21:00:00.000Z" }, ran: {}, waiting: [one, two], durations: {} });
     expect(normalizeRunState({ checked: {}, ran: {}, waiting: { capture: "x" } }).waiting).toEqual([]);
     expect(normalizeRunState({ checked: {}, ran: {} }).waiting).toEqual([]);
   });

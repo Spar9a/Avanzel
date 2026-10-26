@@ -102,13 +102,15 @@ import { frontContext } from "./front-app.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
-import { rowPage, withStep, withWritten } from "./narration.ts";
+import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
 import { pickRequest, popupChoice } from "./popup.ts";
 import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import {
   dueTasks,
+  durationsOf,
+  estimateSeconds,
   markChecked,
   markRan,
   resetMarginMs,
@@ -117,6 +119,7 @@ import {
   signInWatchMs,
   splitWaits,
   timerDelay,
+  withDuration,
   withWait,
   type RunState,
 } from "./schedule.ts";
@@ -179,6 +182,9 @@ function statusOf(check: AgentCheck): AgentStatus | null {
 
 /** The capsule's notice of a shortcut another app holds. */
 type TakenShortcut = Extract<CapsuleState, { kind: "shortcut-taken" }>;
+
+/** The capsule's card of a filing under way. */
+type FilingState = Extract<CapsuleState, { kind: "filing" }>;
 
 /** What an error card's one button does: where its Open Settings goes, or the fix a failed filing offers. */
 type ErrorAction = Extract<CapsuleState, { kind: "error" }>["action"];
@@ -1024,6 +1030,7 @@ export class Controller {
       this.setCapsule({ kind: "saved", text, note: this.savedLine(), ...(detail ? { detail } : {}) }, 4000);
       return;
     }
+    const now = Date.now();
     this.beginFiling({
       capturePath,
       text,
@@ -1034,6 +1041,8 @@ export class Controller {
       edited: false,
       rows: [],
       written: [],
+      startedAt: now,
+      stepAt: now,
       detail,
     });
   }
@@ -1047,42 +1056,120 @@ export class Controller {
 
   private showFiling(job: FilingJob): void {
     this.job = job;
-    this.setCapsule({
+    this.setCapsule(this.filingState(job, this.transcribesOnThisMac()));
+  }
+
+  /**
+   * What the capsule's card says of `job`'s filing: its words, the steps the agent has taken, the seconds it has run for and
+   * about how many it takes. `onThisMac` is where the words were made, as the card first said (`transcribesOnThisMac`), which
+   * a later state keeps rather than read the library's settings again at each step.
+   */
+  private filingState(job: FilingJob, onThisMac: boolean): FilingState {
+    job.estimate ??= this.estimateFor(job);
+    return {
       kind: "filing",
       text: job.text,
       agent: job.agent,
       transcribedIn: job.transcribedIn,
-      onThisMac: this.transcribesOnThisMac(),
+      onThisMac,
       canEdit: true,
       ...(job.detail ? { detail: job.detail } : {}),
       ...(job.waiting ? { waiting: true } : {}),
-    });
+      rows: job.rows,
+      startedAt: job.startedAt,
+      estimate: job.estimate,
+      stepAt: job.stepAt,
+    };
+  }
+
+  /**
+   * The card of `job`'s filing, if the capsule shows it, is sent what has changed since it was shown: the steps the agent has
+   * taken (`filingStep`), a wait for the library that began or ended (`filingProgress`), or the start of the run (`runFiling`).
+   * The card isn't shown again: the state is set and sent as it is, with no menu rebuilt, no hidden capsule brought back and no
+   * hide timer started over (as `followDownload` does with the download's progress), where `setCapsule` does all three. A
+   * filing whose card has gone (hidden, or replaced by a newer capture's, or by the editor) sends nothing; its steps are only
+   * kept in its job, and it ends in a notification.
+   */
+  private refreshFiling(job: FilingJob): void {
+    const state = this.capsuleState;
+    if (this.job !== job || state.kind !== "filing" || this.capsule.isDestroyed()) return; // the window is gone as Avanzel quits
+    this.capsuleState = this.filingState(job, state.onThisMac);
+    this.capsule.webContents.send("capsule:state", this.capsuleState);
+  }
+
+  /**
+   * About how many seconds a filing with `job`'s agent takes: what that agent's last filings in the open library took
+   * (`estimateSeconds`), 15 until it has done three. Best effort: a run state that can't be read gives the 15.
+   */
+  private estimateFor(job: FilingJob): number {
+    try {
+      const harness = this.ranWith(job);
+      return estimateSeconds(this.vault && harness ? durationsOf(this.readRunState(this.vault).durations, harness) : []);
+    } catch (error) {
+      console.warn("filing estimate", error);
+      return estimateSeconds([]);
+    }
+  }
+
+  /** The harness `job`'s filing runs with, by name ("claude"), never "auto": the library's own choice when the job named none. Null if there is none. */
+  private ranWith(job: FilingJob): string | null {
+    return job.harness === "auto" ? this.selectedHarness() : job.harness;
+  }
+
+  /**
+   * `job`'s filing ended well, in `seconds` from when its run had the library: they are kept with the agent that ran it, in the
+   * run state of `library` (the one the note was filed in), as the last of its filings, for the estimate of the next. Best effort:
+   * a run state that can't be written (the app's data folder is read-only) loses a duration, and never fails the filing.
+   */
+  private keepDuration(job: FilingJob, library: Vault | null, seconds: number): void {
+    const harness = this.ranWith(job);
+    if (!library || !harness) return;
+    try {
+      const state = this.readRunState(library);
+      this.writeRunState(library, { ...state, durations: withDuration(state.durations, harness, seconds) });
+    } catch (error) {
+      console.warn("filing duration", error);
+    }
   }
 
   /**
    * What the engine says of `job`'s filing: `WAITING` while another run (a question, a review, another
    * Avanzel) has the library, then the start of its own run. Its card, or the setup window, shows the wait
-   * until the run starts; the window's working line then counts from that start.
+   * until the run starts; the card's seconds, and those kept for the estimate, then count from that start.
    */
   private filingProgress(job: FilingJob, message: string): void {
     const waiting = message === WAITING;
     if (!!job.waiting === waiting) return;
     job.waiting = waiting;
-    if (this.job === job && this.capsuleState.kind === "filing") this.showFiling(job);
+    if (waiting) this.refreshFiling(job);
+    else this.startRun(job);
     this.setup.waiting(job, waiting);
   }
 
   /**
-   * A step the agent takes in setup's first filing, told as it takes it (`file`'s `steps`): it joins the filing's rows,
-   * and the pages written, which the shelf tabs count, and the setup window, if it still shows the filing, is sent them
-   * (`setup.stepped`). Narration is best effort: what goes wrong here is noted, and never fails the filing.
+   * `job`'s seconds start now, as its run has the library (the wait for it, in the queue or at the engine's lock, is no
+   * filing's time), and its card, if it shows, is told. Before its first step, the agent is as quiet as it ever was.
    */
-  private filingStep(job: FilingJob, step: FilingStep): void {
+  private startRun(job: FilingJob): void {
+    job.startedAt = Date.now();
+    job.stepAt = job.startedAt;
+    this.refreshFiling(job);
+  }
+
+  /**
+   * A step the agent takes in a filing, told as it takes it (`file`'s `steps`): it joins the filing's rows, and the pages
+   * written, which setup's shelf tabs count. Setup's window, if it still shows the filing, is sent them (`setup.stepped`), and
+   * the capsule's card, if it does (`refreshFiling`), by `tell`, which spaces the sends out (`stepThrottle`). Narration is best
+   * effort: what goes wrong here is noted, and never fails the filing.
+   */
+  private filingStep(job: FilingJob, step: FilingStep, tell: StepThrottle): void {
     try {
       const root = this.requireVault().root;
       job.written = withWritten(job.written, step);
       job.rows = withStep(job.rows, step, (rel) => rowPage(root, rel));
+      job.stepAt = Date.now();
       if (this.setup.owns(job)) this.setup.stepped(job);
+      else tell();
     } catch (error) {
       console.warn("narration", error);
     }
@@ -1112,11 +1199,13 @@ export class Controller {
     if (job.abort.signal.aborted) return; // Edit, or Cancel in setup, stopped it before its turn came
     if (!existsSync(job.capturePath)) return this.noteGone(job); // already filed meanwhile (e.g. by another Avanzel on this library)
     const library = this.vault; // the note's own: another library may open while the agent runs
-    const started = performance.now();
+    this.startRun(job); // its turn: the seconds count from here, not from when the queue took it in
     let outcome: FileOutcome | undefined;
     const progress = (message: string) => this.filingProgress(job, message);
-    // Only setup's first thought is narrated; the capsule's filings are not, yet.
-    const steps = this.setup.owns(job) ? (step: FilingStep) => this.filingStep(job, step) : null;
+    // Every filing that has a card or a window is narrated: setup's first thought tells its window, a capsule filing its card.
+    // One in the background has neither. A card is sent the steps at the pace `stepThrottle` keeps.
+    const tell = stepThrottle(() => this.refreshFiling(job));
+    const steps = job.background ? null : (step: FilingStep) => this.filingStep(job, step, tell);
     try {
       [outcome] = await this.withRun(
         async (signal) => (await this.librarian(job.harness)).file([job.capturePath], { signal, progress, ...(steps ? { steps } : {}) }),
@@ -1125,11 +1214,13 @@ export class Controller {
     } catch (error) {
       if (job.edited || job.cancelled || this.quitting) return;
       return this.filingFailed(job, error, undefined, library);
+    } finally {
+      tell.cancel(); // the run is over: the state that ends it is shown at once, and no step is left to tell
     }
     job.outcome = outcome;
     // Edit takes back what this run did (`refile`), and so does Cancel in setup (`cancelSetupFiling`).
     if (job.edited || job.cancelled || this.quitting) return;
-    const seconds = (performance.now() - started) / 1000;
+    const seconds = Math.max(0, (Date.now() - job.startedAt) / 1000);
     // No outcome at all: the capture left the inbox while the run waited for the library, and another Avanzel filed it. As when
     // the note was gone before the run's turn, setup's window says so while it is open, and there is nothing else to tell: the
     // agent didn't stop without filing, and its card or notification would say that, and that the note is in the inbox.
@@ -1138,6 +1229,7 @@ export class Controller {
     const vault = this.requireVault();
     job.pages = filedPages(vault.root, outcome.changes);
     this.recent = [...job.pages, ...this.recent.filter((p) => !job.pages?.some((q) => q.path === p.path))].slice(0, 3);
+    this.keepDuration(job, library, seconds);
     this.noteFiled((capture) => capture === job.capturePath);
     // Setup's thought is filed, which counts whether its window is still there to show it or has closed (§5.4).
     if (job.setup) this.firstRun.filed(new Date());
@@ -1145,7 +1237,16 @@ export class Controller {
       this.setup.filed(job, outcome, job.pages);
     } else if (this.job === job && this.capsuleState.kind === "filing") {
       this.setCapsule(
-        { kind: "filed", agent: job.agent, seconds, pages: job.pages, canUndo: !!outcome.commit, message: outcome.message || "Filed." },
+        {
+          kind: "filed",
+          agent: job.agent,
+          seconds,
+          pages: job.pages,
+          canUndo: !!outcome.commit,
+          message: outcome.message || "Filed.",
+          // It ended well and wrote no page: the agent only logged the capture, as it does one that needs none.
+          noted: job.pages.length === 0,
+        },
         8000,
       );
     } else {
@@ -1271,6 +1372,7 @@ export class Controller {
   private fileAgainWith(capturePath: string, harness: string): void {
     const failed = this.job;
     if (failed?.capturePath !== capturePath || !this.inOpenInbox(capturePath)) return this.setCapsule({ kind: "hidden" });
+    const now = Date.now();
     this.beginFiling({
       capturePath,
       text: failed.text,
@@ -1281,6 +1383,8 @@ export class Controller {
       edited: false,
       rows: [],
       written: [],
+      startedAt: now,
+      stepAt: now,
     });
   }
 
@@ -1409,6 +1513,7 @@ export class Controller {
    * and not while the person corrects its words, which their Edit files.
    */
   private fileInBackground(capturePath: string, harness: string, background: NonNullable<FilingJob["background"]>): void {
+    const now = Date.now();
     const job: FilingJob = {
       capturePath,
       text: "",
@@ -1419,6 +1524,8 @@ export class Controller {
       edited: false,
       rows: [],
       written: [],
+      startedAt: now,
+      stepAt: now,
       background,
     };
     this.queuedToFile.add(capturePath);
@@ -1609,6 +1716,7 @@ export class Controller {
   private refile(job: FilingJob, words: string | null): void {
     this.inEditor = null; // settled by File or Cancel: the editor closes without keeping the edit
     const correction = words === null ? null : this.correct(job, words);
+    const now = Date.now();
     const next: FilingJob = {
       capturePath: job.capturePath,
       text: words ?? job.text,
@@ -1619,6 +1727,8 @@ export class Controller {
       edited: false,
       rows: [],
       written: [],
+      startedAt: now,
+      stepAt: now,
       correction: correction ?? job.correction,
     };
     this.showFiling(next);

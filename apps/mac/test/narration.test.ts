@@ -1,9 +1,9 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { posix } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FilingStep } from "@avanzel/engine";
-import { MAX_ROWS, rowPage, withStep, withWritten } from "../src/main/narration.ts";
+import { MAX_ROWS, rowPage, STEP_MS, stepThrottle, withStep, withWritten } from "../src/main/narration.ts";
 import type { FiledPage, NarrationRow } from "../src/shared/ipc.ts";
 
 // The titles pageInfo would find for the pages these tests name; any other page has its file name for a title. Its shelf
@@ -179,5 +179,153 @@ describe("rowPage", () => {
     writeFileSync(path.join(root, "topics", "budget.pdf"), "# A line that looks like a title\n");
     expect(rowPage(root, "topics/plan.md").title).toBe("The plan");
     expect(rowPage(root, "topics/budget.pdf").title).toBe("budget.pdf");
+  });
+});
+
+// How often a filing's steps reach a window: setup's, and the capsule's. A burst of steps is a few updates rather than one each,
+// and the newest is never more than STEP_MS behind.
+describe("stepThrottle", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("is 250 ms", () => {
+    expect(STEP_MS).toBe(250);
+  });
+
+  it("sends the first step at once", () => {
+    const send = vi.fn();
+    stepThrottle(send)();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a burst of steps as two updates: the first at once, and the rest together STEP_MS after it", () => {
+    const send = vi.fn();
+    const step = stepThrottle(send);
+    for (let n = 0; n < 100; n++) step();
+    expect(send).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(STEP_MS - 1);
+    expect(send).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(send).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(10 * STEP_MS);
+    expect(send).toHaveBeenCalledTimes(2); // nothing waits any more
+  });
+
+  it("waits only for what is left of STEP_MS since the last send", () => {
+    const send = vi.fn();
+    const step = stepThrottle(send);
+    step();
+    vi.advanceTimersByTime(200);
+    step(); // 200 ms after the send: it waits 50 ms more
+    vi.advanceTimersByTime(49);
+    expect(send).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends a step at once when STEP_MS has passed since the last send", () => {
+    const send = vi.fn();
+    const step = stepThrottle(send);
+    step();
+    vi.advanceTimersByTime(STEP_MS);
+    step();
+    expect(send).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(STEP_MS * 4);
+    step();
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it("sends no more than once every STEP_MS, and never leaves the newest step unsent for longer", () => {
+    const sentAt: number[] = [];
+    const step = stepThrottle(() => sentAt.push(performance.now()));
+    const start = performance.now();
+    for (let at = 0; at <= 2_000; at += 10) {
+      step();
+      vi.advanceTimersByTime(10);
+    }
+    vi.advanceTimersByTime(STEP_MS);
+    for (let n = 1; n < sentAt.length; n++) expect(sentAt[n]! - sentAt[n - 1]!).toBeGreaterThanOrEqual(STEP_MS);
+    expect(sentAt.length).toBeLessThanOrEqual(2_000 / STEP_MS + 2);
+    // The last step came 2 s in; the send that carries it came within STEP_MS of it.
+    expect(sentAt.at(-1)! - start).toBeLessThanOrEqual(2_010 + STEP_MS);
+    expect(sentAt.at(-1)! - start).toBeGreaterThanOrEqual(2_000);
+  });
+
+  it("cancel drops the send that waits; a step long after the last send is sent at once as usual", () => {
+    const send = vi.fn();
+    const step = stepThrottle(send);
+    step();
+    step(); // waits
+    step.cancel();
+    vi.advanceTimersByTime(10 * STEP_MS);
+    expect(send).toHaveBeenCalledTimes(1);
+    step();
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancel keeps the time of the last send: a step right after it still waits", () => {
+    const send = vi.fn();
+    const step = stepThrottle(send);
+    step();
+    step.cancel(); // nothing waits
+    vi.advanceTimersByTime(100);
+    step();
+    expect(send).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(STEP_MS - 100);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancel with nothing waiting does nothing", () => {
+    const send = vi.fn();
+    const step = stepThrottle(send);
+    step.cancel();
+    step();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("a send that throws at the first step throws to the step, and the next step still waits its turn", () => {
+    const send = vi.fn(() => {
+      throw new Error("the window is gone");
+    });
+    const step = stepThrottle(send);
+    expect(() => step()).toThrow("the window is gone");
+    step(); // right after the send that threw: it waits
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("a send that throws once a wait has ended is noted, not thrown where no one can catch it", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const send = vi.fn().mockImplementationOnce(() => {}).mockImplementation(() => {
+        throw new Error("the window is gone");
+      });
+      const step = stepThrottle(send);
+      step();
+      step(); // waits
+      expect(() => vi.advanceTimersByTime(STEP_MS)).not.toThrow();
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith("narration", expect.objectContaining({ message: "the window is gone" }));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("throttles each filing apart: one's wait isn't another's", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const stepFirst = stepThrottle(first);
+    const stepSecond = stepThrottle(second);
+    stepFirst();
+    stepFirst(); // waits
+    stepSecond(); // its own first step: at once
+    expect(second).toHaveBeenCalledTimes(1);
+    stepFirst.cancel();
+    vi.advanceTimersByTime(STEP_MS);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
   });
 });

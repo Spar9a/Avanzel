@@ -25,6 +25,7 @@ import {
   onlyAgentsIn,
   read,
   resetReported,
+  shown,
   SIGNED_IN,
   signedOutClaude,
   snap,
@@ -1547,5 +1548,346 @@ test("a typed note says it was typed, whoever would have made its words", async 
   await call(app, "submitQuick", "Plant tulips in October");
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
   await expect(capsule.getByText("Typed note", { exact: true })).toBeVisible();
+  await app.close();
+});
+
+// ---- A capsule filing: its steps, its time and its receipt ----
+//
+// The card of a filing is told what the agent does as it does it (`rows`), when its run began and about how long that takes
+// (`startedAt`, `estimate`), and when it last took a step (`stepAt`). Once the filing is done, the state says which of its pages
+// are new and which are updated, and that a filing which wrote no page only noted its capture in the log (`noted`).
+
+/** What the capsule's state carries of a filing, as `capsuleStateForTests` tells it. */
+type Facts = {
+  kind: string;
+  text?: string;
+  waiting?: boolean;
+  rows?: { kind: string; path: string | null; title: string; shelf: string }[];
+  startedAt?: number;
+  estimate?: number;
+  stepAt?: number;
+  seconds?: number;
+};
+const factsOf = async (app: ElectronApplication) => (await call(app, "capsuleStateForTests")) as Facts;
+/** The kinds of the rows the capsule's state holds, oldest first: none while it shows anything but a filing. */
+const rowKindsOf = async (app: ElectronApplication) => ((await factsOf(app)).rows ?? []).map((row) => row.kind);
+
+/** One filing state sent to the capsule's page: how many rows it carried, and how many times the menu had been rebuilt by then. */
+type FilingSend = { rows: number; menus: number };
+
+/** From now on, notes each filing state sent to the capsule's page (`filingSends`), and counts the menu's rebuilds. */
+async function watchFilingStates(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ BrowserWindow }) => {
+    const capsule = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/capsule/"));
+    if (!capsule) throw new Error("There is no capsule window to watch.");
+    const controller = (globalThis as unknown as { __avanzel: { refreshMenu(): void } }).__avanzel;
+    let menus = 0;
+    const refreshMenu = controller.refreshMenu.bind(controller);
+    controller.refreshMenu = () => {
+      menus += 1;
+      refreshMenu();
+    };
+    const sent: FilingSend[] = [];
+    Object.assign(globalThis, { filingSends: sent });
+    const send = capsule.webContents.send.bind(capsule.webContents);
+    capsule.webContents.send = (channel: string, ...args: unknown[]) => {
+      const state = args[0] as { kind?: string; rows?: unknown[] } | undefined;
+      if (channel === "capsule:state" && state?.kind === "filing") sent.push({ rows: state.rows?.length ?? 0, menus });
+      send(channel, ...args);
+    };
+  });
+}
+
+const filingSends = (app: ElectronApplication) => app.evaluate(() => (globalThis as { filingSends?: FilingSend[] }).filingSends ?? []);
+
+/**
+ * A library that Claude Code's stand-in files, which reports its tool calls as Claude Code does (FAKE_AGENT_STREAM) and takes
+ * `stepMs` over each, so that the steps come while the run goes on. `env` adds variables for the app, and for the stand-in.
+ */
+function steppedClaude(stepMs: number, env: Record<string, string> = {}) {
+  const bin = agentStubs({ claude: filingClaude({ FAKE_AGENT_STREAM: "claude" }) });
+  return claudeLibrary(bin, { env: { FAKE_AGENT_STEP_MS: String(stepMs), ...env } });
+}
+
+/** The filing durations the app keeps for `library` in `userData` (run-state.json): the last ten seconds of each agent, by harness. */
+function durationsKept(userData: string, library: string): Record<string, number[]> {
+  const file = path.join(userData, "run-state.json");
+  if (!existsSync(file)) return {};
+  const state = JSON.parse(readFileSync(file, "utf8")) as Record<string, { durations?: Record<string, number[]> }>;
+  return state[path.resolve(library)]?.durations ?? {};
+}
+
+test("a capsule filing shows the agent's steps", async () => {
+  const { app } = await steppedClaude(1000);
+  await watchFilingStates(app);
+  const asked = Date.now();
+  await dictate(app);
+  // The rows come as the agent takes its steps: it reads the library's index, then writes the idea's page. (Its read of the
+  // capture itself is no row.)
+  await expect.poll(() => rowKindsOf(app), { timeout: 30_000, intervals: [100] }).toEqual(expect.arrayContaining(["read", "new"]));
+  const state = await factsOf(app);
+  expect(state).toMatchObject({ kind: "filing", text: "Plant tulips in October", estimate: 15 }); // 15 until it has done three filings
+  expect(state.rows?.slice(0, 2)).toMatchObject([
+    { kind: "read", path: "index.md", shelf: "" },
+    { kind: "new", path: expect.stringMatching(/^ideas\/idea-.+\.md$/), title: "Plant tulips in October", shelf: "ideas" },
+  ]);
+  // Its seconds count from the start of its run, and its last step came after that.
+  expect(state.startedAt).toBeGreaterThanOrEqual(asked);
+  expect(state.startedAt).toBeLessThanOrEqual(Date.now());
+  expect(state.stepAt).toBeGreaterThan(state.startedAt ?? Infinity);
+
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  // The steps reached the card one by one while the run went on, not together at its end, and none of them rebuilt the menu.
+  const sent = await filingSends(app);
+  const counts = sent.map((one) => one.rows);
+  expect(counts).toEqual([...counts].sort((a, b) => a - b));
+  expect(new Set(counts).size).toBeGreaterThanOrEqual(3);
+  expect(new Set(sent.slice(1).map((one) => one.menus)).size).toBe(1);
+  // The idea's page is new; the index and the log the agent also edited are no pages.
+  expect(await factsOf(app)).toMatchObject({ kind: "filed", noted: false, pages: [{ shelf: "ideas", created: true }] });
+  await app.close();
+});
+
+test("a hundred quick steps reach the capsule as a few updates", async () => {
+  // The stand-in reads a hundred pages back to back, after the index and before it writes.
+  const { app } = await steppedClaude(500, { FAKE_AGENT_READS: "100" });
+  await watchFilingStates(app);
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  const sent = await filingSends(app);
+  expect(sent.length).toBeLessThanOrEqual(20); // not one for each of the hundred
+  expect(Math.max(...sent.map((one) => one.rows))).toBe(50); // they did arrive: a send held the fifty newest rows, which is all main keeps
+  await app.close();
+});
+
+test("a card that was hidden stays hidden while its filing goes on, and the filing ends in a notification", async () => {
+  const { app } = await steppedClaude(1000);
+  await watchFilingStates(app);
+  await dictate(app);
+  await expect.poll(() => rowKindsOf(app), { timeout: 30_000, intervals: [100] }).toContain("read");
+  await call(app, "dismiss");
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  const before = (await filingSends(app)).length;
+  // The steps that follow bring nothing back: the card stays hidden, and is sent nothing, until the filing ends in its notification.
+  const seen = new Set<string>();
+  await expect
+    .poll(async () => (seen.add(await capsuleKind(app)), (await notified(app, "Filed by Claude Code")).length), { timeout: 30_000, intervals: [100] })
+    .toBe(1);
+  expect([...seen]).toEqual(["hidden"]);
+  expect(await shown(app, "capsule")).toBe(false);
+  expect((await filingSends(app)).length).toBe(before);
+  await app.close();
+});
+
+test("a card that replaced a filing's keeps its own steps, and the filing it replaced ends in a notification", async () => {
+  const { app } = await steppedClaude(1000);
+  await dictate(app);
+  await expect.poll(() => rowKindsOf(app), { timeout: 30_000, intervals: [100] }).toContain("read");
+  // A second thought, typed, takes the capsule at once. The agent files it after the first (one run at a time) ...
+  await call(app, "submitQuick", "Call the plumber on Monday");
+  // ... so until the first filing ends, the card is the second's, and shows none of the first's steps, which keep coming.
+  const wrong: Facts[] = [];
+  await expect
+    .poll(
+      async () => {
+        const state = await factsOf(app);
+        const notes = await notified(app, "Filed by Claude Code");
+        if (!notes.length && (state.kind !== "filing" || state.text !== "Call the plumber on Monday" || (state.rows ?? []).length > 0)) wrong.push(state);
+        return notes.length;
+      },
+      { timeout: 30_000, intervals: [100] },
+    )
+    .toBe(1);
+  expect(wrong).toEqual([]);
+  // The first filing ended in its notification, with its page, and its receipt is not on the second's card.
+  expect(await notified(app, "Filed by Claude Code")).toEqual([{ title: "Filed by Claude Code", body: "Plant tulips in October (ideas)" }]);
+  expect(await factsOf(app)).toMatchObject({ kind: "filing", text: "Call the plumber on Monday" });
+  // The second card is sent its own steps, once its run starts, and then its own receipt.
+  await expect.poll(async () => ((await factsOf(app)).rows ?? []).map((row) => row.title), { timeout: 30_000, intervals: [100] }).toContain("Call the plumber on Monday");
+  expect(((await factsOf(app)).rows ?? []).map((row) => row.title)).not.toContain("Plant tulips in October");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  expect(await factsOf(app)).toMatchObject({ kind: "filed", pages: [{ title: "Call the plumber on Monday", shelf: "ideas", created: true }] });
+  await app.close();
+});
+
+test("a filing's pages say new or updated", async () => {
+  // A stand-in Claude Code that files as the real one does: it writes a new idea page, adds to a page the library had, and logs
+  // it. The engine's own fake agent edits only the index and the log, which are no pages.
+  const filer = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-filer-")), "filer.mjs");
+  writeFileSync(
+    filer,
+    String.raw`import { appendFileSync, writeFileSync } from "node:fs";
+const prompt = process.argv[2] ?? "";
+const id = /capture id: ([^)]+)\)/.exec(prompt)[1];
+const stamp = /- (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \| file \|/.exec(prompt)[1];
+writeFileSync("ideas/tulips.md", "# Tulips for October\n");
+appendFileSync("goals/run.md", "\n- Ran again today.\n");
+appendFileSync("log.md", "- " + stamp + " | file | [[" + id + "]] → [[tulips]], [[run]]\n");
+console.log("Filed into [[tulips]] and [[run]].");
+`,
+  );
+  const bin = agentStubs();
+  answerAs(bin, "claude", `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else exec '${process.execPath}' '${filer}' "$2"; fi`);
+  const { library, app } = await claudeLibrary(bin);
+  writeFileSync(path.join(library, "goals", "run.md"), "# Run a marathon\n\nStatus: active.\n");
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  // The new page comes first, as the engine lists them, and the one that was changed after it; the log isn't a page.
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    kind: "filed",
+    noted: false,
+    pages: [
+      { title: "Tulips for October", shelf: "ideas", path: "ideas/tulips.md", created: true },
+      { title: "Run a marathon", shelf: "goals", path: "goals/run.md", created: false },
+    ],
+  });
+  await app.close();
+});
+
+test("a log-only filing is noted", async () => {
+  const library = await makeLibrary();
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Nothing in this is worth a page",
+    FAKE_AGENT_MODE: "logonly", // decides the capture needs no page, and says so in the log
+    ...onlyAgentsIn(agentStubs()),
+  });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", noted: true, pages: [] });
+  expect(filesUnder(library, "ideas")).toEqual([]);
+  expect(read(library, "log.md")).toContain("nothing to file (a test)");
+  await app.close();
+});
+
+test("each filing's seconds are kept with the agent that filed it", async () => {
+  const library = await makeLibrary();
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_USER_DATA: userData,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
+    FAKE_AGENT_DELAY_MS: "1500", // the run takes at least this long
+    FAKE_AGENT_DELAY_TASK: "file",
+    ...onlyAgentsIn(agentStubs()),
+  });
+  expect(durationsKept(userData, library)).toEqual({});
+  await dictate(app);
+  await expect.poll(() => durationsKept(userData, library).fake?.length, { timeout: 60_000 }).toBe(1);
+  await dictate(app);
+  await expect.poll(() => durationsKept(userData, library).fake?.length, { timeout: 60_000 }).toBe(2);
+  // Two durations under the agent that ran, in seconds: its pause is in them, and so is nothing like a minute. (The key is the
+  // harness's name, never "auto".)
+  const kept = durationsKept(userData, library);
+  expect(Object.keys(kept)).toEqual(["fake"]);
+  for (const seconds of kept.fake ?? []) {
+    expect(seconds).toBeGreaterThanOrEqual(1.4);
+    expect(seconds).toBeLessThan(30);
+  }
+  await app.close();
+});
+
+test("a filing's estimate is the median of what its agent's last filings took", async () => {
+  const library = await makeLibrary();
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  // The library's fake agent has done four filings, 4, 6, 9 and 30 s; another agent's are kept apart.
+  writeFileSync(
+    path.join(userData, "run-state.json"),
+    JSON.stringify({ [library]: { checked: {}, ran: {}, waiting: [], durations: { fake: [4, 6, 9, 30], codex: [100, 200, 300] } } }),
+  );
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_USER_DATA: userData,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
+    FAKE_AGENT_DELAY_MS: "3000", // the filing stays on view while the test reads it
+    FAKE_AGENT_DELAY_TASK: "file",
+    ...onlyAgentsIn(agentStubs()),
+  });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  // The middle two are 6 and 9; their mean, 7.5, is about 8 s.
+  expect(await factsOf(app)).toMatchObject({ kind: "filing", estimate: 8 });
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  // The filing is kept after them, and the other agent's are as they were.
+  const kept = durationsKept(userData, library);
+  expect(kept.fake?.slice(0, 4)).toEqual([4, 6, 9, 30]);
+  expect(kept.fake).toHaveLength(5);
+  expect(kept.codex).toEqual([100, 200, 300]);
+  await app.close();
+});
+
+test("the seconds a filing took leave out the time it waited for the library", async () => {
+  const library = await makeLibrary();
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_USER_DATA: userData,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
+    FAKE_AGENT_DELAY_MS: "2000", // the run itself takes about this long
+    FAKE_AGENT_DELAY_TASK: "file",
+    ...onlyAgentsIn(agentStubs()),
+  });
+  // Another process has the library for a good while, so the filing waits for it ...
+  let letGo = () => {};
+  const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
+  let released = 0;
+  try {
+    await dictate(app);
+    await expect.poll(() => factsOf(app), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
+    await sleep(5_000);
+    released = Date.now();
+  } finally {
+    letGo();
+    await held;
+  }
+  // ... and the card's seconds start when the run has it.
+  let running: Facts | undefined;
+  await expect
+    .poll(
+      async () => {
+        const state = await factsOf(app);
+        if (state.kind === "filing" && !state.waiting) running = state;
+        return running !== undefined;
+      },
+      { timeout: 30_000, intervals: [100] },
+    )
+    .toBe(true);
+  expect(running?.startedAt).toBeGreaterThanOrEqual(released);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  // What it says it took, and what is kept of it, are the run's: more than its pause, and less than the wait.
+  const [kept] = durationsKept(userData, library).fake ?? [];
+  expect(kept).toBeGreaterThanOrEqual(1.9);
+  expect(kept).toBeLessThan(4.5);
+  expect((await factsOf(app)).seconds).toBeLessThan(4.5);
+  await app.close();
+});
+
+test("the seconds a filing took leave out the time it waited behind another", async () => {
+  const library = await makeLibrary();
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_USER_DATA: userData,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
+    FAKE_AGENT_DELAY_MS: "3000", // each run takes about this long
+    FAKE_AGENT_DELAY_TASK: "file",
+    ...onlyAgentsIn(agentStubs()),
+  });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  // A second thought, typed, is filed after the first: the app runs one agent at a time, so it waits its turn in the queue,
+  // which the engine's wait for the library doesn't tell.
+  await call(app, "submitQuick", "Call the plumber on Monday");
+  await expect.poll(() => durationsKept(userData, library).fake?.length, { timeout: 60_000 }).toBe(2);
+  // Each took about its own pause. Were the second's wait for the first in its seconds, it would have taken about twice that.
+  for (const seconds of durationsKept(userData, library).fake ?? []) {
+    expect(seconds).toBeGreaterThanOrEqual(2.9);
+    expect(seconds).toBeLessThan(5);
+  }
   await app.close();
 });

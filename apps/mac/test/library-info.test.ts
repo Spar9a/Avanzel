@@ -64,6 +64,28 @@ describe("library info", () => {
     expect(pages.map((p) => p.path)).toEqual(["people/mark.md", "goals/launch-podcast.md"]);
   });
 
+  it("marks each page it filed new or updated, by the run's own changes", () => {
+    const root = library();
+    const pages = filedPages(root, { created: ["people/mark.md", "ideas/balcony-garden.md"], modified: ["goals/launch-podcast.md"] });
+    expect(pages).toEqual([
+      { title: "mark", shelf: "people", path: "people/mark.md", created: true },
+      { title: "Маленький сад на балконе", shelf: "ideas", path: "ideas/balcony-garden.md", created: true },
+      { title: "Launch the indie game dev podcast", shelf: "goals", path: "goals/launch-podcast.md", created: false },
+    ]);
+  });
+
+  it("marks a page written both ways as new, and lists it once", () => {
+    const pages = filedPages(library(), { created: ["people/mark.md"], modified: ["people/mark.md", "goals/launch-podcast.md"] });
+    expect(pages.map((p) => [p.path, p.created])).toEqual([["people/mark.md", true], ["goals/launch-podcast.md", false]]);
+  });
+
+  it("marks no page where a page is only looked up: the menu's, Ask's and a step's leave it unset", () => {
+    const root = library();
+    expect(pageInfo(root, "goals/launch-podcast.md")).not.toHaveProperty("created");
+    expect(recentFromLog(root).some((page) => "created" in page)).toBe(false);
+    expect(answeredFrom(root, "See [[mark]].").sources.some((page) => "created" in page)).toBe(false);
+  });
+
   it("opens pages in Obsidian only when Obsidian knows the library as a vault", () => {
     const root = library();
     expect(obsidianUrl(root, "goals/launch-podcast.md")).toBeNull();

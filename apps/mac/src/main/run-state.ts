@@ -1,6 +1,8 @@
-// When each shadow task was last checked for being due, and last ran, and which notes wait for a usage limit to reset
-// (`RunState`): per library, in the app's own data folder. It is about this Mac, not the library, so it never shows up in
-// the library's history. A wait kept here survives a restart, and waits for its library to open again.
+// When each shadow task was last checked for being due, and last ran, which notes wait for a usage limit to reset, and how
+// long the last filings of each agent took (`RunState`): per library, in the app's own data folder. It is about this Mac, not
+// the library, so it never shows up in the library's history. A wait kept here survives a restart, and waits for its library to
+// open again; so do the durations, which give the capsule's estimate of a filing. Whatever is read comes through
+// `normalizeRunState`, so a field that is missing, malformed or too long is mended on the way in, and every field is kept.
 import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { normalizeRunState, type RunState } from "./schedule.ts";

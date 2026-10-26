@@ -3,19 +3,20 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { RunStateStore } from "../src/main/run-state.ts";
+import { markChecked, markRan, withDuration } from "../src/main/schedule.ts";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "avz-run-state-"));
-const empty = { checked: {}, ran: {}, waiting: [] };
+const empty = { checked: {}, ran: {}, waiting: [], durations: {} };
 
 describe("run state store", () => {
   it("keeps each library's state apart, in a file of the app's own", () => {
     const file = path.join(tmp(), "run-state.json");
     const store = new RunStateStore(file);
-    store.set("/libs/a", { checked: { "evening-review": "2026-10-20T17:00:00.000Z" }, ran: {}, waiting: [] });
-    store.set("/libs/b", { checked: {}, ran: { "weekly-review": "2026-10-18T14:00:00.000Z" }, waiting: [] });
+    store.set("/libs/a", { checked: { "evening-review": "2026-10-20T17:00:00.000Z" }, ran: {}, waiting: [], durations: {} });
+    store.set("/libs/b", { checked: {}, ran: { "weekly-review": "2026-10-18T14:00:00.000Z" }, waiting: [], durations: {} });
     const again = new RunStateStore(file);
-    expect(again.get("/libs/a")).toEqual({ checked: { "evening-review": "2026-10-20T17:00:00.000Z" }, ran: {}, waiting: [] });
-    expect(again.get("/libs/b")).toEqual({ checked: {}, ran: { "weekly-review": "2026-10-18T14:00:00.000Z" }, waiting: [] });
+    expect(again.get("/libs/a")).toEqual({ checked: { "evening-review": "2026-10-20T17:00:00.000Z" }, ran: {}, waiting: [], durations: {} });
+    expect(again.get("/libs/b")).toEqual({ checked: {}, ran: { "weekly-review": "2026-10-18T14:00:00.000Z" }, waiting: [], durations: {} });
     expect(again.get("/libs/c")).toEqual(empty);
   });
 
@@ -25,7 +26,7 @@ describe("run state store", () => {
     mkdirSync(path.dirname(legacy));
     writeFileSync(legacy, JSON.stringify({ lastRun: { "evening-review": "2026-10-19T17:00:05.000Z" } })); // the oldest format, too
     const store = new RunStateStore(path.join(tmp(), "run-state.json"));
-    const carried = { checked: { "evening-review": "2026-10-19T17:00:05.000Z" }, ran: { "evening-review": "2026-10-19T17:00:05.000Z" }, waiting: [] };
+    const carried = { checked: { "evening-review": "2026-10-19T17:00:05.000Z" }, ran: { "evening-review": "2026-10-19T17:00:05.000Z" }, waiting: [], durations: {} };
     expect(store.get(library, legacy)).toEqual(carried);
     expect(existsSync(legacy)).toBe(false);
     writeFileSync(legacy, JSON.stringify({ checked: {}, ran: {} })); // e.g. an old copy of the app wrote it again
@@ -37,8 +38,8 @@ describe("run state store", () => {
     writeFileSync(file, "{not json");
     const store = new RunStateStore(file);
     expect(store.get("/libs/a")).toEqual(empty);
-    store.set("/libs/a", { checked: { x: "1" }, ran: {}, waiting: [] });
-    expect(new RunStateStore(file).get("/libs/a")).toEqual({ checked: { x: "1" }, ran: {}, waiting: [] });
+    store.set("/libs/a", { checked: { x: "1" }, ran: {}, waiting: [], durations: {} });
+    expect(new RunStateStore(file).get("/libs/a")).toEqual({ checked: { x: "1" }, ran: {}, waiting: [], durations: {} });
   });
 
   it("keeps a library's usage-limit waits through the store, apart from the others'", () => {
@@ -48,11 +49,49 @@ describe("run state store", () => {
       { capture: "/libs/a/inbox/2026-10-25-100000-one.md", agent: "claude", until: 1_792_532_460_000 },
       { capture: "/libs/a/inbox/2026-10-25-100500-two.md", agent: "codex", until: 1_792_536_000_000 },
     ];
-    store.set("/libs/a", { checked: {}, ran: {}, waiting: waits });
-    store.set("/libs/b", { checked: {}, ran: {}, waiting: [] });
+    store.set("/libs/a", { checked: {}, ran: {}, waiting: waits, durations: {} });
+    store.set("/libs/b", { checked: {}, ran: {}, waiting: [], durations: {} });
     const again = new RunStateStore(file);
     expect(again.get("/libs/a").waiting).toEqual(waits);
     expect(again.get("/libs/b").waiting).toEqual([]);
+  });
+
+  it("keeps a library's filing durations through the store, apart from the others'", () => {
+    const file = path.join(tmp(), "run-state.json");
+    const store = new RunStateStore(file);
+    store.set("/libs/a", { ...empty, durations: { claude: [8, 9.5, 12], codex: [20] } });
+    store.set("/libs/b", { ...empty, durations: { claude: [30] } });
+    const again = new RunStateStore(file);
+    expect(again.get("/libs/a").durations).toEqual({ claude: [8, 9.5, 12], codex: [20] });
+    expect(again.get("/libs/b").durations).toEqual({ claude: [30] });
+    expect(again.get("/libs/c").durations).toEqual({});
+  });
+
+  it("keeps the durations when a task is checked or ran: the state is written back whole", () => {
+    // What tick() and runTask do with the state they read: 1e lost data when a helper left a field out.
+    const store = new RunStateStore(path.join(tmp(), "run-state.json"));
+    store.set("/libs/a", { ...empty, durations: withDuration({}, "claude", 11) });
+    store.set("/libs/a", markChecked(store.get("/libs/a"), ["evening-review"], new Date(2026, 9, 26, 21, 0)));
+    store.set("/libs/a", markRan(store.get("/libs/a"), "weekly-review", new Date(2026, 9, 26, 21, 1)));
+    const kept = store.get("/libs/a");
+    expect(kept.durations).toEqual({ claude: [11] });
+    expect(Object.keys(kept.checked).sort()).toEqual(["evening-review", "weekly-review"]);
+  });
+
+  it("drops a malformed duration on load and keeps the good ones", () => {
+    const file = path.join(tmp(), "run-state.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        "/libs/a": { checked: {}, ran: {}, waiting: [], durations: { claude: [8, "9", -4, null, 12], codex: "fast" } },
+        "/libs/b": { checked: {}, ran: {}, waiting: [], durations: [8, 9] }, // not a record at all
+        "/libs/c": { durations: { claude: Array.from({ length: 50 }, (_, n) => n + 1) } }, // a state of nothing else
+      }),
+    );
+    const store = new RunStateStore(file);
+    expect(store.get("/libs/a").durations).toEqual({ claude: [8, 12] });
+    expect(store.get("/libs/b").durations).toEqual({});
+    expect(store.get("/libs/c").durations).toEqual({ claude: [41, 42, 43, 44, 45, 46, 47, 48, 49, 50] });
   });
 
   it("drops a malformed wait on load and keeps the good ones", () => {

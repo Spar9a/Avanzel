@@ -1,6 +1,7 @@
 // When things happen: which shadow tasks should run now (a task seen for the first time is only remembered, so a fresh
 // install never fires yesterday's run; a run missed while the Mac slept happens once), when a note that a usage limit
-// stopped is filed again, and when a thought saved for the evening review is filed, as the capsule tells it.
+// stopped is filed again, and when a thought saved for the evening review is filed, as the capsule tells it. And how long a
+// filing takes, as the last ones of each agent tell it: the estimate the filing card shows.
 
 export interface SchedulableTask {
   id: string;
@@ -58,20 +59,86 @@ export interface LimitWait {
   until: number;
 }
 
+/** How many filing durations the run state keeps for each agent: the newest. */
+export const MAX_DURATIONS = 10;
+
+/** About how long a filing takes, in seconds, until its agent has done enough of them to tell (`MIN_DURATIONS`). */
+export const DEFAULT_ESTIMATE_SECONDS = 15;
+
+/** How many filings an agent must have done before what they took gives the estimate. */
+const MIN_DURATIONS = 3;
+
 /**
- * Per library (kept by `RunStateStore`): when each task was last checked for being due, and last ran, and the notes that
- * wait for a usage limit to reset.
+ * Per library (kept by `RunStateStore`): when each task was last checked for being due, and last ran, the notes that wait for
+ * a usage limit to reset, and how long the agents' last filings took. Whatever writes a state back whole carries every one of
+ * these (`markChecked`, `markRan`): a field it leaves out is lost the next time `tick()` writes the state.
  */
 export interface RunState {
   checked: Record<string, string>;
   ran: Record<string, string>;
   waiting: LimitWait[];
+  /**
+   * The last `MAX_DURATIONS` filings' seconds of each agent, oldest first, by the harness that ran ("claude", never "auto").
+   * A filing's seconds start when its run has the library, so the wait for it isn't in them. `estimateSeconds` makes the
+   * estimate of them.
+   */
+  durations: Record<string, number[]>;
 }
 
 const stringRecord = (value: unknown): Record<string, string> =>
   typeof value === "object" && value !== null
     ? Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
     : {};
+
+/** Whether `value` can be the seconds a filing took: a number that is none of negative, infinite or not a number. */
+const isDuration = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
+
+/**
+ * The durations in `value`, as a state keeps them: for each agent the good ones of its list, the last `MAX_DURATIONS`. A
+ * list with none left, and anything that isn't a list or a record, is dropped.
+ */
+const durationLists = (value: unknown): Record<string, number[]> => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([harness, list]): [string, number[]][] => {
+      const kept = Array.isArray(list) ? list.filter(isDuration).slice(-MAX_DURATIONS) : [];
+      return kept.length ? [[harness, kept]] : [];
+    }),
+  );
+};
+
+/** `durations` as a copy no other holds, so that what a state hands on is not the state it was made from. */
+const copyDurations = (durations: Record<string, number[]>): Record<string, number[]> =>
+  Object.fromEntries(Object.entries(durations).map(([harness, list]) => [harness, [...list]]));
+
+/** `harness`'s durations, none when it has none: only its own, never a property that every object has (an agent called "constructor"). */
+export function durationsOf(durations: Record<string, number[]>, harness: string): number[] {
+  return Object.hasOwn(durations, harness) ? (durations[harness] ?? []) : [];
+}
+
+/**
+ * `durations` with a filing's `seconds` after those of `harness`, the agent that ran it (never "auto"), keeping its last
+ * `MAX_DURATIONS`. Seconds that can't be a duration (a negative number, or one that isn't finite) are not added. The
+ * durations given are left as they were.
+ */
+export function withDuration(durations: Record<string, number[]>, harness: string, seconds: number): Record<string, number[]> {
+  const copy = copyDurations(durations);
+  if (!isDuration(seconds)) return copy;
+  return { ...copy, [harness]: [...durationsOf(durations, harness), seconds].slice(-MAX_DURATIONS) };
+}
+
+/**
+ * About how long a filing takes with an agent, whole seconds, from what its last filings took: their median, the mean of
+ * the middle two when there is an even number of them. `DEFAULT_ESTIMATE_SECONDS` until it has done three, which are too few
+ * to tell. A median, so that one filing that took far longer than the rest (a Mac that slept) doesn't move it.
+ */
+export function estimateSeconds(durations: readonly number[]): number {
+  if (durations.length < MIN_DURATIONS) return DEFAULT_ESTIMATE_SECONDS;
+  const sorted = [...durations].sort((a, b) => a - b);
+  const middle = sorted.length >> 1;
+  const median = sorted.length % 2 ? (sorted[middle] ?? 0) : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
+  return Math.round(median);
+}
 
 const isWait = (value: unknown): value is LimitWait => {
   if (typeof value !== "object" || value === null) return false;
@@ -85,22 +152,29 @@ const waits = (value: unknown): LimitWait[] =>
 
 export function normalizeRunState(raw: unknown): RunState {
   const r = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
-  if ("checked" in r || "ran" in r || "waiting" in r) {
-    return { checked: stringRecord(r.checked), ran: stringRecord(r.ran), waiting: waits(r.waiting) };
+  // Any field of the current format makes it the current format: a state of durations alone is not the legacy one.
+  if ("checked" in r || "ran" in r || "waiting" in r || "durations" in r) {
+    return { checked: stringRecord(r.checked), ran: stringRecord(r.ran), waiting: waits(r.waiting), durations: durationLists(r.durations) };
   }
   const legacy = stringRecord(r.lastRun);
-  return { checked: { ...legacy }, ran: { ...legacy }, waiting: [] };
+  return { checked: { ...legacy }, ran: { ...legacy }, waiting: [], durations: {} };
 }
 
 export function markChecked(state: RunState, ids: string[], now: Date): RunState {
   const checked = { ...state.checked };
   for (const id of ids) checked[id] = now.toISOString();
-  return { checked, ran: { ...state.ran }, waiting: state.waiting.map((wait) => ({ ...wait })) };
+  return { ...state, checked, ran: { ...state.ran }, waiting: state.waiting.map((wait) => ({ ...wait })), durations: copyDurations(state.durations) };
 }
 
 export function markRan(state: RunState, id: string, now: Date): RunState {
   const at = now.toISOString();
-  return { checked: { ...state.checked, [id]: at }, ran: { ...state.ran, [id]: at }, waiting: state.waiting.map((wait) => ({ ...wait })) };
+  return {
+    ...state,
+    checked: { ...state.checked, [id]: at },
+    ran: { ...state.ran, [id]: at },
+    waiting: state.waiting.map((wait) => ({ ...wait })),
+    durations: copyDurations(state.durations),
+  };
 }
 
 /** `waiting` with `wait` in it, in place of any wait for the same note and agent. */
