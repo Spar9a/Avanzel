@@ -108,6 +108,7 @@ import { pickRequest, popupChoice } from "./popup.ts";
 import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import {
+  DEFAULT_ESTIMATE_SECONDS,
   dueTasks,
   durationsOf,
   estimateSeconds,
@@ -486,6 +487,15 @@ export class Controller {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The harness a run that was asked to use `chosen` is for, by name ("claude"): `chosen`, or on "auto" the one selected now
+   * (`selectedHarness`). A job that could select none when it was made says "auto"; this is what it ran with, or failed with.
+   * Null when there is no agent to name.
+   */
+  private harnessFor(chosen: string): string | null {
+    return chosen === "auto" ? this.selectedHarness() : chosen;
   }
 
   private agentName(harness?: string): string {
@@ -1056,16 +1066,17 @@ export class Controller {
 
   private showFiling(job: FilingJob): void {
     this.job = job;
+    job.estimate ??= this.estimateFor(job); // as its card first shows, so that it doesn't move as other filings end
     this.setCapsule(this.filingState(job, this.transcribesOnThisMac()));
   }
 
   /**
    * What the capsule's card says of `job`'s filing: its words, the steps the agent has taken, the seconds it has run for and
-   * about how many it takes. `onThisMac` is where the words were made, as the card first said (`transcribesOnThisMac`), which
-   * a later state keeps rather than read the library's settings again at each step.
+   * about how many it takes (`estimate`, fixed when the card first showed, `showFiling`). `onThisMac` is where the words were
+   * made, as the card first said (`transcribesOnThisMac`), which a later state keeps rather than read the library's settings
+   * again at each step.
    */
   private filingState(job: FilingJob, onThisMac: boolean): FilingState {
-    job.estimate ??= this.estimateFor(job);
     return {
       kind: "filing",
       text: job.text,
@@ -1077,7 +1088,7 @@ export class Controller {
       ...(job.waiting ? { waiting: true } : {}),
       rows: job.rows,
       startedAt: job.startedAt,
-      estimate: job.estimate,
+      estimate: job.estimate ?? DEFAULT_ESTIMATE_SECONDS, // set by showFiling, before any card shows
       stepAt: job.stepAt,
     };
   }
@@ -1103,7 +1114,7 @@ export class Controller {
    */
   private estimateFor(job: FilingJob): number {
     try {
-      const harness = this.ranWith(job);
+      const harness = this.harnessFor(job.harness);
       return estimateSeconds(this.vault && harness ? durationsOf(this.readRunState(this.vault).durations, harness) : []);
     } catch (error) {
       console.warn("filing estimate", error);
@@ -1111,19 +1122,16 @@ export class Controller {
     }
   }
 
-  /** The harness `job`'s filing runs with, by name ("claude"), never "auto": the library's own choice when the job named none. Null if there is none. */
-  private ranWith(job: FilingJob): string | null {
-    return job.harness === "auto" ? this.selectedHarness() : job.harness;
-  }
-
   /**
-   * `job`'s filing ended well, in `seconds` from when its run had the library: they are kept with the agent that ran it, in the
-   * run state of `library` (the one the note was filed in), as the last of its filings, for the estimate of the next. Best effort:
-   * a run state that can't be written (the app's data folder is read-only) loses a duration, and never fails the filing.
+   * `job`'s filing ended well, in `seconds` from when its run had the library: they are kept with the agent that ran it (never
+   * "auto", `harnessFor`), in the run state of `library` (the one the note was filed in), as the last of its filings, for the
+   * estimate of the next. Best effort: a run state that can't be written (the app's data folder is read-only) loses a duration,
+   * and never fails the filing. The receipt's seconds are the wall clock's, whatever they are; the ones kept are not.
    */
   private keepDuration(job: FilingJob, library: Vault | null, seconds: number): void {
-    const harness = this.ranWith(job);
+    const harness = this.harnessFor(job.harness);
     if (!library || !harness) return;
+    if (seconds > this.timeoutSeconds(library)) return; // no run outlasts its timeout, the engine stops it: more was a sleep
     try {
       const state = this.readRunState(library);
       this.writeRunState(library, { ...state, durations: withDuration(state.durations, harness, seconds) });
@@ -1159,12 +1167,12 @@ export class Controller {
   /**
    * A step the agent takes in a filing, told as it takes it (`file`'s `steps`): it joins the filing's rows, and the pages
    * written, which setup's shelf tabs count. Setup's window, if it still shows the filing, is sent them (`setup.stepped`), and
-   * the capsule's card, if it does (`refreshFiling`), by `tell`, which spaces the sends out (`stepThrottle`). Narration is best
-   * effort: what goes wrong here is noted, and never fails the filing.
+   * the capsule's card, if it does (`refreshFiling`), by `tell`, which spaces the sends out (`stepThrottle`). `root` is the
+   * note's own library's, which the steps' paths are in and the pages are titled from, whichever library is open by then.
+   * Narration is best effort: what goes wrong here is noted, and never fails the filing.
    */
-  private filingStep(job: FilingJob, step: FilingStep, tell: StepThrottle): void {
+  private filingStep(job: FilingJob, step: FilingStep, root: string, tell: StepThrottle): void {
     try {
-      const root = this.requireVault().root;
       job.written = withWritten(job.written, step);
       job.rows = withStep(job.rows, step, (rel) => rowPage(root, rel));
       job.stepAt = Date.now();
@@ -1205,7 +1213,7 @@ export class Controller {
     // Every filing that has a card or a window is narrated: setup's first thought tells its window, a capsule filing its card.
     // One in the background has neither. A card is sent the steps at the pace `stepThrottle` keeps.
     const tell = stepThrottle(() => this.refreshFiling(job));
-    const steps = job.background ? null : (step: FilingStep) => this.filingStep(job, step, tell);
+    const steps = job.background || !library ? null : (step: FilingStep) => this.filingStep(job, step, library.root, tell);
     try {
       [outcome] = await this.withRun(
         async (signal) => (await this.librarian(job.harness)).file([job.capturePath], { signal, progress, ...(steps ? { steps } : {}) }),
@@ -1305,7 +1313,7 @@ export class Controller {
    */
   private failedHarness(chosen: string, error: unknown): string | null {
     if (error instanceof NoAgentError && error.agent) return error.agent;
-    return chosen === "auto" ? this.selectedHarness() : chosen;
+    return this.harnessFor(chosen);
   }
 
   /**
@@ -1406,10 +1414,10 @@ export class Controller {
     return savedNote(review ? { schedule: formatSchedule(review.schedule), enabled: true } : null);
   }
 
-  /** How long the library lets an agent run, in seconds. */
-  private timeoutSeconds(): number {
+  /** How long a library lets an agent run, in seconds: the open library's unless `vault` (a note's own) is given. */
+  private timeoutSeconds(vault: Vault | null = this.vault): number {
     try {
-      return (this.vault ? loadSettings(this.vault.root) : defaultSettings()).timeoutSeconds;
+      return (vault ? loadSettings(vault.root) : defaultSettings()).timeoutSeconds;
     } catch {
       return defaultSettings().timeoutSeconds;
     }

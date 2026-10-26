@@ -74,8 +74,8 @@ export interface FilingJob {
   /** Date.now() when the agent last took a step, or `startedAt` before its first: how long the card has been quiet. */
   stepAt: number;
   /**
-   * About how many seconds a filing with this job's agent takes (`estimateSeconds`), fixed when its card first shows so that
-   * it doesn't change under the person's eyes as another filing ends. Unset until then.
+   * About how many seconds a filing with this job's agent takes (`estimateSeconds`), fixed when its card first shows
+   * (`showFiling`) so that it doesn't change under the person's eyes as another filing ends. Unset until then.
    */
   estimate?: number;
   /**

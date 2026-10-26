@@ -987,6 +987,7 @@ async function notified(app: ElectronApplication, title: string): Promise<{ titl
 test("a note stopped by a usage limit is filed after the reset", async () => {
   const bin = agentStubs();
   const { library, app, capsule, resetsAt } = await limitedFor(bin, 5, { env: AT_THE_RESET });
+  await watchFilingStates(app);
   const [note] = inbox(library);
   // The card promises it, and the app keeps the promise: a wait for the reset, kept with the library, with the agent that was stopped.
   await expect(capsule.getByText(/^It resets (at|tomorrow at) \d\d:\d\d\. Your note is safe in the inbox and will be filed then\.$/)).toBeVisible();
@@ -1002,6 +1003,7 @@ test("a note stopped by a usage limit is filed after the reset", async () => {
   expect(Date.now()).toBeGreaterThanOrEqual(resetsAt * 1000); // not before the reset
   await expect.poll(() => notified(app, "Filed by Claude Code")).toEqual([expect.objectContaining({ title: "Filed by Claude Code" })]);
   expect(seen.has("filing")).toBe(false); // it showed no card of its own
+  expect(await filingSends(app)).toEqual([]); // and none of its steps, or anything else of it, was sent to the capsule's page
   // The card of the failure, which promised the filing, goes now that the note is filed.
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   expect(filesUnder(library, "ideas")).toEqual([`idea-${path.basename(note!, ".md")}.md`]);
@@ -1642,7 +1644,10 @@ test("a capsule filing shows the agent's steps", async () => {
   const counts = sent.map((one) => one.rows);
   expect(counts).toEqual([...counts].sort((a, b) => a - b));
   expect(new Set(counts).size).toBeGreaterThanOrEqual(3);
-  expect(new Set(sent.slice(1).map((one) => one.menus)).size).toBe(1);
+  // tick() (every minute, and on waking or unlocking) and broadcast() rebuild the menu too, and one of them may land in these
+  // seconds, so one rebuild is allowed. A rebuild at each of the steps would be four or more.
+  const menus = sent.slice(1).map((one) => one.menus);
+  expect(Math.max(...menus) - Math.min(...menus)).toBeLessThanOrEqual(1);
   // The idea's page is new; the index and the log the agent also edited are no pages.
   expect(await factsOf(app)).toMatchObject({ kind: "filed", noted: false, pages: [{ shelf: "ideas", created: true }] });
   await app.close();
@@ -1858,11 +1863,12 @@ test("the seconds a filing took leave out the time it waited for the library", a
     .toBe(true);
   expect(running?.startedAt).toBeGreaterThanOrEqual(released);
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-  // What it says it took, and what is kept of it, are the run's: more than its pause, and less than the wait.
+  // What it says it took, and what is kept of it, are the run's: its pause (2 s) and a little, not the wait (5 s) too, which would
+  // make about 7.5. The limit sits between them, with a margin of about 2.5 s on each side for a Mac that is slow or busy.
   const [kept] = durationsKept(userData, library).fake ?? [];
   expect(kept).toBeGreaterThanOrEqual(1.9);
-  expect(kept).toBeLessThan(4.5);
-  expect((await factsOf(app)).seconds).toBeLessThan(4.5);
+  expect(kept).toBeLessThan(5);
+  expect((await factsOf(app)).seconds).toBeLessThan(5);
   await app.close();
 });
 
@@ -1874,7 +1880,7 @@ test("the seconds a filing took leave out the time it waited behind another", as
     AVANZEL_USER_DATA: userData,
     AVANZEL_FAKE_AUDIO: speechWav("hello"),
     AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
-    FAKE_AGENT_DELAY_MS: "3000", // each run takes about this long
+    FAKE_AGENT_DELAY_MS: "4000", // each run takes about this long
     FAKE_AGENT_DELAY_TASK: "file",
     ...onlyAgentsIn(agentStubs()),
   });
@@ -1884,10 +1890,76 @@ test("the seconds a filing took leave out the time it waited behind another", as
   // which the engine's wait for the library doesn't tell.
   await call(app, "submitQuick", "Call the plumber on Monday");
   await expect.poll(() => durationsKept(userData, library).fake?.length, { timeout: 60_000 }).toBe(2);
-  // Each took about its own pause. Were the second's wait for the first in its seconds, it would have taken about twice that.
+  // Each took about its own pause (4 s) and a little. Were the second's wait for the first in its seconds, it would have taken
+  // about 8. The limit sits between them, with a margin of about 2 s on each side for a Mac that is slow or busy.
   for (const seconds of durationsKept(userData, library).fake ?? []) {
-    expect(seconds).toBeGreaterThanOrEqual(2.9);
-    expect(seconds).toBeLessThan(5);
+    expect(seconds).toBeGreaterThanOrEqual(3.9);
+    expect(seconds).toBeLessThan(6.5);
   }
+  await app.close();
+});
+
+test("a filing that failed keeps no duration, and the next one that files keeps its own", async () => {
+  const library = await makeLibrary();
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_USER_DATA: userData,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "An unfileable thought",
+    FAKE_AGENT_MODE: "picky", // fails a capture that says "unfileable", and files any other
+    ...onlyAgentsIn(agentStubs()),
+  });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("error");
+  await call(app, "idleForTests");
+  expect(durationsKept(userData, library)).toEqual({}); // a run that failed says nothing of how long a filing takes
+  // A thought it can file is kept, so the failure left nothing out but its own seconds.
+  await call(app, "submitQuick", "Plant tulips in October");
+  await expect.poll(() => durationsKept(userData, library).fake?.length, { timeout: 60_000 }).toBe(1);
+  await app.close();
+});
+
+test("a filing the Mac slept through keeps no duration, though its receipt says what the clock did", async () => {
+  const library = await makeLibrary(); // its agent may run for 30 s
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    AVANZEL_USER_DATA: userData,
+    AVANZEL_FAKE_AUDIO: speechWav("hello"),
+    AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October",
+    FAKE_AGENT_DELAY_MS: "2000", // the run is under way for a moment, while the clock jumps
+    FAKE_AGENT_DELAY_TASK: "file",
+    ...onlyAgentsIn(agentStubs()),
+  });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  // The Mac sleeps for an hour mid-run: the app's clock jumps ahead, and the agent's own timers do not.
+  await app.evaluate(() => {
+    const now = Date.now.bind(Date);
+    Date.now = () => now() + 3_600_000;
+  });
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  expect((await factsOf(app)).seconds).toBeGreaterThan(3_000); // the receipt says what the clock says
+  await call(app, "idleForTests");
+  expect(durationsKept(userData, library)).toEqual({}); // no run outlasts its 30 s: more than that was the sleep
+  await app.close();
+});
+
+test("a filing's steps name their pages from the note's own library when another opens meanwhile", async () => {
+  // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
+  const { app } = await steppedClaude(2000, { XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
+  await dictate(app);
+  await expect.poll(() => rowKindsOf(app), { timeout: 30_000, intervals: [100] }).toContain("read");
+  // Another library opens while the agent works, and the first library's filing goes on.
+  await stubPicker(app, await makeLibrary());
+  await call(app, "chooseLibrary");
+  expect(await capsuleKind(app)).toBe("filing");
+  // The idea's page the agent writes next is in the first library alone, so its row has the page's title, which only that library
+  // can tell: from the library that is open now, it would be named by its file name ("idea-2026-…").
+  await expect
+    .poll(async () => ((await factsOf(app)).rows ?? []).find((row) => row.kind === "new")?.title, { timeout: 30_000, intervals: [100] })
+    .toBe("Plant tulips in October");
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   await app.close();
 });
