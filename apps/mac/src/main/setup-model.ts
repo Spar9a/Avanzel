@@ -6,6 +6,7 @@ import { existsSync, opendirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { loadSettings, Vault, type FileOutcome } from "@avanzel/engine";
 import { agentWorks, isAgentProblem, type FiledPage, type LibraryFolder, type SetupAgent } from "../shared/ipc.ts";
+import type { TooBroad } from "../shared/problems.ts";
 import { WIKILINK } from "../shared/wikilinks.ts";
 
 /** `target` with the home folder as "~": only the folder itself, so /Users/ab stays as it is when home is /Users/a. */
@@ -65,23 +66,26 @@ function atTheRoot(place: string): string | null {
 }
 
 /**
- * Whether `target` is too broad to be a library: the home folder `home`, one of the folders macOS makes in it
- * (Documents, Desktop…), the disk's root, another disk's (/Volumes/Backup), or one of the system's own folders
- * (SYSTEM_FOLDERS: /Applications, /Users, /usr, /tmp…). Making a library there would put the shelves, an AGENTS.md and git
- * history over everything in it, so setup and Settings refuse. Places are compared as they are on disk (`onDisk`), so no
- * link or alias of one of them gets through (/tmp is /private/tmp), and names whatever their case. A place on the data
- * volume is refused exactly when the same place at the root is: /System/Volumes/Data/Users/me is the home folder.
+ * Whether `target` is too broad to be a library, and why (null when it is a place like any other). One of the system's own
+ * folders (SYSTEM_FOLDERS: /Applications, /Users, /usr, /tmp…) or the startup disk's root is `system`: nothing can be made in
+ * most of them, or macOS doesn't keep it. The home folder `home`, one of the folders macOS makes in it (Documents, Desktop…),
+ * /Volumes or another disk's root (/Volumes/Backup) is `broad`: a folder inside will do. Making a library at either would put
+ * the shelves, an AGENTS.md and git history over everything in it, so setup and Settings refuse, and say why (tooBroadLine).
+ * Places are compared as they are on disk (`onDisk`), so no link or alias of one of them gets through (/tmp is /private/tmp),
+ * and names whatever their case. A place on the data volume is refused exactly when the same place at the root is, and for
+ * the same reason: /System/Volumes/Data/Users/me is the home folder.
  */
-export function tooBroad(target: string, home: string): boolean {
+export function tooBroad(target: string, home: string): TooBroad | null {
   const place = onDisk(target, home);
   const atRoot = atTheRoot(place);
   if (atRoot !== null) return tooBroad(atRoot, home);
   const parent = path.dirname(place);
   const own = onDisk(home, home);
-  if (place === parent || place === own || parent === "/Volumes" || place === "/Volumes") return true;
+  if (place === parent) return "system"; // the startup disk's root
+  if (place === own || parent === "/Volumes" || place === "/Volumes") return "broad";
   const lower = place.toLowerCase();
-  if (SYSTEM_FOLDERS.some((folder) => onDisk(folder, home).toLowerCase() === lower)) return true;
-  return parent === own && HOME_FOLDERS.has(path.basename(place).toLowerCase());
+  if (SYSTEM_FOLDERS.some((folder) => onDisk(folder, home).toLowerCase() === lower)) return "system";
+  return parent === own && HOME_FOLDERS.has(path.basename(place).toLowerCase()) ? "broad" : null;
 }
 
 /** Where setup suggests the library when none is remembered, and where it starts over when the remembered one is gone. */

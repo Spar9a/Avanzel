@@ -6,6 +6,7 @@ import {
   markRan,
   normalizeRunState,
   resetMarginMs,
+  savedNote,
   signInPollMs,
   signInWatchMs,
   splitWaits,
@@ -174,5 +175,18 @@ describe("the times tests can shorten", () => {
       expect(signInPollMs({ ...test, AVANZEL_SIGNIN_POLL_MS: value })).toBe(10_000); // looking every 0 ms would be a busy loop
       expect(signInWatchMs({ ...test, AVANZEL_SIGNIN_WATCH_MS: value })).toBe(1_800_000);
     }
+  });
+});
+
+describe("what a thought saved for the evening review says", () => {
+  it("names the review's own time while it is on, as General says when it runs", () => {
+    expect(savedNote({ schedule: "daily 21:00", enabled: true })).toBe("Saved to your inbox for the evening review at 21:00.");
+    expect(savedNote({ schedule: "daily 07:30", enabled: true })).toBe("Saved to your inbox for the evening review at 07:30.");
+    expect(savedNote({ schedule: "weekly sun 18:00", enabled: true })).toBe("Saved to your inbox for the evening review, Sundays at 18:00.");
+  });
+
+  it("promises no review while it is off, or when the library has none: nothing files the thought by itself", () => {
+    expect(savedNote({ schedule: "daily 21:00", enabled: false })).toBe("Saved to your inbox.");
+    expect(savedNote(null)).toBe("Saved to your inbox.");
   });
 });

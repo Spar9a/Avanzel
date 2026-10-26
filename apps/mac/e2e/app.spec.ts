@@ -113,6 +113,8 @@ test("a screen capture with a spoken comment waits in the inbox with its screens
   await snap(capsule, "6-capture-listening");
   await call(app, "toggleCapture");
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
+  // The evening review files it, at the time the library's review runs.
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ note: "Saved to your inbox for the evening review at 21:00." });
   await snap(capsule, "7-capture-saved");
   const [name] = inbox(library);
   const capture = read(library, `inbox/${name}`);
@@ -896,6 +898,23 @@ test("closing the Ask window gives up its question, so a note waiting behind it 
   await expect.poll(() => capsuleKind(app), { timeout: 15_000 }).toBe("filed");
   expect(alive(pid)).toBe(false); // the question's agent was stopped
   expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("a thought saved for the evening review says when that review runs, and promises none while it is off", async () => {
+  const library = await makeLibrary();
+  // This library's evening review runs at a time of its own.
+  const review = path.join(library, "tasks", "evening-review.md");
+  writeFileSync(review, readFileSync(review, "utf8").replace("schedule: daily 21:00", "schedule: daily 20:30"));
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await call(app, "setApp", { fileMode: "evening" });
+  await call(app, "submitQuick", "first thought");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", note: "Saved to your inbox for the evening review at 20:30." });
+  // With the review off nothing files the thought by itself: the capsule says only where it is.
+  writeFileSync(review, readFileSync(review, "utf8").replace("enabled: true", "enabled: false"));
+  await call(app, "submitQuick", "second thought");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", note: "Saved to your inbox." });
+  expect(inbox(library)).toHaveLength(2);
   await app.close();
 });
 

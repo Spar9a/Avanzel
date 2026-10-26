@@ -751,7 +751,7 @@ test("Change… picks another folder", async () => {
   await app.close();
 });
 
-test("a folder too broad for a library, such as ~/Documents, says so, and nothing is made there", async () => {
+test("a folder too broad for a library, such as ~/Documents or /Applications, says why, and nothing is made there", async () => {
   const { env, home } = firstRun();
   const documents = path.join(home, "Documents");
   mkdirSync(documents);
@@ -768,6 +768,15 @@ test("a folder too broad for a library, such as ~/Documents, says so, and nothin
   // Nor does the controller make one there when asked.
   expect(((await call(app, "createSetupLibrary")) as SetupSnapshot).libraryReady).toBe(false);
   expect(readdirSync(documents)).toEqual(["taxes.pdf"]);
+  // One of macOS's own folders: nothing can be made in most of them, so the line sends the person to their home folder.
+  await stubPicker(app, "/Applications");
+  await setup.getByRole("button", { name: "Change…" }).click();
+  await expect(
+    setup.getByText("/Applications is one of macOS's own folders. Choose or make a folder in your home folder.", { exact: true }),
+  ).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Use this folder" })).toBeDisabled();
+  expect(((await call(app, "createSetupLibrary")) as SetupSnapshot).libraryReady).toBe(false);
+  expect(existsSync("/Applications/.avanzel")).toBe(false);
   // A folder inside it is a library's place like any other.
   const inside = path.join(documents, "Avanzel");
   await stubPicker(app, inside);

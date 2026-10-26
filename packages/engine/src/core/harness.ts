@@ -21,6 +21,20 @@ export type { RateLimit } from "./claude-stream.ts";
 
 export const BUILTIN_ORDER = ["claude", "codex", "opencode", "cursor-agent", "gemini"] as const;
 
+// The built-in agents by the names a person knows them by, as the apps show them.
+const AGENT_NAMES: Readonly<Record<string, string>> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  opencode: "OpenCode",
+  "cursor-agent": "Cursor Agent",
+  gemini: "Gemini CLI",
+};
+
+/** `harness`'s name as a person reads it: "Claude Code" for "claude". A harness of the library's own goes by its own name. */
+export function agentName(harness: string): string {
+  return Object.hasOwn(AGENT_NAMES, harness) ? (AGENT_NAMES[harness] ?? harness) : harness;
+}
+
 // Variables that tie a process to the Claude Code session that spawned it. Avanzel is often run
 // *from* a Claude Code session (via the skill); the nested harness must start a fresh session.
 const SESSION_VARS: ReadonlySet<string> = new Set([
@@ -414,8 +428,9 @@ export interface RunFailure {
 }
 
 // The words of a usage limit, as the agents are expected to print it. None has been seen at a real limit on this Mac, so
-// these are the shapes to expect, for a real limit to confirm.
-const USAGE_LIMIT = /usage limit|rate limit|limit reached|hit your limit|quota|too many requests|\b429\b/i;
+// these are the shapes to expect, for a real limit to confirm. A 429 counts only as an HTTP status ("HTTP 429", "status: 429",
+// "API Error: 429", "429 Too Many Requests"): a bare 429 may be anything, such as a line number in a crash's stack.
+const USAGE_LIMIT = /usage limit|rate limit|limit reached|hit your limit|quota|too many requests|\b(?:HTTP|status|code|error)\s*[:=]?\s*429\b|\b429 too many/i;
 // How Claude Code ends its limit message: a bar and the reset in epoch seconds ("Claude AI usage limit reached|1792532400").
 const RESET_SUFFIX = /\|(\d{10})$/;
 // A limit is looked for in this many of the last lines. Before them is what an agent echoed back (Codex prints the whole

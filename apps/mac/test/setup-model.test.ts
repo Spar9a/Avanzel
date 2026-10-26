@@ -67,6 +67,19 @@ describe("setup model", () => {
     expect(fine.filter((place) => tooBroad(place, home))).toEqual([]);
   });
 
+  it("tooBroad says why: one of the system's own folders, or a place that holds far more than notes", () => {
+    const home = "/Users/a";
+    // macOS's and Unix's own folders, and the startup disk's root: nothing can be made there, or it isn't kept.
+    for (const place of ["/Applications", "/Library", "/System", "/Users", "/Users/Shared", "/usr", "/bin", "/etc", "/var", "/tmp", "/private", "/cores", "/"]) {
+      expect(tooBroad(place, home), place).toBe("system");
+    }
+    // The home folder, the folders macOS makes in it, /Volumes and another disk: a folder inside will do.
+    for (const place of ["/Users/a", "/Users/a/Documents", "/Users/a/Library", "/Users/a/Applications", "/Volumes", "/Volumes/Backup"]) {
+      expect(tooBroad(place, home), place).toBe("broad");
+    }
+    for (const place of ["/Users/a/Avanzel", "/Applications/Avanzel", "/Volumes/Backup/Avanzel"]) expect(tooBroad(place, home), place).toBeNull();
+  });
+
   it("tooBroad refuses the folders macOS and Unix keep for themselves, each as a folder", () => {
     const home = "/Users/a";
     const system = ["/Applications", "/Library", "/System", "/Users", "/Users/Shared", "/private", "/usr", "/opt", "/bin", "/sbin", "/etc",
@@ -85,10 +98,10 @@ describe("setup model", () => {
   it.runIf(existsSync("/private/tmp") && existsSync("/private/var"))("tooBroad compares the system's folders as they are on disk: /tmp is /private/tmp and /var is /private/var", () => {
     const home = tmp();
     expect(realpathSync("/tmp")).toBe("/private/tmp");
-    for (const place of ["/tmp", "/private/tmp", "/var", "/private/var", "/etc", "/private/etc"]) expect(tooBroad(place, home), place).toBe(true);
+    for (const place of ["/tmp", "/private/tmp", "/var", "/private/var", "/etc", "/private/etc"]) expect(tooBroad(place, home), place).toBe("system");
     // The system's temporary folder is where this test made `home` (/var/folders/…/T/…): a place like any other.
-    expect(tooBroad(home, "/Users/a")).toBe(false);
-    expect(tooBroad(path.join(home, "Avanzel"), "/Users/a")).toBe(false);
+    expect(tooBroad(home, "/Users/a")).toBeNull();
+    expect(tooBroad(path.join(home, "Avanzel"), "/Users/a")).toBeNull();
   });
 
   it.runIf(existsSync("/System/Volumes/Data"))("tooBroad takes a folder on the data volume for the one at the root: exactly when that one is refused", () => {
@@ -96,21 +109,21 @@ describe("setup model", () => {
     const data = "/System/Volumes/Data";
     // The system's own folders, reached through the data volume.
     for (const place of ["/Applications", "/Library", "/Users", "/Users/Shared", "/private/tmp", "/opt", "/"]) {
-      expect(tooBroad(path.join(data, place), home), place).toBe(true);
+      expect(tooBroad(path.join(data, place), home), place).toBe("system");
     }
     // The home folder and the folders macOS makes in it: /System/Volumes/Data/Users/<me> is the home folder, whatever its case.
     for (const place of ["/Users/a", "/Users/a/", "/Users/a/Documents", "/Users/a/documents", "/Users/a/Library", "/Users/a/Applications"]) {
-      expect(tooBroad(path.join(data, place), home), place).toBe(true);
+      expect(tooBroad(path.join(data, place), home), place).toBe("broad");
     }
     // A folder in them is a place like any other, as it is at the root.
     for (const place of ["/Applications/Avanzel", "/Users/a/Avanzel", "/Users/a/Library-notes", "/Users/a/Applications/notes", "/Users/ab", "/Users/ab/Documents"]) {
-      expect(tooBroad(path.join(data, place), home), place).toBe(false);
+      expect(tooBroad(path.join(data, place), home), place).toBeNull();
     }
     // The home folder of the person running this, found there too.
     const mine = realpathSync(homedir());
-    expect(tooBroad(path.join(data, mine), homedir())).toBe(true);
-    expect(tooBroad(path.join(data, mine, "Documents"), homedir())).toBe(true);
-    expect(tooBroad(path.join(data, mine, "Avanzel"), homedir())).toBe(false);
+    expect(tooBroad(path.join(data, mine), homedir())).toBe("broad");
+    expect(tooBroad(path.join(data, mine, "Documents"), homedir())).toBe("broad");
+    expect(tooBroad(path.join(data, mine, "Avanzel"), homedir())).toBeNull();
   });
 
   it("tooBroad doesn't refuse ~/Library-notes or ~/Applications/notes, whose names only resemble a folder macOS makes", () => {
@@ -121,9 +134,9 @@ describe("setup model", () => {
 
   it.runIf(existsSync("/Volumes/Macintosh HD"))("tooBroad knows this Mac's /Volumes/Macintosh HD is its startup disk", () => {
     const home = tmp();
-    expect(tooBroad("/Volumes/Macintosh HD", home)).toBe(true);
-    expect(tooBroad(path.join("/Volumes/Macintosh HD", realpathSync(home), "Documents"), home)).toBe(true);
-    expect(tooBroad(path.join("/Volumes/Macintosh HD", realpathSync(home), "Avanzel"), home)).toBe(false);
+    expect(tooBroad("/Volumes/Macintosh HD", home)).toBe("system"); // the startup disk's root
+    expect(tooBroad(path.join("/Volumes/Macintosh HD", realpathSync(home), "Documents"), home)).toBe("broad");
+    expect(tooBroad(path.join("/Volumes/Macintosh HD", realpathSync(home), "Avanzel"), home)).toBeNull();
   });
 
   it("libraryFolder tells missing, empty, has-files and library apart", async () => {

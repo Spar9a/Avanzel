@@ -588,11 +588,15 @@ test("a system folder is refused as a library before any question is asked, and 
       return { response: 1, checkboxChecked: false };
     }) as typeof dialog.showMessageBox;
   });
-  const refused = ["/Applications", "/usr", "/tmp", path.join("/System/Volumes/Data", homedir())];
-  for (const place of refused) {
+  // macOS's own folders, where nothing can be made or nothing is kept, send the person to their home folder.
+  for (const place of ["/Applications", "/usr", "/tmp"]) {
     await stubPicker(app, place);
-    await expect(call(app, "chooseLibrary")).rejects.toThrow(`${place} is too broad for a library. Choose or make a folder inside it.`);
+    await expect(call(app, "chooseLibrary")).rejects.toThrow(`${place} is one of macOS's own folders. Choose or make a folder in your home folder.`);
   }
+  // The home folder, here by the data volume's path for it, is too broad, and a folder inside it will do.
+  const home = path.join("/System/Volumes/Data", homedir());
+  await stubPicker(app, home);
+  await expect(call(app, "chooseLibrary")).rejects.toThrow(`${home} is too broad for a library. Choose or make a folder inside it.`);
   expect(await app.evaluate(() => (globalThis as { confirmsAsked?: unknown[] }).confirmsAsked)).toEqual([]);
   expect(((await call(app, "snapshot")) as SettingsSnapshot).library).toMatchObject({ path: library, exists: true });
   expect(exists("/Applications", ".avanzel")).toBe(false);
@@ -620,7 +624,7 @@ test("Change… on a folder that is too broad says so in Settings, asks nothing,
   await expect(problem.getByText("That change wasn't saved.", { exact: true })).toBeVisible();
   // Why, and what is safe: the library is the one it was.
   await expect(
-    problem.getByText("/Applications is too broad for a library. Choose or make a folder inside it. The setting keeps its old value.", { exact: true }),
+    problem.getByText("/Applications is one of macOS's own folders. Choose or make a folder in your home folder. The setting keeps its old value.", { exact: true }),
   ).toBeVisible();
   await expect(problem).not.toContainText("Error invoking remote method");
   await snap(settings, "settings-library-too-broad");
@@ -667,7 +671,7 @@ test("Choose a folder… for a library that has gone says why a folder is refuse
   await settings.getByRole("alert").getByRole("button", { name: "Choose a folder…", exact: true }).click();
   const problem = settings.getByRole("alert").filter({ hasText: "That change wasn't saved." });
   await expect(
-    problem.getByText("/Applications is too broad for a library. Choose or make a folder inside it. The setting keeps its old value.", { exact: true }),
+    problem.getByText("/Applications is one of macOS's own folders. Choose or make a folder in your home folder. The setting keeps its old value.", { exact: true }),
   ).toBeVisible();
   // The library that went is still named, with its fix: nothing was chosen.
   await expect(settings.getByText("Avanzel can't find your library at ~/Brain.", { exact: true })).toBeVisible();

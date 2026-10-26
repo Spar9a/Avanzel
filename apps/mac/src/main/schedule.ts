@@ -1,11 +1,31 @@
 // When things happen: which shadow tasks should run now (a task seen for the first time is only remembered, so a fresh
-// install never fires yesterday's run; a run missed while the Mac slept happens once), and when a note that a usage limit
-// stopped is filed again.
+// install never fires yesterday's run; a run missed while the Mac slept happens once), when a note that a usage limit
+// stopped is filed again, and when a thought saved for the evening review is filed, as the capsule tells it.
 
 export interface SchedulableTask {
   id: string;
   schedule: string;
   enabled: boolean;
+}
+
+/** A weekly schedule's day as a schedule writes it ("sun"), by its name. */
+const DAY_NAMES: Readonly<Record<string, string>> = {
+  sun: "Sunday", mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday",
+};
+
+/**
+ * What the capsule says of a thought saved for the evening review to file (Tonight, and every screen capture). While the
+ * library's evening review is on, it names when that review runs, as Settings → General does: "at 21:00" for a daily one, and
+ * by its day for a weekly one. `review` is that review, its schedule as main sends it ("daily 21:00", "weekly sun 18:00"); with
+ * it off, or none (null), nothing files the thought by itself, and only where it is saved is said.
+ */
+export function savedNote(review: { schedule: string; enabled: boolean } | null): string {
+  if (!review?.enabled) return "Saved to your inbox.";
+  const daily = /^daily (\d\d:\d\d)$/.exec(review.schedule);
+  if (daily) return `Saved to your inbox for the evening review at ${daily[1]}.`;
+  const weekly = /^weekly (\w+) (\d\d:\d\d)$/.exec(review.schedule);
+  const day = weekly ? DAY_NAMES[weekly[1] ?? ""] : undefined;
+  return weekly && day ? `Saved to your inbox for the evening review, ${day}s at ${weekly[2]}.` : "Saved to your inbox for the evening review.";
 }
 
 export function dueTasks(

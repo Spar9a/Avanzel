@@ -159,9 +159,13 @@ describe("setup copy", () => {
     expect(placeLine("library", false)).toBe(withGit.library);
   });
 
-  it("the too-broad line names the place as the row does", () => {
-    expect(tooBroadLine("~/Documents")).toBe("~/Documents is too broad for a library. Choose or make a folder inside it.");
-    expect(tooBroadLine("/Applications")).toBe("/Applications is too broad for a library. Choose or make a folder inside it.");
+  it("the too-broad line names the place as the row does, and says what to choose instead", () => {
+    // The home folder, a folder macOS makes in it, /Volumes or another disk: a folder inside it will do.
+    expect(tooBroadLine("~/Documents", "broad")).toBe("~/Documents is too broad for a library. Choose or make a folder inside it.");
+    expect(tooBroadLine("/Volumes/Backup", "broad")).toBe("/Volumes/Backup is too broad for a library. Choose or make a folder inside it.");
+    // One of the system's own folders, where nothing can be made, or isn't kept: the home folder is the place to look.
+    expect(tooBroadLine("/Applications", "system")).toBe("/Applications is one of macOS's own folders. Choose or make a folder in your home folder.");
+    expect(tooBroadLine("/tmp", "system")).toBe("/tmp is one of macOS's own folders. Choose or make a folder in your home folder.");
   });
 
   it("the first-thought step says why it can't hear yet, without promising to keep a recording", () => {

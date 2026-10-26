@@ -226,9 +226,9 @@ function useUndoKey(on: boolean): void {
 /**
  * A failed filing's Notice, in the capsule's words (failedFiling): what happened, and what is safe. Its one fix is the moment's
  * primary, and comes last, as in the Ask window. An agent asking to sign in says how, with the command set as code, and the fix is
- * Open Terminal, with Try again beside it, secondary: it would only fail again until the person has signed in. An agent that
- * isn't there offers Open Settings on Agents alone, for the same reason. Any other failure offers Try again, which files the note
- * again. A note gone from the inbox has nothing to try again: Continue goes on.
+ * Open Terminal; an agent that isn't there offers Open Settings on Agents. Beside either, Try again is secondary: it would only
+ * fail again until the person has signed in, or installed or chosen an agent, and then it files the first thought. Any other
+ * failure offers Try again, which files the note again. A note gone from the inbox has nothing to try again: Continue goes on.
  */
 function Failure({ filing, eveningReview }: { filing: Failed; eveningReview: boolean }) {
   const problem = failedFiling(filing, new Date(), eveningReview);
@@ -241,9 +241,7 @@ function Failure({ filing, eveningReview }: { filing: Failed; eveningReview: boo
       title={problem.title}
       actions={
         <Actions align="start">
-          {!agentGone && (
-            <Button size="small" variant={kind === "signin" ? "secondary" : "primary"} onClick={() => api.fileAgain()}>Try again</Button>
-          )}
+          <Button size="small" variant={kind === "signin" || agentGone ? "secondary" : "primary"} onClick={() => api.fileAgain()}>Try again</Button>
           {kind === "signin" && <Button size="small" variant="primary" onClick={() => api.openTerminal()}>Open Terminal</Button>}
           {agentGone && (
             <Button size="small" variant="primary" onClick={() => window.avanzel.capsule.openSettingsFor("open-settings:agents")}>Open Settings</Button>

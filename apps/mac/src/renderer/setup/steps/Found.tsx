@@ -84,7 +84,7 @@ export function Found({ snap, go }: StepProps) {
               makes none. */}
           <Button
             variant={problem || trouble ? "secondary" : "primary"}
-            disabled={!agentWorks(chosen?.status) || place.tooBroad}
+            disabled={!agentWorks(chosen?.status) || place.tooBroad !== null}
             busy={making !== null}
             onClick={make}
           >
@@ -97,7 +97,7 @@ export function Found({ snap, go }: StepProps) {
       <Stack gap={12}>
         <Text variant="heading">Here's what I found.</Text>
         <Group label="Your library">
-          <GroupRow label={place.libraryLabel} description={place.tooBroad ? tooBroadLine(place.libraryLabel) : placeLine(place.folder, place.gitUsable)}>
+          <GroupRow label={place.libraryLabel} description={place.tooBroad ? tooBroadLine(place.libraryLabel, place.tooBroad) : placeLine(place.folder, place.gitUsable)}>
             {/* While the problem shows, its own Change… is the way out: no screen has two buttons of one name. */}
             {!problem && <Button size="small" onClick={chooseFolder}>Change…</Button>}
           </GroupRow>

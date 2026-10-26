@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolStep } from "../../src/core/claude-stream.ts";
 import { Harness, checkAgent, classifyFailure, errorLine, harnesses, runHeadless, type RunOptions } from "../../src/core/harness.ts";
 import { builtin, script, settingsWith } from "./harness-fixtures.ts";
@@ -12,6 +12,9 @@ const FILING = fileURLToPath(new URL("../fixtures/claude-filing.jsonl", import.m
 const tmp = useTmp();
 
 describe("runHeadless with Claude Code", () => {
+  // A test that moves the clock by hand and runs out of time before it puts the real one back leaves it to this, so the
+  // next test has real timers.
+  afterEach(() => void vi.useRealTimers());
   // A stand-in `claude`, and nothing else, on PATH (so its script uses shell builtins and /bin/sleep). It prints what
   // Claude Code prints with --output-format stream-json: one JSON event per line.
   const onPath = (script: string) => vi.stubEnv("PATH", binScripts(tmp(), { claude: script }));
@@ -118,16 +121,20 @@ describe("runHeadless with Claude Code", () => {
   it("a run that takes too long, or is cancelled, keeps the rate limit it had seen", async () => {
     const allowed = { status: "allowed", resetsAt: 1792532400000 };
     // The step comes after the event, so the event has been read when the step is handed over. Both runs are ended then, by
-    // the step and not by a clock that started when the stand-in did: a Mac under load can start it late enough for a real 1 s
-    // limit to run out before it has printed anything, and the run then has no rate limit to keep.
-    const withStep = `${print(rateLimitEvent("allowed", 1792532400), readEvent("/lib/index.md"), readDone)}; /bin/sleep 30`;
+    // the step and not by a clock that started when the stand-in did: a Mac under load can start it late enough for a real
+    // limit to run out before it has printed anything, and the run then has no rate limit to keep. The stand-in becomes the
+    // sleep (exec) rather than starting it, so there is no second process that the stop's signal could miss.
+    const withStep = `${print(rateLimitEvent("allowed", 1792532400), readEvent("/lib/index.md"), readDone)}; exec /bin/sleep 30`;
 
-    // The run's own limit is run out at once, by moving its timer on (only its timers; the stand-in is a real process).
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // The run's own limit is run out at once, by moving its clock on: only its timers (the stand-in is a real process), and
+    // they still move with the real clock, so the stop's SIGKILL and the wait for the output to close run as in any run. The
+    // limit is longer than the test may take, so only the step runs it out.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     try {
       onPath(withStep);
-      const timedOut = await runClaude({ timeoutSeconds: 1, onStep: () => void vi.advanceTimersByTime(1000) });
-      expect(timedOut).toMatchObject({ exitCode: 124, stderr: "claude timed out after 1s", rateLimit: allowed });
+      const limit = 60;
+      const timedOut = await runClaude({ timeoutSeconds: limit, onStep: () => void vi.advanceTimersByTime(limit * 1000) });
+      expect(timedOut).toMatchObject({ exitCode: 124, stderr: `claude timed out after ${limit}s`, rateLimit: allowed });
     } finally {
       vi.useRealTimers();
     }

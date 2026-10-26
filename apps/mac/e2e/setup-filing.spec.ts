@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault, loadSettings } from "../../../packages/engine/src/index.ts";
 import {
+  answerAs,
   call,
   capsuleKind,
   exists,
@@ -449,24 +450,26 @@ test("a failed filing that left edits behind says where they are kept", async ()
   await app.close();
 });
 
-test("a filing whose agent has gone offers Open Settings, the moment's primary, and not Try again", async () => {
+test("a filing whose agent has gone offers Open Settings, the moment's primary, and Try again beside it for once the agent is back", async () => {
   const { env, home } = firstRun({ claude: filingClaude() });
   const app = await launch(env);
   const setup = await throughFound(app);
   const library = path.join(home, "Avanzel");
   // Found chose Claude Code and saved it as the library's agent; it is uninstalled before the thought is filed.
   expect(loadSettings(library).harness).toBe("claude");
-  rmSync(path.join(env.PATH!.split(":")[0]!, "claude"));
+  const bin = env.PATH!.split(":")[0]!;
+  rmSync(path.join(bin, "claude"));
   await typeFirstThought(setup, "Plant tulips in October");
   const notice = setup.getByRole("alert");
   await expect(notice.getByText("Claude Code isn't installed on this Mac any more.", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(
     notice.getByText("Your note is safe in the inbox. Settings → Agents can choose another agent, or has its install command.", { exact: true }),
   ).toBeVisible();
-  // Trying again would only fail again until another agent is chosen: the fix is Settings → Agents.
-  await expect(notice.getByRole("button")).toHaveText(["Open Settings"]);
+  // The fix is Settings → Agents: the moment's one primary, and last in the row, as the sign-in Notice has Open Terminal. Try
+  // again would fail until an agent is there, so it is secondary; it is what files the first thought once one is.
+  await expect(notice.getByRole("button")).toHaveText(["Try again", "Open Settings"]);
+  await expect(notice.getByRole("button", { name: "Try again", exact: true })).toHaveAttribute("data-variant", "secondary");
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Open Settings"]);
-  await expect(setup.getByRole("button", { name: "Try again" })).toHaveCount(0);
   await expect(setup.getByRole("button", { name: "Continue" })).toHaveAttribute("data-variant", "secondary");
   expect(inbox(library)).toHaveLength(1);
   await snap(setup, "setup-filing-gone");
@@ -474,6 +477,11 @@ test("a filing whose agent has gone offers Open Settings, the moment's primary, 
   const settings = await windowFor(app, "settings");
   await expect(settings.getByRole("radio", { name: "Agents", exact: true })).toHaveAttribute("aria-checked", "true");
   await expect(setup.getByRole("alert")).toBeVisible(); // setup stays where it was
+  // Claude Code is installed again, from Settings → Agents' command say, and Try again files the first thought.
+  answerAs(bin, "claude", filingClaude());
+  await notice.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect.poll(async () => (await setupSnap(app)).filing?.kind, { timeout: 30_000 }).toBe("filed");
+  expect(inbox(library)).toEqual([]);
   await app.close();
 });
 

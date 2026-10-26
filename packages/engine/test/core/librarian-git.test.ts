@@ -132,7 +132,7 @@ describe.skipIf(!git.available())("with git", () => {
     const review = await librarian.eveningReview();
     const [stuck, filed] = review.outcomes;
     expect([stuck?.captureId, stuck?.ok, filed?.captureId, filed?.ok]).toEqual([blocked.id, false, plain.id, true]);
-    const problem = `Could not archive ${blocked.id}: the agent left a folder at raw/2026/10/${blocked.id}.md.`;
+    const problem = `The agent left a folder at raw/2026/10/${blocked.id}.md, so the note could not be archived.`;
     expect(stuck?.error).toBe(problem);
     expect(stuck?.commit).toMatch(/^[0-9a-f]{40}$/);
     const leftovers = gitOut("show", "--name-only", "--format=%s", stuck?.commit ?? "");

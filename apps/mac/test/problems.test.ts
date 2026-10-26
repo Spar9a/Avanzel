@@ -130,6 +130,52 @@ describe("filingProblem: not signed in", () => {
   });
 });
 
+describe("filingProblem: a note the app set up nothing for (review)", () => {
+  // The capsule's words when no wait for the reset and no watch of the sign-in was armed: another library is open, the run
+  // state couldn't be written, or the note was filed again and met the same thing. Only the evening review is promised.
+  const review = { after: "review" } as const;
+
+  it("a limit with a known reset still names it, then promises only the evening review, or nothing while it is off", () => {
+    expect(filingProblem(failure({ kind: "limit", resetsAt: on(0, 15) }), now, review)).toEqual({
+      title: "Claude Code has hit its usage limit.",
+      body: `It resets at 15:00. ${SAFE}; ${LATER}`,
+    });
+    expect(filingProblem(failure({ kind: "limit", resetsAt: on(1, 9) }), now, { ...review, eveningReview: false }).body).toBe(
+      `It resets tomorrow at 09:00. ${SAFE}.`,
+    );
+    // No reset to name, or one that has passed: the reset-unknown row, as when the app does wait.
+    for (const resetsAt of [null, on(0, 8)]) {
+      expect(filingProblem(failure({ kind: "limit", resetsAt }), now, review)).toEqual(filingProblem(failure({ kind: "limit" }), now));
+    }
+  });
+
+  it("a sign-in says to sign in as for an agent signed in by hand: no command, and nothing filed straight away", () => {
+    expect(filingProblem(failure({ kind: "signin" }), now, review)).toEqual({
+      title: "Claude Code isn't signed in on this Mac.",
+      body: `Sign in to Claude Code in Terminal. ${SAFE}; ${LATER}`,
+    });
+    expect(filingProblem(failure({ kind: "signin", ...codex }), now, { ...review, eveningReview: false })).toEqual({
+      title: "Codex isn't signed in on this Mac.",
+      body: `Sign in to Codex in Terminal. ${SAFE}.`,
+    });
+  });
+
+  it("changes nothing for a failure whose words promise only the evening review anyway", () => {
+    for (const kind of ["timeout", "gone", "missing", "other"] as const) {
+      for (const eveningReview of [true, false]) {
+        expect(filingProblem(failure({ kind }), now, { ...review, eveningReview })).toEqual(filingProblem(failure({ kind }), now, { eveningReview }));
+      }
+    }
+  });
+
+  it("keeps what the run left behind and where the owner's words are", () => {
+    const limit = failure({ kind: "limit", resetsAt: on(0, 15) });
+    expect(filingProblem(limit, now, { ...review, where: KEPT, partial: "uncommitted" }).body).toBe(
+      `It resets at 15:00. ${ASIDE}; ${LATER} Its partial edits stay in the library, outside its history, so they can't be undone.`,
+    );
+  });
+});
+
 describe("filingProblem: a timeout", () => {
   it("says how long the run had, and promises the evening review only while it is on", () => {
     expect(filingProblem(failure({ kind: "timeout" }), now)).toEqual({
@@ -559,7 +605,7 @@ describe("the copy rules, for every problem a filing can have", () => {
     for (const who of [claude, codex, opencode, { agent: "Avanzel", command: null }]) {
       for (const resetsAt of reaches) {
         for (const line of lines) {
-          for (const after of ["wait", "retry"] as const) {
+          for (const after of ["wait", "retry", "review"] as const) {
             for (const eveningReview of [true, false]) {
               for (const partial of [null, "commit", "uncommitted"] as const) {
                 for (const where of places) {

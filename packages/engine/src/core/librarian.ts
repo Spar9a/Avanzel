@@ -18,6 +18,7 @@ import * as gitops from "./git.ts";
 import { protectedState, undoProtected } from "./guard.ts";
 import {
   NoAgentError,
+  agentName,
   classifyFailure,
   errorLine,
   runHeadless,
@@ -362,22 +363,24 @@ export class Librarian {
     return outcome(captureId, { ...ran, ok: true, archivedTo, commit });
   }
 
-  /** Why a filing run did not file its capture, or null when it did. */
+  /**
+   * Why a filing run did not file its capture, or null when it did. Avanzel's own findings say why first, and name the agent as
+   * a person knows it: a card keeps only about the first 100 characters of a line, and a capture's id is long, while the card
+   * and the evening review's digest already say which note it is.
+   */
   #notFiled(result: RunResult, restoral: Restoral, changes: Changes, captureId: string, archiveRel: string): string | null {
     if (!result.ok) return (result.stderr || result.output).trim().slice(-800);
-    if (restoral === "blocked") {
-      return `The agent changed ${captureId}, and Avanzel does not write it back through a symlink in inbox/.`;
-    }
+    if (restoral === "blocked") return "A symlink in inbox/ kept Avanzel from putting back the words the agent changed.";
     if (!changes.pages.length && !this.vault.logMentions(captureId)) {
       // Exit 0 but nothing written: a denied tool, a refusal or a question back. Not filed.
       const reply = collapse(result.output) || "(no reply)";
-      return `${this.harness.name} finished without filing anything. Its reply: ${reply.slice(0, 500)}`;
+      return `${agentName(this.harness.name)} finished without filing anything. Its reply: ${reply.slice(0, 500)}`;
     }
     if (!realFoldersTo(this.vault.root, archiveRel, true)) {
-      return `Could not archive ${captureId}: a folder on the way to ${archiveRel} is a symlink.`;
+      return `A folder on the way to ${archiveRel} is a symlink, so the note could not be archived.`;
     }
     const taken = lstatOrNull(join(this.vault.root, archiveRel));
-    if (taken && !taken.isFile()) return `Could not archive ${captureId}: the agent left a folder at ${archiveRel}.`;
+    if (taken && !taken.isFile()) return `The agent left a folder at ${archiveRel}, so the note could not be archived.`;
     return null;
   }
 

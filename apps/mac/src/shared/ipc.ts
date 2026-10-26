@@ -1,5 +1,5 @@
 // The contract between the main process and the renderers (capsule, settings, quick-type, ask, setup).
-import type { AgentFailure, PartialEdits } from "./problems.ts";
+import type { AgentFailure, PartialEdits, TooBroad } from "./problems.ts";
 
 export interface FiledPage {
   title: string;
@@ -443,11 +443,11 @@ export interface SetupSnapshot {
   libraryLabel: string;
   folder: LibraryFolder;
   /**
-   * libraryPath is too broad to be a library (setup-model's tooBroad): the home folder, a folder macOS makes in it such
-   * as Documents, a disk's root, one of the system's own folders such as /Applications. Found says so, and nothing is made
-   * there.
+   * Why libraryPath is too broad to be a library (setup-model's tooBroad), or null when it isn't: one of the system's own
+   * folders such as /Applications (`system`), or the home folder, a folder macOS makes in it such as Documents, or a disk's
+   * root (`broad`). Found says why (tooBroadLine), and nothing is made there.
    */
-  tooBroad: boolean;
+  tooBroad: TooBroad | null;
   /**
    * This Mac can run git (the engine's gitUsable): false without Apple's Command Line Tools, where /usr/bin/git is only a
    * stub that opens Apple's install dialog. Found then says changes can't be undone, and offers Install git. Setup looks

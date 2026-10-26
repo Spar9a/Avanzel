@@ -173,9 +173,9 @@ describe("settings copy", () => {
     // The error's class goes with the prefix, and a message that is a sentence already keeps its stop.
     expect(
       notSavedLine(
-        new Error("Error invoking remote method 'settings:choose-library': AvanzelError: /Applications is too broad for a library. Choose or make a folder inside it."),
+        new Error("Error invoking remote method 'settings:choose-library': AvanzelError: /Applications is one of macOS's own folders. Choose or make a folder in your home folder."),
       ),
-    ).toBe("/Applications is too broad for a library. Choose or make a folder inside it. The setting keeps its old value.");
+    ).toBe("/Applications is one of macOS's own folders. Choose or make a folder in your home folder. The setting keeps its old value.");
     // As an agent's line is told: no "Error:" label, a capital, a full stop.
     expect(notSavedLine(new Error("Error invoking remote method 'settings:set-app': Error: error: something odd"))).toBe(
       "Something odd. The setting keeps its old value.",
@@ -249,8 +249,8 @@ describe("settings copy", () => {
 
     it("keeps the words of a refusal that is Avanzel's own, and the folder the person chose in them", () => {
       expect(
-        plainCause(refused("settings:choose-library", "/Applications is too broad for a library. Choose or make a folder inside it.")),
-      ).toBe("/Applications is too broad for a library. Choose or make a folder inside it.");
+        plainCause(refused("settings:choose-library", "/Applications is one of macOS's own folders. Choose or make a folder in your home folder.")),
+      ).toBe("/Applications is one of macOS's own folders. Choose or make a folder in your home folder.");
       expect(plainCause(refused("settings:save-task", "No scheduled review called x."))).toBe("No scheduled review called x.");
     });
 

@@ -113,20 +113,35 @@ export function signedOutClaude(env: Record<string, string> = {}, { readable = t
 const resetAfter = (file: string, seconds: number) => `[ -s '${file}' ] || echo $(( $(date +%s) + ${seconds} )) > '${file}';`;
 
 /**
+ * Shell that is true for the first `limits` runs that ask it, and counts each of them as a line in `file`; false for the runs
+ * after. Always true when `limits` is Infinity, and counts nothing.
+ */
+const amongFirst = (file: string, limits: number) =>
+  limits === Infinity ? "true" : `[ "$(cat '${file}' 2>/dev/null | wc -l)" -lt ${limits} ] && echo >> '${file}'`;
+
+/**
  * A `claude` for agentStubs that has hit its usage limit, which resets `seconds` after the stand-in is first run. It works the
  * reset out when it runs, not when the test is written, so a launch or a failure that is slow under load can't land after the
- * reset; it keeps it in claude.reset beside it (`resetReported` reads it), and every later run says the same. A `tag` keeps it
- * in another file, for a test whose limit resets again. It prints a stream, as Claude Code does.
+ * reset; it keeps it in claude.reset beside it (`resetReported` reads it), and every later limited run says the same. Only its
+ * first `limits` runs hit the limit (the first alone, unless given; Infinity for every run): the runs after file, as
+ * filingClaude's do, so a test that is slow under load can't miss the reset by changing the stand-in too late. A `tag` keeps
+ * its reset and its count in other files, for a test whose limit resets again. It prints a stream, as Claude Code does.
  */
-export function limitedClaudeFor(dir: string, seconds: number, tag = ""): string {
+export function limitedClaudeFor(dir: string, seconds: number, tag = "", limits = 1): string {
   const reset = path.join(dir, `claude.reset${tag}`);
-  return `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else ${resetAfter(reset, seconds)} FAKE_AGENT_STREAM='claude' FAKE_AGENT_MODE='limit' FAKE_AGENT_RESETS_AT="$(cat '${reset}')" exec '${process.execPath}' '${fakeAgent}' "$2"; fi`;
+  const limited = `${resetAfter(reset, seconds)} FAKE_AGENT_STREAM='claude' FAKE_AGENT_MODE='limit' FAKE_AGENT_RESETS_AT="$(cat '${reset}')" exec '${process.execPath}' '${fakeAgent}' "$2"`;
+  const counted = amongFirst(path.join(dir, `claude.limits${tag}`), limits);
+  return `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; elif ${counted}; then ${limited}; else exec '${process.execPath}' '${fakeAgent}' "$2"; fi`;
 }
 
-/** A `codex` for agentStubs that has hit its usage limit, as `limitedClaudeFor`'s `claude` has: its message ends in the reset, as Claude Code's does. */
-export function limitedCodexFor(dir: string, seconds: number, tag = ""): string {
+/**
+ * A `codex` for agentStubs that has hit its usage limit, as `limitedClaudeFor`'s `claude` has, on its first `limits` runs: its
+ * message ends in the reset, as Claude Code's does. The runs after file, as filingCodex's do.
+ */
+export function limitedCodexFor(dir: string, seconds: number, tag = "", limits = 1): string {
   const reset = path.join(dir, `codex.reset${tag}`);
-  return `if [ "$1 $2" = "login status" ]; then echo "Logged in using ChatGPT" >&2; else ${resetAfter(reset, seconds)} echo "Usage limit reached|$(cat '${reset}')" >&2; exit 1; fi`;
+  const counted = amongFirst(path.join(dir, `codex.limits${tag}`), limits);
+  return `if [ "$1 $2" = "login status" ]; then echo "Logged in using ChatGPT" >&2; elif ${counted}; then ${resetAfter(reset, seconds)} echo "Usage limit reached|$(cat '${reset}')" >&2; exit 1; else exec '${process.execPath}' '${fakeAgent}' "$@"; fi`;
 }
 
 /** The reset, in epoch seconds, that the stand-in `agent` of `limitedClaudeFor` or `limitedCodexFor` in `dir` gave; it must have been run. */

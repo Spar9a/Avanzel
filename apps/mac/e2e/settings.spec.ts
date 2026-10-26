@@ -246,6 +246,24 @@ test("General says only what is true of the library's history: commits, automati
   }
 });
 
+test("General looks for git again each time Settings has the focus while this Mac has none, so an install is noticed", async () => {
+  const library = await makeLibrary({ git: true });
+  writeFileSync(path.join(library, "goals", "a.md"), "# A page\n");
+  // AVANZEL_GIT_USABLE=0 plays a Mac whose only git is Apple's stub; the app keeps that answer until it is told to look again.
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_GIT_USABLE: "0" });
+  const settings = await openSettings(app);
+  await expect(settings.getByText("1 page on six shelves. This Mac has no git yet, so changes can't be undone.", { exact: true })).toBeVisible();
+  // The person installs the Command Line Tools from Terminal (here: the stand-in is dropped, and this Mac's own git is read) and
+  // comes back to Settings: the window has the focus again, and git is looked for afresh before the pane is drawn.
+  await app.evaluate(({ BrowserWindow }) => {
+    delete process.env.AVANZEL_GIT_USABLE;
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
+  });
+  await expect(settings.getByText("1 page on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
+  expect((await snapshot(app)).library).toMatchObject({ isGit: true, gitUsable: true });
+  await app.close();
+});
+
 /** The Notice a change main refused is told in: one `alert` in the window, headed "That change wasn't saved.". */
 const notSaved = (settings: Page) => settings.getByRole("alert").filter({ hasText: "That change wasn't saved." });
 

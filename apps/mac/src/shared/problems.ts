@@ -105,10 +105,13 @@ export interface FilingProblemOptions {
   /** What the run left behind: its edits are kept as their own commit, or stay in the library with no history to undo them from. */
   partial?: PartialEdits;
   /**
-   * What the body promises of a note that waits. "wait" (the default): the capsule and the notifications, which promise the
-   * wait or the watch. "retry": setup, which starts neither, says to try again.
+   * What the body promises of a note that waits. "wait" (the default): the capsule and the notifications, when the app keeps a
+   * wait for the limit's reset or a watch of the sign-in, which the body promises. "review": the same, when the app keeps
+   * neither (another library is open, its run state can't be written, or the note was filed again and met the same thing): a
+   * limit still names its reset, a sign-in is told as one signed in by hand, and only the evening review is promised.
+   * "retry": setup, which starts neither, says to try again.
    */
-  after?: "wait" | "retry";
+  after?: "wait" | "review" | "retry";
   /** Whether the library's evening review is on. Off, a body that would end with its promise ends at "Your note is safe in the inbox." */
   eveningReview?: boolean;
   /**
@@ -155,11 +158,13 @@ export function filingProblem(f: AgentFailure, now: Date, o: FilingProblemOption
       const resets = f.resetsAt !== null && f.resetsAt > now.getTime() ? resetPhrase(f.resetsAt, now) : null;
       const title = `${f.agent} has hit its usage limit.`;
       if (resets === null) return done(title, reassure);
+      if (after === "review") return done(title, `It resets ${resets}. ${reassure}`);
       return done(title, `It resets ${resets}. ${safe}${after === "retry" ? "; try again then." : " and will be filed then."}`);
     }
     case "signin": {
       const title = `${f.agent} isn't signed in on this Mac.`;
-      const signIn = signInOf(f);
+      // With no watch to file the note once it is signed in, the words are those for an agent signed in by hand.
+      const signIn = after === "review" ? null : signInOf(f);
       if (signIn === null) {
         return done(title, after === "retry" ? `Sign in to ${f.agent} in Terminal, then try again. ${safe}.` : `Sign in to ${f.agent} in Terminal. ${reassure}`);
       }
@@ -294,10 +299,20 @@ export function takeBackRefusedProblem(inInbox: boolean, eveningReview: boolean)
 export const NO_GIT_LINE = "This Mac has no git yet, so changes can't be undone.";
 
 /**
- * Why a place can't be a library (setup-model's tooBroad): the shelves, an AGENTS.md and git history would go over everything
- * in the home folder, a folder macOS makes in it, a disk's root or one of the system's own folders. `label` names the place as
- * a row does, "~/Documents". Setup's Found says it under the library's row, and Settings' Change… refuses with it.
+ * Why a place is too broad for a library (setup-model's tooBroad): it is one of the folders macOS keeps for itself (`system`:
+ * /Applications, /usr, /tmp…, and the startup disk's root), or it holds far more than notes (`broad`: the home folder, a
+ * folder macOS makes in it, /Volumes, another disk's root).
  */
-export function tooBroadLine(label: string): string {
-  return `${label} is too broad for a library. Choose or make a folder inside it.`;
+export type TooBroad = "system" | "broad";
+
+/**
+ * Why a place can't be a library: the shelves, an AGENTS.md and git history would go over everything in it. `label` names the
+ * place as a row does, "~/Documents", and `why` is tooBroad's. Inside a place that holds too much a folder will do; inside
+ * macOS's own folders nothing can be made (or macOS doesn't keep it), so the person is sent to their home folder. Setup's
+ * Found says it under the library's row, and Settings' Change… refuses with it.
+ */
+export function tooBroadLine(label: string, why: TooBroad): string {
+  return why === "system"
+    ? `${label} is one of macOS's own folders. Choose or make a folder in your home folder.`
+    : `${label} is too broad for a library. Choose or make a folder inside it.`;
 }

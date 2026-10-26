@@ -289,9 +289,21 @@ describe("classifyFailure", () => {
     "Quota exceeded for this project",
     "429 Too Many Requests",
     "HTTP status 429",
+    "HTTP 429",
+    "API Error: 429",
+    "last status: 429",
+    "Request failed with status code 429",
     "too many requests, slow down",
   ])("%s is a limit", (stderr) => {
     expect(classifyFailure(failed({ stderr }))).toEqual({ kind: "limit", resetsAt: null, line: errorLine(stderr) });
+  });
+
+  it("a 429 that is no status, such as a line number in a crash's stack, is no limit", () => {
+    const stack = ["TypeError: Cannot read properties of undefined (reading 'x')", "    at f (/x/cli.js:429:12)", "    at g (/x/cli.js:12:3)"];
+    expect(classifyFailure(failed({ stderr: stack.join("\n") }))).toEqual({ kind: "other", resetsAt: null, line: stack[0] });
+    for (const stderr of ["Error: wrote 429 files", "Error: port 4290 is taken", "Error: build 1429 failed"]) {
+      expect(classifyFailure(failed({ stderr })).kind, stderr).toBe("other");
+    }
   });
 
   it("takes the reset of the stream's rate limit at any status once the limit is hit", () => {

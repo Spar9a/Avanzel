@@ -237,22 +237,46 @@ describe("file", () => {
     expect(vault.pending()).toEqual([capture.path]);
   });
 
-  it("a capture the agent left a folder at the archive for is other, in Avanzel's words", async () => {
+  it("a run that finished without filing names a built-in agent as a person reads it, not by its command", async () => {
+    // The library's own harness that takes a built-in's name is that agent to the person: Claude Code, not "claude".
+    const claude = { name: "claude", headless: ["/bin/sh", "-c", "echo 'I would need permission to write files.'", "{prompt}"], interactive: [] };
+    librarian = new Librarian(vault, fakeSettings({ harness: "claude", harnesses: { claude } }), { clock: () => NOW });
+    librarian.captureText("Something the agent ignores");
+    const outcome = await only(librarian.file());
+    expect(outcome.error).toBe("Claude Code finished without filing anything. Its reply: I would need permission to write files.");
+  });
+
+  // Avanzel's own findings say why first: the capsule's card keeps about the first 100 characters of a line, and a capture's
+  // name is long. The card and the evening review's digest already say which note it is.
+  it("a capture the agent left a folder at the archive for is other, in Avanzel's words, why first", async () => {
     mode("folder-at-archive");
     const capture = librarian.captureText("blocked-archive notes");
     const outcome = await only(librarian.file());
-    const problem = `Could not archive ${capture.id}: the agent left a folder at raw/2026/10/${capture.id}.md.`;
+    const problem = `The agent left a folder at raw/2026/10/${capture.id}.md, so the note could not be archived.`;
     expect(outcome).toMatchObject({ ok: false, error: problem, failure: { kind: "other", resetsAt: null, line: problem } });
   });
 
-  it("a capture the agent changed behind a symlinked inbox/ is other, in Avanzel's words", async () => {
+  it("a capture whose archive is behind a link of the owner's is other, in Avanzel's words, why first", async () => {
+    const outside = join(tmp(), "outside");
+    mkdirSync(outside);
+    mkdirSync(vault.raw, { recursive: true });
+    symlinkSync(outside, join(vault.raw, "2026")); // the owner's: the guard leaves it be
+    const capture = librarian.captureText("harmless words");
+    const outcome = await only(librarian.file());
+    const problem = `A folder on the way to raw/2026/10/${capture.id}.md is a symlink, so the note could not be archived.`;
+    expect(outcome).toMatchObject({ ok: false, error: problem, failure: { kind: "other", resetsAt: null, line: problem } });
+    expect(readdirSync(outside)).toEqual([]); // nothing archived through it
+    expect(vault.pending()).toEqual([capture.path]);
+  });
+
+  it("a capture the agent changed behind a symlinked inbox/ is other, in Avanzel's words, why first", async () => {
     mode("tamper"); // files it, then rewrites the capture
     const elsewhere = join(tmp(), "elsewhere");
     renameSync(vault.inbox, elsewhere);
     symlinkSync(elsewhere, vault.inbox);
-    const capture = librarian.captureText("My exact words");
+    librarian.captureText("My exact words");
     const outcome = await only(librarian.file());
-    const blocked = `The agent changed ${capture.id}, and Avanzel does not write it back through a symlink in inbox/.`;
+    const blocked = "A symlink in inbox/ kept Avanzel from putting back the words the agent changed.";
     expect(outcome).toMatchObject({ ok: false, error: blocked, failure: { kind: "other", resetsAt: null, line: blocked } });
   });
 
