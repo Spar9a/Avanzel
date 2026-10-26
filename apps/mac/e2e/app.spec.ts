@@ -143,13 +143,18 @@ test("words whose recording the library won't keep are saved without it, and the
   });
   const capsule = await windowFor(app, "capsule");
   // One short line: why (the link on the way), and what to do about it.
-  const note = capsule.getByText(
-    /^Only your words were kept: raw\/audio\/\d{4}\/\d{2} isn't a plain folder\. Remove the link or file on its path to keep recordings\.$/,
-  );
+  const why = /^Only your words were kept: raw\/audio\/\d{4}\/\d{2} isn't a plain folder\. Remove the link or file on its path to keep recordings\.$/;
+  const note = capsule.getByText(why);
   // A dictation: filed without its recording.
   await call(app, "toggleDictate");
   await call(app, "toggleDictate");
   await expect(note).toBeVisible({ timeout: 30_000 });
+  // The filing is a card of paper: the note is a footnote in its footer, under how the words were made, and the seconds are in its
+  // header, outside the bar's live region.
+  const card = capsule.getByRole("article");
+  await expect(card.getByText(why)).toBeVisible();
+  await expect(card.getByText(/^Transcribed on this Mac in \d+\.\d seconds$/)).toBeVisible();
+  await expect(card.getByText(/^\d+ s of about \d+$/)).toBeVisible();
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   const [filed, ...others] = archived(library);
   expect(others).toEqual([]);
@@ -761,7 +766,7 @@ test("Open Settings in the Ask window leaves a recording and a note being edited
   const settings = await windowFor(app, "settings");
   await expect(agents(settings)).toHaveAttribute("aria-checked", "true");
   expect(await capsuleKind(app)).toBe("listening"); // the recording goes on
-  await expect(capsule.getByRole("status", { name: "Listening" })).toBeVisible();
+  await expect(capsule.getByRole("status").getByRole("button", { name: "Files now", exact: true })).toBeVisible();
 
   // The words are filed, and Edit opens the box: Open Settings leaves it open, with what is typed in it.
   await call(app, "toggleDictate");
@@ -864,6 +869,11 @@ test("a note dictated while a question is answered says it waits for the library
   const waiting = capsule.getByText("Waiting for another Avanzel run to finish…");
   await expect(waiting).toBeVisible({ timeout: 30_000 });
   await snap(capsule, "2-filing-waiting");
+  // The paper says it, not the bar: the live region keeps its one steady line, and the card has no seconds to count meanwhile.
+  await expect(capsule.getByRole("article").getByText("Waiting for another Avanzel run to finish…")).toBeVisible();
+  await expect(capsule.getByRole("status").getByText("Waiting for another Avanzel run to finish…")).toHaveCount(0);
+  await expect(capsule.getByRole("status").getByText(/^Filing with /)).toBeVisible();
+  await expect(capsule.getByText(/^\d+ s( of about \d+)?$/)).toHaveCount(0);
   // The question is answered and the filing has the library: the line goes while the card still says it files.
   await expect(ask.getByText("Q: What are my goals?")).toBeVisible({ timeout: 60_000 });
   await expect(waiting).toBeHidden();
@@ -1016,9 +1026,9 @@ test("the speech engine that other [voice] settings or another library replace i
 
 // ---- A capture's file mode, and the hint of the first ten recordings ----
 //
-// What the switch does is told at the controller's `toggleFileMode`. The listening card has no switch yet, so these press it as the
-// button will: through the capsule page's bridge, `window.avanzel.capsule.toggleFileMode()`, which `call()` can't do, since the
-// channel answers only the page that sends it.
+// What the switch does is told at the controller's `toggleFileMode`. Most of these press it as the bar's button does: through the
+// capsule page's bridge, `window.avanzel.capsule.toggleFileMode()`, which `call()` can't do, since the channel answers only the
+// page that sends it. The tests of the listening card itself click the button.
 
 /**
  * The file mode's switch, pressed on `page` as the capsule's button will press it. A page's messages reach main in the order they
@@ -1138,6 +1148,86 @@ test("a screen comment has no file mode to switch, and the key that finishes it 
   await app.close();
 });
 
+// ---- The listening card: a bar whose one button is the file mode, with the hint above it ----
+
+test("a dictation listens on a bar whose one button is its file mode, and the first recordings' hint names the keys", async () => {
+  const library = await makeLibrary();
+  const { app, capsule } = await launchHearing(library, newUserData());
+  await startListening(app);
+  await snap(capsule, "1-listening-bar");
+  // The bar is the card's one live region, with Zel listening. It has no line: its time and the file mode's button are all it holds.
+  const bar = capsule.getByRole("status");
+  await expect(capsule.locator("svg[data-mood]")).toHaveAttribute("data-mood", "listening");
+  await expect(bar.getByText(/^\d:\d\d$/)).toBeVisible();
+  const toggle = bar.getByRole("button", { name: "Files now", exact: true });
+  await expect(toggle).toHaveAttribute("data-variant", "secondary");
+  await expect(toggle).toHaveAttribute("data-size", "small");
+  await expect(capsule.getByRole("button")).toHaveCount(1); // no Hide: Esc is what gives a recording up
+  // The hint above it is one sentence of plain text, with the keys as keys, outside the live region.
+  await expect(capsule.getByText("⌥Space to finish, Esc to cancel", { exact: true })).toBeVisible();
+  await expect(capsule.locator("kbd")).toHaveText(["⌥Space", "Esc"]);
+  await expect(bar.locator("kbd")).toHaveCount(0);
+  // Pressing the button switches this capture between now and tonight, and its label says which; the hint stays.
+  await toggle.click();
+  const tonight = bar.getByRole("button", { name: "Files tonight", exact: true });
+  await expect(tonight).toBeVisible();
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "listening", fileMode: "evening", hint: "Alt+Space" });
+  await expect(capsule.getByText("⌥Space to finish, Esc to cancel", { exact: true })).toBeVisible();
+  await tonight.click();
+  await expect(bar.getByRole("button", { name: "Files now", exact: true })).toBeVisible();
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "listening", fileMode: "now" });
+  // Stopped as it reads, the capture goes the way the button said: to the evening review, and nothing is filed.
+  await bar.getByRole("button", { name: "Files now", exact: true }).click();
+  await expect(tonight).toBeVisible();
+  // The time has counted on by itself all the while, and the presses didn't start it over.
+  await expect(bar.getByText(/^0:(0[2-9]|[1-5]\d)$/)).toBeVisible({ timeout: 10_000 });
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ note: "Saved to your inbox for the evening review at 21:00." });
+  expect(archived(library)).toEqual([]);
+  expect(inbox(library)).toHaveLength(1);
+  await app.close();
+});
+
+test("a screen comment listens over a card of its screenshot, labelled with the app, and has no file mode to switch", async () => {
+  const library = await makeLibrary();
+  const { app, capsule } = await launchHearing(library, newUserData(), screenOf());
+  await call(app, "toggleCapture");
+  await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("listening");
+  await snap(capsule, "6-capture-listening-card");
+  // The screenshot sits on paper, as a picture with a name, under the app's name; the bar has a time and nothing to press.
+  const card = capsule.getByRole("article");
+  await expect(card.getByText("Safari", { exact: true })).toBeVisible();
+  const shot = card.getByRole("img", { name: "Screenshot of Safari" });
+  await expect(shot).toBeVisible();
+  expect(await shot.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
+  await expect(capsule.getByRole("status").getByText(/^\d:\d\d$/)).toBeVisible();
+  await expect(capsule.getByRole("button")).toHaveCount(0); // a screen comment is always saved: nothing to switch
+  // Capture screen's shortcut finishes it, not Record a thought's.
+  await expect(capsule.getByText("⌥⇧S to finish, Esc to cancel", { exact: true })).toBeVisible();
+  await expect(capsule.locator("kbd")).toHaveText(["⌥⇧S", "Esc"]);
+  // The card, the hint and the bar all fit in the 300 px panel, the card's top edge included.
+  expect((await card.boundingBox())!.y).toBeGreaterThanOrEqual(4);
+  const bar = (await capsule.getByRole("status").boundingBox())!;
+  expect(bar.y + bar.height).toBeLessThanOrEqual(await capsule.evaluate(() => innerHeight));
+  await call(app, "cancelRecording");
+  await app.close();
+});
+
+test("a recording that learned its keys has no hint, and a dictation has no screenshot card", async () => {
+  const library = await makeLibrary();
+  const userData = newUserData();
+  keptAlready(userData, 10);
+  const { app, capsule } = await launchHearing(library, userData);
+  await startListening(app);
+  await expect(capsule.getByRole("status").getByRole("button", { name: "Files now", exact: true })).toBeVisible();
+  await expect(capsule.locator("kbd")).toHaveCount(0);
+  await expect(capsule.getByRole("article")).toHaveCount(0);
+  await expect(capsule.getByRole("img", { name: /^Screenshot/ })).toHaveCount(0);
+  await call(app, "cancelRecording");
+  await app.close();
+});
+
 test("the file mode's switch is heard from the capsule's page alone, and only while a capture listens", async () => {
   const library = await makeLibrary();
   const { app, capsule } = await launchHearing(library, newUserData());
@@ -1214,12 +1304,15 @@ test("the first ten kept recordings name the key that finishes them, the elevent
   // The tenth recording's card still teaches the key ...
   await startListening(first.app);
   expect(await call(first.app, "capsuleStateForTests")).toMatchObject({ kind: "listening", hint: "Alt+Space" });
+  await expect(first.capsule.getByText("⌥Space to finish, Esc to cancel", { exact: true })).toBeVisible();
   await call(first.app, "toggleDictate");
   await expect.poll(() => capsuleKind(first.app), { timeout: 30_000 }).toBe("saved");
   expect(capturesKept(userData)).toBe(10);
   // ... and the eleventh's doesn't.
   await startListening(first.app);
   expect(await call(first.app, "capsuleStateForTests")).toMatchObject({ kind: "listening", hint: null });
+  await expect(first.capsule.getByRole("status").getByRole("button", { name: "Files tonight", exact: true })).toBeVisible(); // the bar is up
+  await expect(first.capsule.locator("kbd")).toHaveCount(0);
   await call(first.app, "cancelRecording");
   await first.app.close();
   // The count is kept with the app: a new launch has taught the key enough.

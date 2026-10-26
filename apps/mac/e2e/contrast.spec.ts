@@ -162,8 +162,17 @@ function capsuleStates(): [string, CapsuleState, string][] {
   ];
   const context = { app: "Safari", title: "Shure MV7+ Podcast Microphone", url: "https://www.shure.com/mv7" };
   return [
-    ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", hint: "Alt+Space" }, "Auto"],
+    // The hint's card above the bar, and the bar's one button: this capture's file mode.
+    ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", hint: "Alt+Space" }, "Files now"],
+    ["listening, tonight", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null }, "Files tonight"],
+    // A screen comment: the screenshot on a card labelled with the app, the key that finishes it, and no file mode to switch.
+    [
+      "listening, a screen comment",
+      { kind: "listening", mode: "comment", startedAt: Date.now(), fakeMic: true, microphoneId: null, thumbnail, context, fileMode: null, hint: "Alt+Shift+S" },
+      "Safari",
+    ],
     ["transcribing", { kind: "transcribing", mode: "dictate", onThisMac: true }, "Transcribing on this Mac…"],
+    ["transcribing, slow", { kind: "transcribing", mode: "dictate", onThisMac: true, slow: true }, "Still transcribing…"],
     [
       "filing",
       {
@@ -179,6 +188,44 @@ function capsuleStates(): [string, CapsuleState, string][] {
         stepAt: Date.now(),
       },
       "Filing with Claude Code…",
+    ],
+    // Mid-run: the newest step as the card's line, the seconds past the estimate, a note under the origin, and Stop under way.
+    [
+      "filing, stepping",
+      {
+        kind: "filing",
+        text: said,
+        agent: "Claude Code",
+        transcribedIn: null,
+        onThisMac: true,
+        canEdit: false,
+        detail: "Only your words were kept: the recording couldn't be saved.",
+        rows: [
+          { kind: "read", path: "index.md", title: "index", shelf: "" },
+          { kind: "new", path: "ideas/podcast.md", title: "Indie game dev podcast", shelf: "ideas" },
+        ],
+        startedAt: Date.now() - 18_000,
+        estimate: 15,
+        stepAt: Date.now(),
+        cancelling: true,
+      },
+      "New idea page: Indie game dev podcast",
+    ],
+    [
+      "filing, still working",
+      {
+        kind: "filing",
+        text: said,
+        agent: "Claude Code",
+        transcribedIn: 1.4,
+        onThisMac: true,
+        canEdit: true,
+        rows: [],
+        startedAt: Date.now() - 9_000,
+        estimate: 15,
+        stepAt: Date.now() - 9_000,
+      },
+      "Claude Code is still working…",
     ],
     [
       "filing, waiting",
@@ -273,7 +320,7 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   for (const [name, state, shows] of capsuleStates()) {
     await call(app, "setCapsule", state);
     await expect(capsule.getByText(shows)).toBeVisible();
-    await capsule.locator(".hud, .av-hud").first().hover(); // the close button shows on hover
+    await capsule.locator(".hud, .av-hud, .av-card").first().hover(); // the legacy cards' close button shows on hover
     found.push(...(await readable(app, capsule, `capsule ${name}`, desktops)));
   }
   await app.close();

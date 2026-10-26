@@ -887,7 +887,7 @@ export class Controller {
       microphoneId: this.store.get().microphoneId,
       fileMode: recording.fileMode,
       hint: this.hintFor(mode),
-      ...(shot ? { thumbnail: shot.thumbnail } : {}),
+      ...(shot ? { thumbnail: shot.thumbnail, context: shot.context } : {}),
     });
     this.capsuleCommand("start");
     try {

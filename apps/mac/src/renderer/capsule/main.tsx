@@ -1,10 +1,11 @@
+import "@avanzel/ui/base.css";
 import { Actions, Button, CapsuleBar, CapsuleNotice, Hud, Progress, Row, Stack, Text, Zel } from "@avanzel/ui";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
 import type { AvanzelBridge, CapsuleState, FiledPage } from "../../shared/ipc.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
-import { transcribedLine, transcribingLine } from "../../shared/transcribing.ts";
+import { Editor, Filing, Listening, Transcribing } from "./progress.tsx";
 import { Recorder } from "./recorder.ts";
 import "./styles.css";
 
@@ -31,26 +32,6 @@ function useLevels(listening: boolean, fake: boolean) {
   return { levels, push };
 }
 
-function Wave({ levels }: { levels: number[] }) {
-  return (
-    <span className="wave" aria-hidden="true">
-      {levels.map((level, i) => (
-        <b key={i} style={{ height: `${Math.round(5 + level * 19)}px` }} />
-      ))}
-    </span>
-  );
-}
-
-function Timer({ since }: { since: number }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(timer);
-  }, []);
-  const seconds = Math.max(0, Math.floor((now - since) / 1000));
-  return <span>{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</span>;
-}
-
 function Close() {
   return <button className="close" aria-label="Dismiss" onClick={() => api.dismiss()}>×</button>;
 }
@@ -69,69 +50,16 @@ function Pages({ pages }: { pages: FiledPage[] }) {
   );
 }
 
-function Editor({ text }: { text: string }) {
-  const [value, setValue] = useState(text);
-  return (
-    <div className="hud card">
-      <div className="row">Edit before filing</div>
-      <textarea
-        autoFocus
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          api.editDraft(e.target.value);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") api.cancelEdit();
-          if (e.key === "Enter" && (e.metaKey || !e.shiftKey)) {
-            e.preventDefault();
-            api.submitEdit(value);
-          }
-        }}
-      />
-      <div className="actions">
-        <button className="btn" onClick={() => api.cancelEdit()}>Cancel</button>
-        <button className="btn primary" onClick={() => api.submitEdit(value)}>File</button>
-      </div>
-    </div>
-  );
-}
-
 function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
   switch (state.kind) {
     case "hidden":
       return null;
     case "listening":
-      return (
-        <div className={`hud capsule${state.thumbnail ? " with-thumb" : ""}`} role="status" aria-label="Listening">
-          {state.thumbnail && <img className="thumb" src={state.thumbnail} alt="" />}
-          <span className="dot" />
-          <Wave levels={levels} />
-          <Timer since={state.startedAt} />
-          <span className="chip">{state.mode === "comment" ? "Screen" : "Auto"}</span>
-        </div>
-      );
+      return <Listening state={state} levels={levels} />;
     case "transcribing":
-      return (
-        <div className="hud capsule" role="status">
-          <span className="spin" />
-          <span>{transcribingLine(state.onThisMac)}</span>
-        </div>
-      );
+      return <Transcribing state={state} />;
     case "filing":
-      return (
-        <div className="hud card" role="status">
-          <Close />
-          <div className="row"><span className="spin" />Filing with {state.agent}…</div>
-          {state.waiting && <p className="detail">Waiting for another Avanzel run to finish…</p>}
-          <p className="said">“{state.text}”</p>
-          {state.detail && <p className="detail">{state.detail}</p>}
-          <div className="foot">
-            <span>{state.transcribedIn === null ? "Typed note" : transcribedLine(state.transcribedIn, state.onThisMac)}</span>
-            {state.canEdit && <button className="btn" onClick={() => api.edit()}>Edit</button>}
-          </div>
-        </div>
-      );
+      return <Filing state={state} />;
     case "editing":
       return <Editor text={state.text} />;
     case "filed":

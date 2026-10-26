@@ -56,7 +56,10 @@ export type CapsuleState =
       startedAt: number;
       fakeMic: boolean;
       microphoneId: string | null;
+      /** A screen comment's screenshot, small: the card above the bar shows it. */
       thumbnail?: string;
+      /** What that screenshot is of, as the saved card tells it too: the front app's name is the label of the card above the bar. */
+      context?: ScreenContext;
       /** When its words are filed, now or at the evening review; null where there is nothing to switch (the controller's `toggleFileMode`). */
       fileMode: FileMode | null;
       /**

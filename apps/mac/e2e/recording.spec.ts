@@ -16,12 +16,13 @@ import {
   makeLibrary,
   read,
   screenshotFixture,
+  snap,
   speechWav,
   stubPicker,
   throughFound,
   windowFor,
 } from "./helpers.ts";
-import { pressShortcut, sentToCapsule, watchCapsule } from "./setup-helpers.ts";
+import { pressShortcut, sentToCapsule, watchCapsule, zel } from "./setup-helpers.ts";
 
 const WAIT_FOR_AUDIO_MS = 3000; // AVANZEL_AUDIO_TIMEOUT_MS: how long the app waits for audio after a stop (15 s outside tests)
 
@@ -109,10 +110,10 @@ test("a recording whose audio never arrives is given up, and the capsule is told
 
 // ---- Stop, on a transcription that has run long ----
 //
-// What Stop does is told at the controller's `stopTranscribing`. The card has no Stop button yet, so these press it as the button will:
-// through the capsule page's bridge, `window.avanzel.capsule.stopTranscribing()`, which `call()` can't do, since the channel answers
-// only the page that sends it. AVANZEL_TRANSCRIBE_STOP_MS makes a transcription slow after half a second (20 s outside tests), and
-// AVANZEL_FAKE_TRANSCRIPT_DELAY_MS makes the stand-in for the speech model take as long as a test needs.
+// What Stop does is told at the controller's `stopTranscribing`. Most of these press it as the bar's Stop button does: through the
+// capsule page's bridge, `window.avanzel.capsule.stopTranscribing()`, which `call()` can't do, since the channel answers only the page
+// that sends it; the test of the bar clicks the button. AVANZEL_TRANSCRIBE_STOP_MS makes a transcription slow after half a second
+// (20 s outside tests), and AVANZEL_FAKE_TRANSCRIPT_DELAY_MS makes the stand-in for the speech model take as long as a test needs.
 
 const SLOW_MS = 500;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -223,6 +224,32 @@ test("a long transcription offers Stop, and its recording waits in the inbox", a
   // The card hides itself after 6 s, as the card of a stopped filing does.
   await expect.poll(() => capsuleKind(app), { timeout: 15_000, intervals: [100] }).toBe("hidden");
   expect(Date.now() - stopped).toBeGreaterThanOrEqual(5_000);
+  await app.close();
+});
+
+test("a long transcription's bar says it is still at it and offers Stop, whose press keeps the recording", async () => {
+  const { library, app, capsule } = await launchSlowly(60_000);
+  await dictate(app);
+  await untilSlow(app);
+  await snap(capsule, "2-transcribing-slow");
+  // The line changes once, and Stop is the bar's one button: secondary and small, with Zel still thinking.
+  const bar = capsule.getByRole("status");
+  await expect(bar.getByText("Still transcribing…", { exact: true })).toBeVisible();
+  await expect(bar.getByText("Transcribing on this Mac…")).toHaveCount(0);
+  const stopButton = bar.getByRole("button", { name: "Stop", exact: true });
+  await expect(capsule.getByRole("button")).toHaveCount(1);
+  await expect(stopButton).toHaveAttribute("data-variant", "secondary");
+  await expect(stopButton).toHaveAttribute("data-size", "small");
+  await expect(zel(capsule)).toHaveAttribute("data-mood", "thinking");
+  await expect(capsule.getByRole("article")).toHaveCount(0);
+  // Its press keeps the recording in the inbox for the evening review.
+  await stopButton.click();
+  await expect.poll(() => capsuleKind(app)).toBe("recorded");
+  expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "recorded", review: "at 21:00" });
+  const [name, ...others] = filesUnder(library, "inbox");
+  expect(others).toEqual([]);
+  expect(name).toMatch(/^\d{4}-\d{2}-\d{2}-\d{6}\.wav$/);
+  expect(filesUnder(library, "raw")).toEqual([]);
   await app.close();
 });
 
