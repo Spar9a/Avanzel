@@ -1076,9 +1076,9 @@ export class Controller {
   /**
    * What the capsule's card says of `job`'s filing: its words, the steps the agent has taken, the seconds it has run for and
    * about how many it takes (`estimate`, fixed when the card first showed, `showFiling`), and that it is stopping once Stop was
-   * pressed (`cancelling`). All of it is read from the job, so that a step or a wait that rebuilds the state can't undo any of
-   * it. `onThisMac` is where the words were made, as the card first said (`transcribesOnThisMac`), which a later state keeps
-   * rather than read the library's settings again at each step.
+   * pressed (`cancelling`, and no Edit then: `canEdit`). All of it is read from the job, so that a step or a wait that rebuilds
+   * the state can't undo any of it. `onThisMac` is where the words were made, as the card first said (`transcribesOnThisMac`),
+   * which a later state keeps rather than read the library's settings again at each step.
    */
   private filingState(job: FilingJob, onThisMac: boolean): FilingState {
     return {
@@ -1087,7 +1087,7 @@ export class Controller {
       agent: job.agent,
       transcribedIn: job.transcribedIn,
       onThisMac,
-      canEdit: true,
+      canEdit: !job.cancelled, // `edit()` ignores a stopped job
       ...(job.detail ? { detail: job.detail } : {}),
       ...(job.waiting ? { waiting: true } : {}),
       rows: job.rows,
@@ -1700,7 +1700,7 @@ export class Controller {
   /**
    * Stops the agent at once and shows the words; Submit or Cancel then takes back what it did
    * (`refile`). Not while quitting: the editor would close with the app, and its words with it. Nor once Stop has stopped the
-   * filing (`cancelFiling`): the card is on its way to Stopped, and the editor would open on a note that is being taken back.
+   * filing (`cancelFiling`).
    */
   edit(): void {
     const job = this.job;
@@ -1715,10 +1715,11 @@ export class Controller {
   /**
    * Stop, on the card of a filing: its agent is stopped at once, and once the stopped run is over (queue order) what it did is
    * taken back and the card says it is Stopped (`settleStop`), as Cancel does in setup (`cancelSetupFiling`). The note stays in
-   * the inbox. Until then the card says it is stopping (`cancelling`, which `filingState` reads from the job): that can be a
-   * while, as a filing in the wait for the library can't leave it. Only the capsule's own page is heard (`sender` is the page the
-   * message came from, `event.sender`), and only while it shows a filing that neither Stop nor Edit has taken yet: a second Stop
-   * does nothing, nor does one after Edit, or once the filing is filed. Not while quitting, which has stopped every run already.
+   * the inbox. Until then the card says it is stopping and offers no Edit (`cancelling`, `canEdit`, which `filingState` reads from
+   * the job, so no step or wait takes them off): that can be a while, as a filing in the wait for the library can't leave it.
+   * Only the capsule's own page is heard (`sender` is the page the message came from, `event.sender`), and only while it shows a
+   * filing that neither Stop nor Edit has taken yet: a second Stop does nothing, nor does one after Edit, or once the filing is
+   * filed. Not while quitting, which has stopped every run already.
    */
   cancelFiling(sender: WebContents): void {
     const job = this.job;

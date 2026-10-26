@@ -61,6 +61,7 @@ export type CapsuleState =
       transcribedIn: number | null;
       /** As for "transcribing": where the words were made, which the card says only when it is on this Mac. */
       onThisMac: boolean;
+      /** Whether the card offers Edit: not once Stop was pressed (`cancelling`). */
       canEdit: boolean;
       detail?: string;
       /** Waiting for the library: another run (a question, a review, another Avanzel) has it. */
@@ -80,11 +81,7 @@ export type CapsuleState =
       estimate: number;
       /** Date.now() when the filing last took a step, or when its run began before the first: the card says the agent is still working once this is old. */
       stepAt: number;
-      /**
-       * Stop was pressed, and the filing is stopping (`cancelFiling`): its run is stopped, and once that is over what it did is
-       * taken back. It stays until the stop is over, which can take a while: the wait for the library, if the filing is in it,
-       * can't be left. Every state of the filing says it from Stop on, whichever step or wait brings it. Absent otherwise.
-       */
+      /** Stop was pressed and the stop is not over; absent otherwise. The controller's `cancelFiling` tells the rest. */
       cancelling?: true;
     }
   | { kind: "editing"; text: string }
@@ -99,11 +96,7 @@ export type CapsuleState =
       /** The agent filed nothing: it ended well and wrote no page, only a line in the log. */
       noted: boolean;
     }
-  /**
-   * Stop ended a filing (`cancelFiling`): the note is in the inbox, as setup's cancelled filing has it (`SetupFiling`). It is the
-   * state of a stop that took the filing back; a stop whose take-back git refused for a filing that had finished is an error card
-   * instead (`undoRefused`), and one that came as the run filed with no commit to take back leaves the filing filed.
-   */
+  /** Stop ended a filing, and its note is in the inbox. The controller's `cancelFiling` tells the rest. */
   | {
       kind: "cancelled";
       /** The note's words. */
@@ -623,12 +616,7 @@ export interface AvanzelBridge {
     editDraft(text: string): void;
     submitEdit(text: string): void;
     cancelEdit(): void;
-    /**
-     * Stop, on the card of a filing: its agent is stopped at once, and once it has stopped what it did is taken back, the
-     * words staying in the inbox. The card says it is stopping (`cancelling`) and then that it is stopped (`cancelled`). Only the
-     * capsule's own page is heard, and only while it shows a filing that Stop and Edit have not taken: a second Stop does
-     * nothing, and neither does Stop once the filing is filed.
-     */
+    /** Stop, on the card of a filing. The controller's `cancelFiling` tells what it does and when it is heard. */
     cancelFiling(): void;
     undo(): void;
     open(): void;

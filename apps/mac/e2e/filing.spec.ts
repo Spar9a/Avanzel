@@ -1571,6 +1571,7 @@ type Facts = {
   stepAt?: number;
   seconds?: number;
   cancelling?: boolean;
+  canEdit?: boolean;
 };
 const factsOf = async (app: ElectronApplication) => (await call(app, "capsuleStateForTests")) as Facts;
 /** The kinds of the rows the capsule's state holds, oldest first: none while it shows anything but a filing. */
@@ -1968,9 +1969,9 @@ test("a filing's steps name their pages from the note's own library when another
 
 // ---- Stop: a capsule filing ends, and its words go back to the inbox ----
 //
-// Stop stops the agent's run at once, and once that run is over (queue order) takes back what it did, as Cancel does in setup. The
-// note stays in the inbox. The card has no Stop button yet, so these press it as the button will: through the capsule page's bridge,
-// `window.avanzel.capsule.cancelFiling()`, which `call()` can't do, since the channel answers only the page that sends it.
+// What Stop does is told at the controller's `cancelFiling`. The card has no Stop button yet, so these press it as the button will:
+// through the capsule page's bridge, `window.avanzel.capsule.cancelFiling()`, which `call()` can't do, since the channel answers
+// only the page that sends it.
 
 /** Stop, pressed on `page`, as the card's Stop will press it. */
 const stop = (page: Page) => page.evaluate(() => window.avanzel.capsule.cancelFiling());
@@ -2126,12 +2127,14 @@ test("Stop ends the filing and the note stays in the inbox", async () => {
   expect(exists(library, "goals/half.md")).toBe(false);
   expect(read(library, "index.md")).not.toContain("left by a stalled run");
   expect(gitOut(library, "status", "--porcelain")).toBe("");
-  // On the way the card said that it was stopping, and kept saying it until the stop was over; it never showed a failure.
+  // On the way the card said that it was stopping, and offered no Edit, and kept saying it until the stop was over; it never
+  // showed a failure. A step state may have been on its way when Stop reached main (the folder watch settles for 150 ms, and steps
+  // are sent at most every 250 ms), and it says nothing of a stop: so read from the first state that does.
   const sent = await statesSent(app);
   expect(sent.at(-1)?.kind).toBe("cancelled");
-  const stopping = sent.slice(0, -1);
+  const stopping = sent.slice(sent.findIndex((state) => state.cancelling), -1);
   expect(stopping.length).toBeGreaterThan(0);
-  expect(stopping.map((state) => [state.kind, state.cancelling])).toEqual(stopping.map(() => ["filing", true]));
+  expect(stopping.map((state) => [state.kind, state.cancelling, state.canEdit])).toEqual(stopping.map(() => ["filing", true, false]));
   // A stopped filing says nothing of how long a filing takes; the next one that files keeps its own seconds, so the stop left
   // nothing out but its own.
   await call(app, "idleForTests");
@@ -2260,16 +2263,17 @@ test("Stop while the filing waits for the library says it is stopping until the 
   const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
   try {
     await dictate(app);
-    await expect.poll(() => factsOf(app), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
+    await expect.poll(() => factsOf(app), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true, canEdit: true });
     await stop(capsule);
-    await expect.poll(() => factsOf(app), { timeout: 10_000 }).toMatchObject({ kind: "filing", waiting: true, cancelling: true });
+    // The card says at once that it is stopping, and offers no Edit, which main would ignore.
+    await expect.poll(() => factsOf(app), { timeout: 10_000 }).toMatchObject({ kind: "filing", waiting: true, cancelling: true, canEdit: false });
     // A step is told meanwhile, as the agent's last might be (through the function the app handed the engine). The card is sent it
     // from the job, which knows that Stop was pressed, not from what the card showed before.
     await app.evaluate(() => (globalThis as Left).stepsOf?.({ kind: "read", path: "index.md" }));
-    expect(await factsOf(app)).toMatchObject({ kind: "filing", cancelling: true, rows: [{ kind: "read", path: "index.md" }] });
+    expect(await factsOf(app)).toMatchObject({ kind: "filing", cancelling: true, canEdit: false, rows: [{ kind: "read", path: "index.md" }] });
     // The stop is not over while the library is held.
     await sleep(1_500);
-    expect(await factsOf(app)).toMatchObject({ kind: "filing", waiting: true, cancelling: true });
+    expect(await factsOf(app)).toMatchObject({ kind: "filing", waiting: true, cancelling: true, canEdit: false });
   } finally {
     letGo();
     await held;
