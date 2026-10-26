@@ -14,7 +14,7 @@ test("the packaged app transcribes locally and files with the agent", async () =
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-  await expect(capsule.getByText("Filed by fake")).toBeVisible();
+  await expect(capsule.getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
   expect(readdirSync(path.join(library, "inbox")).filter((n) => !n.startsWith("."))).toEqual([]);
   await app.close();
 });

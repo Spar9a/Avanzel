@@ -24,6 +24,8 @@ export function registerIpc(controller: Controller): void {
   on("capsule:stop-transcribing", (e) => controller.stopTranscribing(e.sender)); // only the capsule's own page stops its transcription
   on("capsule:undo", () => void controller.undo());
   on("capsule:open", () => controller.openFiled());
+  // What the page sends is checked where it is used: only the capsule's own page is heard, and only for a page its filing wrote.
+  on("capsule:open-page", (e, path: unknown) => controller.openFiledPage(e.sender, path));
   on("capsule:dismiss", () => controller.dismiss());
   on("capsule:keep-open", (_e, keep: boolean) => controller.setKeepOpen(keep));
   on("capsule:open-settings-for", (_e, action: string) => controller.openSettingsFor(action));

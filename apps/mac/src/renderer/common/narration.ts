@@ -1,6 +1,6 @@
 // What a filing's steps say, in words: a row for each step the agent takes, and the two lines that end the first filing
-// with its proof. Setup's window shows them, and the capsule will (1c), so the words are written once, here. A row is not
-// Zel speaking: it never says "I".
+// with its proof. Setup's window shows them, and so does the capsule's filing card, whose one line (`filingLine`) is the newest
+// row, so the words are written once, here. A row is not Zel speaking: it never says "I".
 import type { Shelf } from "@avanzel/ui";
 import type { NarrationRow } from "../../shared/ipc.ts";
 
@@ -77,4 +77,21 @@ function newLine({ path, title, shelf }: NarrationRow): string {
   if (!path?.endsWith(".md")) return `New file: ${title}`;
   // Own properties only, since a folder may be called anything, "constructor" included.
   return Object.hasOwn(NOUN, shelf) ? `New ${NOUN[shelf as Shelf]} page: ${title}` : `New page: ${title}`;
+}
+
+/** How long the agent may take no step before the capsule's filing card says it is still at work. */
+export const STILL_WORKING_MS = 8_000;
+
+/**
+ * The capsule's filing card's one line of what is going on, in its footer: that the run waits for another (the library's, or the
+ * app's own queue: `waiting`), which comes before anything else, since a run that has not begun has no steps and no quiet; else,
+ * when the agent has taken no step for eight seconds (`stepAt` is its newest step of any kind, even one that adds no row, or the
+ * run's start before the first), that it is still working; else its newest step (`rowLine`). Null before the first step. `now` is
+ * Date.now(), which the card reads again as it counts its seconds.
+ */
+export function filingLine(filing: { agent: string; waiting?: boolean; rows: readonly NarrationRow[]; stepAt: number }, now: number): string | null {
+  if (filing.waiting) return "Waiting for another Avanzel run to finish…";
+  if (now - filing.stepAt >= STILL_WORKING_MS) return `${filing.agent} is still working…`;
+  const newest = filing.rows.at(-1);
+  return newest ? rowLine(newest) : null;
 }

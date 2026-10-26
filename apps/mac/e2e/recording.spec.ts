@@ -22,6 +22,7 @@ import {
   throughFound,
   windowFor,
 } from "./helpers.ts";
+import { expectStoppedRecording } from "./capsule-helpers.ts";
 import { pressShortcut, sentToCapsule, watchCapsule, zel } from "./setup-helpers.ts";
 
 const WAIT_FOR_AUDIO_MS = 3000; // AVANZEL_AUDIO_TIMEOUT_MS: how long the app waits for audio after a stop (15 s outside tests)
@@ -212,6 +213,8 @@ test("a long transcription offers Stop, and its recording waits in the inbox", a
   await stopTranscribing(capsule);
   const stopped = Date.now();
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "recorded", review: "at 21:00" });
+  // The card says so: Stopped, over an empty card, and that the recording is in the inbox, where the evening review turns it into words.
+  await expectStoppedRecording(capsule, "It's in your inbox. The evening review turns it into words and files it at 21:00.");
   // The recording itself, as audio the engine's queue transcribes: one .wav in the inbox, none left in raw/audio/, no capture written.
   const [name, ...others] = filesUnder(library, "inbox");
   expect(others).toEqual([]);
@@ -246,6 +249,8 @@ test("a long transcription's bar says it is still at it and offers Stop, whose p
   await stopButton.click();
   await expect.poll(() => capsuleKind(app)).toBe("recorded");
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "recorded", review: "at 21:00" });
+  await snap(capsule, "2-stopped-recording");
+  await expectStoppedRecording(capsule, "It's in your inbox. The evening review turns it into words and files it at 21:00.");
   const [name, ...others] = filesUnder(library, "inbox");
   expect(others).toEqual([]);
   expect(name).toMatch(/^\d{4}-\d{2}-\d{2}-\d{6}\.wav$/);
@@ -458,6 +463,9 @@ test("Stop keeps the recording in the library it was made in, and names that lib
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "transcribing", slow: true });
   await stopTranscribing(capsule);
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "recorded", review: null });
+  // This library's review is off, so the card says only where the recording is: it promises no review.
+  await expectStoppedRecording(capsule, "It's in your inbox.");
+  await expect(capsule.getByText(/evening review/)).toHaveCount(0);
   expect(filesUnder(library, "inbox")).toHaveLength(1);
   expect(filesUnder(library, "raw")).toEqual([]);
   expect(filesUnder(other, "inbox")).toEqual([]);

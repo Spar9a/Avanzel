@@ -92,7 +92,11 @@ export type CapsuleState =
       /** Whether the card offers Edit: not once Stop was pressed (`cancelling`). */
       canEdit: boolean;
       detail?: string;
-      /** Waiting for the library: another run (a question, a review, another Avanzel) has it. */
+      /**
+       * Not running yet, because it waits: for its turn in the app's own queue (another run of Avanzel's own has it: a filing, a
+       * review, a take-back), or for the library (another run has it: a question, a review, another Avanzel). The card says so
+       * and counts no seconds until the run starts.
+       */
       waiting?: boolean;
       /**
        * What the agent has done so far in this filing, oldest first and the newest fifty at most (`withStep`); the card's
@@ -115,11 +119,15 @@ export type CapsuleState =
   | { kind: "editing"; text: string }
   | {
       kind: "filed";
+      /** The note's words, which the card shows stamped. */
+      text: string;
       agent: string;
       /** How long the run took, from when it had the library. */
       seconds: number;
+      /** The pages the filing wrote, new ones first; the card lists three of them. Each opens through `capsule.openPage`. */
       pages: FiledPage[];
       canUndo: boolean;
+      /** The agent's own sentence about what it did. The card doesn't show it: it lists each page, and says when there is none (`noted`). */
       message: string;
       /** The agent filed nothing: it ended well and wrote no page, only a line in the log. */
       noted: boolean;
@@ -150,7 +158,11 @@ export type CapsuleState =
       /** When the evening review turns the recording into words and files it, worded as for `cancelled`'s `review`. */
       review: string | null;
     }
-  | { kind: "saved"; text: string; thumbnail?: string; context?: ScreenContext; note: string; detail?: string }
+  /**
+   * Words saved to the inbox, for the evening review or a screen comment (`thumbnail` and `context` are the screenshot's); `note`
+   * says where they are. `undone`: Undo took a filing back, and these are its words, in the inbox again; the card then says so.
+   */
+  | { kind: "saved"; text: string; thumbnail?: string; context?: ScreenContext; note: string; detail?: string; undone?: true }
   /**
    * `message` says what happened and `detail` what is safe. `action`: what the card's one button does (see CardAction), and
    * `actionLabel` what it says; "Open Settings" when it names none.
@@ -658,6 +670,12 @@ export interface AvanzelBridge {
     stopTranscribing(): void;
     undo(): void;
     open(): void;
+    /**
+     * A page's title on the filed card: that page opens, as Open opens the first, and the card stays. `path` is library-relative, and
+     * only a page the card's filing wrote is opened (the controller's `openFiledPage`), only for the capsule's own page: sent from
+     * any other window, or for any other path, it opens nothing. Ask's `openPage` opens a page by name for the Ask window and setup.
+     */
+    openPage(path: string): void;
     dismiss(): void;
     keepOpen(keep: boolean): void;
     /**

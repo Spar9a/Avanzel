@@ -25,6 +25,7 @@ const bridge: AvanzelBridge = {
     stopTranscribing: () => ipcRenderer.send("capsule:stop-transcribing"),
     undo: () => ipcRenderer.send("capsule:undo"),
     open: () => ipcRenderer.send("capsule:open"),
+    openPage: (path) => ipcRenderer.send("capsule:open-page", path),
     dismiss: () => ipcRenderer.send("capsule:dismiss"),
     keepOpen: (keep) => ipcRenderer.send("capsule:keep-open", keep),
     openSettingsFor: (action) => ipcRenderer.send("capsule:open-settings-for", action),

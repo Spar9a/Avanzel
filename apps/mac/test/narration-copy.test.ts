@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { FilingStep } from "@avanzel/engine";
 import { filedPages } from "../src/main/library-info.ts";
 import { withStep, withWritten } from "../src/main/narration.ts";
-import { KEPT_LINE, rowLine, SAVED_LINE, SHOWN_ROWS } from "../src/renderer/common/narration.ts";
+import { filingLine, KEPT_LINE, rowLine, SAVED_LINE, SHOWN_ROWS, STILL_WORKING_MS } from "../src/renderer/common/narration.ts";
 import type { FiledPage, NarrationRow } from "../src/shared/ipc.ts";
 
 /** A row as main makes it from a library path: the title it was given, and the path's first folder for a shelf ("" at the root). */
@@ -171,6 +171,58 @@ describe("the proof and the rows' words", () => {
   it("a row has no closing period, and a proof line is a sentence", () => {
     for (const line of everyRow.map(rowLine)) expect(line, line).not.toMatch(/\.$/);
     for (const line of [KEPT_LINE, SAVED_LINE]) expect(line, line).toMatch(/\.$/);
+  });
+});
+
+describe("filingLine: the capsule's filing card's one line of what is going on", () => {
+  const now = 1_000_000;
+  const read: NarrationRow = { kind: "read", path: "index.md", title: "index", shelf: "" };
+  const made: NarrationRow = { kind: "new", path: "ideas/podcast.md", title: "Indie game dev podcast", shelf: "ideas" };
+  const WAITING = "Waiting for another Avanzel run to finish…";
+  /** A filing as the capsule is sent it: `over` changes some of it. */
+  const filing = (over: Partial<Parameters<typeof filingLine>[0]> = {}) => ({ agent: "Claude Code", rows: [], stepAt: now, ...over });
+
+  it("is the agent's newest step, in the words of a row", () => {
+    expect(filingLine(filing({ rows: [read] }), now)).toBe("Reading your library index");
+    expect(filingLine(filing({ rows: [read, made] }), now)).toBe("New idea page: Indie game dev podcast");
+  });
+
+  it("is nothing before the first step, while the agent has not been quiet long", () => {
+    expect(filingLine(filing(), now)).toBeNull();
+    expect(filingLine(filing({ stepAt: now - (STILL_WORKING_MS - 1) }), now)).toBeNull();
+  });
+
+  it("says the agent is still working once eight seconds pass with no step, at the eighth exactly", () => {
+    expect(STILL_WORKING_MS).toBe(8_000);
+    expect(filingLine(filing({ stepAt: now - STILL_WORKING_MS }), now)).toBe("Claude Code is still working…");
+    expect(filingLine(filing({ stepAt: now - 60_000 }), now)).toBe("Claude Code is still working…");
+    expect(filingLine(filing({ agent: "Codex", stepAt: now - 9_000 }), now)).toBe("Codex is still working…");
+  });
+
+  it("puts the quiet before the newest step: a step long ago is no news", () => {
+    expect(filingLine(filing({ rows: [read, made], stepAt: now - 9_000 }), now)).toBe("Claude Code is still working…");
+    expect(filingLine(filing({ rows: [read, made], stepAt: now - 7_999 }), now)).toBe("New idea page: Indie game dev podcast");
+  });
+
+  it("is taken back by a step, even one that adds no row: the quiet is measured from the newest step of any kind", () => {
+    const quiet = filing({ rows: [read], stepAt: now - 9_000 });
+    expect(filingLine(quiet, now)).toBe("Claude Code is still working…");
+    expect(filingLine({ ...quiet, stepAt: now }, now)).toBe("Reading your library index");
+  });
+
+  it("says the run waits for another before anything else, however quiet it has been and whatever steps it has", () => {
+    expect(filingLine(filing({ waiting: true }), now)).toBe(WAITING);
+    expect(filingLine(filing({ waiting: true, stepAt: now - 60_000 }), now)).toBe(WAITING);
+    expect(filingLine(filing({ waiting: true, rows: [read, made], stepAt: now - 9_000 }), now)).toBe(WAITING);
+    expect(filingLine(filing({ waiting: false, rows: [read] }), now)).toBe("Reading your library index");
+  });
+
+  it("is written as the design rules ask: sentence case, the one-character ellipsis, no “!”, they and them for no one", () => {
+    for (const line of [filingLine(filing({ waiting: true }), now), filingLine(filing({ stepAt: now - 9_000 }), now), filingLine(filing({ rows: [made] }), now)]) {
+      expect(line).toMatch(/^\p{Lu}/u);
+      expect(line).not.toContain("!");
+      expect(line).not.toContain("...");
+    }
   });
 });
 

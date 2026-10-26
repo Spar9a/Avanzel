@@ -3,13 +3,16 @@ import { Actions, Button, CapsuleBar, CapsuleNotice, Hud, Progress, Row, Stack, 
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
-import type { CapsuleState, FiledPage } from "../../shared/ipc.ts";
+import type { CapsuleState } from "../../shared/ipc.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
 import { api } from "./api.ts";
 import { Editor } from "./editor.tsx";
+import { Filed } from "./filed.tsx";
 import { Filing } from "./filing.tsx";
 import { Listening } from "./listening.tsx";
 import { Recorder } from "./recorder.ts";
+import { Saved } from "./saved.tsx";
+import { Recorded, Stopped } from "./stopped.tsx";
 import { Transcribing } from "./transcribing.tsx";
 import "./styles.css";
 
@@ -33,20 +36,6 @@ function Close() {
   return <button className="close" aria-label="Dismiss" onClick={() => api.dismiss()}>×</button>;
 }
 
-function Pages({ pages }: { pages: FiledPage[] }) {
-  return (
-    <ul className="pages">
-      {pages.map((page) => (
-        <li key={page.path}>
-          <span className="tag" style={{ ["--c" as string]: `var(--${page.shelf})` }} />
-          <span className="title">{page.title}</span>
-          <span className="shelf">{page.shelf}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
   switch (state.kind) {
     case "hidden":
@@ -60,41 +49,13 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
     case "editing":
       return <Editor text={state.text} />;
     case "filed":
-      return (
-        <div className="hud card" role="status">
-          <Close />
-          <div className="row">
-            <span className="okmark">
-              <svg width="9" height="9" viewBox="0 0 12 12"><path d="M2.5 6.2 5 8.6 9.6 3.6" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </span>
-            Filed by {state.agent}<span className="ago">in {Math.round(state.seconds)} s</span>
-          </div>
-          {state.pages.length ? <Pages pages={state.pages} /> : <p className="message">{state.message}</p>}
-          <div className="actions">
-            {state.canUndo && <button className="btn" onClick={() => api.undo()}>Undo</button>}
-            {state.pages.length > 0 && <button className="btn primary" onClick={() => api.open()}>Open</button>}
-          </div>
-        </div>
-      );
+      return <Filed state={state} />;
     case "saved":
-      return (
-        <div className="hud card" role="status">
-          <Close />
-          {(state.thumbnail || state.context) && (
-            <div className="ctx">
-              {state.thumbnail && <img className="shot" src={state.thumbnail} alt="" />}
-              <div className="meta">
-                {state.context?.app && <small>{state.context.app}</small>}
-                {state.context?.title && <b>{state.context.title}</b>}
-                {state.context?.url && <small>{state.context.url.replace(/^https?:\/\//, "")}</small>}
-              </div>
-            </div>
-          )}
-          {state.text && <p className="said">“{state.text}”</p>}
-          {state.detail && <p className="detail">{state.detail}</p>}
-          <div className="foot"><span>{state.note}</span></div>
-        </div>
-      );
+      return <Saved state={state} />;
+    case "cancelled":
+      return <Stopped state={state} />;
+    case "recorded":
+      return <Recorded state={state} />;
     case "error":
       return (
         <div className="hud card" role="alert">

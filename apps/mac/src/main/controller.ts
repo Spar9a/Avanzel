@@ -1418,6 +1418,7 @@ export class Controller {
       this.setCapsule(
         {
           kind: "filed",
+          text: job.text,
           agent: job.agent,
           seconds,
           pages: job.pages,
@@ -2128,7 +2129,8 @@ export class Controller {
 
   /**
    * Undo, on the capsule's filed card or in setup: once the queue gets to it, git takes back `commit`, a filing's, which
-   * puts its capture back in the inbox. Whether it did; either way the menu's recent pages are read again.
+   * puts its capture back in the inbox. Whether it did; either way the menu's recent pages are read again. The card then says
+   * the filing is undone (`saved` with `undone`), over its words.
    */
   private async revertFiling(commit: string): Promise<boolean> {
     try {
@@ -2144,7 +2146,9 @@ export class Controller {
     if (!job || !commit) return;
     const undone = await this.revertFiling(commit);
     this.setCapsule(
-      undone ? { kind: "saved", text: job.text, note: "Undone. The note is back in your inbox." } : { kind: "error", message: undoRefused.title, detail: undoRefused.body },
+      undone
+        ? { kind: "saved", text: job.text, note: "Undone. The note is back in your inbox.", undone: true }
+        : { kind: "error", message: undoRefused.title, detail: undoRefused.body },
       undone ? 3500 : undefined,
     );
   }
@@ -2153,6 +2157,18 @@ export class Controller {
     const page = this.job?.pages?.[0];
     if (page) this.openPage(page.path);
     this.setCapsule({ kind: "hidden" });
+  }
+
+  /**
+   * A page's title on the filed card is pressed: the page opens, as Open opens the first, and the card stays, for the next title.
+   * Only the capsule's own page is heard (`sender` is the page the message came from, `event.sender`), and only a `path` that is one
+   * of the pages the card's filing wrote (`job.pages`): any other path, a page of the library or a path out of it, is no card's to
+   * open. Every window has the same bridge, so this is not Ask's `ask:open-page`, which opens a page by name for the Ask window and
+   * for setup, and stays as it is.
+   */
+  openFiledPage(sender: WebContents, path: unknown): void {
+    if (!isPageOf(sender, this.capsule) || typeof path !== "string") return;
+    if (this.job?.pages?.some((page) => page.path === path)) this.openPage(path);
   }
 
   dismiss(): void {

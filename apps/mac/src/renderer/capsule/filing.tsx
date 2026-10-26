@@ -2,7 +2,8 @@
 // same for a whole filing; everything that counts or changes (the seconds, the agent's newest step) is on the card, which is not
 // one: VoiceOver hears a filing start and end, and not each second or each step.
 import { Button, CapsuleBar, Card, Stack, Text } from "@avanzel/ui";
-import { filingLine, filingMeta, transcribedLine } from "../../shared/transcribing.ts";
+import { filingMeta, transcribedLine } from "../../shared/transcribing.ts";
+import { filingLine } from "../common/narration.ts";
 import { useNow } from "../common/use-now.ts";
 import { api, type StateOf } from "./api.ts";
 import { Hide } from "./hide.tsx";

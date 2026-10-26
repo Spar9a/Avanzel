@@ -155,11 +155,14 @@ async function readable(app: ElectronApplication, page: Page, surface: string, b
 function capsuleStates(): [string, CapsuleState, string][] {
   const thumbnail = `data:image/png;base64,${readFileSync(screenshotFixture()).toString("base64")}`;
   const said = "I want to launch my podcast about indie game development before the end of the year, and ask Mark to co-host.";
+  // A page the filing changed, a page it made, and a page it made in a folder that is no shelf, whose row names the folder; and a
+  // fourth, which the card only counts.
   const pages = [
-    { title: "Run a marathon in spring", shelf: "goals", path: "goals/run-a-marathon.md" },
-    { title: "Mark Ellison", shelf: "people", path: "people/mark-ellison.md" },
-    { title: "Indie game dev podcast", shelf: "ideas", path: "ideas/podcast.md" },
+    { title: "Run a marathon in spring", shelf: "goals", path: "goals/run-a-marathon.md", created: false },
+    { title: "Mark Ellison", shelf: "people", path: "people/mark-ellison.md", created: true },
+    { title: "Garden plan", shelf: "projects", path: "projects/garden.md", created: true },
   ];
+  const fourth = { title: "Indie game dev podcast", shelf: "ideas", path: "ideas/podcast.md", created: true };
   const context = { app: "Safari", title: "Shure MV7+ Podcast Microphone", url: "https://www.shure.com/mv7" };
   return [
     // The hint's card above the bar, and the bar's one button: this capture's file mode, worded from the evening review.
@@ -265,8 +268,54 @@ function capsuleStates(): [string, CapsuleState, string][] {
       "Waiting for another Avanzel run to finish…",
     ],
     ["editing", { kind: "editing", text: said }, "Edit before filing"],
-    ["filed", { kind: "filed", agent: "Claude Code", seconds: 23, pages, canUndo: true, message: "Filed.", noted: false }, "Filed by Claude Code"],
-    ["saved", { kind: "saved", text: "This mic looks right for the podcast", thumbnail, context, note: "Saved to your inbox for the evening review at 21:00." }, "Saved to your inbox"],
+    // The results: the words on paper, stamped, over a bar of one steady line.
+    ["filed", { kind: "filed", text: said, agent: "Claude Code", seconds: 23, pages, canUndo: true, message: "Filed.", noted: false }, "Filed by Claude Code in 23 s"],
+    [
+      "filed, four pages",
+      { kind: "filed", text: said, agent: "Claude Code", seconds: 8, pages: [...pages, fourth], canUndo: false, message: "Filed.", noted: false },
+      "and 1 more",
+    ],
+    [
+      "filed, nothing new",
+      { kind: "filed", text: said, agent: "Claude Code", seconds: 4, pages: [], canUndo: true, message: "Filed.", noted: true },
+      "Nothing new to file",
+    ],
+    [
+      "saved, a dictation",
+      { kind: "saved", text: "Call the plumber on Monday", note: "Saved to your inbox for the evening review at 21:00.", detail: "Only your words were kept: the recording couldn't be saved." },
+      "Saved to your inbox for the evening review at 21:00.",
+    ],
+    [
+      "saved, a screen comment",
+      {
+        kind: "saved",
+        text: "This mic looks right for the podcast",
+        thumbnail,
+        context,
+        note: "Saved to your inbox for the evening review at 21:00.",
+        detail: "Only your words were kept: the recording couldn't be saved.",
+      },
+      "Safari",
+    ],
+    ["saved, a screen comment with no words", { kind: "saved", text: "", thumbnail, context, note: "Saved to your inbox." }, "No comment"],
+    ["undone", { kind: "saved", text: said, note: "Undone. The note is back in your inbox.", undone: true }, "Undone. The note is back in your inbox."],
+    [
+      "stopped, a filing",
+      { kind: "cancelled", text: said, agent: "Claude Code", partial: false, leftovers: 0, review: "at 21:00" },
+      "Your words are back in the inbox, untouched, and nothing else changed.",
+    ],
+    [
+      "stopped, a filing whose edits stayed",
+      { kind: "cancelled", text: said, agent: "Claude Code", partial: true, leftovers: 0, review: "on Sundays at 18:00" },
+      "Claude Code's partial edits are kept as their own commit",
+    ],
+    [
+      "stopped, a filing with the review off",
+      { kind: "cancelled", text: said, agent: "Claude Code", partial: false, leftovers: 2, review: null },
+      "The agent's partial edits stay as they are",
+    ],
+    ["stopped, a transcription", { kind: "recorded", review: "at 21:00" }, "The evening review turns it into words and files it at 21:00."],
+    ["stopped, a transcription with the review off", { kind: "recorded", review: null }, "It's in your inbox."],
     ["error", { kind: "error", message: "Claude Code couldn't file this note", detail: "Error: rate limited\nThe note is still in your inbox; the evening review will try again.", action: "open-settings:agents" }, "Claude Code couldn't file this note"],
     ["preparing", { kind: "preparing", receivedBytes: 412_000_000, totalBytes: 672_807_563 }, "The speech model is still downloading"],
     [
@@ -340,7 +389,7 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   for (const [name, state, shows] of capsuleStates()) {
     await call(app, "setCapsule", state);
     await expect(capsule.getByText(shows)).toBeVisible();
-    await capsule.locator(".hud, .av-hud, .av-card").first().hover(); // the legacy cards' close button shows on hover
+    await capsule.locator(".hud, .av-hud, .av-card").first().hover(); // the error card, the one legacy card left, shows its close button on hover
     found.push(...(await readable(app, capsule, `capsule ${name}`, desktops)));
   }
   await app.close();

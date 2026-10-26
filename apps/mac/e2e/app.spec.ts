@@ -119,6 +119,18 @@ test("a screen capture with a spoken comment waits in the inbox with its screens
   // The evening review files it, at the time the library's review runs.
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ note: "Saved to your inbox for the evening review at 21:00." });
   await snap(capsule, "7-capture-saved");
+  // The card is the app's name over the comment, stamped Saved, with the screenshot, the page's title and its address (without
+  // "https://") in its footer, over the note. The bar says Saved, with Hide alone.
+  const card = capsule.getByRole("article");
+  await expect(capsule.getByRole("status").getByText("Saved", { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("status").getByRole("button")).toHaveCount(1);
+  await expect(card.getByText("Safari", { exact: true })).toBeVisible();
+  await expect(card.getByText("This mic looks right for the podcast", { exact: true })).toBeVisible();
+  await expect(card.getByRole("img", { name: /^Saved, / })).toBeVisible();
+  await expect(card.getByRole("img", { name: "Screenshot of Safari", exact: true })).toBeVisible();
+  await expect(card.getByText("Shure MV7+ Podcast Microphone", { exact: true })).toBeVisible();
+  await expect(card.getByText("www.shure.com/mv7", { exact: true })).toBeVisible();
+  await expect(card.getByText("Saved to your inbox for the evening review at 21:00.", { exact: true })).toBeVisible();
   const [name] = inbox(library);
   const capture = read(library, `inbox/${name}`);
   expect(capture).toContain("source: screen");
@@ -267,9 +279,31 @@ test("Undo on the filed card takes the filing back, and the note waits in the in
   const { library, app, capsule } = await typedAndFiled();
   expect(filesUnder(library, "ideas")).toHaveLength(1);
   expect(await recentlyFiled(app)).toEqual(["Plant tulips in October"]);
+  // The filed card first: the bar says who filed it and how long it took, and offers Hide, Undo and Open; the card is stamped Filed
+  // and lists the page the filing made, new.
+  const bar = capsule.getByRole("status");
+  const card = capsule.getByRole("article");
+  await expect(bar.getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
+  await expect(bar.getByRole("button")).toHaveCount(3);
+  await expect(card.getByRole("img", { name: /^Filed, \d{1,2} [A-Z][a-z]{2} \d{4}$/ })).toBeVisible();
+  await expect(card.getByRole("listitem")).toHaveCount(1);
+  await expect(card.getByRole("listitem").getByText("new", { exact: true })).toBeVisible();
   await capsule.getByRole("button", { name: "Undo" }).click();
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
   await expect(capsule.getByText("Undone. The note is back in your inbox.")).toBeVisible();
+  // It is an Undone card: the state says so, the bar says Undone with Hide alone, and the card holds the words, with no stamp, as
+  // the filing it would stamp is gone.
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    kind: "saved",
+    undone: true,
+    text: "Plant tulips in October",
+    note: "Undone. The note is back in your inbox.",
+  });
+  await expect(bar.getByText("Undone", { exact: true })).toBeVisible();
+  await expect(bar.getByRole("button")).toHaveCount(1);
+  await expect(bar.getByRole("button", { name: "Hide", exact: true })).toBeVisible();
+  await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
+  await expect(card).not.toHaveAttribute("data-stamped");
   expect(inbox(library)).toHaveLength(1);
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(await recentlyFiled(app)).toEqual([]);
@@ -920,13 +954,19 @@ test("a thought saved for the evening review says when that review runs, and pro
   const review = path.join(library, "tasks", "evening-review.md");
   writeFileSync(review, readFileSync(review, "utf8").replace("schedule: daily 21:00", "schedule: daily 20:30"));
   const app = await launch({ AVANZEL_LIBRARY: library });
+  const card = (await windowFor(app, "capsule")).getByRole("article");
   await call(app, "setApp", { fileMode: "evening" });
   await call(app, "submitQuick", "first thought");
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", note: "Saved to your inbox for the evening review at 20:30." });
+  await expect(card.getByText("first thought", { exact: true })).toBeVisible();
+  await expect(card.getByText("Saved to your inbox for the evening review at 20:30.", { exact: true })).toBeVisible();
   // With the review off nothing files the thought by itself: the capsule says only where it is.
   writeFileSync(review, readFileSync(review, "utf8").replace("enabled: true", "enabled: false"));
   await call(app, "submitQuick", "second thought");
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", note: "Saved to your inbox." });
+  await expect(card.getByText("second thought", { exact: true })).toBeVisible();
+  await expect(card.getByText("Saved to your inbox.", { exact: true })).toBeVisible();
+  await expect(card.getByText(/evening review/)).toHaveCount(0);
   expect(inbox(library)).toHaveLength(2);
   await app.close();
 });

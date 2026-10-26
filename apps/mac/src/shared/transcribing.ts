@@ -1,9 +1,9 @@
 // The capsule's words about a capture, from the recording to the filing: the file-mode button of a recording, turning a recording
-// into text, and the seconds and the one line of a filing's card. The engine's own speech model runs on this Mac; the command in
-// a library's [voice] settings can run anywhere, so for it the words don't say where. Main sends the capsule which it is
-// (`onThisMac`), and the capsule says no more than that.
-import { rowLine } from "../renderer/common/narration.ts";
-import type { FileMode, NarrationRow } from "./ipc.ts";
+// into text, and the seconds of a filing's card. The engine's own speech model runs on this Mac; the command in a library's
+// [voice] settings can run anywhere, so for it the words don't say where. Main sends the capsule which it is (`onThisMac`), and the
+// capsule says no more than that. The filing card's line of what the agent is doing is with the rows' words (`filingLine`, in
+// renderer/common/narration.ts): nothing in shared/ imports from the renderer.
+import type { FileMode } from "./ipc.ts";
 
 /**
  * The file-mode button of a recording: what its words will do, in words that promise only what the app keeps. "Files now" when
@@ -37,21 +37,4 @@ export function transcribedLine(seconds: number, onThisMac: boolean): string {
 export function filingMeta(seconds: number, estimate: number): string {
   const whole = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
   return whole < estimate ? `${whole} s of about ${estimate}` : `${whole} s`;
-}
-
-/** How long the agent may take no step before the card says it is still at work. */
-export const STILL_WORKING_MS = 8_000;
-
-/**
- * The filing card's one line of what is going on, in its footer: that the run waits for another (the library's, or the app's own
- * queue: `waiting`), which comes before anything else, since a run that has not begun has no steps and no quiet; else, when the
- * agent has taken no step for eight seconds (`stepAt` is its newest step of any kind, even one that adds no row, or the run's
- * start before the first), that it is still working; else its newest step (`rowLine`). Null before the first step. `now` is
- * Date.now(), which the card reads again as it counts its seconds.
- */
-export function filingLine(filing: { agent: string; waiting?: boolean; rows: readonly NarrationRow[]; stepAt: number }, now: number): string | null {
-  if (filing.waiting) return "Waiting for another Avanzel run to finish…";
-  if (now - filing.stepAt >= STILL_WORKING_MS) return `${filing.agent} is still working…`;
-  const newest = filing.rows.at(-1);
-  return newest ? rowLine(newest) : null;
 }
