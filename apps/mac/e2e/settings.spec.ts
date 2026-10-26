@@ -400,7 +400,7 @@ test("an app setting the disk won't take is told as Avanzel's own, in plain word
   try {
     await login.click();
     const problem = notSaved(settings);
-    await expect(problem.getByText("Avanzel can't write to Avanzel's settings. The setting keeps its old value.", { exact: true })).toBeVisible();
+    await expect(problem.getByText("Avanzel can't write to its own settings. The setting keeps its old value.", { exact: true })).toBeVisible();
     await expect(problem).not.toContainText(/EACCES|settings\.json|\.tmp/);
     await expect(login).toHaveAttribute("aria-checked", "false");
     expect((await snapshot(app)).app.launchAtLogin).toBe(false);
@@ -410,7 +410,29 @@ test("an app setting the disk won't take is told as Avanzel's own, in plain word
   await app.close();
 });
 
-test("a refused change is told in a row above the pane, which stays in view however far the pane is scrolled", async () => {
+test("Run now refused for lack of permission says that a file was refused, in a plain sentence, and no setting was saved", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
+  const settings = await openSettings(app, "Reviews");
+  // The file that keeps when a review last ran is written through a temporary file that is there already, and can't be written to.
+  const tmp = path.join(userData, "run-state.json.tmp");
+  writeFileSync(tmp, "");
+  chmodSync(tmp, 0o444);
+  try {
+    await settings.getByRole("group", { name: "Weekly review", exact: true }).getByRole("button", { name: "Run now" }).click();
+    const alert = settings.locator(".settings-problem").getByRole("alert");
+    await expect(alert.getByText("Weekly review didn't start.", { exact: true })).toBeVisible();
+    await expect(alert.getByText("Avanzel was refused access to a file it needs.", { exact: true })).toBeVisible();
+    // No code and no file in it, and it saved no setting, so it says nothing of what a setting keeps.
+    await expect(alert).not.toContainText(/EACCES|run-state|\.tmp|The setting keeps/);
+    await expect(settings.getByRole("alert")).toHaveCount(1);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+  await app.close();
+});
+
+test("a refused change is told in a row above the pane, which stays in view however far the pane is scrolled, and keeps the control that failed in view", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Agents");
@@ -432,8 +454,7 @@ test("a refused change is told in a row above the pane, which stays in view howe
     await model.press("Enter");
     const problem = notSaved(settings);
     await expect(problem).toBeVisible();
-    // It is in a row of its own between the toolbar and the pane, in view, and not in the pane: the pane isn't scrolled to show it,
-    // and the field that failed still has the focus.
+    // It is in a row of its own between the toolbar and the pane, in view, and not in the pane: the pane isn't scrolled up to it.
     await expect(pane.getByRole("alert")).toHaveCount(0);
     const notice = (await problem.boundingBox())!;
     const toolbar = (await settings.getByRole("radiogroup", { name: "Section" }).boundingBox())!;
@@ -441,9 +462,20 @@ test("a refused change is told in a row above the pane, which stays in view howe
     expect(notice.y).toBeGreaterThanOrEqual(toolbar.y + toolbar.height);
     expect(notice.y + notice.height).toBeLessThanOrEqual(paneBox.y + 1);
     await expect(problem).toBeInViewport({ ratio: 1 });
-    expect(await pane.evaluate((el) => el.scrollTop)).toBe(scrolledTo);
+    // The row took its height from the pane, which left the field, at the pane's end, below its fold. The pane is scrolled just
+    // enough to show the field whole (down to it, never up to the Notice), with its own box, the border and the ring round the
+    // input that has the focus: below the Notice's row and above the window's bottom edge, and it still has the focus.
+    expect(await pane.evaluate((el) => el.scrollTop)).toBeGreaterThanOrEqual(scrolledTo);
+    const input = (await model.boundingBox())!;
+    const box = (await model.locator("xpath=..").boundingBox())!; // what the person sees as the field
+    const inner = await settings.evaluate(() => window.innerHeight);
+    expect(box.height, "the field's box is more than its input").toBeGreaterThan(input.height + 4);
+    expect(box.y, "below the Notice's row").toBeGreaterThanOrEqual(notice.y + notice.height);
+    expect(box.y + box.height, "the field's box is above the window's bottom edge").toBeLessThanOrEqual(inner);
     await expect(model).toBeFocused();
-    // A pane that shows after it starts at its top, with the Notice gone.
+    // A pane that shows after it starts at its top, with the Notice gone. The field is put back as it was saved first: leaving it
+    // with what it holds would save that again, and be refused again, as the press that leaves it is told on the pane it shows.
+    await model.fill("");
     await settings.getByRole("radio", { name: "Voice", exact: true }).click();
     await expect(settings.getByRole("heading", { name: "Voice", exact: true })).toBeVisible();
     await expect(notSaved(settings)).toHaveCount(0);
@@ -470,11 +502,12 @@ test("a call that saves nothing and is refused says what didn't happen in its ow
     }
   });
   const settings = await openSettings(app, "Agents");
+  // The window's own Notice, in its row: a pane may have Notices of its own (Voice's, for a model that didn't download).
   const told = async (title: string) => {
-    const alert = settings.getByRole("alert");
-    await expect(alert).toHaveCount(1);
-    await expect(alert.getByText(title, { exact: true })).toBeVisible();
-    await expect(alert.getByText("The disk is full.", { exact: true })).toBeVisible();
+    const row = settings.locator(".settings-problem");
+    await expect(row.getByRole("alert")).toHaveCount(1);
+    await expect(row.getByText(title, { exact: true })).toBeVisible();
+    await expect(row.getByText("The disk is full.", { exact: true })).toBeVisible();
     await expect(settings.getByText("That change wasn't saved.")).toHaveCount(0);
     await expect(settings.getByText("The setting keeps its old value.")).toHaveCount(0);
   };

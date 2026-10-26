@@ -188,17 +188,29 @@ describe("settings copy", () => {
   describe("the plain cause of a refusal", () => {
     const refused = (channel: string, message: string) => new Error(`Error invoking remote method '${channel}': Error: ${message}`);
     const LIBRARY = "Avanzel can't write to the library's settings.";
-    const AVANZEL = "Avanzel can't write to Avanzel's settings.";
+    const OWN = "Avanzel can't write to its own settings.";
+    const FOLDER = "Avanzel can't use that folder.";
+    const FILE = "Avanzel was refused access to a file it needs.";
 
-    it("names the settings a refused write was for, when the disk refuses permission", () => {
+    it("names what a refused permission was for, by the call: the library's settings, Avanzel's own, or the folder chosen", () => {
       const tmp = "open '/Users/ana/Avanzel/.avanzel/config.toml.1234.tmp'";
       expect(plainCause(refused("settings:set-library", `EACCES: permission denied, ${tmp}`))).toBe(LIBRARY);
       expect(plainCause(refused("settings:save-task", "EPERM: operation not permitted, rename '/lib/tasks/a.md.1.tmp' -> '/lib/tasks/a.md'"))).toBe(LIBRARY);
-      // An app setting is Avanzel's own: its shortcuts, when it files, the microphone, opening at login, the library it opens.
-      for (const channel of ["settings:set-app", "settings:choose-library"]) {
-        expect(plainCause(refused(channel, "EACCES: permission denied, open '/Users/ana/Library/Application Support/Avanzel/settings.json.tmp'"))).toBe(AVANZEL);
-      }
+      // An app setting is Avanzel's own: its shortcuts, when it files, the microphone, opening at login.
+      expect(plainCause(refused("settings:set-app", "EACCES: permission denied, open '/Users/ana/Library/Application Support/Avanzel/settings.json.tmp'"))).toBe(OWN);
       expect(notSavedLine(refused("settings:set-library", `EACCES: permission denied, ${tmp}`))).toBe(`${LIBRARY} ${SETTING_KEPT}`);
+      expect(notSavedLine(refused("settings:set-app", "EACCES: permission denied, open '/x/settings.json.tmp'"))).toBe(`${OWN} ${SETTING_KEPT}`);
+    });
+
+    it("blames the folder, not Avanzel's settings, when the permission refused came as a library was chosen", () => {
+      // Choosing a library reads the folder, and makes the library in it, before anything of Avanzel's own is written.
+      expect(plainCause(refused("settings:choose-library", "EACCES: permission denied, scandir '/Volumes/Backups/Brain'"))).toBe(FOLDER);
+      expect(plainCause(refused("settings:choose-library", "EPERM: operation not permitted, mkdir '/Volumes/Backups/Brain/inbox'"))).toBe(FOLDER);
+      expect(notSavedLine(refused("settings:choose-library", "EACCES: permission denied, scandir '/Volumes/Backups/Brain'"))).toBe(
+        `${FOLDER} ${SETTING_KEPT}`,
+      );
+      // Nothing in the sentence says what was written, or where.
+      expect(FOLDER).not.toMatch(/settings|write/);
     });
 
     it("says the disk is full or read-only, whatever was being written", () => {
@@ -221,9 +233,18 @@ describe("settings copy", () => {
       }
     });
 
-    it("says nothing of the library's or Avanzel's settings for a call that writes none", () => {
-      expect(plainCause(refused("settings:run-task", "EACCES: permission denied, open '/data/run-state.json.1.tmp'"))).toBe("EACCES: permission denied.");
-      expect(plainCause(refused("settings:check-agent", "EPERM: operation not permitted, open '/data/agents.json'"))).toBe("EPERM: operation not permitted.");
+    it("says no more than that a file was refused, in a plain sentence, for a call that writes no setting", () => {
+      // Run now, Check, Allow… and the download's Try again: nothing in what they say is a code, a file or a setting.
+      for (const [channel, message] of [
+        ["settings:run-task", "EACCES: permission denied, open '/data/run-state.json.1.tmp'"],
+        ["settings:check-agent", "EPERM: operation not permitted, open '/data/agents.json'"],
+        ["settings:check-agents", "EACCES: permission denied, spawn"],
+        ["settings:request-permission", "EPERM: operation not permitted, open '/data/tcc.db'"],
+        ["settings:download-model", "EACCES: permission denied, mkdir '/Users/ana/Library/Application Support/Avanzel/models'"],
+      ] as const) {
+        expect(plainCause(refused(channel, message)), channel).toBe(FILE);
+      }
+      expect(FILE).not.toMatch(/EACCES|EPERM|settings/);
     });
 
     it("keeps the words of a refusal that is Avanzel's own, and the folder the person chose in them", () => {
@@ -235,7 +256,7 @@ describe("settings copy", () => {
 
     it("reads an error that isn't an IPC rejection the same way, and nothing as nothing", () => {
       expect(plainCause(new Error("ENOSPC: no space left on device"))).toBe("The disk is full.");
-      expect(plainCause(new Error("EACCES: permission denied, open '/x/y.tmp'"))).toBe("EACCES: permission denied."); // no channel: no settings to name
+      expect(plainCause(new Error("EACCES: permission denied, open '/x/y.tmp'"))).toBe(FILE); // no channel: nothing to name but the file
       expect(plainCause(new Error(""))).toBe("");
       expect(plainCause("gone")).toBe("Gone.");
     });
@@ -258,7 +279,7 @@ describe("settings copy", () => {
       });
       expect(refusedCall(new Error("Error invoking remote method 'settings:run-task': Error: EACCES: permission denied, open '/x/run-state.json.tmp'"), "Weekly review didn't start.")).toEqual({
         title: "Weekly review didn't start.",
-        body: "EACCES: permission denied.",
+        body: "Avanzel was refused access to a file it needs.",
       });
     });
 

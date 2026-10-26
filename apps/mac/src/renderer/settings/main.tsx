@@ -1,11 +1,11 @@
 // The Settings window: a strip to drag it by, the toolbar that moves between its panes, the Notice for a call main refused,
 // and the pane under its heading. Each pane applies a change at once and draws the snapshot main sends back; a call main
 // refuses is told in a Notice in a row of its own above the pane (`attempt`), which stays in view however far the pane is
-// scrolled. The window keeps the reviews' open editor, their saves on the way and the failure of the last one, which outlast
-// the pane.
+// scrolled, and which keeps the control that has the focus in view. The window keeps the reviews' open editor, their saves on
+// the way and the failure of the last one, which outlast the pane.
 import "@avanzel/ui/base.css";
 import { Notice, Segmented, Stack, Text } from "@avanzel/ui";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { SETTINGS_PANES, isSettingsPane, type AvanzelBridge, type SettingsPane, type SettingsSnapshot } from "../../shared/ipc.ts";
 import { PANE_LABELS, refusedCall } from "./copy.ts";
@@ -31,6 +31,9 @@ function startingPane(): SettingsPane {
 
 /** The toolbar's choices: every pane, in order, by its name. */
 const PANES = SETTINGS_PANES.map((pane) => ({ value: pane, label: PANE_LABELS[pane] }));
+
+/** How far above the pane's bottom edge the control that has the focus is kept, in px: its field's box and ring, and some air. */
+const FOCUS_ROOM = 16;
 
 /**
  * What pane `pane` holds. A pane that needs a library is drawn here only while there is one, with NoLibrary in its place
@@ -64,6 +67,7 @@ interface Problem {
  * The Notice for a call main refused (`refusedCall`): what happened, and why. It has no button: it is told, and goes with the
  * next change that works or the next pane. It stands outside the pane, which scrolls: a pane can be long and the control that
  * failed far down it, and a Notice in the pane would be out of sight or, brought into sight, would take the control out of it.
+ * Its row takes its height from the pane instead, which App makes up for (see where it keeps the focused control in view).
  */
 function Refused({ title, line }: { title: string; line: string }): ReactNode {
   return (
@@ -128,6 +132,20 @@ function App() {
   }, []);
   // An error card's Open Settings, while this window is open: a pane Settings doesn't have means General.
   useEffect(() => api.onShowPane((next) => showPane(isSettingsPane(next) ? next : "general")), [showPane]);
+  // The problem's row takes its height from the pane, which can leave the control the person was working at, the one with the
+  // focus, below the pane's fold. As the row appears (before it is painted) that control is kept in view: the pane is scrolled
+  // just enough to show it, and never to the Notice. What has the focus in a field is the input inside it, whose box, border and
+  // ring reach below it, so a little room is left under whatever has the focus.
+  const scrolls = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    if (!problem || !focused) return;
+    focused.scrollIntoView({ block: "nearest" });
+    const scroller = scrolls.current;
+    if (!scroller?.contains(focused)) return;
+    const short = focused.getBoundingClientRect().bottom + FOCUS_ROOM - scroller.getBoundingClientRect().bottom;
+    if (short > 0) scroller.scrollTop += short; // the pane's end is as far as it goes
+  }, [problem?.id]);
   if (!snap) return null;
   return (
     <div className="settings">
@@ -152,7 +170,7 @@ function App() {
       </div>
       {/* Keyed by its pane: a pane starts at its top, and the one left is unmounted, which ends whatever it had going,
           but for the reviews' edits, which the window keeps. */}
-      <main key={pane} className="settings-pane">
+      <main key={pane} ref={scrolls} className="settings-pane">
         <Stack gap={20}>
           <Text variant="heading">{PANE_LABELS[pane]}</Text>
           <div>{paneContent(pane, { snap, onChange: draw, attempt }, edits)}</div>

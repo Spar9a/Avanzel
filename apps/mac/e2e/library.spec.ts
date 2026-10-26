@@ -636,6 +636,29 @@ test("Change… on a folder that is too broad says so in Settings, asks nothing,
   await app.close();
 });
 
+test("Change… on a folder Avanzel can't read says it can't use that folder, not that it can't write its settings, and leaves the library as it was", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
+  const settings = await openSettings(app);
+  // Choosing a library reads the folder, and makes the library in it, before anything of Avanzel's own is written: the folder is
+  // what a refused permission is about.
+  const folder = mkdtempSync(path.join(tmpdir(), "avz-e2e-locked-"));
+  chmodSync(folder, 0o000);
+  try {
+    await stubPicker(app, folder);
+    await settings.getByRole("button", { name: "Change…" }).click();
+    const problem = settings.getByRole("alert");
+    await expect(problem.getByText("That change wasn't saved.", { exact: true })).toBeVisible();
+    await expect(problem.getByText("Avanzel can't use that folder. The setting keeps its old value.", { exact: true })).toBeVisible();
+    await expect(problem).not.toContainText(/EACCES|scandir|settings\b.*\bwrite|can't write/);
+    await snap(settings, "settings-library-folder-refused");
+    expect(((await call(app, "snapshot")) as SettingsSnapshot).library).toMatchObject({ path: library, exists: true });
+  } finally {
+    chmodSync(folder, 0o755);
+  }
+  await app.close();
+});
+
 test("Choose a folder… for a library that has gone says why a folder is refused, beside the Notice that offered it", async () => {
   const { env, home } = firstRun();
   const app = await launch({ ...env, AVANZEL_LIBRARY: path.join(home, "Brain") }); // remembered, and not there any more

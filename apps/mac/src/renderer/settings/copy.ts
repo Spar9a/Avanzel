@@ -232,22 +232,31 @@ export const CHANGE_NOT_SAVED = "That change wasn't saved.";
 /** What the Notice of a change that wasn't saved ends with: nothing was written, so the setting is what it was. */
 export const SETTING_KEPT = "The setting keeps its old value.";
 
-/** The IPC channels that write a setting, and whose settings they are: what "Avanzel can't write to …" names when the disk refuses. */
-const SETTINGS_WRITTEN: Readonly<Record<string, string>> = {
-  "settings:set-app": "Avanzel's settings",
-  "settings:choose-library": "Avanzel's settings", // the library to open is remembered with the app's own
-  "settings:set-library": "the library's settings",
-  "settings:save-task": "the library's settings", // a review is a file of the library
+/**
+ * What a refused permission (EACCES, EPERM) means, as a sentence, by the IPC channel of the call it refused. Each says what
+ * that call was working at when the disk or macOS said no.
+ */
+const ACCESS_REFUSED: Readonly<Record<string, string>> = {
+  "settings:set-app": "Avanzel can't write to its own settings.",
+  // Choosing a library reads the folder, and makes the library in it, before it writes anything of Avanzel's own: the folder is
+  // what the permission was refused for.
+  "settings:choose-library": "Avanzel can't use that folder.",
+  "settings:set-library": "Avanzel can't write to the library's settings.",
+  "settings:save-task": "Avanzel can't write to the library's settings.", // a review is a file of the library
 };
+
+/** A refused permission of a call that writes no setting (a run, a check, a request, a download), or of one this table doesn't know. */
+const FILE_REFUSED = "Avanzel was refused access to a file it needs.";
 
 /** `message` without the file a system error names: ", open '/lib/.avanzel/config.toml.1.tmp'" or ", rename '/a.tmp' -> '/a'". */
 const withoutFiles = (message: string): string => message.replace(/,\s+\w+\s+'[^']*'(?:\s+->\s+'[^']*')?/g, "");
 
 /**
  * Why a call main refused was refused, in plain words, as a sentence. An IPC rejection arrives as "Error invoking remote
- * method 'settings:set-library': Error: EACCES: …". A disk that won't take a write is told by what it means: the permission to
- * write the settings that call wrote (named by its channel), a full disk, a read-only one. Any other message is told as an
- * agent's line is (`ownLine`: no "Error:" label, a capital, a full stop) after its prefix, its error's class and the file a
+ * method 'settings:set-library': Error: EACCES: …". A disk that won't take a write is told by what it means: a refused
+ * permission is told by the call that met it (ACCESS_REFUSED: the library's settings, Avanzel's own, the folder chosen), and
+ * plainly (FILE_REFUSED) for any other call; a full disk and a read-only one are told as they are. Any other message is told as
+ * an agent's line is (`ownLine`: no "Error:" label, a capital, a full stop) after its prefix, its error's class and the file a
  * system error names go (`remoteMessage`, `withoutFiles`). An error with nothing to say adds nothing.
  */
 export function plainCause(error: unknown): string {
@@ -259,10 +268,8 @@ export function plainCause(error: unknown): string {
     case "EROFS":
       return "The disk is read-only.";
     case "EACCES":
-    case "EPERM": {
-      const written = SETTINGS_WRITTEN[/^Error invoking remote method '([^']*)'/.exec(raw)?.[1] ?? ""];
-      if (written) return `Avanzel can't write to ${written}.`;
-    }
+    case "EPERM":
+      return ACCESS_REFUSED[/^Error invoking remote method '([^']*)'/.exec(raw)?.[1] ?? ""] ?? FILE_REFUSED;
   }
   return ownLine(withoutFiles(message));
 }
