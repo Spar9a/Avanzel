@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  CaptureCount,
   DEFAULT_SETTINGS,
   FirstRunLog,
   NoticedShortcuts,
@@ -212,6 +213,64 @@ describe("FirstRunLog", () => {
       expect(() => log.launched(at("09:00:00"))).not.toThrow();
       expect(problems).toHaveBeenCalledTimes(1);
       expect(log.get()).toEqual(fresh);
+    } finally {
+      problems.mockRestore();
+    }
+  });
+});
+
+describe("CaptureCount", () => {
+  it("counts the captures the library has kept, from one app run to the next", () => {
+    const file = path.join(tmp(), "captures.json");
+    const count = new CaptureCount(file);
+    expect(count.get()).toBe(0); // no file yet
+    count.add();
+    count.add();
+    count.add();
+    expect(count.get()).toBe(3);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ version: 1, kept: 3 });
+    expect(new CaptureCount(file).get()).toBe(3); // the next launch
+  });
+
+  it("goes on counting from what an earlier launch kept, past ten", () => {
+    const file = path.join(tmp(), "captures.json");
+    writeFileSync(file, JSON.stringify({ version: 1, kept: 9 }));
+    const count = new CaptureCount(file);
+    expect(count.get()).toBe(9);
+    count.add();
+    count.add();
+    expect(count.get()).toBe(11);
+    expect(new CaptureCount(file).get()).toBe(11);
+  });
+
+  it("reads a broken file, or one of the wrong shape, as none kept, and the next capture starts it over", () => {
+    const file = path.join(tmp(), "captures.json");
+    const count = new CaptureCount(file);
+    const unreadable = [
+      "{not json", "", "[4]", '"4"', "4", "null",
+      '{"version": 1}', '{"kept": "4"}', '{"kept": null}', '{"kept": -1}', '{"kept": 2.5}', '{"kept": 1e999}', '{"kept": 1e300}',
+    ];
+    for (const content of unreadable) {
+      writeFileSync(file, content);
+      expect(count.get(), content).toBe(0);
+    }
+    // What makes sense of a file is kept: its count, whatever else it holds.
+    writeFileSync(file, JSON.stringify({ version: 7, kept: 5, surprise: true }));
+    expect(count.get()).toBe(5);
+    writeFileSync(file, "{not json");
+    count.add();
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ version: 1, kept: 1 });
+  });
+
+  it("never throws when it can't write: the capture it counts is kept all the same", () => {
+    const blocker = path.join(tmp(), "in-the-way");
+    writeFileSync(blocker, "a file where the count's folder should be");
+    const count = new CaptureCount(path.join(blocker, "captures.json"));
+    const problems = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      expect(() => count.add()).not.toThrow();
+      expect(problems).toHaveBeenCalledTimes(1);
+      expect(count.get()).toBe(0);
     } finally {
       problems.mockRestore();
     }

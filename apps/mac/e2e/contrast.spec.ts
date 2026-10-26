@@ -162,7 +162,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
   ];
   const context = { app: "Safari", title: "Shure MV7+ Podcast Microphone", url: "https://www.shure.com/mv7" };
   return [
-    ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null }, "Auto"],
+    ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", hint: "Alt+Space" }, "Auto"],
     ["transcribing", { kind: "transcribing", mode: "dictate", onThisMac: true }, "Transcribing on this Mac…"],
     [
       "filing",

@@ -94,6 +94,31 @@ test("the first press asks about the microphone behind one Continue, then record
   await app.close();
 });
 
+test("the first spoken thought has no file mode to switch: setup files it whatever the setting says, and it is a kept capture", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const { env, home } = spokenRun({ AVANZEL_USER_DATA: userData, AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October" });
+  const app = await launch(env);
+  await call(app, "setApp", { fileMode: "evening" }); // any other capture would be saved for tonight
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  await pressShortcut(app);
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  // Nothing to switch, and a press of the switch finds nothing to do; the card still names the key that finishes the recording.
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "listening", mode: "dictate", fileMode: null, hint: "Alt+Space" });
+  const capsule = await windowFor(app, "capsule");
+  await capsule.evaluate(async () => {
+    window.avanzel.capsule.toggleFileMode();
+    await window.avanzel.settings.get(); // answered once main has heard the press
+  });
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "listening", fileMode: null });
+  await pressShortcut(app);
+  await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
+  expect(inbox(library)).toEqual([]);
+  expect(filesUnder(library, "ideas")).toHaveLength(1);
+  expect(JSON.parse(readFileSync(path.join(userData, "captures.json"), "utf8"))).toEqual({ version: 1, kept: 1 });
+  await app.close();
+});
+
 test("a denied microphone says where to allow it, and offers typing", async () => {
   const { env } = spokenRun({ AVANZEL_FAKE_PERMISSIONS: "microphone:denied", AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October" });
   const app = await launch(env);

@@ -50,7 +50,26 @@ export type CardAction =
 
 export type CapsuleState =
   | { kind: "hidden" }
-  | { kind: "listening"; mode: CapsuleMode; startedAt: number; fakeMic: boolean; microphoneId: string | null; thumbnail?: string }
+  | {
+      kind: "listening";
+      mode: CapsuleMode;
+      startedAt: number;
+      fakeMic: boolean;
+      microphoneId: string | null;
+      thumbnail?: string;
+      /**
+       * When this capture is filed: now, or at the evening review. It starts as the setting says, and the capsule's
+       * `toggleFileMode` switches this capture's alone. Null where there is nothing to switch: a screen comment is always saved,
+       * and setup's first spoken thought is filed by its step, whatever the mode.
+       */
+      fileMode: FileMode | null;
+      /**
+       * The shortcut that finishes this recording, for the card to name while the first captures teach the keys: Record a
+       * thought's, or Capture screen with a comment's for a screen comment. Set while fewer than ten captures have been kept and
+       * that shortcut is registered; null otherwise.
+       */
+      hint: string | null;
+    }
   /** `onThisMac`: the library's speech-to-text runs on this Mac, which the card then says; a command can run anywhere. */
   | { kind: "transcribing"; mode: CapsuleMode; onThisMac: boolean }
   | {
@@ -618,6 +637,8 @@ export interface AvanzelBridge {
     cancelEdit(): void;
     /** Stop, on the card of a filing. The controller's `cancelFiling` tells what it does and when it is heard. */
     cancelFiling(): void;
+    /** Files this capture now or at the evening review, the other way round, while it listens. The controller's `toggleFileMode` tells the rest. */
+    toggleFileMode(): void;
     undo(): void;
     open(): void;
     dismiss(): void;

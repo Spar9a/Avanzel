@@ -21,6 +21,7 @@ const bridge: AvanzelBridge = {
     submitEdit: (text) => ipcRenderer.send("capsule:submit-edit", text),
     cancelEdit: () => ipcRenderer.send("capsule:cancel-edit"),
     cancelFiling: () => ipcRenderer.send("capsule:cancel-filing"),
+    toggleFileMode: () => ipcRenderer.send("capsule:toggle-file-mode"),
     undo: () => ipcRenderer.send("capsule:undo"),
     open: () => ipcRenderer.send("capsule:open"),
     dismiss: () => ipcRenderer.send("capsule:dismiss"),

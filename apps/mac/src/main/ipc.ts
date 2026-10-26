@@ -20,6 +20,7 @@ export function registerIpc(controller: Controller): void {
   on("capsule:submit-edit", (_e, text: string) => controller.submitEdit(text));
   on("capsule:cancel-edit", () => controller.cancelEdit());
   on("capsule:cancel-filing", (e) => controller.cancelFiling(e.sender)); // only the capsule's own page stops its filing
+  on("capsule:toggle-file-mode", (e) => controller.toggleFileMode(e.sender)); // only the capsule's own page switches its capture's mode
   on("capsule:undo", () => void controller.undo());
   on("capsule:open", () => controller.openFiled());
   on("capsule:dismiss", () => controller.dismiss());

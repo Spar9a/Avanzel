@@ -223,6 +223,17 @@ test("a typed first thought is filed in the window, with the time shown", async 
   await app.close();
 });
 
+test("a typed first thought is a kept capture, and counts", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const { env } = firstRun({ claude: filingClaude() });
+  const app = await launch({ ...env, AVANZEL_USER_DATA: userData });
+  const setup = await throughFound(app);
+  await typeFirstThought(setup, "Plant tulips in October");
+  await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
+  expect(JSON.parse(readFileSync(path.join(userData, "captures.json"), "utf8"))).toEqual({ version: 1, kept: 1 });
+  await app.close();
+});
+
 test("setup's snapshot carries each step while the first thought is filed", async () => {
   const { env } = firstRun({ claude: filingClaude() });
   // The stand-in Claude Code reports each tool call as the real one does, a second apart: the steps come while the run goes on.

@@ -129,7 +129,7 @@ import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
 import { afterStop, defaultLibraryPath, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
-import { FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
+import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
 import { MenuBar } from "./tray.ts";
 import {
@@ -152,6 +152,8 @@ const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.en
 const PICKED_SHOW_MS = 3_000;
 // How long the capsule says that a filing is stopped (hovering over it keeps it longer, as it does any card that hides itself).
 const STOPPED_SHOW_MS = 6_000;
+// For this many kept captures, the listening card names the shortcut that finishes the recording: the first ones teach the keys.
+const HINT_CAPTURES = 10;
 // How many characters of an agent's own line (or of the error's lines, on the card of corrected words that weren't saved) the
 // capsule's failure card, and the notification of the same words, keep: the legacy card shows about four lines of its body, and
 // the sentence that says what is safe must not be among those it cuts off. The windows don't clip, and tell the whole line.
@@ -305,6 +307,8 @@ export class Controller {
   private readonly noticed: NoticedShortcuts;
   /** When a first run reached each of setup's milestones (§5.4): kept on this Mac, never sent anywhere. */
   private readonly firstRun: FirstRunLog;
+  /** How many captures the library has kept, in the app's own folder: the first ones get the listening card's hint (`hintFor`). */
+  private readonly captureCount: CaptureCount;
   /** What each agent's check found in this app run, by harness name, for Settings → Agents. */
   private readonly agentChecks = new Map<string, AgentStatus>();
   /** The agent checks going on, each by the controller that stops it when Avanzel quits. */
@@ -347,6 +351,7 @@ export class Controller {
     this.runState = new RunStateStore(path.join(userData, "run-state.json"));
     this.noticed = new NoticedShortcuts(path.join(userData, "noticed-shortcuts.json"));
     this.firstRun = new FirstRunLog(path.join(userData, "first-run.json"));
+    this.captureCount = new CaptureCount(path.join(userData, "captures.json"));
     this.setup = new Setup(this.setupHost()); // last: the host hands setup the stores made above
   }
 
@@ -821,7 +826,11 @@ export class Controller {
     }
   }
 
-  private async startRecording(mode: CapsuleMode, shot?: Recording["shot"]): Promise<void> {
+  /**
+   * `forSetup`: the recording is setup's first spoken thought (`Setup.recordThought`), which setup files in its own window
+   * whatever the mode, so it has no file mode to switch. A screen comment has none either, since it is always saved.
+   */
+  private async startRecording(mode: CapsuleMode, shot?: Recording["shot"], { forSetup = false } = {}): Promise<void> {
     if (mode === "dictate" && !(await this.readyToListen())) return;
     if (this.recording) {
       // Another tap started one while this one waited (say, on the microphone prompt).
@@ -832,6 +841,7 @@ export class Controller {
     const maxSeconds = this.vault ? loadSettings(this.vault.root).voice.maxRecordSeconds : 600;
     const recording: Recording = {
       mode,
+      fileMode: mode === "dictate" && !forSetup ? this.store.get().fileMode : null,
       startedAt: Date.now(),
       shot,
       stopping: false,
@@ -846,6 +856,8 @@ export class Controller {
       startedAt: recording.startedAt,
       fakeMic: !!process.env.AVANZEL_FAKE_AUDIO,
       microphoneId: this.store.get().microphoneId,
+      fileMode: recording.fileMode,
+      hint: this.hintFor(mode),
       ...(shot ? { thumbnail: shot.thumbnail } : {}),
     });
     this.capsuleCommand("start");
@@ -854,6 +866,34 @@ export class Controller {
     } catch {
       // Esc is a convenience; the menu and the shortcut still stop the recording.
     }
+  }
+
+  /**
+   * The shortcut that finishes a recording in `mode`, for the listening card to name while the first captures teach the keys:
+   * Record a thought's, or Capture screen with a comment's for a screen comment. Null once HINT_CAPTURES captures have been kept
+   * (`captureCount`), and while that shortcut isn't registered (`shortcutProblems` names it: another app holds it, or it can't
+   * work): there is no key to name then.
+   */
+  private hintFor(mode: CapsuleMode): string | null {
+    const key = mode === "comment" ? "capture" : "dictate";
+    const accelerator = this.store.get().shortcuts[key];
+    return accelerator && !this.shortcutProblems[key] && this.captureCount.get() < HINT_CAPTURES ? accelerator : null;
+  }
+
+  /**
+   * The capsule's file-mode switch, while a capture listens: this capture is filed now, or at the evening review, the other way
+   * round from what the card shows. It changes this capture alone: the setting stays as it is, and the next capture starts from it
+   * again. The stop reads the mode (`afterCapture`), so the switch ends with the card that listens: it does nothing once the
+   * recording is stopped (the card says it is transcribing), nor while another card has replaced the listening one (a typed
+   * thought's, say), nor where there is nothing to switch (`Recording.fileMode` is null). Only the capsule's own page is heard
+   * (`sender` is the page the message came from, `event.sender`).
+   */
+  toggleFileMode(sender: WebContents): void {
+    const recording = this.recording;
+    const state = this.capsuleState;
+    if (!isPageOf(sender, this.capsule) || !recording || recording.fileMode === null || state.kind !== "listening") return;
+    recording.fileMode = recording.fileMode === "now" ? "evening" : "now";
+    this.setCapsule({ ...state, fileMode: recording.fileMode });
   }
 
   async stopRecording(): Promise<void> {
@@ -962,6 +1002,7 @@ export class Controller {
           ...(text ? { audio: audioPath, transcriber: engine } : {}),
           context: recording.shot.context,
         });
+        this.captureCount.add(); // the screenshot is kept, with or without a comment
         this.setCapsule(
           {
             kind: "saved",
@@ -987,6 +1028,7 @@ export class Controller {
         );
       }
       const capture = vault.newCapture(text, { source: "voice", audio: audioPath, transcriber: engine, now });
+      this.captureCount.add(); // its words are in the inbox: kept, whatever becomes of them next
       this.afterCapture(capture.path, text, seconds, unkept, recording);
     } catch (error) {
       console.error("recording", error);
@@ -1035,11 +1077,12 @@ export class Controller {
   /**
    * `detail`: a line the capsule shows under the words, e.g. why the recording itself wasn't kept. Words spoken in
    * `recording` that is setup's first spoken thought are setup's first (`setup.heard`), which files them now, whatever
-   * the file mode.
+   * the file mode. Any others are filed now or at the evening review as their recording's own file mode says (`toggleFileMode`);
+   * words with no such mode (a typed thought's, or from a recording that has none to switch) as the setting says.
    */
   private afterCapture(capturePath: string, text: string, transcribedIn: number | null, detail?: string, recording?: Recording): void {
     if (recording && this.setup.heard(recording, capturePath, text, transcribedIn)) return;
-    if (this.store.get().fileMode === "evening") {
+    if ((recording?.fileMode ?? this.store.get().fileMode) === "evening") {
       this.setCapsule({ kind: "saved", text, note: this.savedLine(), ...(detail ? { detail } : {}) }, 4000);
       return;
     }
@@ -2103,6 +2146,7 @@ export class Controller {
       this.fail("Couldn't save that thought", `${errorMessage(error)}\nIt is still in the box: press ${prettyAccelerator(this.store.get().shortcuts.type)} to try again.`);
       throw error;
     }
+    this.captureCount.add(); // its words are in the inbox: kept, whatever becomes of them next
     this.afterCapture(capture.path, trimmed, null);
   }
 
@@ -2589,7 +2633,7 @@ export class Controller {
       setLibrarySettings: (patch) => this.setLibrarySettings(patch),
       changeApp: (patch, picked) => this.changeApp(patch, picked),
       useShortcut: (key, accelerator) => this.useShortcut(key, accelerator),
-      startRecording: (mode, shot) => this.startRecording(mode, shot),
+      startRecording: (mode, shot) => this.startRecording(mode, shot, { forSetup: true }), // only setup's first spoken thought
       hideCapsule: () => this.setCapsule({ kind: "hidden" }),
       toggleDictate: () => this.toggleDictate(),
       openQuick: () => this.openQuick(),
@@ -2598,7 +2642,11 @@ export class Controller {
       takeBack: (job) => this.takeBack(job),
       revert: (commit) => this.revertFiling(commit),
       answer: (question, abort, progress) => this.answerQuestion(question, abort, progress),
-      newCapture: (text, options) => this.requireVault().newCapture(text, options),
+      newCapture: (text, options) => {
+        const capture = this.requireVault().newCapture(text, options);
+        this.captureCount.add(); // setup's typed thought is a kept capture like any other
+        return capture;
+      },
       firstRun: this.firstRun,
       queuedToFile: this.queuedToFile,
       noticed: this.noticed,

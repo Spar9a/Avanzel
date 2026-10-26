@@ -2,7 +2,7 @@
 // agents' names, the library's folder picker, and how an error reads.
 import type { OpenDialogOptions } from "electron";
 import type { FileOutcome } from "@avanzel/engine";
-import type { CapsuleMode, FiledPage, NarrationRow, ScreenContext } from "../shared/ipc.ts";
+import type { CapsuleMode, FileMode, FiledPage, NarrationRow, ScreenContext } from "../shared/ipc.ts";
 import type { AgentFailure } from "../shared/problems.ts";
 
 /** The folder picker for the library, in Settings (Change… and Choose a folder…) and in setup (Change…). */
@@ -14,6 +14,13 @@ export const harnessName = (name: string) => HARNESS_NAMES[name] ?? name;
 
 export interface Recording {
   mode: CapsuleMode;
+  /**
+   * When this capture is filed: now, or at the evening review. It starts as the setting says, and the capsule's switch changes
+   * this capture's alone (`toggleFileMode`); the stop reads it (`afterCapture`). Null where there is nothing to switch: a screen
+   * comment is always saved, and setup's first spoken thought is filed by its step, whatever the mode; words spoken in such a
+   * recording that setup does not take are filed as the setting says.
+   */
+  fileMode: FileMode | null;
   startedAt: number;
   shot?: { path: string; thumbnail: string; context: ScreenContext };
   maxTimer: NodeJS.Timeout;

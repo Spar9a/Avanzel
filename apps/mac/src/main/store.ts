@@ -1,5 +1,6 @@
 // App-level preferences (not per library): where the library is, shortcuts, how notes are filed. And, apart from
-// them, the taken shortcuts the capsule has named, and the times a first run reached setup's milestones.
+// them, the taken shortcuts the capsule has named, the times a first run reached setup's milestones, and how many
+// captures the library has kept.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isSetupStep, SETUP_STEPS, type AppSettings, type SetupStep, type Shortcuts } from "../shared/ipc.ts";
@@ -227,6 +228,36 @@ export class FirstRunLog {
       writeJsonAtomic(this.file, run);
     } catch (error) {
       console.error("first-run log", error);
+    }
+  }
+}
+
+/**
+ * How many captures the library has kept, in a file of the app's own on this Mac (userData/captures.json): never in the
+ * library, and nothing reports it. The first ones teach the keys (the capsule's hint). A capture counts once the library keeps
+ * it, when its words (or, for a screen comment, its screenshot) are written, whatever becomes of it next: filed, saved for the
+ * evening review, stopped. An Esc, a recording with no speech and one that fails write nothing, so they don't count. A missing
+ * or broken file reads as none kept. Counting is best effort: a file that can't be written costs a count, never the capture.
+ */
+export class CaptureCount {
+  constructor(private readonly file: string) {}
+
+  get(): number {
+    try {
+      const raw: unknown = JSON.parse(readFileSync(this.file, "utf8"));
+      const kept = isRecord(raw) ? raw.kept : 0;
+      return typeof kept === "number" && Number.isSafeInteger(kept) && kept > 0 ? kept : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** One more capture is kept: whatever leaves a capture in the library calls this as soon as it is there. */
+  add(): void {
+    try {
+      writeJsonAtomic(this.file, { version: 1, kept: this.get() + 1 });
+    } catch (error) {
+      console.error("capture count", error);
     }
   }
 }
