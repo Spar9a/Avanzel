@@ -12,13 +12,14 @@ import { Words } from "./words.tsx";
 /**
  * A filing that wrote pages is stamped Filed, lands with a thunk, and lists the pages under the words, which are cut off after two
  * lines to leave them room. The bar offers Hide, Undo while the filing has a commit to take back, and Open, the moment's one primary,
- * which opens the first page.
+ * which opens the first page. Undo is busy from its press, as Stop is on the filing card: the card is replaced by what came of it.
  *
  * A filing that wrote no page (`noted`: the agent logged the capture and found nothing to add) says there is nothing new, stamped
  * Noted, and offers no Open: Hide, and Undo while there is a commit.
  */
 export function Filed({ state }: { state: StateOf<"filed"> }) {
   const [day] = useState(() => stampDate(new Date())); // the day the card came, not the day it is redrawn
+  const [undoing, setUndoing] = useState(false); // Undo answers once: busy from the press until the card is replaced by what came of it
   const receipt = !state.noted && state.pages.length > 0;
   return (
     <div className="stack">
@@ -34,7 +35,18 @@ export function Filed({ state }: { state: StateOf<"filed"> }) {
         actions={
           <>
             <Hide />
-            {state.canUndo && <Button size="small" onClick={() => api.undo()}>Undo</Button>}
+            {state.canUndo && (
+              <Button
+                size="small"
+                busy={undoing}
+                onClick={() => {
+                  setUndoing(true);
+                  api.undo();
+                }}
+              >
+                Undo
+              </Button>
+            )}
             {receipt && <Button size="small" variant="primary" onClick={() => api.open()}>Open</Button>}
           </>
         }

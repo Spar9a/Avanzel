@@ -127,8 +127,6 @@ export type CapsuleState =
       /** The pages the filing wrote, new ones first; the card lists three of them. Each opens through `capsule.openPage`. */
       pages: FiledPage[];
       canUndo: boolean;
-      /** The agent's own sentence about what it did. The card doesn't show it: it lists each page, and says when there is none (`noted`). */
-      message: string;
       /** The agent filed nothing: it ended well and wrote no page, only a line in the log. */
       noted: boolean;
     }
@@ -160,7 +158,8 @@ export type CapsuleState =
     }
   /**
    * Words saved to the inbox, for the evening review or a screen comment (`thumbnail` and `context` are the screenshot's); `note`
-   * says where they are. `undone`: Undo took a filing back, and these are its words, in the inbox again; the card then says so.
+   * says where they are. `undone`: Undo took a filing back, and these are its words, in the inbox again; the card then says so, and
+   * its `note` says when the evening review files them (`undoneNote`).
    */
   | { kind: "saved"; text: string; thumbnail?: string; context?: ScreenContext; note: string; detail?: string; undone?: true }
   /**
@@ -672,7 +671,7 @@ export interface AvanzelBridge {
     open(): void;
     /**
      * A page's title on the filed card: that page opens, as Open opens the first, and the card stays. `path` is library-relative, and
-     * only a page the card's filing wrote is opened (the controller's `openFiledPage`), only for the capsule's own page: sent from
+     * only a page the newest filing wrote is opened (the controller's `openFiledPage`), only for the capsule's own page: sent from
      * any other window, or for any other path, it opens nothing. Ask's `openPage` opens a page by name for the Ask window and setup.
      */
     openPage(path: string): void;

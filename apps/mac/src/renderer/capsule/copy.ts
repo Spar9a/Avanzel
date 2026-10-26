@@ -18,15 +18,62 @@ export function notedLine(agent: string): string {
 /** How many pages the filed card lists, at most: the rest are counted (`moreLine`). */
 export const SHOWN_PAGES = 3;
 
-/** The most characters of a page's title its link shows: a row is 396 px wide, and the widest chip and caption leave about 250 px. */
-export const TITLE_CHARS = 32;
+/**
+ * The most a page's title may take across in its link, in cells (`titleCells`): a row is 396 px wide, and the widest chip and caption
+ * leave about 250 px, which is 32 Latin letters of the link's face.
+ */
+export const TITLE_CELLS = 32;
 
 /**
- * A page's title as its link shows it: one longer than 32 characters is cut, after a word where there is a fit one (`shortened`),
- * and ends in "…", so the link, which never wraps its words, stays in its column. Characters are code points, so none is cut in half.
+ * The East Asian wide and fullwidth characters, which a proportional font draws about as wide as two Latin letters: the code points
+ * (first, last) that Unicode's East Asian Width gives as wide or fullwidth, by width and not by script (the prolonged sound mark is
+ * script-less, and as wide as any kana). The half-width forms (U+FF61 to U+FFDC) are narrow, and so are the Latin letters, the
+ * Cyrillic and the rest of the scripts that are drawn as one. Emoji are wide too (`EMOJI`).
+ */
+const WIDE_RANGES: readonly (readonly [number, number])[] = [
+  [0x1100, 0x115f], // Hangul Jamo
+  [0x2e80, 0x303e], // CJK and Kangxi radicals, CJK punctuation, the ideographic space
+  [0x3041, 0xa4cf], // kana, Bopomofo, Hangul compatibility Jamo, enclosed and compatibility forms, the CJK ideographs, Yi
+  [0xa960, 0xa97f], // Hangul Jamo, extended A
+  [0xac00, 0xd7a3], // Hangul syllables
+  [0xf900, 0xfaff], // CJK compatibility ideographs
+  [0xfe10, 0xfe19], // vertical forms
+  [0xfe30, 0xfe6f], // CJK compatibility forms, small form variants
+  [0xff01, 0xff60], // fullwidth forms
+  [0xffe0, 0xffe6], // fullwidth signs
+  [0x1b000, 0x1b2ff], // kana supplement and extended, Nushu
+  [0x20000, 0x3fffd], // the CJK ideographs of the planes after the first
+];
+
+/** A character drawn as an emoji, which is about as wide as two Latin letters too. */
+const EMOJI = /^\p{Emoji_Presentation}$/u;
+
+/** How wide `text` is, in cells: one for each character, and two for a wide one. */
+export function titleCells(text: string): number {
+  let cells = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    cells += WIDE_RANGES.some(([first, last]) => code >= first && code <= last) || EMOJI.test(char) ? 2 : 1;
+  }
+  return cells;
+}
+
+/**
+ * A page's title as its link shows it: one wider than 32 cells is cut, after a word where there is a fit one (`shortened`), and ends
+ * in "…", so the link, which never wraps its words and centres a label that is too wide for it, stays in its column. A wide
+ * character is two cells, so a Japanese title is cut at about 15 characters, where a Latin one is cut at about 32. Characters are
+ * code points, so none is cut in half.
  */
 export function shortTitle(title: string): string {
-  return shortened(title, TITLE_CHARS);
+  const chars = Array.from(title);
+  const cells = chars.map((char) => titleCells(char));
+  if (cells.reduce((all, one) => all + one, 0) <= TITLE_CELLS) return title;
+  // As many characters as fit beside the ellipsis, which takes one cell.
+  let fit = 0;
+  let used = 0;
+  while (fit < chars.length && used + (cells[fit] ?? 1) <= TITLE_CELLS - 1) used += cells[fit++] ?? 1;
+  // `shortened` keeps `max - 1` characters and the ellipsis; one fewer than the title has, so that it always cuts.
+  return shortened(title, Math.min(fit + 1, chars.length - 1));
 }
 
 /** What a page's row says of it: a page the filing made is "new", and any other, or one whose state doesn't say, "updated". */
@@ -51,11 +98,12 @@ function reviewDoes(what: string, review: string | null): string | null {
 
 /**
  * The footer of a Stopped filing: what became of the words and of the run's edits (setup's `cancelledLine`, which setup says of
- * the same ending), then when the evening review files the note. While the review is off, the first alone.
+ * the same ending), then when the evening review files the words: "your words", for `cancelledLine` has just said what is in the
+ * inbox, and "it" would read as the commit it may name, or the agent's edits. While the review is off, the first alone.
  */
 export function stoppedLine(agent: string, partial: boolean, leftovers: number, review: string | null): string {
   const kept = cancelledLine(agent, partial, leftovers);
-  const later = reviewDoes("The evening review files it", review);
+  const later = reviewDoes("The evening review files your words", review);
   return later === null ? kept : `${kept} ${later}`;
 }
 

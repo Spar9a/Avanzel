@@ -290,14 +290,14 @@ test("Undo on the filed card takes the filing back, and the note waits in the in
   await expect(card.getByRole("listitem").getByText("new", { exact: true })).toBeVisible();
   await capsule.getByRole("button", { name: "Undo" }).click();
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
-  await expect(capsule.getByText("Undone. The note is back in your inbox.")).toBeVisible();
+  await expect(capsule.getByText("Undone. Your words are back in the inbox for the evening review at 21:00.")).toBeVisible();
   // It is an Undone card: the state says so, the bar says Undone with Hide alone, and the card holds the words, with no stamp, as
   // the filing it would stamp is gone.
   expect(await call(app, "capsuleStateForTests")).toMatchObject({
     kind: "saved",
     undone: true,
     text: "Plant tulips in October",
-    note: "Undone. The note is back in your inbox.",
+    note: "Undone. Your words are back in the inbox for the evening review at 21:00.",
   });
   await expect(bar.getByText("Undone", { exact: true })).toBeVisible();
   await expect(bar.getByRole("button")).toHaveCount(1);

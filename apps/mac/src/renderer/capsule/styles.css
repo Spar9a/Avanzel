@@ -41,11 +41,13 @@ body {
   max-height: 2lh;
 }
 /* The filed card's pages, a row each, in three columns that line up from row to row: the shelf (a chip, or the folder's name, which
-   is cut off at 96 px), the title, which takes the free width, and whether the page is new or updated. */
+   is cut off at 96 px), the title, which takes the free width, and whether the page is new or updated. The columns are 2 px apart
+   because the title's column has 4 px of its own on each side (see .page-title), which makes 6 px between its link and what is beside it. */
 .page-list {
   display: grid;
   grid-template-columns: fit-content(96px) minmax(0, 1fr) auto;
-  gap: var(--av-space-6);
+  row-gap: var(--av-space-6);
+  column-gap: var(--av-space-2);
   align-items: center;
 }
 .page {
@@ -54,9 +56,14 @@ body {
   grid-column: 1 / -1;
   align-items: center;
 }
+/* The title's link is clipped across where its column ends, which is how a title too long for it is cut, and not above or below it
+   (`clip`, with the other axis left visible). The clip must not cut the link's focus ring, which stands 4 px outside it (2 px wide,
+   2 px off): the column has 4 px of padding on each side for the ring, and the gaps beside it are 4 px narrower for that (see
+   .page-list), so the link stands where it did and the row is no taller. */
 .page-title {
   min-width: 0;
-  overflow: hidden;
+  overflow-x: clip;
+  padding: 0 var(--av-space-4);
 }
 /* A saved screen comment's screenshot, a thumbnail in the 16:10 of a display, with the page's title and address at its side. */
 .shot {

@@ -269,15 +269,15 @@ function capsuleStates(): [string, CapsuleState, string][] {
     ],
     ["editing", { kind: "editing", text: said }, "Edit before filing"],
     // The results: the words on paper, stamped, over a bar of one steady line.
-    ["filed", { kind: "filed", text: said, agent: "Claude Code", seconds: 23, pages, canUndo: true, message: "Filed.", noted: false }, "Filed by Claude Code in 23 s"],
+    ["filed", { kind: "filed", text: said, agent: "Claude Code", seconds: 23, pages, canUndo: true, noted: false }, "Filed by Claude Code in 23 s"],
     [
       "filed, four pages",
-      { kind: "filed", text: said, agent: "Claude Code", seconds: 8, pages: [...pages, fourth], canUndo: false, message: "Filed.", noted: false },
+      { kind: "filed", text: said, agent: "Claude Code", seconds: 8, pages: [...pages, fourth], canUndo: false, noted: false },
       "and 1 more",
     ],
     [
       "filed, nothing new",
-      { kind: "filed", text: said, agent: "Claude Code", seconds: 4, pages: [], canUndo: true, message: "Filed.", noted: true },
+      { kind: "filed", text: said, agent: "Claude Code", seconds: 4, pages: [], canUndo: true, noted: true },
       "Nothing new to file",
     ],
     [
@@ -298,7 +298,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
       "Safari",
     ],
     ["saved, a screen comment with no words", { kind: "saved", text: "", thumbnail, context, note: "Saved to your inbox." }, "No comment"],
-    ["undone", { kind: "saved", text: said, note: "Undone. The note is back in your inbox.", undone: true }, "Undone. The note is back in your inbox."],
+    ["undone", { kind: "saved", text: said, note: "Undone. Your words are back in the inbox for the evening review at 21:00.", undone: true }, "Undone. Your words are back in the inbox for the evening review at 21:00."],
     [
       "stopped, a filing",
       { kind: "cancelled", text: said, agent: "Claude Code", partial: false, leftovers: 0, review: "at 21:00" },

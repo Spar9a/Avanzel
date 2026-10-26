@@ -124,6 +124,7 @@ import {
   signInWatchMs,
   splitWaits,
   timerDelay,
+  undoneNote,
   withDuration,
   withWait,
   type RunState,
@@ -1423,7 +1424,6 @@ export class Controller {
           seconds,
           pages: job.pages,
           canUndo: !!outcome.commit,
-          message: outcome.message || "Filed.",
           // It ended well and wrote no page: the agent only logged the capture, as it does one that needs none.
           noted: job.pages.length === 0,
         },
@@ -2129,8 +2129,7 @@ export class Controller {
 
   /**
    * Undo, on the capsule's filed card or in setup: once the queue gets to it, git takes back `commit`, a filing's, which
-   * puts its capture back in the inbox. Whether it did; either way the menu's recent pages are read again. The card then says
-   * the filing is undone (`saved` with `undone`), over its words.
+   * puts its capture back in the inbox. Whether it did; either way the menu's recent pages are read again.
    */
   private async revertFiling(commit: string): Promise<boolean> {
     try {
@@ -2140,14 +2139,26 @@ export class Controller {
     }
   }
 
+  /**
+   * Undo, on the capsule's filed card: git takes the filing's commit back in queue order (`revertFiling`), which puts its capture
+   * back in the inbox, and the card says so, over the person's words and where they wait now (`saved` with `undone`, and the note
+   * `undoneNote` words). When git refuses, or the revert fails, it says that this one can't be undone automatically (`undoRefused`).
+   * It answers once for a filing (`undoing`), as setup's Undo does: a press while the first runs, or after it, does nothing. A second
+   * revert of the same commit would find it taken back already, and git would refuse it, which would turn the Undone card into the
+   * refusal.
+   */
   async undo(): Promise<void> {
     const job = this.job;
     const commit = job?.outcome?.commit;
-    if (!job || !commit) return;
-    const undone = await this.revertFiling(commit);
+    if (!job || !commit || job.undoing) return;
+    job.undoing = true;
+    const undone = await this.revertFiling(commit).catch((error) => {
+      console.warn("undo", error); // a revert that threw is a refusal to the card: it would otherwise wait on its Undo for ever
+      return false;
+    });
     this.setCapsule(
       undone
-        ? { kind: "saved", text: job.text, note: "Undone. The note is back in your inbox.", undone: true }
+        ? { kind: "saved", text: job.text, note: undoneNote(this.openReview()), undone: true }
         : { kind: "error", message: undoRefused.title, detail: undoRefused.body },
       undone ? 3500 : undefined,
     );
@@ -2161,14 +2172,15 @@ export class Controller {
 
   /**
    * A page's title on the filed card is pressed: the page opens, as Open opens the first, and the card stays, for the next title.
-   * Only the capsule's own page is heard (`sender` is the page the message came from, `event.sender`), and only a `path` that is one
-   * of the pages the card's filing wrote (`job.pages`): any other path, a page of the library or a path out of it, is no card's to
-   * open. Every window has the same bridge, so this is not Ask's `ask:open-page`, which opens a page by name for the Ask window and
+   * Only the capsule's own page is heard (`sender` is the page the message came from, `event.sender`), and only a path (`rel`, relative
+   * to the library) that is one of the pages the newest filing wrote (`job.pages`): any other path, a page of the library or a path
+   * out of it, is no card's to open, and nor is a page only an older filing wrote, which a card that has been replaced may still
+   * show. Every window has the same bridge, so this is not Ask's `ask:open-page`, which opens a page by name for the Ask window and
    * for setup, and stays as it is.
    */
-  openFiledPage(sender: WebContents, path: unknown): void {
-    if (!isPageOf(sender, this.capsule) || typeof path !== "string") return;
-    if (this.job?.pages?.some((page) => page.path === path)) this.openPage(path);
+  openFiledPage(sender: WebContents, rel: unknown): void {
+    if (!isPageOf(sender, this.capsule) || typeof rel !== "string") return;
+    if (this.job?.pages?.some((page) => page.path === rel)) this.openPage(rel);
   }
 
   dismiss(): void {

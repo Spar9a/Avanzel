@@ -12,6 +12,7 @@ import {
   signInWatchMs,
   splitWaits,
   timerDelay,
+  undoneNote,
   withWait,
   type LimitWait,
   type RunState,
@@ -231,6 +232,44 @@ describe("when the evening review files a note that Stop left in the inbox", () 
       const review = { schedule: `weekly ${short} 06:05`, enabled: true };
       expect(reviewTime(review)).toBe(`on ${long} at 06:05`);
       expect(savedNote(review)).toBe(`Saved to your inbox for the evening review, ${long} at 06:05.`);
+    }
+  });
+});
+
+describe("what the capsule says once a filing is undone", () => {
+  it("says the words are back in the inbox, and names when the evening review files them, as the review's schedule says", () => {
+    expect(undoneNote({ schedule: "daily 21:00", enabled: true })).toBe("Undone. Your words are back in the inbox for the evening review at 21:00.");
+    expect(undoneNote({ schedule: "daily 07:30", enabled: true })).toBe("Undone. Your words are back in the inbox for the evening review at 07:30.");
+    expect(undoneNote({ schedule: "weekly sun 18:00", enabled: true })).toBe("Undone. Your words are back in the inbox for the evening review on Sundays at 18:00.");
+  });
+
+  it("names no time for a review whose schedule it can't read, and still names the review", () => {
+    for (const schedule of UNREADABLE) expect(undoneNote({ schedule, enabled: true }), schedule).toBe("Undone. Your words are back in the inbox for the evening review.");
+  });
+
+  it("names no review while it is off, or when the library has none: nothing files the words by itself", () => {
+    expect(undoneNote({ schedule: "daily 21:00", enabled: false })).toBe("Undone. Your words are back in the inbox.");
+    expect(undoneNote({ schedule: "weekly sun 18:00", enabled: false })).toBe("Undone. Your words are back in the inbox.");
+    expect(undoneNote({ schedule: "not a schedule", enabled: false })).toBe("Undone. Your words are back in the inbox."); // off wins over a schedule nobody reads
+    expect(undoneNote(null)).toBe("Undone. Your words are back in the inbox.");
+  });
+
+  it("words the time as the Stopped cards do, for every day of the week, and never says tonight", () => {
+    for (const [short, long] of Object.entries({ mon: "Mondays", tue: "Tuesdays", wed: "Wednesdays", thu: "Thursdays", fri: "Fridays", sat: "Saturdays", sun: "Sundays" })) {
+      const review = { schedule: `weekly ${short} 06:05`, enabled: true };
+      expect(undoneNote(review)).toBe(`Undone. Your words are back in the inbox for the evening review ${reviewTime(review)}.`);
+      expect(undoneNote(review)).toBe(`Undone. Your words are back in the inbox for the evening review on ${long} at 06:05.`);
+    }
+    for (const review of [null, { schedule: "daily 21:00", enabled: true }, { schedule: "nonsense", enabled: true }]) expect(undoneNote(review)).not.toMatch(/tonight/i);
+  });
+
+  it("is a sentence that follows the card's word, Undone, and is written as the design rules ask: no “!”, no three dots", () => {
+    for (const review of [null, { schedule: "daily 21:00", enabled: true }, { schedule: "weekly sun 18:00", enabled: true }, { schedule: "nonsense", enabled: true }]) {
+      const note = undoneNote(review);
+      expect(note).toMatch(/^Undone\. Your words are back in the inbox/);
+      expect(note).not.toContain("!");
+      expect(note).not.toContain("...");
+      expect(note).toMatch(/\.$/);
     }
   });
 });

@@ -56,6 +56,19 @@ export function reviewTime(review: { schedule: string; enabled: boolean } | null
   return when.day ? `on ${when.day}s at ${when.time}` : `at ${when.time}`;
 }
 
+/**
+ * What the capsule says once a filing is undone: its words are back in the inbox, and, while the evening review is on, that the
+ * review files them again, when, worded as `reviewTime` words it: "Undone. Your words are back in the inbox for the evening review
+ * at 21:00." or "… on Sundays at 18:00.". A review whose schedule can't be read is named without a time. While the review is off, or
+ * the library has none, nothing files the words by itself, and only where they are is said. It is the Undone card's note, as
+ * `savedNote` is a Saved card's, and it never says "tonight".
+ */
+export function undoneNote(review: { schedule: string; enabled: boolean } | null): string {
+  const when = reviewTime(review);
+  if (when === null) return "Undone. Your words are back in the inbox.";
+  return when === "" ? "Undone. Your words are back in the inbox for the evening review." : `Undone. Your words are back in the inbox for the evening review ${when}.`;
+}
+
 export function dueTasks(
   tasks: SchedulableTask[],
   lastRuns: Record<string, string>,

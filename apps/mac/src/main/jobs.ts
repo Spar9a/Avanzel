@@ -95,6 +95,8 @@ export interface FilingJob {
   setup?: boolean;
   /** Cancel, in setup, or Stop, in the capsule, stopped the run (`cancelSetupFiling`, `cancelFiling`, which tell the rest). */
   cancelled?: boolean;
+  /** Undo, in the capsule, has been asked to take the filing back, and answers once (`undo`): a press after the first does nothing. */
+  undoing?: true;
 }
 
 /** How a question ended (`answerQuestion`), for the Ask window and for setup's Ask step. */

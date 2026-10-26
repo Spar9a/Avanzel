@@ -2117,10 +2117,10 @@ async function stopAtTheEnd(app: ElectronApplication, { hold = false } = {}): Pr
 
 /**
  * From now on, counts the take-backs the app asks the library for (`undoCalls`). With `hold`, each waits at its door (`atUndo`)
- * until the test lets it in (`letUndoIn`).
+ * until the test lets it in (`letUndoIn`). With `fail`, each throws instead of taking anything back, as git does when it can't run.
  */
-async function watchUndos(app: ElectronApplication, { hold = false } = {}): Promise<void> {
-  await app.evaluate((_electron, holding) => {
+async function watchUndos(app: ElectronApplication, { hold = false, fail = false } = {}): Promise<void> {
+  await app.evaluate((_electron, { holding, failing }) => {
     const controller = (globalThis as unknown as { __avanzel: Wrappable }).__avanzel;
     const librarian = controller.librarian.bind(controller);
     Object.assign(globalThis, { undoCalls: 0 });
@@ -2134,11 +2134,12 @@ async function watchUndos(app: ElectronApplication, { hold = false } = {}): Prom
           Object.assign(globalThis, { atUndo: true });
           await new Promise<void>((resolve) => Object.assign(globalThis, { letUndoIn: resolve }));
         }
+        if (failing) throw new Error("git could not run");
         return undo(...args);
       };
       return made;
     };
-  }, hold);
+  }, { holding: hold, failing: fail });
 }
 
 /** From now on, keeps the function the controller hands the engine to tell a filing's steps (`stepsOf`), for a test to tell one itself. */
@@ -2188,7 +2189,7 @@ test("Stop ends the filing and the note stays in the inbox", async () => {
   await expectStoppedFiling(
     capsule,
     "Plant tulips in October",
-    "Your words are back in the inbox, untouched, and nothing else changed. The evening review files it at 21:00.",
+    "Your words are back in the inbox, untouched, and nothing else changed. The evening review files your words at 21:00.",
   );
   // Stopped: its words, whose agent it was, that taking back the run's edits worked (nothing is `partial`, nothing is left over),
   // and when the evening review files the note, which for a new library is every day at 21:00.
@@ -2441,7 +2442,7 @@ test("Stop in a library without git leaves the stopped run's edits as they are, 
   await expectStoppedFiling(
     capsule,
     "Plant tulips in October",
-    "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them. The evening review files it at 21:00.",
+    "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them. The evening review files your words at 21:00.",
   );
   // What the run wrote stays, as the state says; the words are in the inbox.
   expect(exists(library, "goals/half.md")).toBe(true);
@@ -2481,7 +2482,7 @@ test("Stop whose take-back git refuses says the stopped run's edits stay as thei
   await expectStoppedFiling(
     capsule,
     "Plant tulips in October",
-    "Your words are back in the inbox, untouched. fake's partial edits are kept as their own commit in the library's history. The evening review files it at 21:00.",
+    "Your words are back in the inbox, untouched. fake's partial edits are kept as their own commit in the library's history. The evening review files your words at 21:00.",
   );
   expect(read(library, "goals/half.md")).toBe("# Half done, by hand\n");
   expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]); // the words are safe all the same
@@ -2881,7 +2882,6 @@ const filedCard = (over: Record<string, unknown> = {}) => ({
   seconds: 23.4,
   pages: PAGES,
   canUndo: true,
-  message: "Filed.",
   noted: false,
   ...over,
 });
@@ -2931,6 +2931,8 @@ test("a filed card is the words stamped Filed over a bar that says who filed it 
   await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
   await expect(card).toHaveAttribute("data-stamped", "");
   await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toBeVisible();
+  // The Filed stamp is the one that lands with a thunk, as the work finishes: it is told to animate, where Noted and Saved are not.
+  await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toHaveAttribute("data-animate", "");
   // Only the stamp gives way to the words, and only on the first line: their box is as wide as the card's lines. A box of its own
   // (overflow hidden) would stand beside the stamp as a whole, and narrow every line.
   const gap = await card.getByText("Plant tulips in October", { exact: true }).evaluate((el) => {
@@ -3003,10 +3005,12 @@ test("a filed card clips long words to two lines while its pages show, and the m
   const title = "An idea page whose title goes on and on about indie game development and the podcast that Mark may co-host this year";
   // The widest chip and caption, a folder with a long name, and a title longer than a row: each row still stays on one line, inside
   // the card, and the shelf's column is no wider than the longest name it gives room to.
+  // A Japanese title too: 25 characters, each about as wide as two of the Latin ones, so counted by characters it would run out of its column.
+  const japanese = "日本語のとても長いページのタイトルがここに入ります";
   const pages = [
     { title, shelf: "memories", path: "memories/a.md", created: false },
     { title, shelf: "a-folder-whose-name-goes-on-and-on-and-on", path: "a-folder-whose-name-goes-on-and-on-and-on/b.md", created: false },
-    { title, shelf: "memories", path: "memories/c.md", created: false },
+    { title: japanese, shelf: "memories", path: "memories/c.md", created: false },
     { title, shelf: "memories", path: "memories/d.md", created: false },
   ];
   await call(app, "setCapsule", filedCard({ text: long, pages }));
@@ -3025,6 +3029,8 @@ test("a filed card clips long words to two lines while its pages show, and the m
     expect(await link.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0); // the title is whole, or shortened with "…"
     expect((await link.boundingBox())!.x + (await link.boundingBox())!.width).toBeLessThanOrEqual((await row.getByText("updated", { exact: true }).boundingBox())!.x);
   }
+  // The Japanese title is cut where its column ends, and shows its start, and its "…".
+  await expect(card.getByRole("button", { name: /^日本語/ })).toHaveText(/^日本語.*…$/);
   const folders = card.getByText("a-folder-whose-name-goes-on-and-on-and-on", { exact: true });
   expect((await folders.boundingBox())!.width).toBeLessThanOrEqual(96); // the folder's name is cut off, with "…", at the column's width
   expect(await folders.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
@@ -3049,6 +3055,7 @@ test("a filing that only noted its capture says so: the card is stamped Noted, a
   await expect(bar.getByRole("button", { name: "Undo", exact: true })).toHaveAttribute("data-variant", "secondary");
   await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
   await expect(card.getByRole("img", { name: `Noted, ${stampDay()}`, exact: true })).toBeVisible();
+  await expect(card.getByRole("img", { name: `Noted, ${stampDay()}`, exact: true })).not.toHaveAttribute("data-animate"); // it doesn't land: nothing was filed
   await expect(card.getByText("Claude Code noted it in the log.", { exact: true })).toBeVisible();
   await expect(card.getByRole("listitem")).toHaveCount(0);
   await expectInPanel(capsule);
@@ -3074,6 +3081,7 @@ test("a thought saved for the evening review is stamped Saved, and the card says
   await expect(card.getByText("Thought", { exact: true })).toBeVisible();
   await expect(card.getByText("Call the plumber on Monday", { exact: true })).toBeVisible();
   await expect(card.getByRole("img", { name: `Saved, ${stampDay()}`, exact: true })).toBeVisible();
+  await expect(card.getByRole("img", { name: `Saved, ${stampDay()}`, exact: true })).not.toHaveAttribute("data-animate"); // only a filing's stamp lands
   // The note under the words: when the review files it, or only that it is in the inbox while the review is off.
   await expect(card.getByText("Saved to your inbox for the evening review at 21:00.", { exact: true })).toBeVisible();
   await call(app, "setCapsule", savedCard({ note: "Saved to your inbox." }));
@@ -3136,12 +3144,12 @@ test("a filing that was undone says so: the card has the words, unstamped, and t
   const { app, capsule } = await launchOn(await makeLibrary());
   const bar = capsule.getByRole("status");
   const card = capsule.getByRole("article");
-  await call(app, "setCapsule", savedCard({ text: "Plant tulips in October", note: "Undone. The note is back in your inbox.", undone: true }));
+  await call(app, "setCapsule", savedCard({ text: "Plant tulips in October", note: "Undone. Your words are back in the inbox for the evening review at 21:00.", undone: true }));
   await expect(zel(capsule)).toHaveAttribute("data-mood", "filed");
   await expect(bar.getByText("Undone", { exact: true })).toBeVisible();
   expect(await namesOf(bar.getByRole("button"))).toEqual(["Hide"]);
   await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
-  await expect(card.getByText("Undone. The note is back in your inbox.", { exact: true })).toBeVisible();
+  await expect(card.getByText("Undone. Your words are back in the inbox for the evening review at 21:00.", { exact: true })).toBeVisible();
   await expect(card).not.toHaveAttribute("data-stamped"); // the filing it would stamp is gone
   await expectInPanel(capsule);
   await app.close();
@@ -3154,17 +3162,17 @@ test("a Stopped filing says what is safe, and when the evening review files the 
   const leftovers = "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them.";
   await call(app, "setCapsule", cancelledCard());
   await snap(capsule, "6-stopped-card");
-  await expectStoppedFiling(capsule, "Plant tulips in October", `${untouched} The evening review files it at 21:00.`);
+  await expectStoppedFiling(capsule, "Plant tulips in October", `${untouched} The evening review files your words at 21:00.`);
   // The run's edits that stayed: as a commit of their own, or as they are because nothing recorded them.
   await call(app, "setCapsule", cancelledCard({ partial: true }));
-  await expectStoppedFiling(capsule, "Plant tulips in October", `${partial} The evening review files it at 21:00.`);
+  await expectStoppedFiling(capsule, "Plant tulips in October", `${partial} The evening review files your words at 21:00.`);
   await call(app, "setCapsule", cancelledCard({ leftovers: 2 }));
-  await expectStoppedFiling(capsule, "Plant tulips in October", `${leftovers} The evening review files it at 21:00.`);
+  await expectStoppedFiling(capsule, "Plant tulips in October", `${leftovers} The evening review files your words at 21:00.`);
   // The review is the library's own: a weekly one is not tonight's, and one whose schedule can't be read names no time.
   await call(app, "setCapsule", cancelledCard({ review: "on Sundays at 18:00" }));
-  await expectStoppedFiling(capsule, "Plant tulips in October", `${untouched} The evening review files it on Sundays at 18:00.`);
+  await expectStoppedFiling(capsule, "Plant tulips in October", `${untouched} The evening review files your words on Sundays at 18:00.`);
   await call(app, "setCapsule", cancelledCard({ review: "" }));
-  await expectStoppedFiling(capsule, "Plant tulips in October", `${untouched} The evening review files it.`);
+  await expectStoppedFiling(capsule, "Plant tulips in October", `${untouched} The evening review files your words.`);
   // While the review is off nothing files the note, so the card promises no review.
   await call(app, "setCapsule", cancelledCard({ review: null }));
   await expectStoppedFiling(capsule, "Plant tulips in October", untouched);
@@ -3172,7 +3180,7 @@ test("a Stopped filing says what is safe, and when the evening review files the 
   // Long words keep the footer in view: four lines of them, then all of what is safe.
   const long = "I want to launch my podcast about indie game development before the end of the year, and ask Mark to co-host. ".repeat(12).trim();
   await call(app, "setCapsule", cancelledCard({ text: long, partial: true }));
-  await expectStoppedFiling(capsule, long, `${partial} The evening review files it at 21:00.`);
+  await expectStoppedFiling(capsule, long, `${partial} The evening review files your words at 21:00.`);
   await app.close();
 });
 
@@ -3193,7 +3201,7 @@ test("a Stopped transcription says the recording is in the inbox, and when the e
 
 test("Hide puts away every result card", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
-  const undone = savedCard({ note: "Undone. The note is back in your inbox.", undone: true });
+  const undone = savedCard({ note: "Undone. Your words are back in the inbox for the evening review at 21:00.", undone: true });
   for (const state of [filedCard(), filedCard({ noted: true, pages: [] }), savedCard(), undone, cancelledCard(), recordedCard()]) {
     await call(app, "setCapsule", state);
     await capsule.getByRole("status").getByRole("button", { name: "Hide", exact: true }).click();
@@ -3201,6 +3209,16 @@ test("Hide puts away every result card", async () => {
   }
   await app.close();
 });
+
+/**
+ * A title on the filed card, pressed through `page`'s bridge with `path` as given: what the card sends when a title is pressed. A page's
+ * messages reach main in the order they were sent, so the answer to the round trip after the press comes once main has heard it.
+ */
+const pressTitle = (page: Page, path: unknown) =>
+  page.evaluate(async (which) => {
+    window.avanzel.capsule.openPage(which as string);
+    await window.avanzel.settings.get();
+  }, path);
 
 /**
  * A stand-in Claude Code that files as the real one does, into four pages: two new (one of them in a folder of the library's own,
@@ -3280,25 +3298,179 @@ test("the capsule's page opens only the pages its filing wrote, and no other win
   await stubOpening(app);
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-  // A page's messages reach main in the order they were sent, so the answer to a round trip after the press comes once main has heard it.
-  const press = (page: Page, path: unknown) =>
-    page.evaluate(async (which) => {
-      window.avanzel.capsule.openPage(which as string);
-      await window.avanzel.settings.get();
-    }, path);
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  await press(capsule, "goals/other.md"); // a page of the library, but not of this filing
-  await press(capsule, "../outside.md");
-  await press(capsule, "/etc/hosts");
-  await press(capsule, "index.md");
-  await press(capsule, 42);
-  await press(capsule, null);
-  await press(settings, "ideas/tulips.md"); // this filing's page, but from another window's page
+  await pressTitle(capsule, "goals/other.md"); // a page of the library, but not of this filing
+  await pressTitle(capsule, "../outside.md");
+  await pressTitle(capsule, "/etc/hosts");
+  await pressTitle(capsule, "index.md");
+  await pressTitle(capsule, 42);
+  await pressTitle(capsule, null);
+  await pressTitle(settings, "ideas/tulips.md"); // this filing's page, but from another window's page
   expect(await openedWith(app)).toEqual([]);
   // The same press from the capsule's own page, for a page this filing wrote, opens it: so the silence above is the channel's.
-  await press(capsule, "people/ana.md"); // the fourth page, which the card only counts
+  await pressTitle(capsule, "people/ana.md"); // the fourth page, which the card only counts
   await expect.poll(() => openedWith(app)).toHaveLength(1);
   expect(realpathSync((await openedWith(app))[0] ?? "")).toBe(realpathSync(path.join(library, "people", "ana.md")));
+  await app.close();
+});
+
+/** A stand-in Claude Code that files a second thought as the real one does: one new page, and goals/run.md, which the first filing changed too. */
+function secondFiler(): string {
+  const filer = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-filer-")), "filer.mjs");
+  writeFileSync(
+    filer,
+    String.raw`import { appendFileSync, writeFileSync } from "node:fs";
+const prompt = process.argv[2] ?? "";
+const id = /capture id: ([^)]+)\)/.exec(prompt)[1];
+const stamp = /- (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \| file \|/.exec(prompt)[1];
+writeFileSync("ideas/second.md", "# A second idea\n");
+appendFileSync("goals/run.md", "\n- Ran a second time.\n");
+appendFileSync("log.md", "- " + stamp + " | file | [[" + id + "]] → [[second]], [[run]]\n");
+console.log("Filed into two pages.");
+`,
+  );
+  return filer;
+}
+
+test("a card whose filing was replaced by a newer one opens only what the newer one wrote", async () => {
+  const bin = agentStubs();
+  answerAs(bin, "claude", `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else exec '${process.execPath}' '${pagesFiler()}' "$2"; fi`);
+  const { library, app, capsule } = await claudeLibrary(bin);
+  writeFileSync(path.join(library, "goals", "run.md"), "# Run a marathon\n\nStatus: active.\n");
+  writeFileSync(path.join(library, "people", "ana.md"), "# Ana\n");
+  await stubOpening(app);
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  // A second thought is filed by a filer that wrote an idea of its own, and goals/run.md again. The page's old card may still be
+  // there to press: the controller can't tell which card a title was on, so what opens is what the filing it shows wrote.
+  answerAs(bin, "claude", `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else exec '${process.execPath}' '${secondFiler()}' "$2"; fi`);
+  await dictate(app);
+  const pagesShown = async () => (((await call(app, "capsuleStateForTests")) as { pages?: { path: string }[] }).pages ?? []).map((page) => page.path);
+  await expect.poll(pagesShown, { timeout: 60_000 }).toContain("ideas/second.md");
+  expect(await pagesShown()).toEqual(["ideas/second.md", "goals/run.md"]);
+  // Pages only the first filing wrote are refused now, though its card listed them.
+  for (const page of ["ideas/tulips.md", "projects/garden.md", "people/ana.md"]) await pressTitle(capsule, page);
+  expect(await openedWith(app)).toEqual([]);
+  // A page the newer filing wrote too opens, and so does one only it wrote.
+  await pressTitle(capsule, "goals/run.md");
+  await expect.poll(() => openedWith(app)).toHaveLength(1);
+  expect(realpathSync((await openedWith(app))[0] ?? "")).toBe(realpathSync(path.join(library, "goals", "run.md")));
+  await pressTitle(capsule, "ideas/second.md");
+  await expect.poll(() => openedWith(app)).toHaveLength(2);
+  expect(realpathSync((await openedWith(app))[1] ?? "")).toBe(realpathSync(path.join(library, "ideas", "second.md")));
+  await app.close();
+});
+
+test("a page's title shows the whole of its focus ring: nothing above it clips it, and the row is no bigger for it", async () => {
+  const { app, capsule } = await launchOn(await makeLibrary());
+  await call(app, "setCapsule", filedCard());
+  const link = capsule.getByRole("listitem").first().getByRole("button");
+  await link.focus();
+  await expect(link).toBeFocused();
+  // The ring is the design system's, 2 px wide and 2 px off the button, so 4 px beyond it. The title's column clips what overflows it
+  // sideways, which is how a title too long for it is cut: the ring must lie inside every clip it has above it, on the axes it clips.
+  const ring = await link.evaluate((el) => {
+    const style = getComputedStyle(el);
+    const reach = parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+    const box = el.getBoundingClientRect();
+    const around = { left: box.left - reach, right: box.right + reach, top: box.top - reach, bottom: box.bottom + reach };
+    const cut: string[] = [];
+    for (let up = el.parentElement; up; up = up.parentElement) {
+      const clip = getComputedStyle(up);
+      const room = up.getBoundingClientRect();
+      const name = up.className || up.tagName;
+      if (clip.overflowX !== "visible" && (around.left < room.left - 0.01 || around.right > room.right + 0.01)) cut.push(`${name}, across`);
+      if (clip.overflowY !== "visible" && (around.top < room.top - 0.01 || around.bottom > room.bottom + 0.01)) cut.push(`${name}, up or down`);
+    }
+    return { ringShows: el.matches(":focus-visible"), reach, cut };
+  });
+  expect(ring.ringShows).toBe(true);
+  expect(ring.reach).toBe(4);
+  expect(ring.cut).toEqual([]);
+  // The room is borrowed from the gaps: the rows are as tall as they were, and a row is six pixels from the next.
+  const rows = capsule.getByRole("article").getByRole("listitem");
+  const height = (await rows.first().boundingBox())!.height;
+  expect(height).toBeLessThan(30);
+  expect((await rows.nth(1).boundingBox())!.y - (await rows.first().boundingBox())!.y).toBeCloseTo(height + 6, 0);
+  await app.close();
+});
+
+test("a second Undo while the first runs does nothing, and the card says Undone, not that it can't be undone", async () => {
+  const library = await makeLibrary({ git: true });
+  const { app, capsule } = await launchOn(library);
+  await watchUndos(app);
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  // Two presses one straight after the other, as a double click or a stray message sends them (a page's messages reach main in the order
+  // they were sent).
+  await capsule.evaluate(() => {
+    window.avanzel.capsule.undo();
+    window.avanzel.capsule.undo();
+  });
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
+  await call(app, "idleForTests");
+  // The filing was taken back once, and cleanly: a second take-back would find its commit undone already, and git would refuse it,
+  // which would turn the Undone card into the refusal.
+  expect(await undoCalls(app)).toBe(1);
+  expect(undone(library)).toHaveLength(1);
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({
+    kind: "saved",
+    undone: true,
+    text: "Plant tulips in October",
+    note: "Undone. Your words are back in the inbox for the evening review at 21:00.",
+  });
+  await expect(capsule.getByRole("status").getByText("Undone", { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("alert")).toHaveCount(0);
+  expect(inbox(library)).toHaveLength(1);
+  expect(filesUnder(library, "ideas")).toEqual([]);
+  await app.close();
+});
+
+test("Undo on the filed card is busy once pressed, and another press does nothing until the take-back is done", async () => {
+  const library = await makeLibrary({ git: true });
+  const { app, capsule } = await launchOn(library);
+  await watchUndos(app, { hold: true });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  const undoButton = capsule.getByRole("status").getByRole("button", { name: "Undo", exact: true });
+  await expect(undoButton).not.toHaveAttribute("aria-busy", "true");
+  await undoButton.click();
+  // It is busy at once, and keeps its name, while the take-back waits at the library's door.
+  await expect(undoButton).toHaveAttribute("aria-busy", "true");
+  await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
+  // A press on a busy button does nothing: one take-back is asked for, and none waits behind it.
+  await undoButton.click();
+  expect(await undoCalls(app)).toBe(1);
+  expect(await capsuleKind(app)).toBe("filed");
+  await app.evaluate(() => (globalThis as Left).letUndoIn?.());
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
+  await call(app, "idleForTests");
+  expect(await undoCalls(app)).toBe(1);
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", undone: true });
+  expect(undone(library)).toHaveLength(1);
+  await app.close();
+});
+
+test("an Undo whose take-back throws says it can't be undone, and the card doesn't wait on its Undo for ever", async () => {
+  const library = await makeLibrary({ git: true });
+  const { app, capsule } = await launchOn(library);
+  await watchUndos(app, { fail: true });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await capsule.getByRole("status").getByRole("button", { name: "Undo", exact: true }).click();
+  // A revert that throws is a refusal to the card, as git's own refusal is: the card says so, with nothing to fix.
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "error",
+    message: "This one can't be undone automatically.",
+    detail: "Usually a later change touched the same lines. The library's history keeps both versions.",
+  });
+  await expect(capsule.getByRole("alert")).toContainText("This one can't be undone automatically.");
+  expect(await undoCalls(app)).toBe(1);
+  // The filing stands: its page is where the agent wrote it, and the note is archived, not back in the inbox.
+  expect(filesUnder(library, "ideas")).toHaveLength(1);
+  expect(archived(library)).toHaveLength(1);
+  expect(inbox(library)).toEqual([]);
   await app.close();
 });

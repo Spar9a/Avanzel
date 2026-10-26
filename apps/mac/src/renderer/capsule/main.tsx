@@ -139,6 +139,12 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
     }
     case "shortcut-picked":
       return <CapsuleBar mood="filed">{`${ACTION_NAMES[state.key]} now uses ${prettyAccelerator(state.accelerator)}`}</CapsuleBar>;
+    default: {
+      // Every kind of state has its card above. A kind added without one is a type error here, not a blank panel, as `cancelled` and
+      // `recorded` were for two tasks.
+      const unhandled: never = state;
+      return unhandled;
+    }
   }
 }
 

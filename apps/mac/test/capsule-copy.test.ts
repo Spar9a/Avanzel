@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filedLine, moreLine, notedLine, pageCaption, recordedLine, SHOWN_PAGES, shortTitle, stoppedLine, TITLE_CHARS } from "../src/renderer/capsule/copy.ts";
+import { filedLine, moreLine, notedLine, pageCaption, recordedLine, SHOWN_PAGES, shortTitle, stoppedLine, TITLE_CELLS, titleCells } from "../src/renderer/capsule/copy.ts";
 import { cancelledLine } from "../src/renderer/setup/copy.ts";
 
 // The capsule's result cards' words that are made from values: what a filing says of itself, of its pages, and the two Stopped
@@ -46,26 +46,57 @@ describe("a page's row", () => {
     expect(pageCaption({})).toBe("updated");
   });
 
-  it("shows a title of up to 32 characters whole, and a longer one cut after a word, with the one-character ellipsis", () => {
-    expect(TITLE_CHARS).toBe(32);
+  it("shows a title that is up to 32 characters wide whole, and a longer one cut after a word, with the one-character ellipsis", () => {
+    expect(TITLE_CELLS).toBe(32);
     expect(shortTitle("Tulips for October")).toBe("Tulips for October");
-    const whole = "x".repeat(TITLE_CHARS);
+    const whole = "x".repeat(TITLE_CELLS);
     expect(shortTitle(whole)).toBe(whole);
     expect(shortTitle("An idea page whose title goes on and on about indie game development")).toBe("An idea page whose title goes…");
     expect(shortTitle("Plan for the Q4 launch of the podcast")).toBe("Plan for the Q4 launch of the…");
   });
 
-  it("cuts a title with no word to cut after at the character, and never to more than 32 characters", () => {
-    expect(shortTitle(`${"x".repeat(TITLE_CHARS)}y`)).toBe(`${"x".repeat(TITLE_CHARS - 1)}…`);
+  it("cuts a title with no word to cut after at the character, and never to more than 32 characters wide", () => {
+    expect(shortTitle(`${"x".repeat(TITLE_CELLS)}y`)).toBe(`${"x".repeat(TITLE_CELLS - 1)}…`);
     for (const title of ["An idea page whose title goes on and on about indie game development", "x".repeat(80), "ab cd ".repeat(20)]) {
-      expect(Array.from(shortTitle(title)).length, title).toBeLessThanOrEqual(TITLE_CHARS);
+      expect(titleCells(shortTitle(title)), title).toBeLessThanOrEqual(TITLE_CELLS);
     }
   });
 
   it("cuts a title by characters, never through one that takes two code units", () => {
-    const smile = "\u{1F600}"; // one character, two UTF-16 code units
-    expect(shortTitle(smile.repeat(TITLE_CHARS + 1))).toBe(`${smile.repeat(TITLE_CHARS - 1)}…`);
-    expect(shortTitle(smile.repeat(TITLE_CHARS))).toBe(smile.repeat(TITLE_CHARS));
+    const clef = "\u{1D11E}"; // one narrow character, two UTF-16 code units
+    expect(shortTitle(clef.repeat(TITLE_CELLS + 1))).toBe(`${clef.repeat(TITLE_CELLS - 1)}…`);
+    expect(shortTitle(clef.repeat(TITLE_CELLS))).toBe(clef.repeat(TITLE_CELLS));
+  });
+
+  it("counts a wide character as two, as East Asian text is drawn: 16 of them fit, and a longer title is cut to 31 cells and the ellipsis", () => {
+    // Kana and the prolonged sound mark, a Han character and one of the planes after the first, a Hangul syllable and a compatibility Jamo,
+    // a fullwidth Latin letter and a fullwidth sign, CJK punctuation, and an emoji.
+    for (const wide of ["あ", "ア", "ー", "日", "𠮷", "한", "ㄱ", "Ａ", "￥", "、", "。", "😀"]) {
+      expect(titleCells(wide), wide).toBe(2);
+      expect(shortTitle(wide.repeat(16)), wide).toBe(wide.repeat(16)); // 32 cells
+      expect(shortTitle(wide.repeat(17)), wide).toBe(`${wide.repeat(15)}…`); // 30 cells and the ellipsis
+    }
+  });
+
+  it("counts a narrow character as one: the Latin letters, a half-width katakana, and a letter with an accent", () => {
+    for (const narrow of ["a", "Z", "é", "ｱ", "ﾊ", "｡", "-", " ", "·"]) expect(titleCells(narrow), narrow).toBe(1);
+    expect(shortTitle("ｱ".repeat(TITLE_CELLS))).toBe("ｱ".repeat(TITLE_CELLS));
+  });
+
+  it("cuts a Japanese title where the line ends, not after 32 characters, which would be twice as wide as the column", () => {
+    // 25 characters: 50 cells, about 325 px in the card's link, in a column of about 250 px.
+    const title = "日本語のとても長いページのタイトルがここに入ります";
+    expect(Array.from(title)).toHaveLength(25);
+    expect(shortTitle(title)).toBe(`${Array.from(title).slice(0, 15).join("")}…`);
+    expect(titleCells(shortTitle(title))).toBeLessThanOrEqual(TITLE_CELLS);
+    // A mixed title counts each character for what it is, and keeps a word whole where it can.
+    expect(shortTitle("Meeting notes 日本語のミーティングのメモ")).toBe("Meeting notes 日本語のミーティ…");
+    expect(titleCells(shortTitle("Meeting notes 日本語のミーティングのメモ"))).toBeLessThanOrEqual(TITLE_CELLS);
+  });
+
+  it("never cuts a title to more than its cells, whatever it is made of", () => {
+    const mixes = ["日本語 and English together in one page title", "😀😀😀 party plans for the whole year", "한국어로 쓴 아주 긴 페이지 제목입니다", "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴ", "ab".repeat(40)];
+    for (const title of mixes) expect(titleCells(shortTitle(title)), title).toBeLessThanOrEqual(TITLE_CELLS);
   });
 
   it("shows three pages, and says how many more there are", () => {
@@ -78,20 +109,20 @@ describe("a page's row", () => {
 
 describe("stoppedLine: the Stopped filing's footer", () => {
   it("says what stayed of the run's edits, as setup does, and when the evening review files the note", () => {
-    expect(stoppedLine("Claude Code", false, 0, "at 21:00")).toBe(`${cancelledLine("Claude Code", false, 0)} The evening review files it at 21:00.`);
-    expect(stoppedLine("Claude Code", true, 0, "at 21:00")).toBe(`${cancelledLine("Claude Code", true, 0)} The evening review files it at 21:00.`);
-    expect(stoppedLine("Claude Code", false, 2, "at 21:00")).toBe(`${cancelledLine("Claude Code", false, 2)} The evening review files it at 21:00.`);
+    expect(stoppedLine("Claude Code", false, 0, "at 21:00")).toBe(`${cancelledLine("Claude Code", false, 0)} The evening review files your words at 21:00.`);
+    expect(stoppedLine("Claude Code", true, 0, "at 21:00")).toBe(`${cancelledLine("Claude Code", true, 0)} The evening review files your words at 21:00.`);
+    expect(stoppedLine("Claude Code", false, 2, "at 21:00")).toBe(`${cancelledLine("Claude Code", false, 2)} The evening review files your words at 21:00.`);
   });
 
   it("words a weekly review as the review does, never as tonight", () => {
     expect(stoppedLine("Codex", false, 0, "on Sundays at 18:00")).toBe(
-      "Your words are back in the inbox, untouched, and nothing else changed. The evening review files it on Sundays at 18:00.",
+      "Your words are back in the inbox, untouched, and nothing else changed. The evening review files your words on Sundays at 18:00.",
     );
     for (const review of REVIEWS) expect(stoppedLine("Codex", false, 0, review)).not.toMatch(/tonight/i);
   });
 
   it("names no time for a review whose schedule can't be read", () => {
-    expect(stoppedLine("Claude Code", false, 0, "")).toBe(`${cancelledLine("Claude Code", false, 0)} The evening review files it.`);
+    expect(stoppedLine("Claude Code", false, 0, "")).toBe(`${cancelledLine("Claude Code", false, 0)} The evening review files your words.`);
   });
 
   it("promises no review while the review is off: it is setup's line alone", () => {

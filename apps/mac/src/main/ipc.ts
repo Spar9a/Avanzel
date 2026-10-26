@@ -25,7 +25,7 @@ export function registerIpc(controller: Controller): void {
   on("capsule:undo", () => void controller.undo());
   on("capsule:open", () => controller.openFiled());
   // What the page sends is checked where it is used: only the capsule's own page is heard, and only for a page its filing wrote.
-  on("capsule:open-page", (e, path: unknown) => controller.openFiledPage(e.sender, path));
+  on("capsule:open-page", (e, rel: unknown) => controller.openFiledPage(e.sender, rel));
   on("capsule:dismiss", () => controller.dismiss());
   on("capsule:keep-open", (_e, keep: boolean) => controller.setKeepOpen(keep));
   on("capsule:open-settings-for", (_e, action: string) => controller.openSettingsFor(action));
