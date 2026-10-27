@@ -82,6 +82,19 @@ export async function closeSetup(app: ElectronApplication): Promise<void> {
   });
 }
 
+/**
+ * Stands in for Reduce Motion as main reads it (systemPreferences.getAnimationSettings): on, or off. A stand-in that
+ * couldn't be put in place fails the test at once.
+ */
+export async function reduceMotion(app: ElectronApplication, on = true): Promise<void> {
+  await app.evaluate(({ systemPreferences }, reduce) => {
+    const real = systemPreferences.getAnimationSettings.bind(systemPreferences);
+    const standIn: typeof systemPreferences.getAnimationSettings = () => ({ ...real(), prefersReducedMotion: reduce });
+    systemPreferences.getAnimationSettings = standIn;
+    if (systemPreferences.getAnimationSettings !== standIn) throw new Error("The Reduce Motion stand-in didn't take.");
+  }, on);
+}
+
 /** The captures waiting in `library`'s inbox. */
 export const inbox = (library: string) => filesUnder(library, "inbox");
 

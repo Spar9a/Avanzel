@@ -6,25 +6,28 @@ import { mkdtempSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
-import { dictate, launchOn, notified, sleep } from "./capsule-helpers.ts";
+import { dictate, launchOn, notified, reachedUndo, sleep, watchUndos, type Left } from "./capsule-helpers.ts";
 import {
   call,
   capsuleKind,
   closeModelHubs,
   emptyHfCache,
+  exists,
   fakeModelHub,
   filesUnder,
   filingClaude,
   firstRun,
+  gitOut,
   hfSnapshot,
   launch,
   makeLibrary,
+  onceMarker,
   shown,
   speechWav,
   toDone,
   windowFor,
 } from "./helpers.ts";
-import { settingsSnap } from "./setup-helpers.ts";
+import { reduceMotion, settingsSnap } from "./setup-helpers.ts";
 
 test.afterEach(closeModelHubs);
 
@@ -59,15 +62,16 @@ const faceOf = async (app: ElectronApplication) => (await barOf(app)).face;
 const titleOf = async (app: ElectronApplication) => (await barOf(app)).title;
 
 /**
- * From now on, notes each change of what the controller gives the menu bar (`MenuBar.show`) with the time it came, for `changes`.
- * A view shown again as it was is no change.
+ * From now on, notes each change of what the controller gives the menu bar (`MenuBar.show`) with the time it came, for `changes`,
+ * beginning with what it shows now, at time 0: it was showing that before the watch began, and no time a test takes after the watch
+ * can reach back to it, as one taken in the same millisecond could. A view shown again as it was is no change.
  */
 async function watchTray(app: ElectronApplication): Promise<void> {
   await call(app, "capsuleStateForTests"); // the controller is there once this answers
   await app.evaluate(() => {
     type Shown = { face: string; title: string };
-    const controller = (globalThis as unknown as { __avanzel: { menuBar: { show(view: Shown): void } } }).__avanzel;
-    const changes: Change[] = [];
+    const controller = (globalThis as unknown as { __avanzel: { menuBar: { shown: Shown; show(view: Shown): void } } }).__avanzel;
+    const changes: Change[] = [{ face: controller.menuBar.shown.face, title: controller.menuBar.shown.title, at: 0 }];
     Object.assign(globalThis, { trayChanges: changes });
     const show = controller.menuBar.show.bind(controller.menuBar);
     controller.menuBar.show = (view) => {
@@ -129,49 +133,74 @@ async function withNote(hour: string, env: Record<string, string> = {}) {
   return hearing({ AVANZEL_FAKE_HOUR: hour, ...env }, library);
 }
 
+/** How the evening review said it ended: the first notification whose title begins "Evening review", once there is one. */
+async function reviewSaid(app: ElectronApplication): Promise<{ title: string; body: string }> {
+  let said: { title: string; body: string } | undefined;
+  const find = async () => {
+    said = ((await call(app, "notificationsForTests")) as { title: string; body: string }[]).find((note) => note.title.startsWith("Evening review"));
+    return said;
+  };
+  await expect.poll(find, { timeout: 60_000 }).toBeDefined();
+  return said!;
+}
+
 /** Runs the evening review, and returns once it has filed the note and said so. */
 async function reviewed(app: ElectronApplication): Promise<void> {
   await call(app, "runTask", "evening-review");
-  await expect.poll(() => notified(app, "Evening review: 1 thing filed"), { timeout: 60_000 }).toHaveLength(1);
+  expect(await reviewSaid(app), "how the review ended").toMatchObject({ title: "Evening review: 1 thing filed" });
   await call(app, "idleForTests");
-}
-
-/**
- * Stands in for Reduce Motion as main reads it (systemPreferences.getAnimationSettings): on, so the setup window just closes
- * and no window flies over this Mac's screen. A stand-in that couldn't be put in place fails the test at once.
- */
-async function reduceMotion(app: ElectronApplication): Promise<void> {
-  await app.evaluate(({ systemPreferences }) => {
-    const real = systemPreferences.getAnimationSettings.bind(systemPreferences);
-    const standIn: typeof systemPreferences.getAnimationSettings = () => ({ ...real(), prefersReducedMotion: true });
-    systemPreferences.getAnimationSettings = standIn;
-    if (systemPreferences.getAnimationSettings !== standIn) throw new Error("The Reduce Motion stand-in didn't take.");
-  });
 }
 
 /**
  * From now on, Zel's bubble stays up until `letTheBubbleGo`: a Mac that is busy, or that its owner is using, may take the focus
  * from it, and a window that loses the focus puts the bubble away, which is not what the test that reads the title beside it asks.
- * Not now and Esc press `closeUpHere` all the same, and wait here.
+ * Each `closeUpHere` that would put a bubble away is swallowed and noted, with where it came from (`swallowedCloses`), so that a
+ * test can say that none came: one that does is a focus lost, and shows as one, not as noise. (A call with no bubble up, such as
+ * the one `openUpHere` makes before it opens one, closes nothing, and goes through.) Not now and Esc press `closeUpHere` all the
+ * same, and wait here.
  */
 async function holdTheBubble(app: ElectronApplication): Promise<void> {
-  await app.evaluate(() => {
+  await app.evaluate(({ BrowserWindow }) => {
     const setup = (globalThis as unknown as { __avanzel: { setup: { closeUpHere(): void } } }).__avanzel.setup;
     const closeUpHere = setup.closeUpHere.bind(setup);
-    Object.assign(globalThis, { bubbleHeld: true });
+    const swallowed: string[] = [];
+    Object.assign(globalThis, { bubbleHeld: true, swallowedCloses: swallowed });
+    const bubbleIsUp = () => BrowserWindow.getAllWindows().some((win) => !win.isDestroyed() && win.webContents.getURL().includes("/renderer/up-here/"));
     setup.closeUpHere = () => {
-      if (!(globalThis as { bubbleHeld?: boolean }).bubbleHeld) closeUpHere();
+      if (!(globalThis as { bubbleHeld?: boolean }).bubbleHeld || !bubbleIsUp()) return closeUpHere();
+      swallowed.push((new Error().stack ?? "").split("\n").slice(2, 6).join("\n"));
     };
   });
 }
 
+/** The `closeUpHere` calls that `holdTheBubble` has swallowed, each as the lines of the stack it came from. */
+const swallowedCloses = (app: ElectronApplication) => app.evaluate(() => (globalThis as { swallowedCloses?: string[] }).swallowedCloses ?? []);
+
 const letTheBubbleGo = (app: ElectronApplication) => app.evaluate(() => Object.assign(globalThis, { bubbleHeld: false })).then(() => undefined);
+
+/**
+ * From now on, the app's queue is held by a piece of work that runs no agent (as saving a review's settings, or taking a commit
+ * back, is) until `letTheQueueGo`: whatever is queued behind it waits its turn. `idleForTests` waits for the queue, so it is not
+ * asked while the queue is held.
+ */
+async function holdTheQueue(app: ElectronApplication): Promise<void> {
+  await call(app, "capsuleStateForTests");
+  await app.evaluate(() => {
+    const controller = (globalThis as unknown as { __avanzel: { enqueue(work: () => Promise<void>): Promise<void> } }).__avanzel;
+    void controller.enqueue(() => new Promise<void>((resolve) => Object.assign(globalThis, { letTheQueueGo: resolve })));
+  });
+}
+
+const letTheQueueGo = (app: ElectronApplication) => app.evaluate(() => (globalThis as { letTheQueueGo?: () => void }).letTheQueueGo?.()).then(() => undefined);
+
+/** The seconds a count says: "1:05" is 65. */
+const secondsOf = (title: string) => Number(title.split(":")[0]) * 60 + Number(title.split(":")[1]);
 
 /** The menu bar icon in the setup test, as AVANZEL_FAKE_TRAY_BOUNDS gives it: "x,y,width,height". */
 const ICON = "1000,0,24,24";
 
 test("the face listens and the title counts while recording, then it files, stamps and rests", async () => {
-  const { app } = await hearing({ FAKE_AGENT_DELAY_MS: "2000", FAKE_AGENT_DELAY_TASK: "file" }); // the filing can be seen
+  const { app, capsule } = await hearing({ FAKE_AGENT_DELAY_MS: "2000", FAKE_AGENT_DELAY_TASK: "file" }); // the filing can be seen
   await watchTray(app);
   const since = Date.now();
   await call(app, "toggleDictate");
@@ -179,6 +208,9 @@ test("the face listens and the title counts while recording, then it files, stam
   // After two seconds the count has moved on.
   await expect.poll(() => titleOf(app), { timeout: 10_000, intervals: [100] }).toMatch(/^0:0[2-9]$/);
   expect(await faceOf(app)).toBe("listening");
+  // The capsule's bar writes the count as the menu bar does (shared/clock.ts), and the two are never more than a second apart.
+  const inBar = await capsule.getByRole("status").getByText(/^\d:\d\d$/).innerText();
+  expect(Math.abs(secondsOf(inBar) - secondsOf(await titleOf(app)))).toBeLessThanOrEqual(1);
   await call(app, "toggleDictate"); // stop
   await expect.poll(() => barOf(app), { intervals: [50] }).toMatchObject({ face: "filing", title: "" });
   await expect.poll(() => faceOf(app), { timeout: 30_000, intervals: [50] }).toBe("filed");
@@ -187,9 +219,11 @@ test("the face listens and the title counts while recording, then it files, stam
   const list = await changes(app);
   // One face after another, none left out, and none put in between (a flash of idle as the transcription hands over to the filing).
   expect(facesFrom(list, since)).toEqual(["listening", "filing", "filed", "idle"]);
-  // The count began at 0:00 and went up a second at a time while the recording ran.
+  // The count began at 0:00 and went up while the recording ran (an event loop that stalled for a second may skip one).
   const counted = list.filter((change) => change.at >= since && change.face === "listening").map((change) => change.title);
-  expect(counted.slice(0, 3)).toEqual(["0:00", "0:01", "0:02"]);
+  expect(counted[0]).toBe("0:00");
+  expect(counted.length).toBeGreaterThanOrEqual(3);
+  expect(counted.map(secondsOf)).toEqual([...counted.map(secondsOf)].sort((a, b) => a - b));
   // The stamp lasted two seconds from the filing's end.
   const filed = list.find((change) => change.face === "filed")!;
   const rested = list.find((change) => change.face === "idle" && change.at > filed.at)!;
@@ -279,6 +313,8 @@ test("there is no title while setup or its bubble shows", async () => {
   expect((await settingsSnap(app)).model.kind).toBe("downloading");
   // The bubble is centred on the icon's bounds, which a title would widen.
   expect(await barOf(app)).toMatchObject({ title: "", nativeTitle: "" });
+  // Nothing asked to put the bubble away while it was held: had a lost focus done, this says so.
+  expect(await swallowedCloses(app), "closeUpHere was called while the bubble was held").toEqual([]);
   const closing = Date.now();
   await letTheBubbleGo(app);
   await bubble.getByRole("button", { name: "Not now" }).click();
@@ -413,6 +449,231 @@ test("an Ask makes the face think while it is answered, and lets go when it is",
   expect(facesFrom(await changes(app), since)).toEqual(["filing", "idle"]); // an answer is no filing: nothing is stamped
   await app.close();
 });
+
+// ---- A filing that leaves the queue without running ----
+//
+// The face thinks while a filing waits for its turn (`queuedToFile`), and the queue takes it out of there with no run, and often no
+// card, to show the icon again: a filing stopped before its turn, a note that was filed meanwhile, a note filed in the background.
+// These hold the queue with a piece of work that runs no agent (`holdTheQueue`), so that nothing else shows the icon when the
+// filing's turn comes.
+
+test("a filing that was stopped before its turn leaves no face behind when its turn comes", async () => {
+  const { app, capsule } = await hearing();
+  await holdTheQueue(app);
+  await dictate(app);
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
+  expect(await faceOf(app)).toBe("filing"); // it waits for its turn, and Zel is thinking of it
+  await capsule.evaluate(() => window.avanzel.capsule.cancelFiling()); // Stop: nothing has touched the note, so the card says Stopped at once
+  await expect.poll(() => capsuleKind(app)).toBe("cancelled");
+  await call(app, "dismiss");
+  await letTheQueueGo(app); // its turn comes: it finds itself stopped, and does nothing
+  await expect.poll(() => barOf(app), { timeout: 5_000, intervals: [50] }).toEqual({ face: "idle", title: "", nativeTitle: "" });
+  await app.close();
+});
+
+test("a hidden filing whose note was filed while it waited for its turn leaves no face behind", async () => {
+  const library = await makeLibrary();
+  const { app } = await hearing({}, library);
+  await holdTheQueue(app);
+  await dictate(app);
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
+  await call(app, "dismiss");
+  const [note] = filesUnder(library, "inbox");
+  renameSync(path.join(library, "inbox", note!), path.join(library, "raw", note!)); // another Avanzel filed it
+  expect(await faceOf(app)).toBe("filing");
+  await letTheQueueGo(app); // its turn comes: there is no note to file, and no card to say so
+  await expect.poll(() => barOf(app), { timeout: 5_000, intervals: [50] }).toEqual({ face: "idle", title: "", nativeTitle: "" });
+  await app.close();
+});
+
+test("a note filed in the background makes the face think while it waits, and leaves nothing when its turn finds it filed", async () => {
+  const library = await makeLibrary();
+  const note = new Vault(library).newCapture("A note that waits for a limit to reset", { source: "text" }).path;
+  const { app } = await hearing({}, library);
+  await holdTheQueue(app);
+  await call(app, "fileInBackground", note, "fake", { by: "watch" }); // as the wait for a limit's reset, or a sign-in's watch, files a note
+  await expect.poll(() => barOf(app), { timeout: 5_000, intervals: [50] }).toEqual({ face: "filing", title: "", nativeTitle: "" });
+  renameSync(note, path.join(library, "raw", path.basename(note))); // filed meanwhile
+  await letTheQueueGo(app);
+  await expect.poll(() => barOf(app), { timeout: 5_000, intervals: [50] }).toEqual({ face: "idle", title: "", nativeTitle: "" });
+  await app.close();
+});
+
+// ---- The filed stamp ----
+
+test("words saved for the evening review stamp the face filed, and the Undone card of an Undo doesn't", async () => {
+  const { app } = await hearing({}, await makeLibrary({ git: true })); // a library with git, for Undo to take a commit back
+  await watchTray(app);
+  // Saved for the evening review: no filing, and the card says so; the face wears the stamp for two seconds.
+  await call(app, "setApp", { fileMode: "evening" });
+  const first = Date.now();
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
+  await expect.poll(() => faceOf(app), { timeout: 10_000, intervals: [100] }).toBe("idle");
+  const saved = await changes(app);
+  expect(facesFrom(saved, first)).toEqual(["listening", "filing", "filed", "idle"]);
+  const stamped = saved.find((change) => change.at >= first && change.face === "filed")!;
+  const wornOff = saved.find((change) => change.face === "idle" && change.at > stamped.at)!;
+  expect(wornOff.at - stamped.at).toBeGreaterThanOrEqual(1_900);
+  // Filed now, and the stamp worn off; then Undo puts the words back in the inbox, and its card is `saved` too, with `undone`.
+  await call(app, "setApp", { fileMode: "now" });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  await expect.poll(() => faceOf(app), { timeout: 10_000, intervals: [100] }).toBe("idle");
+  const undoing = Date.now();
+  await call(app, "undo");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", undone: true });
+  await sleep(800); // time for a stamp to show, if that card put one up
+  expect((await changes(app)).filter((change) => change.at >= undoing)).toEqual([]);
+  expect(await faceOf(app)).toBe("idle");
+  await app.close();
+});
+
+test("a library that opens takes the filed stamp off before it wears off", async () => {
+  const config = mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")); // the new library is remembered here, not in ~/.config
+  const { app } = await hearing({ XDG_CONFIG_HOME: config });
+  await watchTray(app);
+  await dictate(app);
+  await expect.poll(() => faceOf(app), { timeout: 30_000, intervals: [50] }).toBe("filed");
+  const library = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-")), "Avanzel");
+  await call(app, "createLibrary", library);
+  expect((await settingsSnap(app)).library?.path).toBe(library);
+  expect(await faceOf(app), "the stamp went with the library it was for").toBe("idle");
+  const list = await changes(app);
+  const stamped = list.find((change) => change.face === "filed")!;
+  const taken = list.find((change) => change.face === "idle" && change.at > stamped.at)!;
+  expect(taken.at - stamped.at).toBeLessThan(1_800); // a stamp lasts two seconds: this one didn't wear off, a library took it
+  await app.close();
+});
+
+// ---- A Filing card with no run behind it ----
+
+test("the face keeps thinking under a Filing card while the stopped run's commit is taken back", async () => {
+  const library = await makeLibrary({ git: true });
+  const { app } = await hearing({ FAKE_AGENT_MODE: "slow-once", FAKE_AGENT_ONCE: onceMarker() }, library);
+  await dictate(app);
+  await expect.poll(() => exists(library, "goals/half.md"), { timeout: 30_000 }).toBe(true); // the agent's first run is halfway
+  await call(app, "edit"); // Edit stops it, and the editor opens
+  expect(await capsuleKind(app)).toBe("editing");
+  await expect.poll(() => gitOut(library, "log", "--format=%s"), { timeout: 30_000 }).toContain("avanzel: leftovers of"); // its edits, committed
+  await call(app, "idleForTests"); // and its run is over
+  await watchUndos(app, { hold: true });
+  await call(app, "submitEdit", "corrected words"); // File: the card shows Filing again, and the leftovers come out first
+  await expect.poll(() => reachedUndo(app), { timeout: 30_000 }).toBe(true);
+  expect(await capsuleKind(app)).toBe("filing");
+  // No run, and nothing waits in the queue by name: only the card says that the filing is going on, and the face must say it too.
+  expect(await barOf(app)).toEqual({ face: "filing", title: "", nativeTitle: "" });
+  await app.evaluate(() => (globalThis as Left).letUndoIn?.());
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  await expect.poll(() => faceOf(app), { timeout: 10_000, intervals: [100] }).toBe("idle");
+  await app.close();
+});
+
+// ---- A review that ends while a thought is in flight ----
+//
+// Zel falls asleep when an evening review ends at night, unless a thought is in flight (`capturing`): it began before the review
+// ended, so it is no "next capture" to wake Zel, and its filing would end on the asleep face. In each of these a thought is at a
+// stage of its own when the review says it is over (`begin` starts the review, and the thought, in the order the stage asks, and
+// `atReviewEnd` checks the stage); the thought is then `end`ed, and its filing ends on the idle face, with Zel never asleep.
+
+const startReview = (app: ElectronApplication) => call(app, "runTask", "evening-review").then(() => undefined);
+
+/** A thought spoken while the review works, and waiting behind it: its card shows Filing, with its seconds not begun. */
+async function waitsBehindTheReview(app: ElectronApplication): Promise<void> {
+  await startReview(app);
+  await dictate(app);
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
+}
+
+const MID_THOUGHT: {
+  stage: string;
+  env: Record<string, string>;
+  begin(app: ElectronApplication): Promise<void>;
+  atReviewEnd(app: ElectronApplication): Promise<void>;
+  end?(app: ElectronApplication): Promise<void>;
+}[] = [
+  {
+    stage: "is being recorded",
+    env: { FAKE_AGENT_DELAY_MS: "1200" },
+    begin: async (app) => {
+      await startReview(app);
+      await call(app, "toggleDictate");
+    },
+    atReviewEnd: async (app) => void expect(await faceOf(app)).toBe("listening"),
+    end: async (app) => void (await call(app, "toggleDictate")), // the recording is stopped, and its words are filed
+  },
+  {
+    stage: "is being made into words",
+    env: { FAKE_AGENT_DELAY_MS: "1200", AVANZEL_FAKE_TRANSCRIPT_DELAY_MS: "5000" },
+    begin: async (app) => {
+      await startReview(app);
+      await dictate(app);
+    },
+    atReviewEnd: async (app) => void expect(await capsuleKind(app)).toBe("transcribing"),
+  },
+  {
+    stage: "waits behind it, its card showing",
+    env: { FAKE_AGENT_DELAY_MS: "2000" },
+    begin: waitsBehindTheReview,
+    atReviewEnd: async (app) => void expect(await capsuleKind(app)).toBe("filing"),
+  },
+  {
+    stage: "waits behind it, its card hidden",
+    env: { FAKE_AGENT_DELAY_MS: "2000" },
+    begin: async (app) => {
+      await waitsBehindTheReview(app);
+      await call(app, "dismiss");
+    },
+    atReviewEnd: async (app) => void expect(await capsuleKind(app)).toBe("hidden"),
+  },
+  {
+    stage: "is being edited, its filing still to come",
+    env: { FAKE_AGENT_DELAY_MS: "2000" },
+    begin: async (app) => {
+      await waitsBehindTheReview(app);
+      await call(app, "edit");
+    },
+    atReviewEnd: async (app) => {
+      expect(await capsuleKind(app)).toBe("editing");
+      expect(await faceOf(app)).toBe("idle"); // not asleep, while the editor is open
+    },
+    end: async (app) => void (await call(app, "cancelEdit")), // the words are filed as they were
+  },
+  {
+    // Its first run has come and gone (Edit stopped it): only the open editor says that the thought is in flight.
+    stage: "is being edited, its first run over",
+    env: { FAKE_AGENT_DELAY_MS: "2000" },
+    begin: async (app) => {
+      await dictate(app);
+      await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing" });
+      await call(app, "edit");
+      await call(app, "idleForTests"); // the stopped run is over
+      await startReview(app);
+    },
+    atReviewEnd: async (app) => {
+      expect(await capsuleKind(app)).toBe("editing");
+      expect(await faceOf(app)).toBe("idle");
+    },
+    end: async (app) => void (await call(app, "cancelEdit")),
+  },
+];
+
+for (const { stage, env, begin, atReviewEnd, end } of MID_THOUGHT) {
+  test(`a review that ends while a thought ${stage} doesn't put Zel to sleep`, async () => {
+    const { app } = await withNote("21", env);
+    await watchTray(app);
+    const since = Date.now();
+    await begin(app);
+    expect(await reviewSaid(app), "how the review ended").toMatchObject({ title: "Evening review: 1 thing filed" });
+    await atReviewEnd(app);
+    await end?.(app);
+    await expect.poll(() => faceOf(app), { timeout: 30_000, intervals: [50] }).toBe("filed");
+    await expect.poll(() => faceOf(app), { timeout: 10_000, intervals: [100] }).toBe("idle"); // the thought's filing ends awake
+    await sleep(500);
+    expect(facesFrom(await changes(app), since)).not.toContain("asleep");
+    await app.close();
+  });
+}
 
 test("title ticks don't rebuild the menu", async () => {
   const { app } = await hearing();

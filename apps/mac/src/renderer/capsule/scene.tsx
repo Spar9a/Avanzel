@@ -5,16 +5,11 @@
 // a filing.
 import { CapsuleBar, type CapsuleMood } from "@avanzel/ui";
 import { Fragment, type ReactNode } from "react";
+import { clock } from "../../shared/clock.ts";
 import { useNow } from "../common/use-now.ts";
 
 /** How often the time is read again: it shows whole seconds. */
 const TICK_MS = 250;
-
-/** How long a recording has run, as the bar draws it: "0:07". */
-function clock(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-}
 
 /**
  * What a state says in the bar. `line`: the bar's one line, which stays the same for a whole state, since the region is live (a

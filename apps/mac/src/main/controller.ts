@@ -781,12 +781,12 @@ export class Controller {
       const input = this.trayInput();
       const now = Date.now();
       this.menuBar.show(trayView(input, now));
-      const wake = this.checksStopped ? null : nextTrayWake(input, now);
-      if (wake !== null) {
+      const delay = this.checksStopped ? null : nextTrayWake(input, now);
+      if (delay !== null) {
         this.trayTimer = setTimeout(() => {
           this.trayTimer = null;
           this.showTray();
-        }, wake);
+        }, delay);
       }
     } catch (error) {
       console.error("menu bar", error);
@@ -799,9 +799,24 @@ export class Controller {
     this.refreshTray();
   }
 
-  /** An evening review has finished without throwing: at night (`sleepsAfterReview`) Zel sleeps, until the next capture or library. */
+  /**
+   * A thought of the person's is in flight: it is being recorded or made into words, its editor is open, or its filing (the
+   * capsule's own, whether its card shows or is hidden) shows, waits for its turn or runs. A recording of setup's first thought counts.
+   */
+  private capturing(): boolean {
+    const capsule = this.capsuleState.kind;
+    const job = this.job;
+    const filing = job !== null && !job.background && (this.queuedToFile.has(job.capturePath) || this.runs.has(job.abort));
+    return this.recording !== null || capsule === "transcribing" || capsule === "filing" || this.inEditor !== null || filing;
+  }
+
+  /**
+   * An evening review has finished without throwing: at night (`sleepsAfterReview`) Zel sleeps, until the next capture or library.
+   * Not while a thought is in flight (`capturing`): it began before this review ended, so it is no "next capture" to wake Zel, and
+   * its filing would end on the asleep face under the person's eyes.
+   */
   private fallAsleep(): void {
-    if (!sleepsAfterReview(reviewEndedAt(process.env))) return;
+    if (this.capturing() || !sleepsAfterReview(reviewEndedAt(process.env))) return;
     this.asleep = true;
     this.refreshTray();
   }
@@ -1561,6 +1576,8 @@ export class Controller {
 
   private async runFiling(job: FilingJob): Promise<void> {
     this.queuedToFile.delete(job.capturePath); // its turn: should it not file the capture, a review may
+    // The face thought of it while it waited. A filing that ends below, stopped or with its note gone, has no run to show that it doesn't.
+    this.refreshTray();
     delete job.queuedAlone; // a Stop from here on waits for the run (`cancelFiling`)
     if (job.abort.signal.aborted) return; // Edit, Cancel in setup or Stop in the capsule stopped it before its turn came
     if (!existsSync(job.capturePath)) return this.noteGone(job); // already filed meanwhile (e.g. by another Avanzel on this library)
@@ -1908,10 +1925,12 @@ export class Controller {
       background,
     };
     this.queuedToFile.add(capturePath);
+    this.refreshTray(); // the face thinks while a filing waits, card or no card
     void this.enqueue(async () => {
       const waiting = this.vault?.pending().includes(capturePath);
       if (waiting && !this.editing.has(capturePath)) return this.runFiling(job);
       this.queuedToFile.delete(capturePath);
+      this.refreshTray();
       if (!waiting) this.noteGone(job);
     });
   }

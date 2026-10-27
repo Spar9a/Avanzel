@@ -2,6 +2,13 @@
 // a `TrayInput` and `trayView` decides what shows, so every rule of precedence lives here, apart from Electron, where it can be tested.
 // Plain TypeScript with only a type from the design system: main may take no value from the package's root.
 import type { MenuBarState } from "@avanzel/ui/menu-bar";
+import { clock } from "../shared/clock.ts";
+
+/**
+ * The count of `ms`, "0:07", "1:05" or "12:03": whole seconds, rounded down, and never negative. It is the capsule's own clock
+ * (shared/clock.ts), so that the card and the menu bar count the same way.
+ */
+export const elapsed = clock;
 
 /** How the controller's state reads to the menu bar. A time is Date.now() in ms; null is "not going on". */
 export interface TrayInput {
@@ -26,12 +33,6 @@ export interface TrayInput {
 export interface TrayView {
   face: MenuBarState;
   title: string;
-}
-
-/** The count of `ms`, "0:07", "1:05" or "12:03": whole seconds, rounded down, and never negative. */
-export function elapsed(ms: number): string {
-  const seconds = Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0;
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 /** What the title counts: a recording, else a hidden filing's run; null when neither does. */

@@ -23,7 +23,7 @@ import {
   typeFirstThought,
   windowFor,
 } from "./helpers.ts";
-import { closeSetup, dockShown, filedFirstThought, settingsSnap, windowsTitled, zel } from "./setup-helpers.ts";
+import { closeSetup, dockShown, filedFirstThought, reduceMotion, settingsSnap, windowsTitled, zel } from "./setup-helpers.ts";
 
 test.afterEach(closeModelHubs);
 
@@ -211,19 +211,6 @@ const endingRun = (): Record<string, string> => ({
   AVANZEL_FAKE_TRANSCRIPT: "Call the vet on Monday",
   AVANZEL_FAKE_TRAY_BOUNDS: ICON,
 });
-
-/**
- * Stands in for Reduce Motion as main reads it (systemPreferences.getAnimationSettings): on, or off. A stand-in that
- * couldn't be put in place fails the test at once.
- */
-async function reduceMotion(app: ElectronApplication, on: boolean): Promise<void> {
-  await app.evaluate(({ systemPreferences }, reduce) => {
-    const real = systemPreferences.getAnimationSettings.bind(systemPreferences);
-    const standIn: typeof systemPreferences.getAnimationSettings = () => ({ ...real(), prefersReducedMotion: reduce });
-    systemPreferences.getAnimationSettings = standIn;
-    if (systemPreferences.getAnimationSettings !== standIn) throw new Error("The Reduce Motion stand-in didn't take.");
-  }, on);
-}
 
 /**
  * From now on, notes each frame the setup window is given (setBounds), and whether macOS animates it, for `flights`;

@@ -1,5 +1,6 @@
 import type { MenuBarState } from "@avanzel/ui/menu-bar";
 import { describe, expect, it } from "vitest";
+import { clock } from "../src/shared/clock.ts";
 import { elapsed, nextTrayWake, reviewEndedAt, sleepsAfterReview, trayView, wholePercent, type TrayInput } from "../src/main/tray-state.ts";
 
 const NOW = 1_000_000;
@@ -110,29 +111,15 @@ describe("trayView's title", () => {
 });
 
 describe("elapsed", () => {
-  it("shows whole seconds as minutes and seconds", () => {
-    expect(elapsed(0)).toBe("0:00");
+  it("is the capsule's clock, so that the card and the menu bar count the same way (test/clock.test.ts has its cases)", () => {
+    expect(elapsed).toBe(clock);
+  });
+
+  it("gives the brief's examples: 0:07, 1:05, 12:03, and 0:00 for a time before the start", () => {
     expect(elapsed(7_000)).toBe("0:07");
     expect(elapsed(65_400)).toBe("1:05");
     expect(elapsed(723_000)).toBe("12:03");
-  });
-
-  it("rounds down, never up", () => {
-    expect(elapsed(999)).toBe("0:00");
-    expect(elapsed(1_000)).toBe("0:01");
-    expect(elapsed(59_999)).toBe("0:59");
-    expect(elapsed(60_000)).toBe("1:00");
-  });
-
-  it("is never negative, or anything but a time", () => {
     expect(elapsed(-5)).toBe("0:00");
-    expect(elapsed(-70_000)).toBe("0:00");
-    expect(elapsed(Number.NaN)).toBe("0:00");
-    expect(elapsed(Number.POSITIVE_INFINITY)).toBe("0:00");
-  });
-
-  it("goes on in minutes past the hour", () => {
-    expect(elapsed(3_600_000)).toBe("60:00");
   });
 });
 
