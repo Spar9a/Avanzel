@@ -9,8 +9,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import { encodePng } from "../src/main/png.ts";
-import { SOUND_MS } from "../src/renderer/common/sounds.ts";
-import type { SetupSnapshot, SoundName } from "../src/shared/ipc.ts";
+import { PREVIEW_AT_MS } from "../src/renderer/common/sounds.ts";
+import type { SetupSnapshot } from "../src/shared/ipc.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const appDir = path.resolve(here, "..");
@@ -425,15 +425,20 @@ export const played = async (page: Page): Promise<string[]> => (await playedAt(p
 
 /**
  * Preview sounds was pressed: the page plays the Tick, the Stamp, the Drawer and the Letter, one after the other, after the `already` that it played
- * before. The page's own record says when (`playedAt`), so nothing here is a wall-clock bound from the press, which a busy Mac would break: each
- * sound begins after the one before has ended (`SOUND_MS`), and the Letter comes about 0.8 s after the Tick.
+ * before. The page's own record says when (`playedAt`), so nothing here is a wall-clock bound from the press, which a busy Mac would break. Each
+ * sound comes about where Preview plans it (`PREVIEW_AT_MS`), after the one before it: a busy Mac fires a timer late, so each gap may lose up to
+ * 40% of itself. (That the plan leaves each sound room to end before the next, by its length in `SOUND_MS`, is held by the unit tests, on fake
+ * timers: the plan leaves as little as 60 ms between one sound's end and the next one's start, which a late timer can take.) The Letter comes
+ * about 0.8 s after the Tick.
  */
 export async function expectPreviewPlayed(page: Page, already: string[] = []): Promise<void> {
   await expect.poll(() => played(page), { timeout: 10_000 }).toEqual([...already, "tick", "stamp", "drawer", "letter"]);
   const heard = (await playedAt(page)).slice(already.length);
+  const planned: Record<string, number> = { tick: 0, ...PREVIEW_AT_MS };
   for (let i = 1; i < heard.length; i += 1) {
-    const before = heard[i - 1]!;
-    expect(heard[i]!.at - before.at, `${heard[i]!.name} begins after ${before.name} has ended`).toBeGreaterThanOrEqual(SOUND_MS[before.name as SoundName]);
+    const [before, now] = [heard[i - 1]!, heard[i]!];
+    const gap = planned[now.name]! - planned[before.name]!;
+    expect(now.at - before.at, `${now.name} comes about ${gap} ms after ${before.name}`).toBeGreaterThanOrEqual(gap * 0.6);
   }
   expect(heard[3]!.at - heard[0]!.at, "the Letter comes about 0.8 s after the Tick").toBeGreaterThanOrEqual(750);
 }

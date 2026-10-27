@@ -124,10 +124,13 @@ test("Settings opens on General at its default size without a scroll, with the S
   const settings = await openSettings(app);
   // General with its Library, After you speak, Sounds and Startup groups needs 557 px of pane: the window gives it room (the pane scrolls when
   // another pane or a Notice needs more, and the window's least height stays).
-  const { size, least } = await app.evaluate(({ BrowserWindow }) => {
+  const { size, least, workArea } = await app.evaluate(({ BrowserWindow, screen }) => {
     const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes("/renderer/settings/"))!;
-    return { size: win.getSize(), least: win.getMinimumSize() };
+    return { size: win.getSize(), least: win.getMinimumSize(), workArea: screen.getDisplayMatching(win.getBounds()).workAreaSize.height };
   });
+  // macOS fits a window to the screen it opens on: where the screen's work area is under 680 pt, Settings opens shorter than 660, as it should.
+  if (workArea < 680) await app.close();
+  test.skip(workArea < 680, `the screen's work area is ${workArea} pt high: too short for Settings' 660`);
   expect(size).toEqual([680, 660]);
   expect(least, "the window can still be made small").toEqual([640, 440]);
   const pane = settings.locator("main.settings-pane");

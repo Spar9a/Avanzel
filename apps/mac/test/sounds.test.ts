@@ -1,8 +1,10 @@
 // The five sounds, played into a fake AudioContext that writes down what is scheduled: nothing here is heard, and no audio device is
 // needed. What the tests hold the sounds to is the spec's §4.6: each under 0.6 s and quiet, and each a stand-in whose last sample
 // is where SOUND_MS says. They also hold the page to one AudioContext, and its record of what played (`__avanzelSounds`).
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AudioContextLike } from "../src/renderer/common/sounds.ts";
+import { STAMP_LANDS_MS } from "../src/renderer/common/stamp.ts";
 import type { SoundName } from "../src/shared/ipc.ts";
 
 type Sounds = typeof import("../src/renderer/common/sounds.ts");
@@ -119,6 +121,12 @@ class FakeContext {
   readonly sampleRate = 48000;
   readonly destination = new FakeNode();
   resumed = 0;
+  /** How many times the page suspended it, and whether suspending fails (a real context rejects once it is closed). */
+  suspended = 0;
+  suspendFails = false;
+  /** Whether a resume waits for `letResume`, as a real one takes a moment to open the device again; by default it is over at once. */
+  holdResume = false;
+  private resumeWaits: (() => void)[] = [];
   /** How many times the page closed it, and whether closing fails (a real context rejects if the device has gone, or it is closed already). */
   closed = 0;
   closeFails = false;
@@ -130,7 +138,19 @@ class FakeContext {
 
   async resume(): Promise<void> {
     this.resumed += 1;
+    if (this.holdResume) await new Promise<void>((resolve) => this.resumeWaits.push(resolve));
     this.state = "running";
+  }
+
+  /** Lets every resume that waits go through: the context runs again. */
+  letResume(): void {
+    for (const resolve of this.resumeWaits.splice(0)) resolve();
+  }
+
+  async suspend(): Promise<void> {
+    this.suspended += 1;
+    if (this.suspendFails) throw new Error("The context is closed.");
+    this.state = "suspended";
   }
 
   async close(): Promise<void> {
@@ -509,6 +529,141 @@ describe("getting the page's AudioContext ready, and letting go of it", () => {
   });
 });
 
+// A context that runs keeps the audio device open, and with it the Mac awake: with sounds on and nothing playing, coreaudiod holds
+// PreventUserIdleSystemSleep for the page's audio (`pmset -g assertions`, measured in 1d's final fix wave), where with sounds off it holds
+// none. So a page that has played nothing for QUIET_MS suspends its context, which lets the device go, and the next sound wakes it first.
+describe("the quiet: a context with nothing to play for 30 s is suspended, and woken for the next sound", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Lets the wake's promise, and what waits for it, run. */
+  const settle = () => vi.advanceTimersByTimeAsync(0);
+
+  it("is 30 seconds", async () => {
+    const { QUIET_MS } = await page();
+    expect(QUIET_MS).toBe(30_000);
+  });
+
+  it("suspends a prepared context once 30 s have gone by with no sound, and not before", async () => {
+    vi.useFakeTimers();
+    const { prepareSounds } = await page();
+    const context = new FakeContext();
+    prepareSounds(() => context.asAudio);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(context.suspended).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(context.suspended).toBe(1);
+    expect(context.state).toBe("suspended");
+    await vi.advanceTimersByTimeAsync(120_000); // suspended once: nothing comes round to suspend it again
+    expect(context.suspended).toBe(1);
+  });
+
+  it("counts the quiet from the end of the last sound: each sound starts it again", async () => {
+    vi.useFakeTimers();
+    const { playSound, prepareSounds } = await page();
+    const context = new FakeContext();
+    prepareSounds(() => context.asAudio);
+    await vi.advanceTimersByTimeAsync(20_000);
+    playSound("letter", () => context.asAudio); // it lasts 570 ms
+    await vi.advanceTimersByTimeAsync(30_000 + 570 - 1);
+    expect(context.suspended).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(context.suspended).toBe(1);
+  });
+
+  it("wakes the suspended context for the next sound, which plays once it runs again, on the same context", async () => {
+    vi.useFakeTimers();
+    const { playSound, prepareSounds } = await page();
+    const context = new FakeContext();
+    const make = vi.fn(() => context.asAudio);
+    prepareSounds(make);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(context.state).toBe("suspended");
+    context.holdResume = true; // opening the device again takes a moment
+    playSound("tick", make);
+    expect(context.resumed).toBe(1);
+    expect(context.oscillators).toHaveLength(0); // not into a context that is still asleep: its clock stands still
+    expect(played() ?? []).toEqual([]);
+    context.letResume();
+    await settle();
+    expect(context.oscillators).toHaveLength(1);
+    expect(played()?.map((entry) => entry.name)).toEqual(["tick"]);
+    expect(make).toHaveBeenCalledTimes(1);
+  });
+
+  it("has every sound that comes while it wakes wait for the one wake, and plays them in the order they came", async () => {
+    vi.useFakeTimers();
+    const { playSound, prepareSounds } = await page();
+    const context = new FakeContext();
+    prepareSounds(() => context.asAudio);
+    await vi.advanceTimersByTimeAsync(30_000);
+    context.holdResume = true;
+    playSound("tick", () => context.asAudio);
+    playSound("tock", () => context.asAudio);
+    expect(context.resumed).toBe(1);
+    context.letResume();
+    await settle();
+    expect(played()?.map((entry) => entry.name)).toEqual(["tick", "tock"]);
+    // Awake again, and quiet again 30 s after the Tock's end.
+    await vi.advanceTimersByTimeAsync(30_000 + 90 - 1);
+    expect(context.suspended).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(context.suspended).toBe(2);
+  });
+
+  it("is woken by wakeSounds, as main says a recording is starting, without a sound and without making a context", async () => {
+    vi.useFakeTimers();
+    const { prepareSounds, wakeSounds } = await page();
+    expect(() => wakeSounds()).not.toThrow(); // no context yet: nothing to wake, and none is made
+    const context = new FakeContext();
+    prepareSounds(() => context.asAudio);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(context.state).toBe("suspended");
+    wakeSounds();
+    await settle();
+    expect(context.resumed).toBe(1);
+    expect(context.state).toBe("running");
+    expect(context.allSources()).toHaveLength(0);
+    // A wake with no sound after it is quiet too, and goes back to sleep 30 s on.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(context.suspended).toBe(2);
+  });
+
+  it("never suspends a context that sounds have let go of, and drops a sound that waited for a wake when they are let go of", async () => {
+    vi.useFakeTimers();
+    const { playSound, prepareSounds, releaseSounds } = await page();
+    const released = new FakeContext();
+    prepareSounds(() => released.asAudio);
+    releaseSounds();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(released.suspended).toBe(0);
+
+    const asleep = new FakeContext();
+    prepareSounds(() => asleep.asAudio);
+    await vi.advanceTimersByTimeAsync(30_000);
+    asleep.holdResume = true;
+    playSound("stamp", () => asleep.asAudio);
+    releaseSounds(); // sounds switched off while it wakes: the Stamp goes with them
+    asleep.letResume();
+    await settle();
+    expect(asleep.allSources()).toHaveLength(0);
+    expect(played() ?? []).toEqual([]);
+  });
+
+  it("leaves a context that won't suspend awake, without an error", async () => {
+    vi.useFakeTimers();
+    const { playSound, prepareSounds } = await page();
+    const stuck = new FakeContext();
+    stuck.suspendFails = true;
+    prepareSounds(() => stuck.asAudio);
+    await vi.advanceTimersByTimeAsync(30_000); // a rejection nobody caught would fail the run here
+    expect(stuck.suspended).toBe(1);
+    playSound("tick", () => stuck.asAudio); // it still runs, so the Tick plays at once
+    expect(stuck.oscillators).toHaveLength(1);
+  });
+});
+
 // A window's own sounds: Preview sounds, in setup and in Settings, and the Stamp that says sounds are switched on. They play outside main's
 // gate for the capsule (controller.ts, `sound`), which keeps everything but a recording's own Tick and Tock out of a recording: the recorder
 // keeps no echo cancellation, so a sound would be heard in the words. So each of them asks main right before it plays (`may`, the bridge's
@@ -647,8 +802,7 @@ describe("Switching sounds on or off in a window", () => {
     const context = new FakeContext();
     const may = vi.fn(yes);
     soundsSwitched(true, may, () => context.asAudio);
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0)); // main's answer, however many turns it takes to come back
     expect(may).toHaveBeenCalledTimes(1);
     expect(names()).toEqual(["stamp"]);
   });
@@ -726,5 +880,25 @@ describe("what played", () => {
     const context = new FakeContext();
     playSound("tock", () => context.asAudio);
     expect(played()?.map((entry) => entry.name)).toEqual(["tock"]);
+  });
+});
+
+// The capsule plays the Stamp where the filed card's stamp lands (capsule/main.tsx, `playStamp`), not where the card is drawn. The design
+// system draws that landing: `av-stamp-in` (stamp.css) comes down to its lowest scale, where it touches the paper, and lifts a little
+// after, over the token its animation runs for. A change to either moves the landing, and this fails until the Stamp follows it.
+describe("when the Stamp is heard", () => {
+  const ui = (file: string) => readFileSync(new URL(`../../../packages/ui/${file}`, import.meta.url), "utf8");
+
+  it("is where av-stamp-in touches the paper: its lowest step, as a share of the duration token it runs for", () => {
+    const stamp = ui("src/components/stamp.css");
+    const token = /\.av-stamp\[data-animate\]\s*\{[^}]*animation:\s*av-stamp-in\s+var\((--av-duration-[\w-]+)\)/.exec(stamp)?.[1];
+    expect(token).toBe("--av-duration-card");
+    const duration = Number(new RegExp(`${token}:\\s*(\\d+)ms;`).exec(ui("src/generated/tokens.css"))?.[1]);
+    const keyframes = /@keyframes av-stamp-in\s*\{([\s\S]*?)\n\}/.exec(stamp)?.[1] ?? "";
+    const steps = [...keyframes.matchAll(/(\d+)%\s*\{[^}]*scale\(([\d.]+)\)/g)].map(([, at, scale]) => ({ at: Number(at), scale: Number(scale) }));
+    expect(steps.map((step) => step.at)).toEqual([0, 60, 100]);
+    const touch = steps.reduce((lowest, step) => (step.scale < lowest.scale ? step : lowest));
+    expect(touch.at).toBe(60);
+    expect(STAMP_LANDS_MS).toBe((duration * touch.at) / 100);
   });
 });

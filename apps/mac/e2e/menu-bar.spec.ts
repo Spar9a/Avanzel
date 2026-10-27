@@ -10,6 +10,7 @@ import { loadSettings, localDate, saveSettings, Vault } from "../../../packages/
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import { dictate, inbox, launchOn, notified, reachedUndo, sleep, undoCalls, undone, watchUndos, type Left } from "./capsule-helpers.ts";
 import {
+  agentCalls,
   agentStubs,
   answerAs,
   answerDialogs,
@@ -58,8 +59,8 @@ type Change = { face: string; title: string; at: number };
 const TOOLTIPS: Record<string, string> = {
   idle: "Avanzel",
   listening: "Avanzel is recording",
-  filing: "Avanzel is filing",
-  filed: "Avanzel filed it",
+  filing: "Avanzel is working",
+  filed: "Avanzel saved it",
   "needs-you": "Avanzel needs you",
   asleep: "The evening review is done",
 };
@@ -256,19 +257,21 @@ test("the face listens and the title counts while recording, then it files, stam
   expect(Math.abs(secondsOf(inBar) - secondsOf(await titleOf(app)))).toBeLessThanOrEqual(1);
   await call(app, "toggleDictate"); // stop
   await expect.poll(() => barOf(app), { intervals: [50] }).toMatchObject({ face: "filing", title: "" });
-  await expect.poll(() => sampleOf(app), { intervals: [50] }).toMatchObject({ face: "filing", tooltip: "Avanzel is filing" }); // not idle's: it reads like it at 18 pt
+  await expect.poll(() => sampleOf(app), { intervals: [50] }).toMatchObject({ face: "filing", tooltip: "Avanzel is working" }); // not idle's: it reads like it at 18 pt
   await expect.poll(() => faceOf(app), { timeout: 30_000, intervals: [50] }).toBe("filed");
-  await expect.poll(() => sampleOf(app), { timeout: 30_000, intervals: [50] }).toMatchObject({ face: "filed", tooltip: "Avanzel filed it" });
+  await expect.poll(() => sampleOf(app), { timeout: 30_000, intervals: [50] }).toMatchObject({ face: "filed", tooltip: "Avanzel saved it" });
   await expect.poll(() => barOf(app), { timeout: 10_000, intervals: [100] }).toEqual({ face: "idle", title: "", nativeTitle: "" });
   expect(await tooltipOf(app)).toBe("Avanzel");
 
   const list = await changes(app);
   // One face after another, none left out, and none put in between (a flash of idle as the transcription hands over to the filing).
   expect(facesFrom(list, since)).toEqual(["listening", "filing", "filed", "idle"]);
-  // The count began at 0:00 and went up while the recording ran (an event loop that stalled for a second may skip one).
+  // The count began at 0:00 and went up while the recording ran, to 0:02 at least (an event loop that stalled for a second may skip one,
+  // so two titles may be all there is: 0:00 and 0:02).
   const counted = list.filter((change) => change.at >= since && change.face === "listening").map((change) => change.title);
   expect(counted[0]).toBe("0:00");
-  expect(counted.length).toBeGreaterThanOrEqual(3);
+  expect(counted.length).toBeGreaterThanOrEqual(2);
+  expect(secondsOf(counted.at(-1)!)).toBeGreaterThanOrEqual(2);
   expect(counted.map(secondsOf)).toEqual([...counted.map(secondsOf)].sort((a, b) => a - b));
   // The stamp lasted two seconds from the filing's end.
   const filed = list.find((change) => change.face === "filed")!;
@@ -581,17 +584,17 @@ test("words saved for the evening review stamp the face filed, and the Undone ca
 test("a library that opens takes the filed stamp off before it wears off", async () => {
   const config = mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")); // the new library is remembered here, not in ~/.config
   const { app } = await hearing({ XDG_CONFIG_HOME: config });
-  await watchTray(app);
   await dictate(app);
   await expect.poll(() => faceOf(app), { timeout: 30_000, intervals: [50] }).toBe("filed");
+  // The stamp is made to last a minute, so a face that is idle again below is the library's doing, and not a stamp that wore off: a
+  // two-second stamp and a library that takes its time to open would race.
+  await app.evaluate(() => {
+    (globalThis as unknown as { __avanzel: { filedUntil: number | null } }).__avanzel.filedUntil = Date.now() + 60_000;
+  });
   const library = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-")), "Avanzel");
   await call(app, "createLibrary", library);
   expect((await settingsSnap(app)).library?.path).toBe(library);
-  expect(await faceOf(app), "the stamp went with the library it was for").toBe("idle");
-  const list = await changes(app);
-  const stamped = list.find((change) => change.face === "filed")!;
-  const taken = list.find((change) => change.face === "idle" && change.at > stamped.at)!;
-  expect(taken.at - stamped.at).toBeLessThan(1_800); // a stamp lasts two seconds: this one didn't wear off, a library took it
+  await expect.poll(() => faceOf(app), { timeout: 5_000, intervals: [50], message: "the stamp went with the library it was for" }).toBe("idle");
   await app.close();
 });
 
@@ -705,6 +708,25 @@ const MID_THOUGHT: {
     },
     end: async (app) => void (await call(app, "cancelEdit")),
   },
+  // Edit stopped its first run, and its File came while the review ran: the corrected words wait to be filed behind the review. The work
+  // that files them settles the edit when its turn comes (`settleEdit`), so until then only the edit says the thought is in flight: no
+  // run, no place in `queuedToFile`, and, once its card is hidden, no card.
+  ...[false, true].map((hidden) => ({
+    stage: `is filed again after an edit, and waits behind it, its card ${hidden ? "hidden" : "showing"}`,
+    env: { FAKE_AGENT_DELAY_MS: "4000" },
+    begin: async (app: ElectronApplication) => {
+      await dictate(app);
+      await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing" });
+      await call(app, "edit");
+      await call(app, "idleForTests"); // the stopped run is over
+      await startReview(app);
+      await expect.poll(() => detailOf(app), { timeout: 30_000, intervals: [50] }).toBe("Filing 1 of 1"); // its run has the note
+      await call(app, "submitEdit", "Plant tulips in late October");
+      expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filing", waiting: true });
+      if (hidden) await call(app, "dismiss");
+    },
+    atReviewEnd: async (app: ElectronApplication) => void expect(await capsuleKind(app)).toBe(hidden ? "hidden" : "filing"),
+  })),
 ];
 
 for (const { stage, env, begin, atReviewEnd, end } of MID_THOUGHT) {
@@ -1030,9 +1052,9 @@ test("voice settings Avanzel can't use are named in the menu until a fix is read
     action: "open-settings:voice",
     sublabel: "Typed thoughts are still saved to the inbox. Fix the config file.",
   });
-  // Fixed by hand, with Avanzel running. Nothing watches the file, so it is not found at once; the minute that comes round reads it.
+  // Fixed by hand, with Avanzel running. Nothing watches the file; the minute that comes round reads it, and the test brings it round.
+  // (Whether the item is still named before then is not asked: the real minute may come round first.)
   saveSettings(library, config);
-  expect((await menuOf(app))[1]).toMatchObject({ label: title });
   await call(app, "tick");
   await expect.poll(async () => (await menuOf(app))[1], { timeout: 10_000 }).toEqual({ type: "separator" });
   await expect.poll(() => faceOf(app), { timeout: 10_000, intervals: [50] }).toBe("idle");
@@ -1381,9 +1403,13 @@ test("Undo from the menu is not offered after an evening review that filed", asy
   await app.close();
 });
 
-// A review that runs writes to the library: the evening review files, and the weekly one commits the owner's changes and appends its own
-// line to the log. A revert of the filing before it would meet that later commit, so the review's start ends the offer, whichever review
-// it is. A custom review is skipped and changes nothing: the last filing stands.
+/** A custom review, for the tests that ask what Avanzel does with one: it skips it, and says so. */
+const STANDUP = "---\nname: Standup\nschedule: daily 09:00\nkind: custom\n---\nAsk about the day.\n";
+
+// A review that writes to the library ends the offer: the weekly one commits the owner's changes and appends its own line to the log, and
+// the evening review commits what it files. A revert of the filing before it would meet that later commit. The weekly review's start ends
+// it; the evening review ends it as it ends, if it filed anything (one with nothing to file writes nothing: the test after these). A
+// custom review is skipped and changes nothing: the last filing stands. While any of them waits or runs, the item is hidden.
 for (const { review, name, ends } of [
   { review: "weekly-review", name: "Weekly review", ends: true },
   { review: "evening-review", name: "Evening review", ends: true },
@@ -1391,17 +1417,21 @@ for (const { review, name, ends } of [
 ]) {
   test(`Undo from the menu hides while the ${name.toLowerCase()} waits and runs, and is ${ends ? "gone" : "back"} after it`, async () => {
     const library = await makeLibrary({ git: true });
-    writeFileSync(path.join(library, "tasks", "standup.md"), "---\nname: Standup\nschedule: daily 09:00\nkind: custom\n---\nAsk about the day.\n");
+    // Only its own case has the custom review: in the others, a run that crossed 09:00 would run it on its schedule.
+    if (review === "standup") writeFileSync(path.join(library, "tasks", "standup.md"), STANDUP);
     const { app } = await hearing({}, library);
     await watchUndos(app);
     await filedFromTheCapsule(app);
     expect(await undoItem(app)).toBeDefined();
+    // The evening review has a note to file, so it does write to the library.
+    if (review === "evening-review") new Vault(library).newCapture("An earlier thought", { source: "text" });
     await holdTheQueue(app); // the review waits for its turn
     await call(app, "runTask", review);
     expect(await undoItem(app)).toBeUndefined();
     expect(await trayOffersUndo(app)).toBe(false);
     await letTheQueueGo(app);
     await expect.poll(async () => (await said(app)).some((note) => note.title.startsWith(name)), { timeout: 60_000 }).toBe(true);
+    if (review === "evening-review") expect((await said(app)).find((note) => note.title.startsWith(name))?.title).toBe("Evening review: 1 thought filed");
     await call(app, "idleForTests");
     if (ends) {
       expect(await undoItem(app)).toBeUndefined();
@@ -1415,6 +1445,38 @@ for (const { review, name, ends } of [
     await app.close();
   });
 }
+
+// An evening review with nothing to file makes no commit and writes no line in the log, so git would still take the last filing back:
+// the offer stands until the next filing (spec §6.3). On the default path that is every evening whose inbox the day's filings emptied.
+test("an evening review with nothing to file leaves Undo the last filing in place, and the Undo still takes the filing back", async () => {
+  const library = await makeLibrary({ git: true });
+  const { app } = await hearing({}, library);
+  await watchUndos(app);
+  await filedFromTheCapsule(app);
+  expect(inbox(library)).toEqual([]);
+  const commits = gitOut(library, "rev-list", "--count", "HEAD");
+  await holdTheQueue(app); // the review waits for its turn
+  await call(app, "runTask", "evening-review");
+  // Hidden while it waits and runs, as for any review.
+  expect(await undoItem(app)).toBeUndefined();
+  expect(await trayOffersUndo(app)).toBe(false);
+  await letTheQueueGo(app);
+  expect(await reviewSaid(app), "how the review ended").toMatchObject({ title: "Evening review", body: "Inbox was empty." });
+  await call(app, "idleForTests");
+  expect(gitOut(library, "rev-list", "--count", "HEAD"), "the review wrote nothing").toBe(commits);
+  // Offered again, in the model and in the menu the tray holds.
+  await expect.poll(() => trayOffersUndo(app), { timeout: 10_000 }).toBe(true);
+  expect(await undoItem(app)).toEqual({ type: "item", label: "Undo the last filing", action: "undo-filing" });
+  // And it still works: the page goes, and the note is back in the inbox.
+  await call(app, "dismiss"); // the card is hidden: the menu is all that offers Undo now
+  await pressUndo(app);
+  expect(filesUnder(library, "ideas")).toEqual([]);
+  expect(inbox(library)).toHaveLength(1);
+  expect(undone(library)).toHaveLength(1);
+  expect(await said(app)).toContainEqual({ title: "Undone", body: UNDONE_NOTE });
+  expect(await undoItem(app)).toBeUndefined();
+  await app.close();
+});
 
 test("Undo from the menu goes with a library switch, and does not come back with the library", async () => {
   const config = mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")); // the libraries that open are remembered here, not in ~/.config
@@ -1835,9 +1897,14 @@ for (const words of ["Plant tulips in October", ""]) {
 }
 
 test("a custom review is never asked about: it runs no agent, and only says it was skipped", async () => {
+  // The library's agent is the stand-in `claude`, which notes each call it gets (`agentCalls`), and a note waits in the inbox: a review
+  // that ran an agent would put a question to it.
+  const bin = agentStubs({ claude: filingClaude() });
   const library = await makeLibrary();
-  writeFileSync(path.join(library, "tasks", "standup.md"), "---\nname: Standup\nschedule: daily 09:00\nkind: custom\n---\nAsk about the day.\n");
-  const { app } = await hearing({}, library);
+  saveSettings(library, { ...loadSettings(library), harness: "claude" });
+  writeFileSync(path.join(library, "tasks", "standup.md"), STANDUP);
+  new Vault(library).newCapture("An earlier thought", { source: "text" });
+  const { app } = await hearing(onlyAgentsIn(bin), library);
   await answerDialogs(app, 1); // were it asked, Cancel would stop it
   const skipped = { title: "Standup", body: "Avanzel doesn't run custom reviews yet, so this one was skipped." };
   await call(app, "menuAction", "task:standup");
@@ -1849,6 +1916,9 @@ test("a custom review is never asked about: it runs no agent, and only says it w
   await call(app, "idleForTests");
   expect(await dialogsAsked(app)).toEqual([]);
   expect(await notified(app, "Standup")).toEqual([skipped, skipped]);
+  // The agent was never called, and the note still waits.
+  expect(await agentCalls(app)).toEqual([]);
+  expect(inbox(library)).toHaveLength(1);
   await app.close();
 });
 
@@ -1859,12 +1929,15 @@ test("a review is not run in a library other than the one the question named", a
   const { app } = await hearing({ XDG_CONFIG_HOME: config }, library);
   await answerDialogs(app, 0, { hold: true }); // Run Now, once the test lets the question be answered
   const pressed = call(app, "menuAction", "task:evening-review");
-  await expect.poll(() => dialogsAsked(app)).toHaveLength(1);
-  // The person opens another library while the question is up. It has an evening review of the same name, which they never asked for.
-  const other = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-")), "Avanzel");
-  await call(app, "createLibrary", other);
-  expect((await settingsSnap(app)).library?.path).toBe(other);
-  await letDialogsGo(app);
+  try {
+    await expect.poll(() => dialogsAsked(app)).toHaveLength(1);
+    // The person opens another library while the question is up. It has an evening review of the same name, which they never asked for.
+    const other = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-")), "Avanzel");
+    await call(app, "createLibrary", other);
+    expect((await settingsSnap(app)).library?.path).toBe(other);
+  } finally {
+    await letDialogsGo(app); // answered even when a check above fails, so the press ends and the app can close
+  }
   await pressed;
   await call(app, "idleForTests");
   expect(await lastRun(app, "evening-review")).toBeNull();

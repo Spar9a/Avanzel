@@ -38,13 +38,15 @@ export interface TrayView {
 /**
  * The words of each face, for the icon's tooltip. Electron's Tray has no accessibility label, so the tooltip is all the text a hover or
  * VoiceOver gets of the icon: the states carry words, not just a face (DESIGN.md, Accessibility). The filing face needs them most, since
- * at 18 pt it reads like idle.
+ * at 18 pt it reads like idle. The words hold on every path to a face: the busy face is a filing, but also an Ask, a transcription for a
+ * screen comment or for the evening review, and the weekly review, so it says "working"; the stamp follows a saved card too (a screen
+ * comment, words kept for the review), where Filed is "saved and undoable" (spec §4.2), so it says "saved".
  */
 const TOOLTIPS: Record<MenuBarState, string> = {
   idle: "Avanzel",
   listening: "Avanzel is recording",
-  filing: "Avanzel is filing",
-  filed: "Avanzel filed it",
+  filing: "Avanzel is working",
+  filed: "Avanzel saved it",
   "needs-you": "Avanzel needs you",
   asleep: "The evening review is done",
 };

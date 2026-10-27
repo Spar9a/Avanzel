@@ -400,11 +400,11 @@ export class Controller {
   private filed = { day: "", count: 0 };
   /**
    * The filing the menu's Undo takes back (`undoLastFiling`): the last capsule or background filing that ended well with a commit, and
-   * the root of the library it filed in. Each filing's run clears it as it starts (`runFiling`) and so does each review's, the evening
-   * review's and the weekly one's (`executeTask`): they write to the library, and a revert of the filing would meet their later commits;
-   * so does the take-back of its commit (`takeBack`, `revertFiling`) and a library that opens (`openLibrary`). A Stop on a filing that
-   * still waits in the queue clears nothing: no run has begun. Setup's first thought never sets it, and nor does the evening review: each
-   * has its own Undo.
+   * the root of the library it filed in. Each filing's run clears it as it starts (`runFiling`), and so does a review that writes to the
+   * library (`executeTask`), since a revert of the filing would meet the review's later commits: the weekly review as it starts, and the
+   * evening review as it ends, if it filed anything or threw (one with nothing to file writes nothing, and leaves it). So does the
+   * take-back of its commit (`takeBack`, `revertFiling`) and a library that opens (`openLibrary`). A Stop on a filing that still waits in
+   * the queue clears nothing: no run has begun. Setup's first thought never sets it, and nor does the evening review: each has its own Undo.
    */
   private lastFiled: { commit: string; library: string; pages: FiledPage[]; job?: FilingJob } | null = null;
   private running = new Set<string>();
@@ -762,9 +762,10 @@ export class Controller {
   }
 
   /**
-   * The menu's Undo has nothing to take back: a filing's run begins (`runFiling`), a review's does (`executeTask`), or the commit of
-   * the filing it would take back is being taken back already (`takeBack`, `revertFiling`: `commit` is that commit, and any other
-   * filing's take-back leaves it be). The menu is built again, but only if it was holding a filing.
+   * The menu's Undo has nothing to take back: a filing's run begins (`runFiling`), a review writes to the library (`executeTask`: the
+   * weekly one as it starts, an evening review that filed something as it ends), or the commit of the filing it would take back is being
+   * taken back already (`takeBack`, `revertFiling`: `commit` is that commit, and any other filing's take-back leaves it be). The menu is
+   * built again, but only if it was holding a filing.
    */
   private clearLastFiled(commit?: string): void {
     if (this.lastFiled === null || (commit !== undefined && this.lastFiled.commit !== commit)) return;
@@ -880,14 +881,17 @@ export class Controller {
   }
 
   /**
-   * A thought of the person's is in flight: it is being recorded or made into words, its editor is open, or its filing (the
-   * capsule's own, whether its card shows or is hidden) shows, waits for its turn or runs. A recording of setup's first thought counts.
+   * A thought of the person's is in flight: it is being recorded or made into words, its editor is open, its edit is still to be settled
+   * (`editing`), or its filing (the capsule's own, whether its card shows or is hidden) shows, waits for its turn or runs. A recording of
+   * setup's first thought counts. An edit is settled in the queued work that files the corrected words (`settleEdit`, `refile`), so File
+   * after Edit during a review is in flight until that work's turn comes, whether its card shows or is hidden: it is in neither
+   * `queuedToFile` nor `runs` meanwhile. (`job` is never a background filing's: only the capsule's own filings set it.)
    */
   private capturing(): boolean {
     const capsule = this.capsuleState.kind;
     const job = this.job;
-    const filing = job !== null && !job.background && (this.queuedToFile.has(job.capturePath) || this.runs.has(job.abort));
-    return this.recording !== null || capsule === "transcribing" || capsule === "filing" || this.inEditor !== null || filing;
+    const filing = job !== null && (this.queuedToFile.has(job.capturePath) || this.runs.has(job.abort));
+    return this.recording !== null || capsule === "transcribing" || capsule === "filing" || this.inEditor !== null || this.editing.size > 0 || filing;
   }
 
   /**
@@ -996,10 +1000,12 @@ export class Controller {
    *   would be heard in the words. A recording runs from `startRecording` until its audio arrives or it is given up.
    * - A sound isn't held for a page that can't hear it yet, as a command is (`capsuleCommand`): it would come late, and a late sound is no
    *   twin of what happened. Nor is one sent to a page that has gone.
+   * - Nothing is sent once Avanzel is quitting (`stopForQuit`): an evening review that the quit stopped still comes to its end, and its
+   *   Letter would play on the way out.
    * The evening review asks whether its Letter was sent, since the review's notification is silent only then (`executeTask`).
    */
   private sound(name: SoundName): boolean {
-    if (!this.store.get().sounds || !this.capsuleListening) return false;
+    if (this.quitting || !this.store.get().sounds || !this.capsuleListening) return false;
     if (this.recording && name !== "tick" && name !== "tock") return false;
     if (this.capsule.isDestroyed() || this.capsule.webContents.isDestroyed()) return false;
     this.capsule.webContents.send("capsule:sound", name);
@@ -1211,7 +1217,8 @@ export class Controller {
       ...(shot ? { thumbnail: shot.thumbnail, context: shot.context } : {}),
     });
     // The Tick goes out before the recorder is told to start, and nothing waits for it: opening the microphone takes longer than the
-    // Tick lasts (getUserMedia, then the audio worklet, recorder.ts), so the Tick is over before anything is recorded.
+    // Tick lasts (getUserMedia, then the audio worklet, recorder.ts), so the Tick is usually over before anything is recorded. (A page
+    // whose audio has been quiet for 30 s wakes it first, from the listening card on: renderer/common/sounds.ts, `QUIET_MS`.)
     this.sound("tick");
     this.capsuleCommand("start");
     try {
@@ -3701,37 +3708,48 @@ export class Controller {
   private async executeTask(task: ShadowTask): Promise<void> {
     const agent = this.agentName(task.agent);
     try {
-      // A review that runs writes to the library: the evening review files, and the weekly one appends to the log and commits. The filing
-      // before it is not the last any more, and a revert of it would meet the review's later commit and be refused. A custom review is
-      // skipped below and changes nothing, so the last filing stands.
-      if (task.kind === "evening-review" || task.kind === "review") this.clearLastFiled();
+      // The weekly review appends to the log and commits as it runs: the filing before it is not the last any more, and a revert of it
+      // would meet the review's later commit and be refused. The evening review writes to the library only if it files something, so it
+      // ends the offer as it ends (below). A custom review is skipped below and changes nothing, so the last filing stands.
+      if (task.kind === "review") this.clearLastFiled();
       if (task.kind === "evening-review") {
         const left = new Set<string>();
-        const result = await this.withRun(async (signal) => {
-          const librarian = await this.librarian(task.agent);
-          // The count's total is read here, as the review begins.
-          return librarian.eveningReview({ instructions: task.instructions, signal, leave: this.countReview(task.id, left) });
-        });
-        this.fallAsleep(); // it ran to its end, whatever it found to file
-        // The Letter plays as the review ends, whatever it found to file, and with it the review's notification makes no sound of its own:
-        // the Letter is its sound (spec §8, "Passive (silent)"). With sounds off, or over a recording, none is sent and macOS's sound stays.
-        const silent = this.sound("letter");
-        if (!result.outcomes.length) {
-          this.notify(task.name, nothingFiled(left.size), undefined, silent);
-          return;
+        // An evening review with nothing to file commits nothing and writes no line in the log, so git would still take the last filing
+        // back: the menu offers it again once the review is over, until the next filing (spec §6.3). One that filed something has
+        // committed after that filing, and one that threw may have filed some of the inbox first: either ends the offer. While the
+        // review waits and runs, the item is hidden all the same (`running`, `undoableFiling`).
+        let filedNothing = false;
+        try {
+          const result = await this.withRun(async (signal) => {
+            const librarian = await this.librarian(task.agent);
+            // The count's total is read here, as the review begins.
+            return librarian.eveningReview({ instructions: task.instructions, signal, leave: this.countReview(task.id, left) });
+          });
+          filedNothing = !result.outcomes.length;
+          this.fallAsleep(); // it ran to its end, whatever it found to file
+          // The Letter plays as the review ends, whatever it found to file, and with it the review's notification makes no sound of its
+          // own: the Letter is its sound (spec §8, "Passive (silent)"). With sounds off, over a recording, or as Avanzel quits, none is
+          // sent, and macOS's sound stays.
+          const silent = this.sound("letter");
+          if (filedNothing) {
+            this.notify(task.name, nothingFiled(left.size), undefined, silent);
+            return;
+          }
+          const filedIds = new Set(result.outcomes.filter((o) => o.ok).map((o) => o.captureId));
+          this.noteFiled((capture) => filedIds.has(path.basename(capture, path.extname(capture)))); // as a filing does (`runFiling`)
+          this.lastEveningCommits = result.commits;
+          const failed = result.outcomes.filter((o) => !o.ok);
+          const filed = result.outcomes.length - failed.length;
+          const digest = result.digestPath;
+          this.notify(
+            `${task.name}: ${filed} ${filed === 1 ? "thought" : "thoughts"} filed`,
+            failed.length ? notFiled(failed, filed) : `${agent} sorted today's inbox. Click to read the summary.`,
+            digest ? () => this.openPage(path.relative(this.requireVault().root, digest)) : undefined,
+            silent,
+          );
+        } finally {
+          if (!filedNothing) this.clearLastFiled();
         }
-        const filedIds = new Set(result.outcomes.filter((o) => o.ok).map((o) => o.captureId));
-        this.noteFiled((capture) => filedIds.has(path.basename(capture, path.extname(capture)))); // as a filing does (`runFiling`)
-        this.lastEveningCommits = result.commits;
-        const failed = result.outcomes.filter((o) => !o.ok);
-        const filed = result.outcomes.length - failed.length;
-        const digest = result.digestPath;
-        this.notify(
-          `${task.name}: ${filed} ${filed === 1 ? "thought" : "thoughts"} filed`,
-          failed.length ? notFiled(failed, filed) : `${agent} sorted today's inbox. Click to read the summary.`,
-          digest ? () => this.openPage(path.relative(this.requireVault().root, digest)) : undefined,
-          silent,
-        );
       } else if (task.kind === "review") {
         const outcome = await this.withRun(async (signal) => (await this.librarian(task.agent)).review({ signal }));
         const report = outcome.report;

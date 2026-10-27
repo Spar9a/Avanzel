@@ -11,6 +11,7 @@
 - **Sounds** are synthesised with WebAudio in a shared renderer module, one AudioContext per page.
   - The capsule plays what main sends. Main sends only while the setting is on, and while a recording runs only that recording's own Tick and Tock.
   - Main also tells the capsule's page when sounds go on or off (`capsule:sounds-setting`, and at load while they are on). On, the page makes its AudioContext at once, off the dictation's path; off, it lets go of it.
+  - A page suspends its AudioContext after 30 s with nothing played, since a running one keeps the Mac awake (measured with `pmset -g assertions`), and wakes it for the next sound or a recording's start. Nothing plays once Avanzel is quitting.
   - Setup and Settings play their own sounds: a Preview that plays four of the five, and the Stamp when sounds are switched on. Each asks main first (`settings:may-play-sounds`) and stays quiet while a recording runs, since the recorder has no echo cancellation.
 
 **Tech Stack:** Electron 44 (Tray, nativeImage, dialog), TypeScript, React 19 renderers on `@avanzel/ui`, Vitest, Playwright for Electron.
@@ -36,8 +37,9 @@ Where this plan sits:
   - Task 5: `916b4f0`, `d929c6b`.
   - Task 6: `10d4eb1`.
   - Task 7: `6a5542d`, `4239057`.
-  - Task 8, step 4 (the design review's fixes): `mac: the menu bar reads as one design`. Its seven changes are listed under Task 8, and they supersede the task text below where the two differ.
-- **This plan now says what was built.** Where a review's ruling changed what a task's text first said, the text follows the ruling. Owner items 11 to 20 are the ones the work found, and the Review Focus lists carry the final rulings.
+  - Task 8, step 4 (the design review's fixes): `mac: the menu bar reads as one design`. Its seven changes are listed under Task 8.
+  - The final fix wave, after the whole-branch review: `mac: an empty evening review leaves Undo alone, the face's words are true on every path, and the last loose ends are tied`. An evening review with nothing to file keeps the menu's Undo, the tooltips say "working" and "saved", the capsule's AudioContext is suspended after 30 s of quiet, and the README names the menu's Undo, the review's question and Play sounds.
+- **This plan says what was built, through the final fix wave.** Each task's interfaces, copy and tests follow the reviews' rulings, Task 8's design fixes and the final fix wave; where the first build differed, a parenthesis says what it was. The steps' checklists and the commands they ran are as each task ran them. Owner items 11 to 20 are the ones the work found, and the Review Focus lists carry the final rulings.
 
 ## Global Constraints
 
@@ -91,7 +93,7 @@ These are stand-ins and choices for the owner. Each task names the ones it creat
 5. **The shelf glyphs and names are copied into main** (`main/shelf-glyphs.ts`).
    - Shelf.tsx's `GLYPHS` is private JSX, and main can't import a value from the package root.
    - A test keeps the copy equal to the design system. A plain-TypeScript export next to `menu-bar.ts` would remove the copy.
-   - The menu draws them in black, as template images (the design review's fix). A coloured glyph is an owner option: an ink variant per shelf, in `@avanzel/ui/menu-bar`, which would also remove the copy of the colours main no longer holds.
+   - The menu draws them in black, as template images that macOS tints (the design review's fix), so main holds no shelf colours. A coloured glyph is an owner option: an ink variant per shelf in `@avanzel/ui/menu-bar`, which main would then import.
 6. **Choices the spec leaves open:**
    - The face is `idle` with no library.
    - Downloading doesn't make the face busy; the title shows the percent.
@@ -101,10 +103,10 @@ These are stand-ins and choices for the owner. Each task names the ones it creat
    - No title shows while setup's window or Zel's up-here bubble is open: a title widens the icon's bounds, which they centre on.
    - Esc plays a Tock, since the spec's Tock is "listening stops". A recording whose microphone fails to start has a Tick and no Tock: listening never began, and its error card is the twin of that end.
    - The Letter plays whenever the evening review finishes, and the review's notification is then silent (§8 line 570).
-   - Every review that runs an agent clears the menu's Undo as it starts: the evening review and the weekly one. A custom review is only skipped, with a notice, and clears nothing.
+   - A review that writes to the library clears the menu's Undo: the weekly review as it starts, and the evening review as it ends, if it filed anything (or threw). An evening review with nothing to file writes nothing, so the Undo comes back after it. A custom review is only skipped, with a notice, and clears nothing.
 7. **Native alert buttons are in title case** ("Run Now", "Cancel"), like the existing "Use This Folder" (controller.ts:2785-2796).
    - The default is Run Now, so Return runs the review: the question answers a press made a second ago, and Esc cancels.
-8. **By hand on macOS 27:** the custom shelf images show in the menu (§6.5: "macOS 27 hides SF Symbols in menus by default").
+8. **By hand on macOS 27:** the custom shelf images show in the menu (§6.5: "macOS 27 hides SF Symbols in menus by default"), in light and dark, and on the selected row, where a template image should turn the highlight's white.
 9. **The global "Undo the last filing" shortcut** (§10, line 640) isn't in 1d.
 10. **"Show the last receipt" in the menu** (§6.3, line 340) isn't in 1d.
 11. **The filing face's first dot merges with the shelf at 2x** (art, `packages/ui/src/menu-bar.ts:29`).
@@ -117,13 +119,16 @@ These are stand-ins and choices for the owner. Each task names the ones it creat
     - The shell check matches only `.tsx`, `.css` and `.html` (`guard.mjs:43`), while `config.mjs:6` makes `renderer/**/*.ts` window code.
     - A script edited `renderer/common/sounds.ts` unrefused. Its after-shell step still ran the design check, which passed.
     - Widening the regex is the owner's call.
-14. **Words for the owner to read.** The implementers wrote all three, and the design review's fixes reworded them:
+14. **Words for the owner to read.** The implementers wrote the first three, and the design review's fixes reworded them; the tooltips are the design review's, reworded in the final fix wave:
     - The speech item's second line says what is safe and where to go, from the capsule's and Settings → Voice's own sentences: "Typing works meanwhile. Try again in Settings → Voice.", and for voice settings Avanzel can't use "Typed thoughts are still saved to the inbox. Fix the config file." What Try again does (continue or start over) is left to Settings → Voice.
+    - The menu no longer says that Avanzel reads the config file again within a minute (the first build's "Fix the config file. Avanzel reads it again within a minute."). It still does (`tick`), and choosing the item reads it at once; the rewording dropped the sentence, and nothing says it now.
+    - The icon's tooltip, the face in words: "Avanzel", "Avanzel is recording", "Avanzel is working", "Avanzel saved it", "Avanzel needs you" and "The evening review is done". "Working", not "filing": the busy face is also an Ask, a transcription for a screen comment or the evening review, and the weekly review. "Saved", not "filed": the stamp also follows a saved card (a screen comment, words kept for the review), and Filed is "saved and undoable" (spec §4.2).
     - The review question's detail: "It runs with Claude Code on your plan, so it may count toward your usage limit." (with no agent: "It runs on your plan, so it may count toward your usage limit."). "May", because "uses" is untrue for an empty inbox and for a local model. The capsule says "usage limit" and Settings says "on your plan".
     - Settings' description of Play sounds: "A tick and a tock as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two soft bell tones when the evening review is done." It says "tones", since "notes" is the app's word for a capture.
-15. **The audio device stays open while sounds are on.**
+15. **The audio device while sounds are on.**
     - The capsule's page makes its AudioContext when sounds go on, and at launch while they are on. The first Tick is then played about 25 ms after the listening card, where making the context at the first Tick took about 150 ms and delayed the card.
-    - With sounds on, an idle Mac may keep a Bluetooth headset in its playback profile. By hand: leave it idle for 10 minutes with AirPods and check, with `pmset -g assertions`, and decide whether idle should let the device go.
+    - A running context kept the Mac awake. Measured in the final fix wave, with sounds on and nothing playing, `pmset -g assertions` showed coreaudiod holding `PreventUserIdleSystemSleep` ("com.apple.audio.BuiltInSpeakerDevice.context.preventuseridlesleep") for the app's audio process, and none with sounds off. So the page now suspends its context after 30 s with nothing played (`QUIET_MS`), and then holds none. The next sound wakes it, and so does a recording's start; the Tick after a suspend came 10 to 42 ms after main sent the listening state, against 5 to 6 ms awake.
+    - By hand: with AirPods, check that the headset leaves its playback profile once the 30 s have passed. The 30 s is the owner's to change.
     - A Preview that is playing when sounds go off isn't stopped.
 16. **Whether the Tick lands in a recording.**
     - The Tick is sent before the recorder starts and plays while the microphone opens. A delay before the recorder would risk missing a stop or cancel, so there is none.
@@ -144,10 +149,11 @@ These are stand-ins and choices for the owner. Each task names the ones it creat
    - A running review rebuilds the menu once for each capture it counts, never for each step: over a two-note review, four builds (its start, each capture, its end), with a fifth allowed for a tick (Task 5's test).
 4. **Undo from the menu reverts `lastFiled` only.**
    - It is set by a capsule or background filing that ends ok with a commit.
-   - It is cleared by every filing's start, by every review's start (the evening review and the weekly one), by any take-back of its commit, and by a library change.
+   - It is cleared by every filing's start, by the weekly review's start, by the end of an evening review that filed something or threw (one with nothing to file writes nothing, and leaves it), by any take-back of its commit, and by a library change.
    - The item hides while a filing or review runs, and while a filing waits in the queue. It answers once, and its result is told once (Task 4's tests).
 5. **Sounds.**
    - While the setting is off, no `capsule:sound` is sent at all. Main still tells the capsule's page that sounds are off (`capsule:sounds-setting`), once, when they go off.
+   - Once Avanzel is quitting no `capsule:sound` is sent either: an evening review the quit stopped still ends, and plays no Letter on the way out (final fix wave).
    - While a recording runs, only its own Tick and Tock play, and the windows' own sounds stay quiet.
    - macOS's notification sound is unchanged, except on the evening review's notification, which is silent when the Letter plays (Task 6's tests).
 
@@ -159,7 +165,7 @@ Owner items: 5, 11, 18.
 
 **Files:**
 - Create `apps/mac/src/main/raster.ts` and `apps/mac/src/main/shelf-glyphs.ts`.
-- Modify `apps/mac/src/main/png.ts`: add `faceIcon` and `tinted`. Keep `trayIcon` until Task 2 replaces its one caller.
+- Modify `apps/mac/src/main/png.ts`: add `faceIcon`. Keep `trayIcon` until Task 2 replaces its one caller. (A `tinted`, for glyphs in their shelf's colour, was built here and went in Task 8, when the glyphs became template images.)
 - Test: `apps/mac/test/raster.test.ts`, `png.test.ts` and `shelf-glyphs.test.ts`.
 
 **Interfaces (produces):**
@@ -181,13 +187,12 @@ Owner items: 5, 11, 18.
   - **Anything outside the subset throws, naming itself.** That covers elements (`<ellipse>`), attributes (`transform`, `fill-rule`, `fill-opacity`, `stroke-dasharray`, `style`), a path command outside the list (the path switch has a `default: throw`), paint on the `<svg>` root, a `rx` beyond half a side and a negative length, so an art change can't fail silently.
   - Nested `opacity` multiplies, as SVG's does.
 - **`faceIcon(state: MenuBarState, scale: 1 | 2): Bitmap`, in `png.ts`:** `rasterizeSvg(menuBarFaceSvg(state), scale)`, so 18 × 18 at 1x and 36 × 36 at 2x. It imports `menuBarFaceSvg` and `type MenuBarState` from `@avanzel/ui/menu-bar`.
-- **`tinted(bitmap: Bitmap, hex: string): Bitmap`, in `png.ts`:** the same alpha, with every pixel's RGB set to `hex`.
 - **In `shelf-glyphs.ts`:**
   - `SHELVES`, `type Shelf` and `SHELF_NAMES` ("Goals", "Ideas", …), copied from `packages/ui/src/generated/tokens.ts:8-9` and `Shelf.tsx:9-16`.
   - `SHELF_GLYPH_SVG: Record<Shelf, string>`: each shelf's 12 × 12 SVG. It has the same paths, circles and stroke widths as `Shelf.tsx:22-39`, with `fill="none" stroke="black"` on the stroked ones.
-  - `SHELF_COLORS: { light: Record<Shelf, string>; dark: Record<Shelf, string> }`. `light` moves from `tray.ts:6-8` (it equals `tokens.css:116-121`), and `dark` comes from `tokens.css:173-178`.
+  - No shelf colours. The glyphs are drawn black, as template images that macOS tints (Task 8's design fixes: a coloured glyph fell under 3:1 on a light menu). `tray.ts`'s own `SHELF_COLORS` went with its dots in Task 3.
   - `isShelf(folder: string): folder is Shelf`: by the exact name, so a folder the person made is none, whatever it is called.
-  - `shelfGlyph(shelf: Shelf, dark: boolean, scale: 1 | 2): Bitmap`, and `shelfGlyphIcon(shelf: string, dark: boolean, scale: 1 | 2): Bitmap | null` around it: the tinted glyph, 12 × 12 at 1x. It is null for a folder that isn't a shelf.
+  - `shelfGlyph(shelf: Shelf, scale: 1 | 2): Bitmap`, and `shelfGlyphIcon(shelf: string, scale: 1 | 2): Bitmap | null` around it: the glyph in black on transparent, for a template image, 12 × 12 at 1x. It is null for a folder that isn't a shelf.
 
 - [ ] **Step 1: Write the failing tests.**
   - **raster.test.ts:**
@@ -208,11 +213,9 @@ Owner items: 5, 11, 18.
     - "2x is 36 px".
   - **shelf-glyphs.test.ts:**
     - "the glyphs match Shelf.tsx": compare each shelf's `SHELF_GLYPH_SVG` element by element with `renderToStaticMarkup(ShelfGlyph)`. A changed path, circle or stroke width, a swapped fill and stroke, an added opacity, a new element or a new viewBox fails it (20 drifts tried on a mirror, 20 caught).
-    - "the shelves, names and colours match the design system":
-      - `SHELVES` and `SHELF_NAMES` equal `@avanzel/ui`'s. A test may import the root, since vitest takes its CSS, as `common-copy.test.ts:3` does.
-      - `SHELF_COLORS` equals the `--av-shelf-*` values in `tokens.css`, in light and in dark.
-    - "a shelf glyph is tinted with its colour": every painted pixel of `shelfGlyphIcon("ideas", false, 1)` is `#ffcc00`, and with `dark` it is `#ffd60a`.
-    - "a folder off the shelves has no glyph": `shelfGlyphIcon("projects", false, 1)` is null.
+    - "the shelves and names match the design system": `SHELVES` and `SHELF_NAMES` equal `@avanzel/ui`'s. A test may import the root, since vitest takes its CSS, as `common-copy.test.ts:3` does.
+    - "a shelf glyph is black on transparent, for macOS to tint: no colour of its own": every painted pixel of `shelfGlyphIcon("ideas", 1)` is black.
+    - "a folder off the shelves has no glyph": `shelfGlyphIcon("projects", 1)` is null.
 - [ ] **Step 2: Run** `npx vitest run test/raster.test.ts test/png.test.ts test/shelf-glyphs.test.ts` from `apps/mac`. Expected: they fail (no module).
 - [ ] **Step 3: Implement.**
   - Fill counts windings per subsample.
@@ -273,7 +276,7 @@ Owner items: 6, 12, 20.
     - any filing ends ok (`runFiling`'s success path);
     - a `saved` card shows that isn't `undone`. The Undone card is `saved` with `undone`, controller.ts:2250.
   - **`asleep`:**
-    - It is set when `executeTask`'s `eveningReview` resolves without throwing and `sleepsAfterReview(reviewEndedAt(env))` holds, and no thought is in flight (`capturing()`: a recording, speech being made into words, an open editor, or the capsule's own filing, shown, hidden or waiting). Such a thought began before the review ended, so it is no "next capture" to wake Zel, and its filing would end on the asleep face.
+    - It is set when `executeTask`'s `eveningReview` resolves without throwing and `sleepsAfterReview(reviewEndedAt(env))` holds, and no thought is in flight (`capturing()`: a recording, speech being made into words, an open editor, an edit still to be settled (`editing`: File after Edit during a review, whose filing waits behind it with its card shown or hidden; final fix wave), or the capsule's own filing, shown, hidden or waiting). Such a thought began before the review ended, so it is no "next capture" to wake Zel, and its filing would end on the asleep face.
     - It is cleared at the next capture (`startRecording`, `submitQuick`, or setup's typed thought through the host's `newCapture`, controller.ts:2919) and in `openLibrary`.
     - With `AVANZEL_TEST=1`, `AVANZEL_FAKE_HOUR` stands in for the hour, as `AVANZEL_FAKE_TRAY_BOUNDS` stands in for the bounds (tray.ts:57-61).
   - **`setupOpen`:** `this.setup.isOpen() || this.setup.upHereOpen()`.
@@ -332,9 +335,9 @@ Owner items: 8, 14, 20.
 **Files:**
 - Modify:
   - `menu-model.ts`;
-  - `tray.ts`: shelf glyph images replace the dots, following the appearance;
+  - `tray.ts`: shelf glyph images replace the dots (black template images since Task 8, which macOS tints for the appearance and the highlight);
   - `library-info.ts`: `filedToday`;
-  - `controller.ts`: the count's cache, `MenuTask.kind`, `speechProblem`, the menu's `open-settings:` actions, and a rebuild on `nativeTheme`'s `updated` event.
+  - `controller.ts`: the count's cache, `MenuTask.kind`, `speechProblem` and `speechSublabel`, and the menu's `open-settings:voice` action. (The first build rebuilt the menu on `nativeTheme`'s `updated` event for coloured glyphs; Task 8 removed it with them.)
 - Test: `apps/mac/test/menu-model.test.ts`, `library-info.test.ts` and `e2e/menu-bar.spec.ts`.
 - No e2e reads the ready library's head label. Only `menu-model.test.ts` pins it (:31-34, :36-40, :53-66, :76-84, :128-132).
 
@@ -344,25 +347,25 @@ Owner items: 8, 14, 20.
   - `filedToday(root: string, now: Date): number`, in `library-info.ts`.
     - It counts today's lines in `log.md` whose operation is `file` (`- 2026-10-20 14:03 | file | …`, the `FILE_LINE` pattern), using local dates as `Vault.logLine` writes them. An Ask whose words mention " | file | " isn't a filing.
     - It does no page lookups, and a missing file counts as 0.
-  - `MenuInput` gains `filedToday: number`, `speechProblem: string | null` and `speechRetry?: string`, and `MenuTask` gains `kind: string`.
-  - `speechProblemOf(model: ModelStatus): { title: string; retry: string } | null`, exported from `menu-model.ts`: null unless `model.kind === "error"`; the title is the capsule's own, and the retry says what trying again does.
+  - `MenuInput` gains `filedToday: number`, `speechProblem: string | null` and `speechSublabel?: string`, and `MenuTask` gains `kind: string`.
+  - `speechProblemOf(model: ModelStatus): { title: string; sublabel: string } | null`, exported from `menu-model.ts`: null unless `model.kind === "error"`; the title is the capsule's own, and the sublabel says what is safe meanwhile and where the fix is, in the builders' own words (shared/problems.ts).
   - `statusLine(filedToday: number, evening: MenuTask | undefined, now: Date): string`, exported from `menu-model.ts`.
     - The evening review is the soonest enabled task whose `kind` is `"evening-review"` and whose `at` isn't null, picked as `upcoming` is (menu-model.ts:79-81).
     - It is named by its own `name`.
   - **The head item:**
     - Its label is `statusLine(…)`.
     - Its sublabel is "1 note in the inbox" or "N notes in the inbox", or none when the inbox is empty. The old "Next: …" sublabel goes.
-    - Its action stays `open-inbox`.
+    - Its action follows its words (Task 8): `open-inbox` while the sublabel names the inbox, and `open-library` when the inbox is empty and nothing names it.
   - **A speech-model problem item.** When `speechProblem` is set, an item follows the head.
     - Its label is the capsule's own problem title: "The speech model didn't finish downloading." (`downloadFailedProblem`, shared/problems.ts:258-264), or "Avanzel can't use the voice settings in this library's config file." (`voiceSettingsProblem`, :427-429).
-    - Its second line says what trying again does (`speechRetry`): "Try again in Settings → Voice. It continues where it stopped." for a download that kept part of its file, "Try again in Settings → Voice. It starts the download over." for one that kept none, and "Fix the config file. Avanzel reads it again within a minute." for voice settings Avanzel can't use.
+    - Its second line (`speechSublabel`) says what is safe meanwhile and where the fix is, in the capsule's and Settings → Voice's own words (`TYPING_WORKS_MEANWHILE` and `TYPED_THOUGHTS_SAVED`, shared/problems.ts): "Typing works meanwhile. Try again in Settings → Voice." for a download that failed, and "Typed thoughts are still saved to the inbox. Fix the config file." for voice settings Avanzel can't use. Whether a retry continues or starts over is Settings → Voice's to say. (The first build said what a retry does, in words of its own; Task 8's design review replaced them.)
     - Its action is `open-settings:voice`. `menuAction` re-reads the voice settings (`rereadVoiceSettings`) and then calls `showSettings("voice")` directly. The capsule card's own path, `openSettingsFor`, would also hide an unrelated error or shortcut-taken card, so the menu doesn't use it.
     - The voice settings are re-read each minute (`tick`) and when this item is chosen while they are in error, so the item follows a fix made by hand in the config file. (`menu-will-show` is documented for `popup()` only, and an open menu isn't swapped.)
   - **Recently filed:** each item keeps `shelf` and gains a `sublabel`: `SHELF_NAMES[shelf]`, or the folder's name for a page off the shelves.
+    - With no page to list, the section invites a first thought ("Nothing filed yet. Press ⌥Space and say hello.") only while nothing has been filed today and no filing can be undone (final fix wave): a filing that wrote no page would otherwise sit under "1 thought filed today." with its own Undo below. A section with nothing to show has no header.
   - **In `tray.ts`:**
-    - An item's icon is `shelfGlyphIcon(shelf, nativeTheme.shouldUseDarkColors)`, or none off the shelves.
-    - Icons are cached per shelf and appearance.
-    - The controller rebuilds the menu on `nativeTheme`'s `updated` event.
+    - An item's icon is the shelf's glyph (`shelfGlyph`), a black template image that macOS tints for a light or dark menu and the highlight, or none off the shelves.
+    - Icons are cached per shelf. The appearance turning builds no new menu.
   - **The count's cache:**
     - it is seeded in `openLibrary` (controller.ts:484);
     - it is refreshed wherever `recent` is (controller.ts:1482, :2223, :3226, :3288);
@@ -382,7 +385,7 @@ Owner items: 8, 14, 20.
       - with the review renamed "Nightly sweep", giving "… Nightly sweep at 21:00.";
       - with an enabled review whose `at` is null, which isn't named.
     - The recent items' sublabels are shelf names, or a folder name.
-    - The speech-model item follows the head, with `open-settings:voice` and its retry line. Without a problem there is none. `speechProblemOf` gives each of the three variants, and null for a model that is ready or downloading.
+    - The speech-model item follows the head, with `open-settings:voice` and its second line. Without a problem there is none. `speechProblemOf` gives the failed download's line (the same whether the download can continue or must start over) and the voice settings' line, and null for a model that is ready or downloading.
     - Update `input()` (with `kind`) and the pinned head and label lists.
   - **library-info.test.ts:** `filedToday` counts only today's `file` lines. It ignores `review` and `ask` lines and yesterday's lines, and a missing `log.md` gives 0.
   - **menu-bar.spec.ts:**
@@ -391,7 +394,7 @@ Owner items: 8, 14, 20.
     - "a failed speech-model download is named in the menu". With `fakeModelHub("missing")`, the item after the head reads "The speech model didn't finish downloading.", and `menuAction("open-settings:voice")` opens Settings on Voice.
     - "voice settings Avanzel can't use are named in the menu until a fix is read again", and "choosing the voice settings problem in the menu reads them again, so Settings shows what is wrong now".
     - "choosing the speech model's problem in the menu leaves an error card, or a taken shortcut's notice, that is not about it up".
-    - "the shelf glyphs in the menu are drawn in the shelf's colour, and follow the appearance"; "a library that opens brings the count of its own log, and its own pages"; "the count is read from the log once, and again when the day turns".
+    - "the shelf glyphs in the menu are black template images, which macOS tints, and the appearance turning builds no new menu" (it was "drawn in the shelf's colour, and follow the appearance" until Task 8); "a library that opens brings the count of its own log, and its own pages"; "the count is read from the log once, and again when the day turns".
 - [ ] **Step 2: Run** them. Expected: they fail.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the unit tests, typecheck and design:check. Then build and run `e2e/menu-bar.spec.ts e2e/library.spec.ts e2e/app.spec.ts e2e/models.spec.ts e2e/setup-hello-found.spec.ts e2e/setup-ending.spec.ts e2e/shortcuts.spec.ts`. Expected: they pass.
@@ -412,10 +415,10 @@ Owner items: 8, 14, 20.
       - Edited and stopped runs return before that point (controller.ts:1471).
     - **Cleared**, rebuilding the menu if it was set:
       - when any filing's run starts. That covers `runFiling`, where it calls `startRun` (controller.ts:1448), on the capsule, background, setup and refile paths. A Stop on a filing that still waits in the queue clears nothing: no run has begun;
-      - when a review that runs an agent starts, one guarded call at the top of `executeTask`: the evening review and the weekly one (`kind` is `"evening-review"` or `"review"`). Both write to the library, and the weekly review commits and appends to `log.md`, so a revert of an older filing after either would conflict and be refused. A custom review is only skipped, with a notice, and clears nothing, so the last filing stands;
+      - when a review writes to the library, in `executeTask`, since a revert of an older filing after it would conflict and be refused: the weekly review (`kind` `"review"`) as it starts, since it commits and appends to `log.md`; the evening review as it ends, in a `finally`, if it filed anything or threw. An evening review with nothing to file commits nothing and writes no log line, so the filing stays undoable, and the item comes back once the review is over (spec §6.3: it stays until the next filing). Task 4 first cleared at both reviews' start, which took the Undo away every evening on the default path; the final fix wave moved the evening review's clear to its end. A custom review is only skipped, with a notice, and clears nothing, so the last filing stands;
       - when its commit is taken back, before the take-back's first await. Stop and Edit take back through `takeBack` (controller.ts:2166-2177); Undo from the card or the menu goes through `revertFiling` (:2219-2225);
       - in `openLibrary`.
-  - **`MenuInput.undoableFiling`** is true when `lastFiled` is set, its library is open, Avanzel isn't quitting, and no filing or review waits or runs (`queuedToFile.size === 0 && running.size === 0`). A running filing has already cleared `lastFiled`, and so has a running review.
+  - **`MenuInput.undoableFiling`** is true when `lastFiled` is set, its library is open, Avanzel isn't quitting, and no filing or review waits or runs (`queuedToFile.size === 0 && running.size === 0`). A running filing has already cleared `lastFiled`, and so has a running weekly review; an evening review hides the item through `running` until it ends, and clears `lastFiled` then only if it filed something.
     - `beginFiling` adds to `queuedToFile` before it shows the Filing card, so the one rebuild that follows already hides the item. A queued setup thought hides it too, since setup adds to `queuedToFile`. A background filing (`fileInBackground`) still has a moment in which the item is shown and a press does nothing; the queue add has no guarded rebuild.
   - **`Controller.undoLastFiling(): Promise<void>`.**
     - It acts only when `undoableFiling` holds and `lastFiled.job`, if any, isn't `undoing`.
@@ -440,7 +443,8 @@ Owner items: 8, 14, 20.
     - "Undo from the menu follows the last filing":
       - a background filing, from a usage-limit wait that comes due, offers Undo for its own commit;
       - none is offered after a failed filing, a filing Stop took back (`stopAtTheEnd`, helpers.ts:492-517), setup's first thought, or an evening review that filed;
-      - the item hides while a filing or a review waits or runs. It is gone after an evening or a weekly review, and back after a custom one, which changes nothing;
+      - the item hides while a filing or a review waits or runs. It is gone after a weekly review and after an evening review that filed a note, and back after a custom one, which changes nothing;
+      - "an evening review with nothing to file leaves Undo the last filing in place, and the Undo still takes the filing back" (final fix wave);
       - the item goes with a library switch and with quitting, and a take-back of its commit (Stop, Edit, a refused one told once) takes it away.
 - [ ] **Step 2: Run** them. Expected: they fail.
 - [ ] **Step 3: Implement.**
@@ -473,11 +477,11 @@ Owner items: 7, 14.
   - The menu's `task:<id>` (controller.ts:670) runs `confirmRun(id)`, then `runTask(id)`.
   - Settings' Run now calls `runTaskFromSettings(id)`: `confirmRun` with the Settings window as its parent, then `runTask`. Otherwise it returns the snapshot.
   - `runTask` itself never asks: `tick()`'s due runs and the e2e call it by name.
-- **`MenuTask.progress?: string`,** for example "2 of 5".
+- **`MenuTask.progress?: string`,** for example "Filing 2 of 5" (`reviewProgress(done, total)` in `menu-model.ts`, capitalised like the other details; the first build said "2 of 5", without a unit, until Task 8).
   - `executeTask` passes the engine a `leave` callback made by `countReview(task.id, left)`, and the menu shows the count it keeps (`reviewing`, by task id).
   - The total is taken in `countReview`, as the review begins: `vault.pending()`, less what `leftAlone` would skip (controller.ts:3237-3243).
   - **A capture counts once, at the engine's `leave` pick, not at its first report.** The engine asks `leave(capturePath)` as it picks each capture, and a `false` answer is the pick: the capture is worked on from there, and `leave` isn't asked of it again (the doc of `FileOptions.leave`, pinned by an engine test for a note to leave alone, an unreadable note, a plain note, a recording and a silent recording). `countReview`'s wrapper counts the capture when its answer is false. That counts a recording once, though the engine reports it twice, and a note that can't be read, which reports nothing.
-  - Captures that arrive during the review are filed too, so the total rises to meet the count: `${done} of ${Math.max(total, done)}`. The total is read once, so a capture that becomes one to leave alone after that stays in it, and the last count can read "2 of 3" until the review ends.
+  - Captures that arrive during the review are filed too, so the total rises to meet the count: `Filing ${done} of ${Math.max(total, done)}`. The total is read once, so a capture that becomes one to leave alone after that stays in it, and the last count can read "Filing 2 of 3" until the review ends.
   - The menu shows `progress` as the item's detail instead of "Running…", and `runTask`'s `finally` clears it. One rebuild per counted capture, never per step: over a two-note review the menu is built four times (the review's start, each capture, its end), and the test allows one more for a tick.
 - **`answerDialogs(app, response)`, in `e2e/helpers.ts`.**
   - From then on, `dialog.showMessageBox` answers `{ response, checkboxChecked: false }`.
@@ -485,8 +489,9 @@ Owner items: 7, 14.
 
 **Copy:**
 - Message: `Run “${task.name}” now?`
-- Detail: `It's an agent run with ${agent}, so it may use your plan's quota.` ("May", not "uses": it is untrue for an empty inbox and for an agent on a local model, and Settings already hedges with "on your plan".)
-- With no agent to name, the detail is "It's an agent run, so it may use your plan's quota.", because `agentName` would give "your agent" (controller.ts:574-577).
+- Detail: `It runs with ${harnessName(named)} on your plan, so it may count toward your usage limit.`, for example "It runs with Claude Code on your plan, so it may count toward your usage limit." ("May", not "will": it is untrue for an empty inbox and for an agent on a local model. The capsule says "usage limit", and Settings says "on your plan".)
+- With no agent to name (`selectedHarness` finds none), the detail is "It runs on your plan, so it may count toward your usage limit.", because `agentName` would give "your agent" (controller.ts:574-577).
+- (The first build said "It's an agent run with Claude Code, so it may use your plan's quota."; Task 8's design review gave it the app's own words.)
 - A custom review isn't asked about at all (see `confirmRun`).
 
 - [ ] **Step 1: Write the failing tests** (`menu-bar.spec.ts`):
@@ -500,8 +505,8 @@ Owner items: 7, 14.
     2. Write `checked: { "evening-review": <two days ago> }`, under the library's resolved path, into the test's userData `run-state.json`. `RunStateStore` reads it on every call (run-state.ts:15-44).
     3. `call(app, "tick")`: the review runs, and nothing was asked.
   - "a running review shows how far it is". Hold the fake agent with `FAKE_AGENT_STEP_MS`, and put two notes in the inbox.
-    - The item's `detail` reads "1 of 2", then "2 of 2", then its time again.
-    - `menuForTests` gives `label` and `detail` separately; "(1 of 2)" is only `menuLabel`'s rendering in tray.ts.
+    - The item's `detail` reads "Running…", then "Filing 1 of 2", then "Filing 2 of 2", then its time again.
+    - `menuForTests` gives `label` and `detail` separately; "Evening review (Filing 1 of 2)" is only `menuLabel`'s rendering in tray.ts.
   - **Added in the fix round:**
     - "a custom review is never asked about: it runs no agent, and only says it was skipped";
     - "the question before a review names no agent where none can be named";
@@ -535,7 +540,7 @@ Owner items: 1, 3, 13, 15, 16, 19.
     - tick 80, tock 90, stamp 200, drawer 220, letter 570.
     - The prototype's tones stop 20 ms after they fade (first-run.html:506), and its noise ends with its buffer (:507).
   - `playSound(name: SoundName, make?: () => AudioContextLike): void`, in `renderer/common/sounds.ts`.
-    - It uses one AudioContext per page, made by `prepareSounds` when sounds go on (Task 7) or else at the first play (by `make` in tests), and resumed if it is suspended. Once made it stays open for the page's life, so the Tick, the one sound that races the microphone, is on time; `releaseSounds` lets go of it when sounds go off.
+    - It uses one AudioContext per page, made by `prepareSounds` when sounds go on (Task 7) or else at the first play (by `make` in tests); `releaseSounds` lets go of it when sounds go off. Task 6 kept it running for the page's life, so that the Tick, the one sound that races the microphone, is on time. The final fix wave measured that a running context keeps the Mac awake (coreaudiod's PreventUserIdleSystemSleep, with sounds on and nothing playing), so after 30 s with nothing played (`QUIET_MS`) the page suspends it. The next sound wakes it and waits for the wake (`wake`), and so does a recording's start (`wakeSounds`, as the listening state arrives) and a sound the capsule holds back (the Tock, the Stamp), as it arrives. The Tick after a suspend came 10 to 42 ms after main sent the listening state, against 5 to 6 ms awake.
     - Making the context opens the audio device, which took 110 to 130 ms here. The first Tick of a page that wasn't prepared is that much late, and built on the page's thread ahead of the listening card: Task 7 prepares the context off the dictation's path.
     - **The synth** is the prototype's (first-run.html:505-508):
       - tick = `tone(1320, .06, sine, .07, 880)`;
@@ -606,19 +611,19 @@ Owner items: 2, 14, 15, 17.
 - **Consumes:** Task 6's `playSound` and `AppSettings.sounds`.
 - **The capsule's page is told when sounds go on or off** (Task 6's review, Minor 1).
   - `capsule:sounds-setting` carries a boolean. Main sends it when the setting changes, and once the page has loaded while sounds are on; it sends nothing at load while they are off. A page loaded with sounds on is told after the commands held for it, so a held start doesn't wait for the context.
-  - On, the page calls `prepareSounds()`: it makes its AudioContext at once, off the dictation's path, so the first Tick of a launch is played about 25 ms after the listening card, where building it then took about 150 ms and delayed the card.
+  - On, the page calls `prepareSounds()`: it makes its AudioContext at once, off the dictation's path, so the first Tick of a launch is played about 25 ms after the listening card, where building it then took about 150 ms and delayed the card. (Since the final fix wave the context is suspended after 30 s with nothing played, and woken as a recording starts: Task 6's `QUIET_MS`.)
   - Off, the page calls `releaseSounds()`: it lets go of the device, clears a Tock that waits for the microphone, and a Stamp timer that comes later finds `soundsOn` false and plays nothing, so no late play opens the device again.
 - **Setup's Done step:**
   - The Group keeps all three switches as its direct children, since a Group draws rows only for its direct children (group.css:8-17). They go in this order:
     1. "Open Avanzel when I log in", first, because `watchFirstSwitch` reads the first `[role="switch"]` (setup-ending.spec.ts:56-66);
-    2. "Play sounds", off;
-    3. the review's switch.
+    2. the review's switch;
+    3. "Play sounds", off, last, so that Preview sounds, below the Group, sits right under its own switch (Task 8's design fixes; the first build had it second).
   - Below the Group: `<Actions align="start"><Button size="small" variant="secondary">Preview sounds</Button></Actions>`. "Start using Avanzel" stays the one primary.
   - Preview sounds plays four of the five sounds, whatever the setting: the Tick at 0, the Stamp at 260 ms, the Drawer at 520 ms and the Letter at 800 ms (`PREVIEW_AT_MS`). The times count from the Tick, which opens the device the first time and may take a tenth of a second. The first version played three, and a person deciding later heard only the Stamp.
   - Switching sounds on plays the Stamp, once the change is saved: a change that wasn't kept leaves the switch where it was and plays nothing (and setup has no place to tell it, as for the other two switches).
   - Setup's Play sounds has no description: two lines would scroll the tallest state (owner item 2).
-- **Settings → General:** a "Sounds" group right before "Startup" (it shows with or without a library), with `<Switch label="Play sounds" description="A tick as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two notes when the evening review is done." />`.
-  - The description says only what plays. The first version promised a stamp when a card is filed, which doesn't play for a filing that ends in a notification, for the review's cards or over a recording, and it didn't name the Drawer. (The stop sound is the Tock, which "a tick as you start and stop" doesn't name: owner item 14.)
+- **Settings → General:** a "Sounds" group right before "Startup" (it shows with or without a library), with `<Switch label="Play sounds" description="A tick and a tock as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two soft bell tones when the evening review is done." />`.
+  - The description says only what plays. The first version promised a stamp when a card is filed, which doesn't play for a filing that ends in a notification, for the review's cards or over a recording, and it didn't name the Drawer. Task 8's design review named the Tock and said "tones", since "notes" is the app's word for a capture (owner item 14).
   - Under the switch, in the same Group, a "Preview sounds" button (small, secondary) in a `.settings-preview` box, since a Group draws only its direct children as rows. It plays the same four sounds.
   - Switching it on plays the Stamp, once the change is saved. Off lets go of this page's audio device, and main tells the capsule's page to do the same.
 - **A window's own sound asks main first.** Setup's Preview and its switch-on Stamp, and Settings' Preview and Stamp, call `settings.mayPlaySounds()` (`settings:may-play-sounds`, answered by `!this.recording`) before each sound, and a Preview asks again before each of its four. They stay quiet while a recording runs: the recorder keeps no echo cancellation, so a window's sound would be heard in the words, and the Done step's "Press ⌥Space" starts a real recording there.
@@ -654,7 +659,7 @@ Owner items: 2, 14, 15, 17.
 
   Use a throwaway spec, archived as `.txt` in the flight pack's `archive/1d-work/` and never committed.
 - [x] **Step 4: The design review.** The controller ran the `design-reviewer` agent on the Done step, General and the face shots, and ruled a list. It is fixed in one commit, `mac: the menu bar reads as one design`:
-  1. **The face's six states have words.** `trayTooltip(face)` (tray-state.ts) gives the icon's tooltip, set whenever the face changes ("Avanzel", "Avanzel is recording", "Avanzel is filing", "Avanzel filed it", "Avanzel needs you", "The evening review is done"). Electron's Tray has no accessibility label, so the tooltip is all the text a hover or VoiceOver gets, and the filing face reads like idle at 18 pt. `trayForTests` gives `tooltip`.
+  1. **The face's six states have words.** `trayTooltip(face)` (tray-state.ts) gives the icon's tooltip, set whenever the face changes ("Avanzel", "Avanzel is recording", "Avanzel is working", "Avanzel saved it", "Avanzel needs you", "The evening review is done"; this commit said "Avanzel is filing" and "Avanzel filed it", which the final fix wave made true on every path: the busy face is also an Ask, a transcription that files nothing yet and the weekly review, and the stamp also follows a saved card). Electron's Tray has no accessibility label, so the tooltip is all the text a hover or VoiceOver gets, and the filing face reads like idle at 18 pt. `trayForTests` gives `tooltip`.
   2. **In setup, Preview sounds sits under Play sounds.** The Done step's switches are the login switch, the review's and Play sounds, last. Preview, below the Group, is tied to its switch by place alone (owner item 2), so the place has to be right.
   3. **The menu's speech item says what is safe.** See owner item 14. `TYPING_WORKS_MEANWHILE` and `TYPED_THOUGHTS_SAVED` (problems.ts) are the builders' own words; `MenuInput.speechRetry` is now `speechSublabel`.
   4. **The app's own words.** The review question's detail and the sounds description (owner item 14), and the review's notification: "Evening review: 1 thought filed" or "N thoughts filed", as the menu's head counts them.
@@ -664,12 +669,12 @@ Owner items: 2, 14, 15, 17.
   - Left as they are, for the owner: the filing face's dots merge with the base at menu-bar size (owner item 11), and Run Now stays the review question's default button.
 - [ ] **Step 5: List the by-hand checks** in the flight pack as pending for the owner, never as done:
   - with sounds on, record with the Mac's microphone and with AirPods: the Tick isn't heard in the saved recording (`raw/audio/`, the first half-second; owner item 16);
-  - on macOS 27, the shelf images show in the menu, in light and dark (owner item 8);
+  - on macOS 27, the shelf images show in the menu, in light and dark, and on the selected row, where a template image should turn the highlight's white (owner item 8);
   - after setup's flight, with a download running, the bubble's tail points at Zel;
   - the six faces read at menu-bar size, in light and dark; the `needs-you` dot, the `asleep` z and the `filing` face's dots (owner item 11) are the small parts;
   - the title beside the icon on a crowded or notched menu bar, in light and dark (owner item 12);
   - the review question, from the menu and from Settings: from the menu it comes to the front, Return runs the review and Esc cancels, and focus goes back to the app that had it after Cancel; from Settings it is a sheet on the window;
-  - by ear (owner items 15, 16 and 19): levels on laptop speakers and with AirPods; the first Tick after a launch with sounds on (about 25 ms after the card, where it was about 150); the Tick in the take; the Tock after the card, and with AirPods in call mode; the Stamp against the stamp's contact, under Reduce Motion and on a Noted card; the Drawer as the window hides, and before a screen comment's Tick; the Letter as two notes with no chime, or a chime and no notes with sounds off; a review that ends mid-dictation puts macOS's chime in the take; with sounds on and 10 minutes idle, the headset stays free, and the output follows a device switch;
+  - by ear (owner items 15, 16 and 19): levels on laptop speakers and with AirPods; the first Tick after a launch with sounds on (about 25 ms after the card, where it was about 150), and the first Tick after 30 s of quiet, which waits for the audio to wake (measured 10 to 42 ms after main sent the listening state, against 5 to 6 ms awake); the Tick in the take; the Tock after the card, and with AirPods in call mode; the Stamp against the stamp's contact, under Reduce Motion and on a Noted card; the Drawer as the window hides, and before a screen comment's Tick; the Letter as two tones with no chime, or a chime and no tones with sounds off; a review that ends mid-dictation puts macOS's chime in the take; with sounds on and 10 minutes idle, the headset stays free (the context is suspended after 30 s, and `pmset -g assertions` holds no audio assertion then), and the output follows a device switch;
   - a recording past a few minutes ("12:03", "60:00"), App Nap over a long hidden filing, and a download on a real network.
 - [ ] **Step 6: Docs.** Update this plan's tables to what was built, and fill in the owner items it found.
   - Done: the Built list, the Architecture and Global Constraints, each task's text, the Review Focus lists and owner items 11 to 20, in the commit `docs: the 1d plan says what was built`.

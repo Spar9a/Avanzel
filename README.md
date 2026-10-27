@@ -48,7 +48,10 @@ The **evening review** (a scheduled review, 21:00 by default) files the day's in
 summary to `reviews/`, and can be taken back with **Undo the last evening review** in the menu bar
 menu. A **weekly review** looks over the whole library. Scheduled reviews are Markdown files in
 `tasks/`; edit their times, agents and instructions in Settings → Reviews (a file Avanzel can't
-read is listed there with what is wrong with it).
+read is listed there with what is wrong with it). Running the evening or the weekly review
+yourself, from the menu bar menu or with Settings' **Run now**, asks first, since it runs your agent
+on your plan and may count toward your usage limit; while the evening review runs, the menu shows
+how far it is ("Filing 2 of 5"). A review that comes due on its schedule doesn't ask.
 
 Good to know:
 
@@ -67,6 +70,15 @@ Good to know:
   the corrected words (or cancel), whatever that run already changed is undone first, then the note
   is filed again. An edit survives quitting and a new dictation (your words wait in the inbox), and
   the evening review leaves a note you are editing alone.
+- **Undo the last filing** in the menu bar menu takes the last filed thought back as the capsule's
+  Undo does, after its card has gone too: what the filing changed is undone, and your words are back
+  in the inbox. It stays until the next filing, or until a review writes to the library (the weekly
+  review, or an evening review that files something), and it is hidden while a filing or a review
+  waits or runs.
+- **Play sounds** in Settings → General (off by default; setup's last step offers it too) adds a
+  tick and a tock as you start and stop recording, a stamp and a whoosh as the capsule files a card
+  and puts it away, and two soft bell tones when the evening review is done. **Preview sounds**
+  plays them first. While you record, nothing but the tick and the tock plays.
 - **Screen Recording**: macOS applies the permission only to a fresh start of the app. After you
   allow Avanzel in System Settings → Privacy & Security → Screen Recording, quit and reopen it.
 - **Quitting** while your agent is filing stops the agent; what it had changed is kept as its own

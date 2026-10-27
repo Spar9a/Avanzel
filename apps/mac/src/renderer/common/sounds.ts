@@ -3,16 +3,17 @@
 // Sounds are off by default and each has a visual twin (spec §4.6): each is under 0.6 s and quiet, no layer peaks over 0.35, and the
 // Stamp's two layers together peak at 0.48. A window plays one with `playSound`; the capsule's page plays what main sends it
 // (`capsule:sound`), and main decides when, and whether the setting allows it (controller.ts, `sound`). A page holds one AudioContext,
-// which holds the audio device open: the capsule's is made ahead of its first Tick (`prepareSounds`, when main says sounds are on) and
-// closed when they go off (`releaseSounds`). Setup and Settings play sounds of their own, outside main's gate: Preview sounds
-// (`previewSounds`) plays four of them whatever the setting, and switching sounds on plays the Stamp (`soundsSwitched`). Each asks main
-// right before it plays (`MayPlay`), and main says no while a recording runs.
+// which holds the audio device open while it runs: the capsule's is made ahead of its first Tick (`prepareSounds`, when main says sounds
+// are on) and closed when they go off (`releaseSounds`). After 30 s with nothing played it is suspended, which lets the device go, and
+// with it the Mac sleep (`QUIET_MS`); the next sound wakes it, and so does a recording's start (`wakeSounds`). Setup and Settings play
+// sounds of their own, outside main's gate: Preview sounds (`previewSounds`) plays four of them whatever the setting, and switching sounds
+// on plays the Stamp (`soundsSwitched`). Each asks main right before it plays (`MayPlay`), and main says no while a recording runs.
 import type { SoundName } from "../../shared/ipc.ts";
 
 /** What of an `AudioContext` the sounds use. The page's own is one, and a fake stands in for it in the tests. */
 export type AudioContextLike = Pick<
   AudioContext,
-  "currentTime" | "sampleRate" | "state" | "destination" | "resume" | "close" | "createOscillator" | "createGain" | "createBiquadFilter" | "createBuffer" | "createBufferSource"
+  "currentTime" | "sampleRate" | "state" | "destination" | "resume" | "suspend" | "close" | "createOscillator" | "createGain" | "createBiquadFilter" | "createBuffer" | "createBufferSource"
 >;
 
 /**
@@ -89,18 +90,66 @@ const SYNTH: Record<SoundName, (context: AudioContextLike) => void> = {
 
 /**
  * The page's one AudioContext, made at the first sound or by `prepareSounds`, whichever comes first, and let go of by `releaseSounds`. Each
- * context holds the audio device open, so there is one for a page, not one for a sound.
+ * context holds the audio device open while it runs, so there is one for a page, not one for a sound.
  */
 let shared: AudioContextLike | null = null;
 
 /** A real one. Read when it is made, not when the module loads: a page that never plays makes none. */
 const newContext = (): AudioContextLike => new AudioContext();
 
-/** The page's AudioContext: the one it has, else a new one by `make`, woken if it is suspended. Throws when none can be made. */
+/** The page's AudioContext: the one it has, else a new one by `make`. Throws when none can be made. */
 function context(make: () => AudioContextLike): AudioContextLike {
-  const ready = (shared ??= make());
-  if (ready.state === "suspended") void ready.resume().catch(() => undefined);
-  return ready;
+  return (shared ??= make());
+}
+
+/**
+ * How long the page's AudioContext runs with nothing to play before it is suspended (`quietFrom`). A context that runs keeps the audio
+ * device open, playing silence: macOS then keeps the Mac from sleeping (with sounds on and nothing playing, coreaudiod holds
+ * PreventUserIdleSystemSleep for the page's audio, which `pmset -g assertions` shows, and with sounds off it holds none), and a Bluetooth
+ * headset stays in its playback mode. Suspended, the context lets both go. Waking it takes a moment, which the next sound waits for.
+ */
+export const QUIET_MS = 30_000;
+
+/** The wake of the page's context while it is under way (`wake`): each sound that comes meanwhile waits for it. */
+let waking: Promise<void> | null = null;
+
+/** The suspend that comes once the page has been quiet for QUIET_MS (`quietFrom`). */
+let quiet: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Wakes `ready` if it is suspended (by the quiet, or as it was made), and returns the wake, which every sound that comes meanwhile waits
+ * for, so they play in the order they came: a sound scheduled into a suspended context would wait on its stopped clock, and be noted as
+ * played before it is heard. Null when the context runs and no wake is under way. (A wake is always the page's context's: letting go of
+ * the context forgets it, `releaseSounds`.)
+ */
+function wake(ready: AudioContextLike): Promise<void> | null {
+  if (waking) return waking;
+  if (ready.state !== "suspended") return null;
+  const woken: Promise<void> = ready
+    .resume()
+    .catch(() => undefined) // a context that can't wake plays nothing, and the next sound tries again
+    .finally(() => {
+      if (waking === woken) waking = null;
+    });
+  waking = woken;
+  return woken;
+}
+
+/**
+ * Starts the quiet over: QUIET_MS after `after` milliseconds from now (the length of a sound that has just begun), `ready` is suspended,
+ * if it is still the page's context and runs. A context that won't suspend is left as it is.
+ */
+function quietFrom(ready: AudioContextLike, after = 0): void {
+  if (quiet !== null) clearTimeout(quiet);
+  quiet = setTimeout(() => {
+    quiet = null;
+    if (shared !== ready || ready.state !== "running") return;
+    try {
+      void ready.suspend().catch(() => undefined);
+    } catch {
+      // It stays awake, as it was: the next sound starts the quiet over.
+    }
+  }, after + QUIET_MS);
 }
 
 /** How many plays `__avanzelSounds` keeps. */
@@ -117,14 +166,30 @@ function note(name: SoundName): void {
 
 /**
  * Plays `name` now. The page's AudioContext is made by the first play, unless `prepareSounds` made it first (`make`, which the tests
- * give a fake), and woken if it is suspended. Each play is noted in `globalThis.__avanzelSounds` for the tests, the last 20. A sound
- * that can't play is left unheard, and nothing else is affected: a Mac with no way to play audio is a Mac without sounds, never an
- * error in a window.
+ * give a fake). A context the quiet has suspended is woken first, and the sound waits for it to run (`wake`); one that sounds have let
+ * go of meanwhile (`releaseSounds`) takes the sound with it. Each sound starts the quiet over from its end (`quietFrom`). Each play is
+ * noted in `globalThis.__avanzelSounds` for the tests, the last 20, as it is played. A sound that can't play is left unheard, and
+ * nothing else is affected: a Mac with no way to play audio is a Mac without sounds, never an error in a window.
  */
 export function playSound(name: SoundName, make: () => AudioContextLike = newContext): void {
   try {
-    SYNTH[name](context(make));
+    const ready = context(make);
+    const woken = wake(ready);
+    if (woken === null) return play(name, ready);
+    void woken.then(() => {
+      if (shared === ready && ready.state === "running") play(name, ready);
+    });
+  } catch (error) {
+    console.warn(`The ${name} sound could not play.`, error);
+  }
+}
+
+/** Plays `name` into `ready`, which runs, notes it, and starts the quiet over from the sound's end. */
+function play(name: SoundName, ready: AudioContextLike): void {
+  try {
+    SYNTH[name](ready);
     note(name);
+    quietFrom(ready, SOUND_MS[name]);
   } catch (error) {
     console.warn(`The ${name} sound could not play.`, error);
   }
@@ -132,15 +197,35 @@ export function playSound(name: SoundName, make: () => AudioContextLike = newCon
 
 /**
  * Makes the page's AudioContext now, with no sound, so that the first sound finds it made. Opening the audio device takes a tenth of a
- * second, and for the capsule that would be the Tick's, ahead of the listening card: main says sounds are on (`capsule:sounds-setting`,
- * when they are switched on and when the page loads with them on), and the page prepares them then, off the dictation's path. Like
- * `playSound`, it never throws: a Mac with no way to play audio is a Mac without sounds, and the next sound tries again.
+ * second, and for the capsule that would be the Tick's, ahead of the recorder's start: main says sounds are on (`capsule:sounds-setting`,
+ * when they are switched on and when the page loads with them on), and the page prepares them then, off the dictation's path. A context
+ * made, or found suspended, is woken, and the quiet starts from now. Like `playSound`, it never throws: a Mac with no way to play audio is a
+ * Mac without sounds, and the next sound tries again.
  */
 export function prepareSounds(make: () => AudioContextLike = newContext): void {
   try {
-    context(make);
+    const ready = context(make);
+    void wake(ready);
+    quietFrom(ready);
   } catch (error) {
     console.warn("The sounds could not be made ready.", error);
+  }
+}
+
+/**
+ * Wakes the page's AudioContext, if the quiet has suspended it, for a sound that is on its way, and starts the quiet over: main says a
+ * recording is starting, whose Tick follows, or has sent a sound the page holds back for a moment (the Tock until the microphone is let
+ * go, the Stamp until it lands), which then finds the context awake. The wake takes about as long as opening the device. It makes no
+ * context: a page that has none has nothing to wake, and its first sound makes one.
+ */
+export function wakeSounds(): void {
+  const ready = shared;
+  if (!ready) return;
+  try {
+    void wake(ready);
+    quietFrom(ready);
+  } catch (error) {
+    console.warn("The sounds could not be woken.", error);
   }
 }
 
@@ -148,11 +233,15 @@ export function prepareSounds(make: () => AudioContextLike = newContext): void {
  * Closes the page's AudioContext and lets go of it, which lets go of the audio device: an open context keeps the device, and with it
  * a Bluetooth headset's playback mode, until the page ends. Main says sounds are off (`capsule:sounds-setting`), and the page releases
  * them then; a window that plays by itself releases them when its own switch goes off. A sound played after it makes a new context, as
- * the first one did. It does nothing for a page that has none, and a context that will not close is let go of all the same.
+ * the first one did, and a sound that waited for the context to wake goes with it. It does nothing for a page that has none, and a
+ * context that will not close is let go of all the same.
  */
 export function releaseSounds(): void {
   const held = shared;
   shared = null;
+  waking = null;
+  if (quiet !== null) clearTimeout(quiet);
+  quiet = null;
   if (!held) return;
   try {
     void held.close().catch(() => undefined);

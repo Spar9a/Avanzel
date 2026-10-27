@@ -162,23 +162,24 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     SEP,
   ];
 
-  items.push({ type: "header", label: "Recently filed" });
-  if (input.recent.length) {
-    for (const page of input.recent.slice(0, 3)) {
-      const shelf = shelfLine(page.shelf);
-      items.push({ type: "item", label: page.title, action: `open:${page.path}`, shelf: page.shelf, ...(shelf ? { sublabel: shelf } : {}) });
-    }
-  } else {
+  const filed: MenuItemModel[] = [];
+  for (const page of input.recent.slice(0, 3)) {
+    const shelf = shelfLine(page.shelf);
+    filed.push({ type: "item", label: page.title, action: `open:${page.path}`, shelf: page.shelf, ...(shelf ? { sublabel: shelf } : {}) });
+  }
+  if (!input.recent.length && input.filedToday === 0 && !input.undoableFiling) {
     // Nothing filed yet invites a first thought. What the owner has to read is an enabled item (see MenuItemModel), so this is
     // one, and it does what Record a thought does. It names the shortcut that action really has: none when it didn't register
-    // or isn't set.
+    // or isn't set. Only while nothing has been filed: a filing that wrote no page (the agent only logged the note) leaves no page
+    // to list, and the invitation would contradict the head's count, and the Undo of that filing.
     const dictate = input.unregisteredShortcuts.includes("dictate") ? "" : input.shortcuts.dictate;
     const press = dictate ? `Press ${prettyAccelerator(dictate)}` : "Record a thought";
-    items.push({ type: "item", label: `Nothing filed yet. ${press} and say hello.`, action: "dictate" });
+    filed.push({ type: "item", label: `Nothing filed yet. ${press} and say hello.`, action: "dictate" });
   }
   // The newest filing can be taken back from here: the item closes the section that lists the pages filed.
-  if (input.undoableFiling) items.push({ type: "item", label: "Undo the last filing", action: "undo-filing" });
-  items.push(SEP);
+  if (input.undoableFiling) filed.push({ type: "item", label: "Undo the last filing", action: "undo-filing" });
+  // A section with nothing to show (filings today, but none that wrote a page or can be undone) has no header either.
+  if (filed.length) items.push({ type: "header", label: "Recently filed" }, ...filed, SEP);
 
   if (input.tasks.length || input.undoableReview) {
     items.push({ type: "header", label: "Scheduled reviews" });

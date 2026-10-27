@@ -131,8 +131,8 @@ describe("MenuBar", () => {
     expect(tray?.tips).toEqual([
       "Avanzel",
       "Avanzel is recording",
-      "Avanzel is filing",
-      "Avanzel filed it",
+      "Avanzel is working",
+      "Avanzel saved it",
       "Avanzel needs you",
       "The evening review is done",
       "Avanzel",

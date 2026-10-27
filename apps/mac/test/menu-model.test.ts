@@ -347,7 +347,8 @@ describe("tray menu", () => {
   });
 
   describe("Recently filed, with nothing filed yet", () => {
-    const empty = (overrides: Partial<MenuInput> = {}) => buildMenuModel(input({ recent: [], ...overrides }), now);
+    // Nothing filed yet: no page to list, none counted today, and no filing to undo.
+    const empty = (overrides: Partial<MenuInput> = {}) => buildMenuModel(input({ recent: [], filedToday: 0, ...overrides }), now);
     /** The item right under the Recently filed header; none when the menu has no such header. */
     const underHeader = (items: ReturnType<typeof buildMenuModel>) => {
       const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
@@ -357,7 +358,7 @@ describe("tray menu", () => {
     it("keeps the header and invites a first thought: an enabled item that records one, naming the real shortcut", () => {
       const items = empty();
       expect(labels(items)).toEqual([
-        "3 thoughts filed today. Evening review at 21:00.", "--",
+        "Nothing filed today. Evening review at 21:00.", "--",
         "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "--",
         "Recently filed", "Nothing filed yet. Press ⌥Space and say hello.", "--",
         "Scheduled reviews", "Evening review", "Weekly review", "--",
@@ -390,6 +391,27 @@ describe("tray menu", () => {
       expect(labels(buildMenuModel(input(), now))).not.toContain("Nothing filed yet. Press ⌥Space and say hello.");
       expect(labels(buildMenuModel(input({ recent: [], libraryReady: false }), now))).toEqual(["Set up Avanzel…", "--", "Quit Avanzel"]);
     });
+
+    // A filing that wrote no page (the agent only logged the note) is counted in the head and leaves nothing to list: the invitation
+    // would say the opposite of the head, and of an Undo of that filing.
+    it("is not there once a thought has been filed today, though no page was, and the section goes when it has nothing to show", () => {
+      const items = empty({ filedToday: 1 });
+      expect(labels(items)).toEqual([
+        "1 thought filed today. Evening review at 21:00.", "--",
+        "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "--",
+        "Scheduled reviews", "Evening review", "Weekly review", "--",
+        "Open library", "Settings…", "Quit Avanzel",
+      ]);
+      expect(JSON.stringify(items)).not.toContain("Nothing filed yet");
+    });
+
+    it("is not there while a filing can be undone, even one filed on another day: the section holds the Undo alone", () => {
+      for (const filedToday of [0, 1]) {
+        const items = empty({ filedToday, undoableFiling: true });
+        expect(labels(items).slice(7, 10)).toEqual(["Recently filed", "Undo the last filing", "--"]);
+        expect(JSON.stringify(items)).not.toContain("Nothing filed yet");
+      }
+    });
   });
 
   describe("Undo the last filing", () => {
@@ -421,13 +443,14 @@ describe("tray menu", () => {
       expect(items.filter((item) => item.type !== "item" || item.action !== "undo-filing")).toEqual(without);
     });
 
-    it("closes the section after three pages at most, or after the invitation while there are none", () => {
+    it("closes the section after three pages at most, or is all it holds while there are none", () => {
       const pages = Array.from({ length: 5 }, (_, i) => ({ title: `Page ${i}`, shelf: "topics", path: `topics/${i}.md` }));
       expect(labels(withUndo({ recent: pages })).slice(7, 12)).toEqual(["Recently filed", "Page 0", "Page 1", "Page 2", "Undo the last filing"]);
-      // A filing that wrote no page (the agent only logged the note) leaves the invitation to a first thought where the pages go: the
-      // filing can still be undone, and the item is after whatever that section holds.
-      const empty = labels(withUndo({ recent: [] }));
-      expect(empty.slice(7, 10)).toEqual(["Recently filed", "Nothing filed yet. Press ⌥Space and say hello.", "Undo the last filing"]);
+      // A filing that wrote no page (the agent only logged the note) leaves no page to list: the filing can still be undone, and the
+      // item is all the section holds. "Nothing filed yet" would contradict the head's count and the Undo under it.
+      const empty = labels(withUndo({ recent: [], filedToday: 1 }));
+      expect(empty.slice(0, 1)).toEqual(["1 thought filed today. Evening review at 21:00."]);
+      expect(empty.slice(7, 10)).toEqual(["Recently filed", "Undo the last filing", "--"]);
     });
 
     it("is an item that can be read, not dimmed, with no shortcut, shelf or sublabel of its own", () => {

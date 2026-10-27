@@ -5,7 +5,8 @@ import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
 import type { CapsuleState } from "../../shared/ipc.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
-import { playSound, prepareSounds, releaseSounds } from "../common/sounds.ts";
+import { playSound, prepareSounds, releaseSounds, wakeSounds } from "../common/sounds.ts";
+import { STAMP_LANDS_MS } from "../common/stamp.ts";
 import { api, type StateOf } from "./api.ts";
 import { editorScene } from "./editor.tsx";
 import { filedScene } from "./filed.tsx";
@@ -179,16 +180,11 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: readonly numb
 }
 
 /**
- * When the filed card's stamp lands, in milliseconds after the card is drawn: 60% of `--av-duration-card` (380 ms), where `av-stamp-in`
- * has the stamp touch the paper (stamp.css). The Stamp is the thud of that moment.
- */
-const STAMP_LANDS_MS = 228;
-
-/**
- * Plays the Stamp main sent with a filed card, as its stamp lands. Where the stamp is drawn already landed, that is at once: under Reduce
- * Motion, and on a Noted card, whose stamp does not animate. A card put away before the stamp lands makes no sound (`current` is read
- * again then): the stamp never landed, and a sound without its picture is not the twin it is meant to be. Nor does one that sounds were
- * switched off before it landed (`soundsOn` is read again too): playing it would make a new AudioContext, which the page has just let go of.
+ * Plays the Stamp main sent with a filed card, as its stamp lands (`STAMP_LANDS_MS` after the card is drawn, common/stamp.ts). Where the
+ * stamp is drawn already landed, that is at once: under Reduce Motion, and on a Noted card, whose stamp does not animate. A card put away
+ * before the stamp lands makes no sound (`current` is read again then): the stamp never landed, and a sound without its picture is not the
+ * twin it is meant to be. Nor does one that sounds were switched off before it landed (`soundsOn` is read again too): playing it would
+ * make a new AudioContext, which the page has just let go of.
  */
 function playStamp(current: () => CapsuleState, soundsOn: () => boolean): void {
   const state = current();
@@ -212,6 +208,8 @@ function App() {
 
   useEffect(() => {
     const off = api.onState((next) => {
+      // A recording is starting: its Tick follows at once, so the audio the quiet has put to sleep is woken now (`wakeSounds`).
+      if (next.kind === "listening" && stateRef.current.kind !== "listening") wakeSounds();
       stateRef.current = next;
       setState(next);
     });
@@ -220,17 +218,20 @@ function App() {
   }, []);
 
   // The page plays what main sends, when main sends it, with two exceptions that are its own to time: the Tock waits for the microphone
-  // (below), and the Stamp for the stamp to land (`playStamp`).
+  // (below), and the Stamp for the stamp to land (`playStamp`). Audio the quiet has put to sleep is woken as the sound arrives, so that
+  // the two find it awake when their moment comes; the others wait for the wake as they play (`playSound`).
   useEffect(() => api.onSound((name) => {
+    wakeSounds();
     if (name === "tock") tockWaits.current = true;
     else if (name === "stamp") playStamp(() => stateRef.current, () => soundsOn.current);
     else playSound(name);
   }), []);
 
   // Sounds on, or on at load: the page makes its AudioContext now, so that the first Tick doesn't wait for the audio device to open, which
-  // takes a tenth of a second, with the recorder's start behind it. Off: it closes the context, which lets go of the device, and what
-  // waits to be played goes with it: a Tock that is held for the microphone, and (`playStamp`) a Stamp that is yet to land. Played
-  // after this, either would make a new context, and open the device again.
+  // takes a tenth of a second, with the recorder's start behind it. (After 30 s with nothing played the context is suspended, and a Tick
+  // then waits for it to wake: sounds.ts, `QUIET_MS`.) Off: it closes the context, which lets go of the device, and what waits to be
+  // played goes with it: a Tock that is held for the microphone, and (`playStamp`) a Stamp that is yet to land. Played after this, either
+  // would make a new context, and open the device again.
   useEffect(() => api.onSoundsSetting((on) => {
     soundsOn.current = on;
     if (on) return prepareSounds();

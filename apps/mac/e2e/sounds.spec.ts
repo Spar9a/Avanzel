@@ -3,7 +3,7 @@
 // `webContents.send`, as `watchCapsule` does, to read what main sent in order; what the page played it reads from the page's own record
 // (`__avanzelSounds`). Every window is muted first, so the suite makes no noise on the Mac it runs on: the page plays all the same.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
@@ -330,6 +330,25 @@ test("no app sound plays over a recording: a review that ends while a thought is
   await app.close();
 });
 
+/** How many there are of the controller's agent runs under way (`runs`), or of the reviews that wait or run (`running`). */
+const underWay = (app: ElectronApplication, of: "runs" | "running") =>
+  app.evaluate((_electron, name) => (globalThis as unknown as { __avanzel: Record<string, { size: number }> }).__avanzel[name]!.size, of);
+
+test("an evening review that quitting stops plays no Letter on the way out", async () => {
+  const { app, library } = await withNote({ FAKE_AGENT_DELAY_MS: "20000" }); // its agent run is still under way when Avanzel quits
+  await soundsOn(app);
+  await watchSends(app);
+  await call(app, "runTask", "evening-review");
+  await expect.poll(() => underWay(app, "runs"), { timeout: 30_000 }).toBe(1);
+  // Quitting stops the run, and the review comes to its end all the same: its summary is written. But Avanzel is on its way out, and
+  // nothing plays then.
+  await app.evaluate(() => (globalThis as unknown as { __avanzel: { stopForQuit(): Promise<void> } }).__avanzel.stopForQuit());
+  expect(await underWay(app, "running")).toBe(0);
+  expect(readdirSync(path.join(library, "reviews")).filter((name) => name.endsWith("-evening.md"))).toHaveLength(1);
+  expect(await soundsSent(app)).toEqual([]);
+  await app.close();
+});
+
 test("a filing that ends in a notification plays nothing of its own, and none plays over the next thought", async () => {
   const { app, capsule } = await launchOn(await makeLibrary(), { FAKE_AGENT_DELAY_MS: "1500", FAKE_AGENT_DELAY_TASK: "file" });
   await soundsOn(app);
@@ -579,6 +598,32 @@ test("a page that loads with sounds on makes its AudioContext as it loads, and t
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await expect.poll(() => played(capsule)).toEqual(["tick"]);
   expect(await audioContexts(capsule)).toHaveLength(1); // the Tick found the context made, and made none
+  await call(app, "cancelRecording");
+  await app.close();
+});
+
+// A context that runs keeps the audio device open, and macOS keeps the Mac awake for it: with sounds on and nothing playing, coreaudiod
+// holds PreventUserIdleSystemSleep for the page's audio (`pmset -g assertions`). So after 30 s with nothing played the page suspends it.
+test("with sounds on and nothing played for 30 s, the capsule page's AudioContext is suspended, and a recording wakes it for its Tick", async () => {
+  test.setTimeout(150_000);
+  const { app, capsule } = await launchOn(await makeLibrary());
+  await soundsOn(app);
+  await app.context().addInitScript(watchAudioContexts);
+  await watchSends(app);
+  await reloadCapsule(app);
+  // Made as the page loaded with sounds on.
+  await expect.poll(() => audioContexts(capsule), { timeout: 15_000, intervals: [50] }).toEqual(["running"]);
+  const seen = Date.now();
+  await expect.poll(() => audioContexts(capsule), { timeout: 60_000, intervals: [250] }).toEqual(["suspended"]);
+  // Suspended by the quiet, not long before its 30 s: the context was made a moment before the test saw it, and the unit tests hold the
+  // quiet to the millisecond.
+  expect(Date.now() - seen, "suspended after the quiet, and not before").toBeGreaterThanOrEqual(25_000);
+  // A recording wakes it, and its Tick is played on it once it runs: the same context, not a new one.
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await expect.poll(() => played(capsule)).toEqual(["tick"]);
+  expect(await audioContexts(capsule)).toEqual(["running"]);
+  expect(await soundsSent(app)).toEqual(["tick"]);
   await call(app, "cancelRecording");
   await app.close();
 });

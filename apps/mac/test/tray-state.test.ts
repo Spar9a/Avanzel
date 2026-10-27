@@ -111,12 +111,15 @@ describe("trayView's title", () => {
 });
 
 describe("trayTooltip", () => {
-  // Keyed by every MenuBarState, so a state the design system adds fails the typecheck here until its words are pinned too.
+  // Keyed by every MenuBarState, so a state the design system adds fails the typecheck here until its words are pinned too. The words
+  // hold on every path to the face: the busy face is also an Ask, a transcription that files nothing yet and the weekly review, so it
+  // says "working", not "filing"; the stamp also follows a saved card (a screen comment, words kept for the review), and Filed is
+  // "saved and undoable" (spec §4.2), so it says "saved".
   const WORDS: Record<MenuBarState, string> = {
     idle: "Avanzel",
     listening: "Avanzel is recording",
-    filing: "Avanzel is filing",
-    filed: "Avanzel filed it",
+    filing: "Avanzel is working",
+    filed: "Avanzel saved it",
     "needs-you": "Avanzel needs you",
     asleep: "The evening review is done",
   };
