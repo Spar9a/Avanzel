@@ -227,7 +227,7 @@ test("typing a thought files it", async () => {
   await app.close();
 });
 
-test("a typed thought that can't be saved says so, where it is now, and which key opens it again", async () => {
+test("a typed thought that can't be saved says so and where its words are, and its one fix opens them again", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   const capsule = await windowFor(app, "capsule");
@@ -240,16 +240,44 @@ test("a typed thought that can't be saved says so, where it is now, and which ke
     await box.fill("Plant tulips in October");
     await box.press("Enter");
     await expect.poll(() => capsuleKind(app)).toBe("error");
-    // What happened, and where the words are now: still in the box, which the key opens. No fix: it is trying again.
+    // What happened, and where the words are now, by the action's name: no key (a key is a Kbd), and no "box". The one fix opens it.
     const title = "That thought couldn't be saved.";
-    const why = /^EACCES: permission denied.*[.…] It's still in the box: press ⌥⇧Space to try again\.$/;
-    expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: expect.stringMatching(why) });
-    await expectProblem(capsule, { title, lines: [why] });
+    const why = /^EACCES: permission denied.*[.…] Your words are still in “Type a thought”\.$/;
+    expect(await call(app, "capsuleStateForTests")).toEqual({
+      kind: "error",
+      message: title,
+      detail: expect.stringMatching(why),
+      action: "type-a-thought",
+      actionLabel: "Type a thought",
+    });
+    await expectProblem(capsule, { title, lines: [why], fix: "Type a thought" });
+    // Quick has put itself away, and the words wait in its field.
+    await expect.poll(() => shown(app, "quick")).toBe(false);
     await expect(box).toHaveValue("Plant tulips in October");
     expect(inbox(library)).toEqual([]);
+    // The fix opens Type a thought again, with the words in it, and the card goes.
+    await capsule.getByRole("button", { name: "Type a thought", exact: true }).click();
+    await expect.poll(() => shown(app, "quick")).toBe(true);
+    await expect.poll(() => capsuleKind(app)).toBe("hidden");
+    await expect(box).toHaveValue("Plant tulips in October");
   } finally {
     chmodSync(inboxDir, 0o755);
   }
+  // Return saves the thought, now that the inbox can take it: it is filed, and the field is empty.
+  await box.press("Enter");
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await expect(box).toHaveValue("");
+  await app.close();
+});
+
+test("the fix of a thought that couldn't be saved leaves a card that has replaced it alone", async () => {
+  // The press is a stale one if the capsule shows something else by the time it arrives, say a recording: it opens nothing and hides nothing.
+  const { app } = await launchHearing(await makeLibrary(), newUserData());
+  await startListening(app);
+  await call(app, "openSettingsFor", "type-a-thought");
+  expect(await capsuleKind(app)).toBe("listening");
+  expect(await shown(app, "quick")).toBe(false);
+  await call(app, "cancelRecording");
   await app.close();
 });
 
@@ -1302,11 +1330,11 @@ test("the capsule's corners beside the hint catch no pointer: only what is drawn
     };
   });
   const asked = () => app.evaluate(() => (globalThis as { interactiveAsked?: boolean[] }).interactiveAsked ?? []);
+  // The lists below are exact, and the pointer visits the corner and the gap before the hint, so a call from either shows: a corner that
+  // had caught the pointer would not give it back at the second visit to it.
   await capsule.mouse.move(beside.x, beside.y);
   await capsule.mouse.move(beside.x + 6, beside.y);
   await capsule.mouse.move(between.x, between.y);
-  await capsule.waitForTimeout(400);
-  expect(await asked()).toEqual([]);
   await capsule.mouse.move(onHint.x, onHint.y);
   await expect.poll(asked).toEqual([true]);
   await capsule.mouse.move(beside.x, beside.y);
@@ -1314,6 +1342,37 @@ test("the capsule's corners beside the hint catch no pointer: only what is drawn
   await capsule.mouse.move(onBar.x, onBar.y);
   await expect.poll(asked).toEqual([true, false, true]);
   await call(app, "cancelRecording");
+  await app.close();
+});
+
+test("a pointer crossing the gap between a card and its bar keeps the card up, though the card's time comes while it is in the gap", async () => {
+  // Crossing the 8 px between them is a leave and then an enter. The hold is let go 250 ms after a leave, and a return cancels it, so
+  // a card whose time is up in that moment is not put away under the pointer.
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const capsule = await windowFor(app, "capsule");
+  const TIME_MS = 2_000;
+  await call(app, "setCapsule", { kind: "saved", text: "Plant tulips in October", note: "Saved to your inbox." }, TIME_MS);
+  const shownAt = Date.now(); // the card's time began a moment before: the call's own round trip
+  const card = (await capsule.getByRole("article").boundingBox())!;
+  const bar = (await capsule.getByRole("status").boundingBox())!;
+  const onCard = { x: card.x + card.width / 2, y: card.y + card.height / 2 };
+  const inGap = { x: card.x + card.width / 2, y: (card.y + card.height + bar.y) / 2 };
+  const onBar = { x: bar.x + bar.width / 2, y: bar.y + bar.height / 2 };
+  expect(inGap.y).toBeGreaterThan(card.y + card.height);
+  expect(inGap.y).toBeLessThan(bar.y);
+  const until = (ms: number) => new Promise((resolve) => setTimeout(resolve, Math.max(0, shownAt + ms - Date.now())));
+  await capsule.mouse.move(onCard.x, onCard.y); // the pointer holds the card
+  await until(TIME_MS - 100);
+  await capsule.mouse.move(inGap.x, inGap.y); // it leaves the card for the gap just before the card's time ...
+  await until(TIME_MS + 50);
+  await capsule.mouse.move(onBar.x, onBar.y); // ... and is on the bar just after it: the time came while the pointer was in the gap
+  // The card looks again 1.5 s after its time, and finds the pointer on the bar: the let-go that the leave began was cancelled by the
+  // return. Left to run, it would have fired 250 ms after the leave, and the card would go at this second look.
+  await until(TIME_MS + 1_500 + 700);
+  expect(await capsuleKind(app)).toBe("saved");
+  // The pointer goes for good: the hold is let go, and the card goes at its next time.
+  await capsule.mouse.move(0, 0);
+  await expect.poll(() => capsuleKind(app), { timeout: 8_000 }).toBe("hidden");
   await app.close();
 });
 

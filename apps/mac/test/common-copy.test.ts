@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { SHELVES } from "@avanzel/ui";
 import { describe, expect, it } from "vitest";
 import { isShelf } from "../src/renderer/common/shelf.ts";
@@ -16,6 +18,12 @@ describe("stampDate", () => {
 
   it("is the one setup's copy re-exports", () => {
     expect(setupCopy.stampDate).toBe(stampDate);
+  });
+
+  it("is a plain function: the module that holds it imports no React, which only the hook's module does", () => {
+    const source = (file: string) => readFileSync(fileURLToPath(new URL(`../src/renderer/common/${file}`, import.meta.url)), "utf8");
+    expect(source("stamp.ts")).not.toMatch(/from\s+["']react["']/);
+    expect(source("use-stamp-date.ts")).toMatch(/from\s+["']react["']/);
   });
 });
 

@@ -10,7 +10,7 @@ import { Editor } from "./editor.tsx";
 import { Filed } from "./filed.tsx";
 import { Filing } from "./filing.tsx";
 import { Listening } from "./listening.tsx";
-import { Problem } from "./problem.tsx";
+import { ProblemNotice } from "./problem-notice.tsx";
 import { Recorder } from "./recorder.ts";
 import { Saved } from "./saved.tsx";
 import { Recorded, Stopped } from "./stopped.tsx";
@@ -54,7 +54,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
     case "recorded":
       return <Recorded state={state} />;
     case "error":
-      return <Problem state={state} />;
+      return <ProblemNotice state={state} />;
     case "preparing":
       // Zel idles: no agent runs. Only the headline is a live region, so VoiceOver hears the start once, not each step.
       return (
@@ -125,7 +125,13 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
       );
     }
     case "shortcut-picked":
-      return <CapsuleBar mood="filed">{`${ACTION_NAMES[state.key]} now uses ${prettyAccelerator(state.accelerator)}`}</CapsuleBar>;
+      // A piece of the stack, as every bar is: the page's wrapper takes no pointer (see styles.css), so a bar outside the stack could not be
+      // hovered, and would be put away under the pointer. It is as wide as the others.
+      return (
+        <div className="stack">
+          <CapsuleBar mood="filed">{`${ACTION_NAMES[state.key]} now uses ${prettyAccelerator(state.accelerator)}`}</CapsuleBar>
+        </div>
+      );
     default: {
       // Every kind of state has its card above. A kind added without one is a type error here, not a blank panel, as `cancelled` and
       // `recorded` were for two tasks.

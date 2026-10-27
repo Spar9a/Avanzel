@@ -2,7 +2,8 @@
 // cards, which name the evening review only while the library's runs. The rest of their words are main's (a saved thought's
 // note) or fixed, and are written where they are shown.
 import type { FiledPage } from "../../shared/ipc.ts";
-import { reviewDoes, shortened, stoppedLine } from "../../shared/problems.ts";
+import { shortened } from "../../shared/clip.ts";
+import { reviewDoes, stoppedLine } from "../../shared/problems.ts";
 
 // What a Stopped filing's card says is shared with the main process, which tells the same in a notification when the card is gone.
 export { stoppedLine };

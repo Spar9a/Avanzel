@@ -9,7 +9,7 @@ import { api, type StateOf } from "./api.ts";
  * buttons are Hide, which puts the card away, and the fix when the state names one (`action`), last, the moment's one primary. A
  * problem with no fix has Hide alone. It stays until it is handled: it hides by no timer.
  */
-export function Problem({ state }: { state: StateOf<"error"> }) {
+export function ProblemNotice({ state }: { state: StateOf<"error"> }) {
   const { message, detail, command, action, actionLabel } = state;
   const lines = detail?.split("\n").filter(Boolean) ?? [];
   return (

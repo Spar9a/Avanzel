@@ -2,7 +2,7 @@
 // took, with Hide, Undo and Open. Nothing here ticks: the bar is a live region, and its one line stays the same.
 import { Button, CapsuleBar, Card, Text } from "@avanzel/ui";
 import { useState } from "react";
-import { useStampDate } from "../common/stamp.ts";
+import { useStampDate } from "../common/use-stamp-date.ts";
 import { api, type StateOf } from "./api.ts";
 import { filedLine, notedLine } from "./copy.ts";
 import { Hide } from "./hide.tsx";

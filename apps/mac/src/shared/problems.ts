@@ -2,7 +2,12 @@
 // process) and setup's and Ask's windows (their renderers) all use these functions, so one problem reads the same wherever
 // it shows. A problem is three parts: the title says what happened, the body says what is safe and anything else the
 // person needs to know, and the window offers one fix. What a Stop says of how it ended is here too (`stoppedLine`): the
-// capsule's Stopped card says it, and a notification says the same when that card is gone.
+// capsule's Stopped card says it, and a notification says the same when that card is gone. How a line of an error becomes a
+// sentence, and is cut to a card's room, is clip.ts's.
+import { ownLine, shortenedKeepingPaths, shortReason } from "./clip.ts";
+
+// An agent's own line as a sentence is clip.ts's (its clippers need it); the windows and the main process keep importing it from here.
+export { ownLine };
 
 /**
  * Why a filing didn't happen, as far as a person needs to tell: the agent hit its usage limit (`limit`), wants a sign-in
@@ -30,7 +35,7 @@ export interface AgentFailure {
 export interface Problem {
   title: string;
   body: string;
-  /** The part of `body` the person types in Terminal. Windows set it in code font; the capsule and notifications take strings, and show it plain. */
+  /** The part of `body` the person types in Terminal. The windows and the capsule's card set it in code font; a notification takes a string, and shows it plain. */
   command?: string;
 }
 
@@ -46,17 +51,6 @@ export type PartialEdits = "commit" | "uncommitted" | null;
  */
 export function avanzelFailure(line: string): AgentFailure {
   return { kind: "other", agent: "Avanzel", command: null, resetsAt: null, seconds: 0, line };
-}
-
-/**
- * A line an agent printed, as a sentence: without the "Error:" label many CLIs put first, with a capital, and with a
- * full stop unless it ends a sentence already. Nothing stays nothing.
- */
-export function ownLine(detail: string): string {
-  const line = detail.trim().replace(/^error\s*:\s*/i, "");
-  if (!line) return "";
-  const sentence = line.charAt(0).toUpperCase() + line.slice(1);
-  return /[.?…]$/.test(sentence) ? sentence : `${sentence}.`;
 }
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -124,47 +118,6 @@ export interface FilingProblemOptions {
   lineMax?: number;
 }
 
-/**
- * `text` as a line of at most `max` characters (code points, so none is cut in half): whole when it fits, else cut after a word
- * that ends in the last 40% of what fits, or at the character when there is none, and ended with "…" with no space or stop
- * before it. Whole when `max` is not given.
- */
-export function shortened(text: string, max: number | undefined): string {
-  if (max === undefined) return text;
-  const chars = Array.from(text);
-  if (chars.length <= max) return text;
-  const head = chars.slice(0, Math.max(0, max - 1));
-  const space = head.lastIndexOf(" ");
-  const kept = space >= max * 0.6 ? head.slice(0, space) : head;
-  return `${kept.join("").replace(/[\s,;:.–—-]+$/u, "")}…`;
-}
-
-/**
- * What an error says (Node's, the speech engine's), as a sentence (`ownLine`) of at most `max` characters for a card that clips:
- * whole when it fits, or when `max` is not given. A longer one is cut after a word, and ends in "…" with no space or stop before
- * it; never through a path, which these messages name, long and more than once, and which a person can't use: a word with a slash
- * in it is kept whole or left out. When the cut falls before a path, the word that led up to it ("rename", "to") goes too, so that
- * the line doesn't end on a word that points at nothing. A first word longer than the room (one long path) is cut at the character.
- */
-export function shortReason(reason: string, max?: number): string {
-  const line = ownLine(reason);
-  if (max === undefined || Array.from(line).length <= max) return line;
-  const words = line.split(/\s+/u);
-  // As many whole words as fit beside the ellipsis.
-  let fit = 0;
-  let used = 0;
-  while (fit < words.length) {
-    const next = used + (fit > 0 ? 1 : 0) + Array.from(words[fit] ?? "").length;
-    if (next > max - 1) break;
-    used = next;
-    fit++;
-  }
-  if (fit === 0) return shortened(line, max);
-  if (fit === words.length) return words.join(" "); // only its runs of white space made it long
-  if (fit > 1 && /\//.test(words[fit] ?? "") && /^[a-z]+,?$/.test(words[fit - 1] ?? "")) fit--;
-  return `${words.slice(0, fit).join(" ").replace(/[\s,;:.–—>-]+$/u, "")}…`;
-}
-
 /** Sentences told one after the other: the ones there are, with a space between. */
 function sentences(...parts: string[]): string {
   return parts.filter(Boolean).join(" ");
@@ -212,22 +165,22 @@ export function filingProblem(f: AgentFailure, now: Date, o: FilingProblemOption
     case "other":
       return done(
         `${f.agent} couldn't file this note.`,
-        [shortened(ownLine(f.line), f.agent === "Avanzel" ? undefined : lineMax), reassure].filter(Boolean).join(" "),
+        [shortReason(f.line, f.agent === "Avanzel" ? undefined : lineMax), reassure].filter(Boolean).join(" "),
       );
   }
 }
 
 /**
  * The corrected words (File after Edit) couldn't be written to the inbox yet. Not an agent's failure: nothing ran. `lines` is
- * the error's last lines, cut to `lineMax` characters for a card that clips (see FilingProblemOptions.lineMax: such an error
- * names two long paths); the words are kept in memory and saved to the inbox when Avanzel quits, and `originalKept` says the
- * note they correct is still there.
+ * the error's last lines, cut to `lineMax` characters for a card that clips and for the notification that says the same (see
+ * FilingProblemOptions.lineMax: such an error names two long paths, which are never cut through, `shortenedKeepingPaths`); the
+ * words are kept in memory and saved to the inbox when Avanzel quits, and `originalKept` says the note they correct is still there.
  */
 export function correctedWordsProblem(lines: string, originalKept: boolean, lineMax?: number): Problem {
   const original = originalKept ? "; the original note is still there" : "";
   return {
     title: "Your corrected words weren't saved yet.",
-    body: `${shortened(lines, lineMax)}\nYour corrected words are saved to your inbox when you quit${original}.`,
+    body: `${shortenedKeepingPaths(lines, lineMax)}\nYour corrected words are saved to your inbox when you quit${original}.`,
   };
 }
 
@@ -301,7 +254,7 @@ export function downloadFailedProblem(reason: string, resumable: boolean): Probl
 /** Why git refused to take a filing back: usually a later change touched the same lines. */
 const HISTORY_KEEPS_BOTH = "Usually a later change touched the same lines. The library's history keeps both versions.";
 
-/** Undo, on the capsule's filed card or in setup, that git refused. There is nothing to fix: the card's OK, or setup's Continue, goes on. */
+/** Undo, on the capsule's filed card or in setup, that git refused. There is nothing to fix: the card's Hide, or setup's Continue, goes on. */
 export const undoRefused: Problem = {
   title: "This one can't be undone automatically.",
   body: HISTORY_KEEPS_BOTH,
@@ -397,11 +350,19 @@ function recordingKept(kept: string | null): string {
 }
 
 /**
- * The screen couldn't be captured, or its screenshot kept, and `reason` says why (an error's message; cut to `lineMax` characters for
- * a card that clips, or told whole when it is Avanzel's own). Whatever was taken is removed first, so nothing was saved.
+ * The screen couldn't be captured, or its screenshot claimed or written, and `reason` says why (an error's message; cut to `lineMax`
+ * characters for a card that clips, or told whole when it is Avanzel's own). Whatever was claimed is removed first, so nothing was saved.
  */
 export function screenCaptureProblem(reason: string, lineMax?: number): Problem {
   return { title: "Avanzel couldn't capture the screen.", body: sentences(shortReason(reason, lineMax), "Nothing was saved.") };
+}
+
+/**
+ * A screen comment's screenshot was taken, but its recording couldn't start, and `reason` says why (as for `screenCaptureProblem`).
+ * The screen was captured, so this is not that problem: it says what didn't happen. The screenshot is removed, so nothing was saved.
+ */
+export function commentNotStartedProblem(reason: string, lineMax?: number): Problem {
+  return { title: "The screen comment couldn't start.", body: sentences(shortReason(reason, lineMax), "Nothing was saved.") };
 }
 
 /** The audio of a recording never reached Avanzel: nothing was recorded to keep. The fix is to choose the microphone. */
@@ -419,30 +380,40 @@ export function unheardProblem(reason: string, kept: string | null, lineMax?: nu
 }
 
 /**
- * A recording's words were made, but not saved (`reason`, `kept` and `lineMax` as for `unheardProblem`); for a screen comment
- * (`screen`), it is the screen capture that couldn't be saved.
+ * A recording's words were made, or none were (a screen comment may have none: it is saved as "No comment"), but the save failed
+ * (`reason`, `kept` and `lineMax` as for `unheardProblem`). For a dictation, it is the person's words that couldn't be saved. For a
+ * screen comment (`screen`), whatever its words, it is the screen capture, and its screenshot is gone: nothing holds it, so it is
+ * removed, which the body says before it says where the recording is kept, if it is.
  */
 export function unsavedProblem(reason: string, kept: string | null, screen: boolean, lineMax?: number): Problem {
+  const safe = !screen
+    ? recordingKept(kept)
+    : kept === null
+      ? "The screenshot is gone, and nothing was saved."
+      : `The screenshot is gone. ${recordingKept(kept)}`;
   return {
     title: screen ? "The screen capture couldn't be saved." : "Your words couldn't be saved.",
-    body: sentences(shortReason(reason, lineMax), recordingKept(kept)),
+    body: sentences(shortReason(reason, lineMax), safe),
   };
 }
 
 /**
- * A thought typed in Quick couldn't be saved (`reason`, as for `screenCaptureProblem`). Its words stay in Quick's box, which the type
- * shortcut (`key`, as the menu bar writes it) opens again.
+ * A thought typed in Quick couldn't be saved (`reason`, as for `screenCaptureProblem`). Its words are where they were typed: in Type
+ * a thought, which the card's one fix opens again. The body names that window by its action's name, as the menu bar does (a shortcut
+ * is a Kbd, which a plain string can't hold, and nothing in the app calls Quick a box).
  */
-export function thoughtNotSavedProblem(reason: string, key: string, lineMax?: number): Problem {
-  return { title: "That thought couldn't be saved.", body: sentences(shortReason(reason, lineMax), `It's still in the box: press ${key} to try again.`) };
+export function thoughtNotSavedProblem(reason: string, lineMax?: number): Problem {
+  return { title: "That thought couldn't be saved.", body: sentences(shortReason(reason, lineMax), "Your words are still in “Type a thought”.") };
 }
 
 /**
- * The library's [voice] settings can't be used, and `reason` is what is wrong with them, told whole: it says what to mend. Typing
- * works meanwhile. Trying again can't help, since they are fixed in the config file; the capsule's fix is Settings → Voice.
+ * The library's [voice] settings can't be used, and `reason` is what is wrong with them, told whole: it says what to mend. What is
+ * safe meanwhile is what a typed thought always gets: it is saved to the inbox. Not that it is filed: a config file that doesn't
+ * parse stops a filing too. Trying again can't help, since they are fixed in the config file; the capsule's fix is Settings → Voice,
+ * and Settings → Voice tells it in these words.
  */
 export function voiceSettingsProblem(reason: string): Problem {
-  return { title: "Avanzel can't use the voice settings in this library's config file.", body: sentences(ownLine(reason), "Typing a thought works meanwhile.") };
+  return { title: "Avanzel can't use the voice settings in this library's config file.", body: sentences(ownLine(reason), "Typed thoughts are still saved to your inbox.") };
 }
 
 /**

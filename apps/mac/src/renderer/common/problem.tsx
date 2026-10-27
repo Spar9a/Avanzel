@@ -1,5 +1,5 @@
-// What setup's and Ask's Notices share of telling a problem (shared/problems.ts): its body, with the part the person types
-// in Terminal set as code.
+// What the windows' Notices and the capsule's notice share of telling a problem (shared/problems.ts): its body, with the part the
+// person types in Terminal set as code.
 import { Text } from "@avanzel/ui";
 import type { ReactNode } from "react";
 import type { Problem } from "../../shared/problems.ts";

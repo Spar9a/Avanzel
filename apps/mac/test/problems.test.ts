@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import * as setupCopy from "../src/renderer/setup/copy.ts";
+import { ownLine as clipOwnLine } from "../src/shared/clip.ts";
 import {
   askProblem,
   avanzelFailure,
   cancelledLine,
+  commentNotStartedProblem,
   correctedWordsProblem,
   downloadFailedProblem,
   duration,
@@ -12,7 +14,6 @@ import {
   recordingLost,
   resetPhrase,
   screenCaptureProblem,
-  shortReason,
   stopFailedProblem,
   stopRefused,
   stoppedLine,
@@ -295,6 +296,13 @@ describe("filingProblem: a long line of the agent's, for the capsule's card", ()
     expect(Array.from(line).slice(0, 99).every((char) => char === "💥")).toBe(true);
   });
 
+  it("is never cut through a path, which an agent's line names too, with or without a space in a folder's name", () => {
+    for (const folder of ["Notes", "My Notes", "Mobile Documents"]) {
+      const named = `ENOENT: no such file or directory, open '/Users/ana/Documents/${folder}/Avanzel/ideas/some-long-page-name-here.md' while it wrote the page`;
+      expect(lineOf(filingProblem(failure({ line: named }), now, { lineMax: 100 }).body), folder).toBe("ENOENT: no such file or directory…");
+    }
+  });
+
   it("keeps the rest of the body: the partial edits, the owner's words kept aside, and the review being off", () => {
     const line = long.slice(0, 300);
     expect(filingProblem(failure({ line }), now, { lineMax: 100, partial: "commit" }).body).toMatch(
@@ -380,11 +388,29 @@ describe("correctedWordsProblem", () => {
     expect(Array.from(first!).length).toBeLessThanOrEqual(100);
     expect(Array.from(first!).length).toBeGreaterThan(60);
     expect(first!.endsWith("…")).toBe(true);
-    expect(first!.startsWith("EACCES: permission denied, rename '/Users/ana/Avanzel/inbox/")).toBe(true);
+    // The first path fits and is kept whole; the arrow that led to the second goes, and the second is left out.
+    expect(first).toBe("EACCES: permission denied, rename '/Users/ana/Avanzel/inbox/2026-10-26-032519-misheard-words.md'…");
     expect(rest).toEqual([kept]);
     // The windows keep it whole, as does a card with a line that fits.
     expect(correctedWordsProblem(lines, true).body).toBe(`${lines}\n${kept}`);
     expect(correctedWordsProblem("EACCES: permission denied", true, 100).body).toBe(`EACCES: permission denied\n${kept}`);
+  });
+
+  it("is never cut through a path whose folder has a space in its name: the cut is before it", () => {
+    const kept = "Your corrected words are saved to your inbox when you quit; the original note is still there.";
+    for (const folder of ["My Notes", "Mobile Documents"]) {
+      const lines = `EACCES: permission denied, rename '/Users/ana/Documents/${folder}/Avanzel/inbox/2026-10-26-032519-misheard-words.md' -> '/Users/ana/Documents/${folder}/Avanzel/inbox/.2026-10-26-032519-misheard-words.md.editing'`;
+      expect(correctedWordsProblem(lines, true, 100).body, folder).toBe(`EACCES: permission denied…\n${kept}`);
+    }
+  });
+
+  it("keeps the line breaks of an error that has several lines, as far as it is kept", () => {
+    const lines = "first line of the error\nsecond line of the error that goes on a good while longer than the room";
+    expect(correctedWordsProblem(lines, false, 40).body.split("\n")).toEqual([
+      "first line of the error",
+      "second line of…",
+      "Your corrected words are saved to your inbox when you quit.",
+    ]);
   });
 });
 
@@ -669,57 +695,6 @@ const WAV = "raw/audio/2026/10/2026-10-27-101500.wav";
 /** What Node says when a recording can't be moved into a folder it may not write to, with the paths of a library in a deep folder. */
 const RENAME_REFUSED = `EACCES: permission denied, rename '/Users/ana/Documents/Notes/Avanzel/${WAV}' -> '/Users/ana/Documents/Notes/Avanzel/inbox/2026-10-27-101500.wav'`;
 
-describe("shortReason", () => {
-  it("is an error's message as a sentence, whole when it fits or when no limit is given", () => {
-    expect(shortReason("Error: boom", 100)).toBe("Boom.");
-    expect(shortReason(RENAME_REFUSED)).toBe(`${RENAME_REFUSED}.`);
-    expect(shortReason("")).toBe("");
-    expect(shortReason("EACCES: permission denied", 100)).toBe("EACCES: permission denied.");
-  });
-
-  it("cuts a long message after a whole word, with no space before the ellipsis", () => {
-    const long = "the model could not be reached because the network went away while the audio was on its way to it, ".repeat(3);
-    const line = shortReason(long, 80);
-    expect(Array.from(line).length).toBeLessThanOrEqual(80);
-    expect(Array.from(line).length).toBeGreaterThan(60);
-    expect(line.endsWith("…")).toBe(true);
-    expect(line).not.toMatch(/[\s,]…$/);
-    expect(ownLine(long).startsWith(line.slice(0, -1))).toBe(true);
-    expect(ownLine(long).charAt(line.length - 1)).toBe(" "); // a word ended there
-  });
-
-  it("cuts before a path that doesn't fit, and takes the word that led up to it along", () => {
-    expect(shortReason(RENAME_REFUSED, 100)).toBe("EACCES: permission denied…");
-  });
-
-  it("keeps a path that fits whole, and cuts after it", () => {
-    const near = `EACCES: permission denied, rename '/tmp/lib/${WAV}' -> '/tmp/lib/inbox/2026-10-27-101500.wav'`;
-    expect(shortReason(near, 100)).toBe(`EACCES: permission denied, rename '/tmp/lib/${WAV}'…`);
-  });
-
-  it("never cuts through a path, whatever the room", () => {
-    const wordsOf = (text: string) => text.split(/\s+/).filter(Boolean);
-    const whole = wordsOf(ownLine(RENAME_REFUSED));
-    for (let room = 12; room <= 200; room++) {
-      const line = shortReason(RENAME_REFUSED, room);
-      expect(Array.from(line).length, `room ${room}`).toBeLessThanOrEqual(room);
-      // Each word of what is kept that has a slash in it is a whole word of the message: a path is kept or left out, never cut.
-      for (const word of wordsOf(line.replace(/…$/, ""))) {
-        if (word.includes("/")) expect(whole, `room ${room}: ${line}`).toContain(word);
-      }
-    }
-  });
-
-  it("cuts a first word that is longer than the room at the character, and never splits a character in two", () => {
-    const line = shortReason("/a/very/long/path/".repeat(10), 30);
-    expect(Array.from(line)).toHaveLength(30);
-    expect(line.endsWith("…")).toBe(true);
-    const wide = shortReason("💥".repeat(80), 20);
-    expect(Array.from(wide)).toHaveLength(20);
-    expect(Array.from(wide).slice(0, 19).every((char) => char === "💥")).toBe(true);
-  });
-});
-
 describe("stopFailedProblem", () => {
   const TITLE = "Avanzel couldn't move the recording to your inbox.";
 
@@ -753,6 +728,18 @@ describe("stopFailedProblem", () => {
     expect(stopFailedProblem(RENAME_REFUSED, WAV).body.startsWith(`${RENAME_REFUSED}. The transcription goes on`)).toBe(true);
   });
 
+  it("clips a reason before a path whose folder has a space in its name, as before one that has none", () => {
+    // Several people's libraries: a folder named "My Notes", iCloud Drive's "Mobile Documents", and one of several words.
+    for (const root of [
+      "/Users/ana/Documents/My Notes/Avanzel",
+      "/Users/ana/Library/Mobile Documents/com~apple~CloudDocs/Avanzel",
+      "/Users/ana/Documents/Notes and thoughts/Avanzel",
+    ]) {
+      const refused = `EACCES: permission denied, rename '${root}/${WAV}' -> '${root}/inbox/2026-10-27-101500.wav'`;
+      expect(stopFailedProblem(refused, WAV, 100).body, root).toBe(`EACCES: permission denied… The transcription goes on, and your recording is in ${WAV}.`);
+    }
+  });
+
   it("has nothing but the rest when the reason is empty", () => {
     expect(stopFailedProblem("", WAV).body).toBe(`The transcription goes on, and your recording is in ${WAV}.`);
   });
@@ -777,6 +764,28 @@ describe("screenCaptureProblem", () => {
 
   it("has only what is true when the reason is empty", () => {
     expect(screenCaptureProblem("").body).toBe("Nothing was saved.");
+  });
+});
+
+describe("commentNotStartedProblem, for a screen comment whose recording couldn't start after its screenshot was taken", () => {
+  it("says the screen comment couldn't start, why, and that nothing was saved: the screenshot is removed", () => {
+    expect(commentNotStartedProblem("Error: the library's settings can't be read")).toEqual({
+      title: "The screen comment couldn't start.",
+      body: "The library's settings can't be read. Nothing was saved.",
+    });
+  });
+
+  it("is not the title of a screenshot that couldn't be taken or claimed, which says Avanzel couldn't capture the screen", () => {
+    expect(commentNotStartedProblem("boom").title).not.toBe(screenCaptureProblem("boom").title);
+  });
+
+  it("cuts a system error before its path, and tells Avanzel's own sentence whole", () => {
+    expect(commentNotStartedProblem(RENAME_REFUSED, 100).body).toBe("EACCES: permission denied… Nothing was saved.");
+    expect(commentNotStartedProblem(RENAME_REFUSED).body).toBe(`${RENAME_REFUSED}. Nothing was saved.`);
+  });
+
+  it("has only what is true when the reason is empty", () => {
+    expect(commentNotStartedProblem("").body).toBe("Nothing was saved.");
   });
 });
 
@@ -819,53 +828,61 @@ describe("unsavedProblem, for words (or a screen capture) that could not be save
     });
   });
 
-  it("says the screen capture couldn't be saved for a screen comment", () => {
+  it("says the screen capture couldn't be saved for a screen comment, that its screenshot is gone, and where the recording is kept", () => {
     expect(unsavedProblem("EACCES: permission denied", WAV, true)).toEqual({
       title: "The screen capture couldn't be saved.",
-      body: `EACCES: permission denied. Your recording is kept in ${WAV}.`,
+      body: `EACCES: permission denied. The screenshot is gone. Your recording is kept in ${WAV}.`,
     });
   });
 
-  it("says nothing was saved when no recording is kept", () => {
+  it("says nothing was saved when no recording is kept: for a screen comment, with its screenshot gone too", () => {
     expect(unsavedProblem("EACCES: permission denied", null, false).body).toBe("EACCES: permission denied. Nothing was saved.");
-    expect(unsavedProblem("EACCES: permission denied", null, true).body).toBe("EACCES: permission denied. Nothing was saved.");
+    expect(unsavedProblem("EACCES: permission denied", null, true).body).toBe("EACCES: permission denied. The screenshot is gone, and nothing was saved.");
   });
 
   it("clips a long reason before its path", () => {
     expect(unsavedProblem(RENAME_REFUSED, null, false, 100).body).toBe("EACCES: permission denied… Nothing was saved.");
+    expect(unsavedProblem(RENAME_REFUSED, WAV, true, 100).body).toBe(`EACCES: permission denied… The screenshot is gone. Your recording is kept in ${WAV}.`);
   });
 });
 
 describe("thoughtNotSavedProblem", () => {
-  it("says that thought couldn't be saved, why, and that it is still in the box, with the key that opens it", () => {
-    expect(thoughtNotSavedProblem("EACCES: permission denied, open 'inbox/a.md'", "⌥⇧Space")).toEqual({
+  it("says that thought couldn't be saved, why, and where its words are now, by the action's name", () => {
+    expect(thoughtNotSavedProblem("EACCES: permission denied, open 'inbox/a.md'")).toEqual({
       title: "That thought couldn't be saved.",
-      body: "EACCES: permission denied, open 'inbox/a.md'. It's still in the box: press ⌥⇧Space to try again.",
+      body: "EACCES: permission denied, open 'inbox/a.md'. Your words are still in “Type a thought”.",
     });
   });
 
+  it("names no shortcut and no box: a shortcut is a Kbd, and the window is the action's", () => {
+    const { body } = thoughtNotSavedProblem("EACCES: permission denied");
+    expect(body).not.toMatch(/press|box|[⌃⌥⇧⌘]|try again/i);
+  });
+
   it("clips a long reason before its path, so the rest is whole", () => {
-    expect(thoughtNotSavedProblem(RENAME_REFUSED, "⌥⇧Space", 100).body).toBe(
-      "EACCES: permission denied… It's still in the box: press ⌥⇧Space to try again.",
-    );
+    expect(thoughtNotSavedProblem(RENAME_REFUSED, 100).body).toBe("EACCES: permission denied… Your words are still in “Type a thought”.");
   });
 });
 
 describe("voiceSettingsProblem", () => {
-  it("says Avanzel can't use the voice settings in the library's config file, why, and that typing works", () => {
+  it("says Avanzel can't use the voice settings in the library's config file, why, and that typed thoughts are still saved", () => {
     expect(voiceSettingsProblem("Speech model 'parakeet-v9' is not supported; choose parakeet-tdt-0.6b-v3")).toEqual({
       title: "Avanzel can't use the voice settings in this library's config file.",
-      body: "Speech model 'parakeet-v9' is not supported; choose parakeet-tdt-0.6b-v3. Typing a thought works meanwhile.",
+      body: "Speech model 'parakeet-v9' is not supported; choose parakeet-tdt-0.6b-v3. Typed thoughts are still saved to your inbox.",
     });
+  });
+
+  it("promises no filing: with a config file that doesn't parse, a typed thought is saved and its filing fails", () => {
+    expect(voiceSettingsProblem("config.toml: invalid TOML at line 2").body).not.toMatch(/works|filed/);
   });
 
   it("tells a long reason whole: it says what to mend", () => {
     const why = "/Users/ana/Avanzel/.avanzel/config.toml: invalid TOML at line 2, column 17: incomplete key-value declaration, expected a value";
-    expect(voiceSettingsProblem(why).body).toBe(`${why}. Typing a thought works meanwhile.`);
+    expect(voiceSettingsProblem(why).body).toBe(`${why}. Typed thoughts are still saved to your inbox.`);
   });
 
   it("has only what is true when the reason is empty", () => {
-    expect(voiceSettingsProblem("").body).toBe("Typing a thought works meanwhile.");
+    expect(voiceSettingsProblem("").body).toBe("Typed thoughts are still saved to your inbox.");
   });
 });
 
@@ -906,14 +923,16 @@ describe("the copy rules, for every problem a filing can have", () => {
   }
   // The corrected words' card is a problem of its own, and tells itself by the same rules, as do the refused undos.
   problems.push(correctedWordsProblem("EACCES: permission denied, open 'inbox/a.md'", true), correctedWordsProblem("EACCES: permission denied", false));
+  problems.push(correctedWordsProblem(RENAME_REFUSED, true, 100), correctedWordsProblem(RENAME_REFUSED.replaceAll("/Documents/Notes/", "/Documents/My Notes/"), false, 100));
   problems.push(undoRefused, takeBackRefused, ...[true, false].flatMap((inInbox) => [true, false].map((review) => takeBackRefusedProblem(inInbox, review))));
   // A speech-model download that didn't finish is told by the same rules, with a reason of any shape, and kept part or none.
   for (const reason of ["Could not download silero_vad.onnx: the server answered HTTP 404 Not Found", "Error: could not download vocab.txt: terminated (other side closed)", ""]) {
     problems.push(downloadFailedProblem(reason, true), downloadFailedProblem(reason, false));
   }
   // What a recording, a screen capture, a typed thought, the voice settings and Stop can end in, for a reason of any shape: a sentence,
-  // an "Error:" label, a Node error with two long paths (cut for a card, whole for a window), and none.
-  for (const reason of ["The speech model fell over", "Error: cannot reach the model", "EACCES: permission denied", RENAME_REFUSED, ""]) {
+  // an "Error:" label, a Node error with two long paths (cut for a card, whole for a window), one whose folder has a space, and none.
+  const SPACED = RENAME_REFUSED.replaceAll("/Documents/Notes/", "/Documents/My Notes/");
+  for (const reason of ["The speech model fell over", "Error: cannot reach the model", "EACCES: permission denied", RENAME_REFUSED, SPACED, ""]) {
     for (const lineMax of [undefined, 100]) {
       for (const kept of [null, WAV]) {
         problems.push(
@@ -923,7 +942,7 @@ describe("the copy rules, for every problem a filing can have", () => {
           stopFailedProblem(reason, kept, lineMax),
         );
       }
-      problems.push(screenCaptureProblem(reason, lineMax), thoughtNotSavedProblem(reason, "⌥⇧Space", lineMax));
+      problems.push(screenCaptureProblem(reason, lineMax), commentNotStartedProblem(reason, lineMax), thoughtNotSavedProblem(reason, lineMax));
     }
     problems.push(voiceSettingsProblem(reason));
   }
@@ -1068,12 +1087,7 @@ describe("duration", () => {
 });
 
 describe("ownLine", () => {
-  it("is an agent's line as a sentence", () => {
-    expect(ownLine("Error: usage limit reached")).toBe("Usage limit reached.");
-    expect(ownLine("agent crashed: not logged in")).toBe("Agent crashed: not logged in.");
-    expect(ownLine("Is it on?")).toBe("Is it on?");
-    expect(ownLine("ERROR: the model is not supported with this account")).toBe("The model is not supported with this account.");
-    expect(ownLine("Still starting…")).toBe("Still starting…");
-    expect(ownLine("")).toBe("");
+  it("is the clip module's, which the windows and the main process keep importing from here (its cases are clip.test.ts's)", () => {
+    expect(ownLine).toBe(clipOwnLine);
   });
 });

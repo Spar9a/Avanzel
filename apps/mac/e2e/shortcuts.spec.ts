@@ -46,6 +46,27 @@ test("a taken ⌥Space is named at launch, and a free one picked there says it w
   await app.close();
 });
 
+test("the picked shortcut's bar is a piece of the stack: as wide as the others, it says each action in full and holds while the pointer is on it", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const capsule = await windowFor(app, "capsule");
+  const bar = capsule.getByRole("status");
+  const PICKED_MS = 1_500; // the bar goes by itself after 3 s: a shorter time for the test
+  // The longest name an action has, with the longest shortcut: nothing of the line is cut off.
+  await call(app, "setCapsule", { kind: "shortcut-picked", key: "capture", accelerator: "Control+Alt+Shift+Command+Space" }, PICKED_MS);
+  const line = bar.getByText("Capture screen with a comment now uses ⌃⌥⇧⌘Space", { exact: true });
+  await expect(line).toBeVisible();
+  expect(await line.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  expect((await bar.boundingBox())!.width).toBeCloseTo(420, 0); // as wide as the other bars of the stack
+  // The pointer on it holds it past its time, as it holds any card (it took no pointer, and hid under it, when it was no piece of the stack) ...
+  await bar.hover();
+  await capsule.waitForTimeout(PICKED_MS + 800);
+  expect(await capsuleKind(app)).toBe("shortcut-picked");
+  // ... and once the pointer is off it, the bar goes at its next time.
+  await capsule.mouse.move(0, 0);
+  await expect.poll(() => capsuleKind(app), { timeout: 8_000 }).toBe("hidden");
+  await app.close();
+});
+
 test("the launch notice names each taken shortcut once, and again only after it has worked", async () => {
   test.setTimeout(240_000);
   const library = await makeLibrary();

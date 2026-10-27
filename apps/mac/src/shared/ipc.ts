@@ -38,14 +38,16 @@ export type LibraryFolder = "missing" | "empty" | "has-files" | "library";
 
 /**
  * What the one button of the capsule's problem card does: opens a pane of System Settings, or Avanzel's Settings on the pane
- * that fixes the problem; opens Terminal, where an agent signs in; or (`refile:<agent>`, the agent's harness name) files
- * the note the card is about again with that agent.
+ * that fixes the problem; opens Terminal, where an agent signs in; opens Type a thought, where the words of a thought that couldn't
+ * be saved still are (`type-a-thought`); or (`refile:<agent>`, the agent's harness name) files the note the card is about again
+ * with that agent.
  */
 export type CardAction =
   | "open-microphone-settings"
   | "open-screen-settings"
   | `open-settings:${SettingsPane}`
   | "open-terminal"
+  | "type-a-thought"
   | `refile:${string}`;
 
 export type CapsuleState =

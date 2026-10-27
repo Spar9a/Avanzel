@@ -4,9 +4,9 @@ import { Actions, Button, Group, GroupRow, Kbd, Notice, Progress, Row, Stack, Te
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { ModelStatus, Shortcuts } from "../../../shared/ipc.ts";
-import { downloadFailedProblem } from "../../../shared/problems.ts";
+import { downloadFailedProblem, voiceSettingsProblem } from "../../../shared/problems.ts";
 import { passesThrough, toAccelerator } from "../accelerator.ts";
-import { asSentence, DOWNLOAD_NOT_STARTED, microphoneName, microphoneOptions, speechModelLine, type InputDevice } from "../copy.ts";
+import { DOWNLOAD_NOT_STARTED, microphoneName, microphoneOptions, speechModelLine, type InputDevice } from "../copy.ts";
 import { attemptChange, ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -71,20 +71,20 @@ function SpeechControl({ model, onDownload }: { model: ModelStatus; onDownload()
 /**
  * The Notice under the Speech group while the model is in an error: a download that didn't finish, with why and Try
  * again (which continues where it stopped when part of it was kept), or voice settings in the library's config file that
- * Avanzel can't use, with why, which Try again couldn't help: they are fixed in that file. Either way, typing works
- * meanwhile. `primary` says whether Try again is the pane's primary button, which it isn't when a shortcut's Notice has
- * a free shortcut to offer.
+ * Avanzel can't use, with why, which Try again couldn't help: they are fixed in that file. Either way the words are the
+ * capsule's card's, from the same builder (shared/problems.ts), and say what is safe meanwhile. `primary` says whether Try again
+ * is the pane's primary button, which it isn't when a shortcut's Notice has a free shortcut to offer.
  */
 function SpeechProblem({ model, primary, onDownload }: { model: ModelStatus; primary: boolean; onDownload(): void }): ReactNode {
   if (model.kind !== "error") return null;
   if (model.cause === "settings") {
+    const settings = voiceSettingsProblem(model.message);
     return (
-      <Notice tone="error" title="Avanzel can't use the voice settings in this library's config file.">
-        {`${asSentence(model.message)} Typing a thought works meanwhile.`}
+      <Notice tone="error" title={settings.title}>
+        {settings.body}
       </Notice>
     );
   }
-  // The same words as the capsule's card.
   const problem = downloadFailedProblem(model.message, model.resumable);
   return (
     <Notice

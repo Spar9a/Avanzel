@@ -67,6 +67,7 @@ import {
 } from "@avanzel/engine";
 import { isSettingsPane, noSuchReview } from "../shared/ipc.ts";
 import {
+  commentNotStartedProblem,
   correctedWordsProblem,
   filingProblem,
   NO_GIT_LINE,
@@ -140,7 +141,7 @@ import {
 import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
 import { afterStop, defaultLibraryPath, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
-import { freeAlternatives, likelyHolder, prettyAccelerator, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
+import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
 import { MenuBar } from "./tray.ts";
@@ -169,6 +170,9 @@ const PICKED_SHOW_MS = 3_000;
 // How long the capsule says that a filing or a transcription is stopped (hovering over it keeps it longer, as it does any card that
 // hides itself).
 const STOPPED_SHOW_MS = 6_000;
+// How long after the pointer leaves what the capsule draws a card that hides itself is let go (`setKeepOpen`). The card and its bar are
+// a few pixels apart, and crossing them is a leave and an enter.
+const KEEP_OPEN_LET_GO_MS = 250;
 // The listening card names the shortcut that finishes a recording until the library has kept this many recordings: the first ones
 // teach the keys.
 const HINT_CAPTURES = 10;
@@ -320,7 +324,10 @@ export class Controller {
   /** The job whose words are in the capsule's editor: from Edit until File or Cancel (`refile`), or `keepEdit`. */
   private inEditor: FilingJob | null = null;
   private hideTimer: NodeJS.Timeout | null = null;
+  /** The pointer is over what the capsule draws, so a card that hides itself waits (`scheduleHide`). */
   private keepOpen = false;
+  /** The pending end of that hold, once the pointer has left (`setKeepOpen`): a return before it fires cancels it. */
+  private letGoTimer: NodeJS.Timeout | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   /** Work in the queue that hasn't finished. */
   private queued = 0;
@@ -793,19 +800,26 @@ export class Controller {
     const vault = this.requireVault();
     if (this.capsule.isVisible()) this.setCapsule({ kind: "hidden" });
     await new Promise((r) => setTimeout(r, 80)); // let the capsule leave the screen before the shot
+    // Two things can go wrong, and each says so: the screen can't be captured (and its screenshot claimed and written), or it was, and
+    // the recording that goes with it can't start. Either way the card says nothing was saved, so a screenshot that was claimed goes.
     let shotPath: string | null = null;
+    let shot: NonNullable<Recording["shot"]>;
     try {
       // Not asked yet: this capture is what makes macOS ask. Without the grant it comes back blank.
       const [image, context] = await Promise.all([captureDisplay(), this.screenContext()]);
       if (looksBlank(image)) return this.cantSeeScreen();
       shotPath = vault.newAttachmentPath(new Date(), ".png");
       writeFileSync(shotPath, image.toPNG());
-      const thumbnail = image.resize({ width: 208 }).toDataURL();
-      await this.startRecording("comment", { path: shotPath, thumbnail, context });
+      shot = { path: shotPath, thumbnail: image.resize({ width: 208 }).toDataURL(), context };
     } catch (error) {
-      // The card says nothing was saved, so a screenshot that was claimed goes.
       if (shotPath !== null) rmSync(shotPath, { force: true });
-      this.fail(screenCaptureProblem(errorMessage(error), reasonMax(error)));
+      return this.fail(screenCaptureProblem(errorMessage(error), reasonMax(error)));
+    }
+    try {
+      await this.startRecording("comment", shot);
+    } catch (error) {
+      rmSync(shot.path, { force: true });
+      this.fail(commentNotStartedProblem(errorMessage(error), reasonMax(error)));
     }
   }
 
@@ -1090,10 +1104,13 @@ export class Controller {
       if (recording.shot && !captured) rmSync(recording.shot.path, { force: true });
       const kept = written !== null && existsSync(written) ? vault.relativePath(written) : null;
       const why = errorMessage(error);
+      // A screen comment with no words is a normal one (it is saved as "No comment"), so for a comment it is always the screen capture
+      // that couldn't be saved. A dictation that made no words is one whose recording couldn't be turned into words.
+      const comment = recording.mode === "comment";
       this.recordingFailed(
         recording,
         { problem: text ? "unsaved" : "unheard", kept: kept !== null },
-        text ? unsavedProblem(why, kept, recording.mode === "comment", reasonMax(error)) : unheardProblem(why, kept, reasonMax(error)),
+        comment || text ? unsavedProblem(why, kept, comment, reasonMax(error)) : unheardProblem(why, kept, reasonMax(error)),
       );
     }
   }
@@ -1877,7 +1894,9 @@ export class Controller {
     const unkept = this.cardUnkept;
     const refile = state.action?.startsWith("refile:") ?? false;
     if (!unkept && !refile) return;
-    const words: Problem = unkept ?? { title: state.message, body: state.detail ?? "", ...(state.command ? { command: state.command } : {}) };
+    // No command to carry: this card either promised a filing at a limit's reset (`unkept`), or has a refile button to lose, and only a
+    // sign-in names a command, whose button opens Terminal and whose words `unwatch` rewrites.
+    const words: Problem = unkept ?? { title: state.message, body: state.detail ?? "" };
     this.fail(words, refile ? undefined : state.action, refile ? undefined : state.actionLabel, card);
   }
 
@@ -2208,8 +2227,23 @@ export class Controller {
     this.setCapsule({ kind: "hidden" });
   }
 
+  /**
+   * The pointer enters what the capsule draws (`keep`), or leaves it. A card that hides itself waits while the pointer is on it
+   * (`scheduleHide`), but the hold is let go only `KEEP_OPEN_LET_GO_MS` after the pointer leaves, and a return before then cancels it:
+   * crossing the gap between a card and its bar is a leave and an enter, and a card whose time is up in that moment would be put away
+   * under the pointer. Whether the window passes clicks through is `setInteractive`'s, and has no such delay.
+   */
   setKeepOpen(keep: boolean): void {
-    this.keepOpen = keep;
+    if (this.letGoTimer) clearTimeout(this.letGoTimer);
+    this.letGoTimer = null;
+    if (keep) {
+      this.keepOpen = true;
+      return;
+    }
+    this.letGoTimer = setTimeout(() => {
+      this.letGoTimer = null;
+      this.keepOpen = false;
+    }, KEEP_OPEN_LET_GO_MS);
   }
 
   setInteractive(interactive: boolean): void {
@@ -2221,7 +2255,9 @@ export class Controller {
    * A button on the capsule's card is clicked (an error card's one button, or a notice's Open Settings): `action`, as the
    * page sent it, says what to do (see CardAction), and the card goes away. `refile:<agent>` files the card's note
    * (`cardCapture`) again with that agent (`fileAgainWith`): the filing the capsule shows replaces the card. A second click
-   * on the button finds no note, since that filing has replaced the card, and does nothing.
+   * on the button finds no note, since that filing has replaced the card, and does nothing. `type-a-thought`, the fix of a thought
+   * that couldn't be saved, opens Type a thought again, with its words still in it (`typeInstead`), and only while an error card is
+   * what the capsule shows: a press that finds another card up, a recording say, is a stale one, and opens and hides nothing.
    *
    * Other windows send it too (the Ask window's Open Settings, setup's Open Settings), while the capsule shows something
    * that isn't a card: a recording, or a note being edited. It hides only the two cards it is the button of, an error card
@@ -2231,6 +2267,10 @@ export class Controller {
     if (action.startsWith("refile:")) {
       const capture = this.cardCapture; // before the filing replaces the card, and the card's note with it
       if (capture !== null) this.fileAgainWith(capture, action.slice("refile:".length));
+      return;
+    }
+    if (action === "type-a-thought") {
+      if (this.capsuleState.kind === "error") this.typeInstead();
       return;
     }
     if (action === "open-microphone-settings") void this.openPrivacy("microphone");
@@ -2311,8 +2351,8 @@ export class Controller {
     try {
       capture = this.requireVault().newCapture(trimmed, { source: "text", now: new Date() });
     } catch (error) {
-      // The words stay in the type-a-thought box for another try.
-      this.fail(thoughtNotSavedProblem(errorMessage(error), prettyAccelerator(this.store.get().shortcuts.type), reasonMax(error)));
+      // The words stay in Type a thought for another try, which the card's one fix opens (`openSettingsFor`).
+      this.fail(thoughtNotSavedProblem(errorMessage(error), reasonMax(error)), "type-a-thought", "Type a thought");
       throw error;
     }
     this.afterCapture(capture.path, trimmed, null);

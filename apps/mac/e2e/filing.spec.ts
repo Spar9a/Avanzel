@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameS
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault, git, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import type { AgentFailure, Problem } from "../src/shared/problems.ts";
+import { correctedWordsProblem, filingProblem, stopFailedProblem, voiceSettingsProblem, type AgentFailure, type Problem } from "../src/shared/problems.ts";
 import {
   agentCalls,
   agentStubs,
@@ -393,6 +393,7 @@ test("corrected words that can't be saved yet are saved when Avanzel quits, and 
     const [reason] = detail.split("\n");
     expect(Array.from(reason!).length).toBeLessThanOrEqual(100);
     expect(reason!.endsWith("…")).toBe(true);
+    expect((reason!.match(/'/g) ?? []).length % 2).toBe(0); // no path is cut: each quote it opens, it closes
     await expectProblem(capsule, {
       title: "Your corrected words weren't saved yet.",
       lines: [reason!, "Your corrected words are saved to your inbox when you quit; the original note is still there."],
@@ -729,7 +730,6 @@ test("a long line of the agent's is shortened in the notification too, when the 
 });
 
 test("the longest problems the capsule tells fit the panel with their buttons, and a command is in the code face", async () => {
-  const { correctedWordsProblem, filingProblem, stopFailedProblem, voiceSettingsProblem } = await import("../src/shared/problems.ts");
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const capsule = await windowFor(app, "capsule");
   const now = new Date();
@@ -819,7 +819,7 @@ test("a library whose settings can't be read says so, and not that no agent is i
   const capsule = await windowFor(app, "capsule");
   await call(app, "submitQuick", "Plant tulips in October"); // typed: recording reads the settings too
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("error");
-  // No agent can be named, so Avanzel couldn't file it; and no agent can be retried, and the file is mended by hand: OK alone.
+  // No agent can be named, so Avanzel couldn't file it; and no agent can be retried, and the file is mended by hand: Hide alone.
   const state = (await call(app, "capsuleStateForTests")) as { message: string; detail: string };
   expect(state).toEqual({
     kind: "error",
@@ -971,7 +971,7 @@ test("a limit card left up while another library opens stops promising the filin
 
   // The card is still up, for a note that waits in the first library's inbox and isn't in the new library's. Its wait is the
   // first library's, and files only while that library is open: the card says only what is so now, in the words of a limit
-  // that nothing waits for. File it with Codex now would file a note of the open library, so it goes; OK closes the card.
+  // that nothing waits for. File it with Codex now would file a note of the open library, so it goes; Hide puts the card away.
   expect(await call(app, "capsuleStateForTests")).toEqual({
     kind: "error",
     message: "Claude Code has hit its usage limit.",

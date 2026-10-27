@@ -26,7 +26,8 @@ body {
   pointer-events: auto;
 }
 
-/* A bar with a card above it (every state but a problem's notice and the download's): all as wide as the notices below. */
+/* A bar, with a card above it where there is one (every state but the notices: a problem's, the download's and a taken shortcut's, which
+   are .slot): all as wide as the notices below. A bar outside it would take no pointer. */
 .stack {
   display: flex;
   flex-direction: column;

@@ -299,25 +299,27 @@ test("voice settings Avanzel can't use are named at the shortcut, and nothing do
   expect(await modelStatus(app)).toMatchObject({ kind: "error", cause: "settings" });
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
-  // What happened, where; then why, and what still works meanwhile. The one fix is Settings → Voice, where the config file's
-  // [voice] settings are named (Try again can't help: nothing downloads).
+  // What happened, where; then why, and what is safe meanwhile: a typed thought is saved to the inbox (it needn't be filed: a config
+  // file that doesn't parse stops a filing too). The one fix is Settings → Voice, where the config file's [voice] settings are named
+  // (Try again can't help: nothing downloads).
   const title = "Avanzel can't use the voice settings in this library's config file.";
-  const why = /^Speech model 'parakeet-v9' is not supported; .*\. Typing a thought works meanwhile\.$/;
+  const why = /^Speech model 'parakeet-v9' is not supported; .*\. Typed thoughts are still saved to your inbox\.$/;
   await expectProblem(capsule, { title, lines: [why], fix: "Open Settings" });
-  expect(await call(app, "capsuleStateForTests")).toEqual({
+  const state = (await call(app, "capsuleStateForTests")) as { detail: string };
+  expect(state).toEqual({
     kind: "error",
     message: title,
     detail: expect.stringMatching(why),
     action: "open-settings:voice",
     actionLabel: "Open Settings",
   });
-  // Its button opens Settings on the Voice pane, which tells it in the same words, and the card goes.
+  // Its button opens Settings on the Voice pane, which tells it in the very words of the card (one builder, `voiceSettingsProblem`),
+  // and the card goes.
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings");
   await expect(settings.getByRole("radio", { name: "Voice", exact: true })).toHaveAttribute("aria-checked", "true");
   const alert = settings.getByRole("alert");
-  await expect(alert).toContainText(title);
-  await expect(alert).toContainText(/Speech model 'parakeet-v9' is not supported; .*\. Typing a thought works meanwhile\.$/); // the title comes first in its text
+  await expect(alert).toHaveText(`${title}${state.detail}`); // the title, then the body: one Notice, no button
   await expect(settings.getByRole("button", { name: "Try again" })).toHaveCount(0); // trying again can't help
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   expect(hub.requests).toEqual([]);

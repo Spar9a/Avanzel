@@ -592,12 +592,40 @@ test("a screen comment that can't be saved says the screen capture couldn't be, 
     await call(app, "toggleCapture");
     await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
     const [recording] = filesUnder(library, "raw/audio");
+    // The card says the screenshot is gone, as it is: no screenshot is left in the library with no note to hold it. The recording is
+    // the person's voice, and stays where it was written.
     await expectProblem(capsule, {
       title: "The screen capture couldn't be saved.",
-      lines: [`EACCES: permission denied… Your recording is kept in raw/audio/${recording}.`],
+      lines: [`EACCES: permission denied… The screenshot is gone. Your recording is kept in raw/audio/${recording}.`],
     });
-    // The card says the capture wasn't saved: no screenshot is left in the library with no note to hold it.
     expect(filesUnder(library, "raw/attachments")).toEqual([]);
+    expect(filesUnder(library, "inbox")).toEqual([]);
+  } finally {
+    chmodSync(inbox, 0o755);
+  }
+  await app.close();
+});
+
+test("a screen comment with no words that can't be saved is still the screen capture that couldn't be saved, and nothing was", async () => {
+  // A comment with no words is a normal one: it is saved as "No comment". What fails here is its save, so the card does not say that
+  // the recording couldn't be turned into words. The recording went with the words that weren't there, and the screenshot with the note.
+  const { library, app, capsule } = await launchSlowly(0, {
+    library: await deepLibrary(),
+    env: { AVANZEL_FAKE_TRANSCRIPT: "   ", AVANZEL_FAKE_SCREEN: screenshotFixture(), AVANZEL_FAKE_FRONT_APP: "Safari|Growing basil|https://example.com/basil" },
+  });
+  const inbox = path.join(library, "inbox");
+  chmodSync(inbox, 0o555);
+  try {
+    await call(app, "toggleCapture");
+    await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("listening");
+    await call(app, "toggleCapture");
+    await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+    await expectProblem(capsule, {
+      title: "The screen capture couldn't be saved.",
+      lines: ["EACCES: permission denied… The screenshot is gone, and nothing was saved."],
+    });
+    expect(filesUnder(library, "raw/attachments")).toEqual([]);
+    expect(filesUnder(library, "raw/audio")).toEqual([]);
     expect(filesUnder(library, "inbox")).toEqual([]);
   } finally {
     chmodSync(inbox, 0o755);
@@ -629,18 +657,19 @@ test("a screenshot the library won't take says Avanzel couldn't capture the scre
   await app.close();
 });
 
-test("a screenshot that was taken for a recording that can't start is removed, and the card says nothing was saved", async () => {
+test("a screenshot that was taken for a recording that can't start is removed, and the card says the screen comment couldn't start", async () => {
   const library = await makeLibrary();
   const { app, capsule } = await launchSlowly(0, {
     library,
     env: { AVANZEL_FAKE_SCREEN: screenshotFixture(), AVANZEL_FAKE_FRONT_APP: "Safari|Growing basil|https://example.com/basil" },
   });
-  // The library's settings break after Avanzel has read them: the screenshot is taken, and then the recording can't start.
+  // The library's settings break after Avanzel has read them: the screenshot is taken, and then the recording can't start. The screen
+  // was captured, so the card does not say it couldn't be: it says what didn't happen, and what is safe.
   writeFileSync(path.join(library, ".avanzel", "config.toml"), 'harness = "claude"\ntimeout_seconds =\n');
   await call(app, "toggleCapture");
   await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("error");
   await expectProblem(capsule, {
-    title: "Avanzel couldn't capture the screen.",
+    title: "The screen comment couldn't start.",
     lines: [/config\.toml: invalid TOML at line 2, column \d+: .+\. Nothing was saved\.$/],
   });
   expect(filesUnder(library, "raw/attachments")).toEqual([]); // the card says nothing was saved: the screenshot is not left behind

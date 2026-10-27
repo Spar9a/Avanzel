@@ -338,11 +338,23 @@ function capsuleStates(): [string, CapsuleState, string][] {
         message: "Avanzel can't use the voice settings in this library's config file.",
         detail:
           "/Users/ana/Documents/Notes/Avanzel/.avanzel/config.toml: invalid TOML at line 2, column 17: incomplete key-value declaration, expected a value. " +
-          "Typing a thought works meanwhile.\nYour words are kept in raw/audio/2026/10/2026-10-27-101500.wav.",
+          "Typed thoughts are still saved to your inbox.\nYour words are kept in raw/audio/2026/10/2026-10-27-101500.wav.",
         action: "open-settings:voice",
         actionLabel: "Open Settings",
       },
       "Avanzel can't use the voice settings in this library's config file.",
+    ],
+    // A thought that couldn't be saved: its one fix opens Type a thought, where the words wait.
+    [
+      "error, a thought",
+      {
+        kind: "error",
+        message: "That thought couldn't be saved.",
+        detail: "EACCES: permission denied… Your words are still in “Type a thought”.",
+        action: "type-a-thought",
+        actionLabel: "Type a thought",
+      },
+      "That thought couldn't be saved.",
     ],
     ["preparing", { kind: "preparing", receivedBytes: 412_000_000, totalBytes: 672_807_563 }, "The speech model is still downloading"],
     [
@@ -416,6 +428,16 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   for (const [name, state, shows] of capsuleStates()) {
     await call(app, "setCapsule", state);
     await expect(capsule.getByText(shows)).toBeVisible();
+    // Every piece the page draws takes the pointer. The page's wrapper and the stack take none (the transparent corners pass it to the
+    // apps below), so a state whose root were a bare piece, and not a notice or a stack, could not be hovered, and would be put away
+    // under the pointer: each state's pieces are the stack's children, or the notice itself.
+    const pieces = await capsule.evaluate(() =>
+      [...document.querySelectorAll(".app > *")]
+        .flatMap((root) => (root.matches(".stack") ? [...root.children] : [root]))
+        .map((piece) => ({ piece: piece.className || piece.tagName.toLowerCase(), pointerEvents: getComputedStyle(piece).pointerEvents })),
+    );
+    expect(pieces.length, `capsule ${name}: pieces`).toBeGreaterThan(0);
+    for (const { piece, pointerEvents } of pieces) expect(pointerEvents, `capsule ${name}: ${piece}`).toBe("auto");
     found.push(...(await readable(app, capsule, `capsule ${name}`, desktops)));
   }
   await app.close();

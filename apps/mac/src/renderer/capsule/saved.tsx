@@ -1,7 +1,7 @@
 // The capsule once words are saved to the inbox, and not filed yet: the person's words on a card, over a bar that says Saved. Hide is
 // its only button. A screen comment's card is labelled with the app and holds its screenshot, its page's title and its address.
 import { CapsuleBar, Card, Row, Stack, Text } from "@avanzel/ui";
-import { useStampDate } from "../common/stamp.ts";
+import { useStampDate } from "../common/use-stamp-date.ts";
 import type { StateOf } from "./api.ts";
 import { Hide } from "./hide.tsx";
 import { Words } from "./words.tsx";
