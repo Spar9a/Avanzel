@@ -4,7 +4,9 @@
 // Stamp's two layers together peak at 0.48. A window plays one with `playSound`; the capsule's page plays what main sends it
 // (`capsule:sound`), and main decides when, and whether the setting allows it (controller.ts, `sound`). A page holds one AudioContext,
 // which holds the audio device open: the capsule's is made ahead of its first Tick (`prepareSounds`, when main says sounds are on) and
-// closed when they go off (`releaseSounds`), and setup's Preview (`previewSounds`) plays all three of its sounds, whatever the setting.
+// closed when they go off (`releaseSounds`). Setup and Settings play sounds of their own, outside main's gate: Preview sounds
+// (`previewSounds`) plays four of them whatever the setting, and switching sounds on plays the Stamp (`soundsSwitched`). Each asks main
+// right before it plays (`MayPlay`), and main says no while a recording runs.
 import type { SoundName } from "../../shared/ipc.ts";
 
 /** What of an `AudioContext` the sounds use. The page's own is one, and a fake stands in for it in the tests. */
@@ -16,7 +18,7 @@ export type AudioContextLike = Pick<
 /**
  * When each sound's last sample plays, in milliseconds after it starts: it is over by then. The synth sets them. A tone stops 20 ms
  * after it has faded (`tone`), and a burst of noise ends with its buffer (`noise`); the Letter's second note starts 0.1 s late. All are
- * under 0.6 s (spec §4.6). Setup's Preview spaces its sounds by them (`PREVIEW_AT_MS`).
+ * under 0.6 s (spec §4.6). Preview sounds spaces its sounds by them (`PREVIEW_AT_MS`).
  */
 export const SOUND_MS: Record<SoundName, number> = { tick: 80, tock: 90, stamp: 200, drawer: 220, letter: 570 };
 
@@ -160,18 +162,55 @@ export function releaseSounds(): void {
 }
 
 /**
- * When setup's Preview plays the Stamp and the Letter, in milliseconds after it plays the Tick, which is at once. Each begins after the
- * one before has ended (`SOUND_MS`), with room to hear it end.
+ * Asks main whether a window may play a sound of its own now (`AvanzelBridge.settings.mayPlaySounds`). It may not while a recording runs:
+ * the recorder keeps no echo cancellation (recorder.ts), so the sound would be heard in the words. The capsule's sounds are kept out of a
+ * recording by main (controller.ts, `sound`), which sends them; a window plays its own, so it asks, right before each sound.
  */
-export const PREVIEW_AT_MS = { stamp: 260, letter: 760 } as const;
+export type MayPlay = () => Promise<boolean>;
+
+/** What main says, or no when it can't be asked (the window is closing, say): a sound that may be heard in someone's words is worse than one that isn't played. */
+async function allowed(may: MayPlay): Promise<boolean> {
+  try {
+    return await may();
+  } catch {
+    return false;
+  }
+}
+
+/** Plays `name` as a window's own sound, if main says it may right as it would play. */
+async function playIfAllowed(name: SoundName, may: MayPlay, make?: () => AudioContextLike): Promise<void> {
+  if (await allowed(may)) playSound(name, make);
+}
 
 /**
- * Plays the Tick, the Stamp and the Letter one after the other, for a person to hear what the sounds are before they switch them on. It
- * plays whatever the setting is: the person asked for it, and the setting is main's to hold for the capsule (controller.ts, `sound`), not
- * a window's own. The times count from the press, so a first sound that takes its time to open the audio device moves none of them.
+ * When Preview sounds plays the Stamp, the Drawer and the Letter, in milliseconds after it plays the Tick, which is first. Each begins
+ * after the one before has ended (`SOUND_MS`: the Tick's, the Stamp's and the Drawer's), with room to hear it end.
  */
-export function previewSounds(make: () => AudioContextLike = newContext): void {
-  setTimeout(() => playSound("stamp", make), PREVIEW_AT_MS.stamp);
-  setTimeout(() => playSound("letter", make), PREVIEW_AT_MS.letter);
-  playSound("tick", make);
+export const PREVIEW_AT_MS = { stamp: 260, drawer: 520, letter: 800 } as const;
+
+/**
+ * Plays the Tick, the Stamp, the Drawer and the Letter one after the other, for a person to hear what the sounds are before they switch
+ * them on. It plays whatever the setting is: the person asked for it, and the setting is main's to hold for the capsule (controller.ts,
+ * `sound`), not a window's own. Each sound asks main right before it plays (`may`), so a recording that starts during the Preview
+ * keeps the rest of it out. The times count from the Tick, which opens the audio device the first time and may take a tenth of a second
+ * to: the others follow it, so the spacing between the sounds holds.
+ */
+export function previewSounds(may: MayPlay, make?: () => AudioContextLike): void {
+  void (async () => {
+    if (!(await allowed(may))) return;
+    playSound("tick", make);
+    setTimeout(() => void playIfAllowed("stamp", may, make), PREVIEW_AT_MS.stamp);
+    setTimeout(() => void playIfAllowed("drawer", may, make), PREVIEW_AT_MS.drawer);
+    setTimeout(() => void playIfAllowed("letter", may, make), PREVIEW_AT_MS.letter);
+  })();
+}
+
+/**
+ * What a window does when its Play sounds switch has changed, once the change is saved: switching on plays the Stamp, as the sign that
+ * they are on (if main says it may: not over a recording); switching off lets go of the window's audio device (`releaseSounds`), and
+ * plays nothing.
+ */
+export function soundsSwitched(on: boolean, may: MayPlay, make?: () => AudioContextLike): void {
+  if (on) void playIfAllowed("stamp", may, make);
+  else releaseSounds();
 }

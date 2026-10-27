@@ -40,6 +40,7 @@ const bridge: AvanzelBridge = {
     onChanged: (callback) => listen<SettingsSnapshot>("settings:changed", callback),
     onShowPane: (callback) => listen<SettingsPane>("settings:show-pane", callback),
     setApp: (patch) => ipcRenderer.invoke("settings:set-app", patch),
+    mayPlaySounds: () => ipcRenderer.invoke("settings:may-play-sounds"),
     setLibrary: (patch) => ipcRenderer.invoke("settings:set-library", patch),
     chooseLibrary: () => ipcRenderer.invoke("settings:choose-library"),
     downloadModel: () => ipcRenderer.invoke("settings:download-model"),

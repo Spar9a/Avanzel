@@ -509,35 +509,44 @@ describe("getting the page's AudioContext ready, and letting go of it", () => {
   });
 });
 
-// Setup's Preview sounds: the Tick, the Stamp and the Letter, one after the other, whether sounds are on or not.
+// A window's own sounds: Preview sounds, in setup and in Settings, and the Stamp that says sounds are switched on. They play outside main's
+// gate for the capsule (controller.ts, `sound`), which keeps everything but a recording's own Tick and Tock out of a recording: the recorder
+// keeps no echo cancellation, so a sound would be heard in the words. So each of them asks main right before it plays (`may`, the bridge's
+// `mayPlaySounds`), and plays only if main says it may, which it does not while a recording runs.
 describe("Preview sounds", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
   const names = () => (played() ?? []).map((entry) => entry.name);
+  const yes = () => Promise.resolve(true);
 
-  it("plays the Tick at once, the Stamp 260 ms after it and the Letter 760 ms after it", async () => {
+  it("plays the Tick at once, the Stamp 260 ms after it, the Drawer at 520 and the Letter at 800", async () => {
     vi.useFakeTimers();
     const { previewSounds } = await page();
     const context = new FakeContext();
-    previewSounds(() => context.asAudio);
+    previewSounds(yes, () => context.asAudio);
+    await vi.advanceTimersByTimeAsync(0);
     expect(names()).toEqual(["tick"]);
-    vi.advanceTimersByTime(259);
+    await vi.advanceTimersByTimeAsync(259);
     expect(names()).toEqual(["tick"]);
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(names()).toEqual(["tick", "stamp"]);
-    vi.advanceTimersByTime(499);
+    await vi.advanceTimersByTimeAsync(259);
     expect(names()).toEqual(["tick", "stamp"]);
-    vi.advanceTimersByTime(1);
-    expect(names()).toEqual(["tick", "stamp", "letter"]);
-    vi.advanceTimersByTime(5_000);
-    expect(names()).toEqual(["tick", "stamp", "letter"]); // once each
-    const [tick, stamp, letter] = played()!;
-    expect([stamp!.at - tick!.at, letter!.at - tick!.at]).toEqual([260, 760]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(names()).toEqual(["tick", "stamp", "drawer"]);
+    await vi.advanceTimersByTimeAsync(279);
+    expect(names()).toEqual(["tick", "stamp", "drawer"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(names()).toEqual(["tick", "stamp", "drawer", "letter"]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(names()).toEqual(["tick", "stamp", "drawer", "letter"]); // once each
+    const [tick, stamp, drawer, letter] = played()!;
+    expect([stamp!.at - tick!.at, drawer!.at - tick!.at, letter!.at - tick!.at]).toEqual([260, 520, 800]);
   });
 
-  it("counts from the press, not from the end of the Tick: a first sound that takes its time to open the device moves nothing", async () => {
+  it("counts from the Tick: a first sound that takes its time to open the audio device moves the others with it, and the spacing holds", async () => {
     vi.useFakeTimers();
     const { previewSounds } = await page();
     const context = new FakeContext();
@@ -546,36 +555,71 @@ describe("Preview sounds", () => {
       vi.advanceTimersByTime(100);
       return context.asAudio;
     };
-    previewSounds(slow);
-    vi.advanceTimersByTime(160);
-    expect(names()).toEqual(["tick", "stamp"]); // 260 ms after the press, though only 160 after the Tick returned
-    vi.advanceTimersByTime(500);
-    expect(names()).toEqual(["tick", "stamp", "letter"]);
+    previewSounds(yes, slow);
+    await vi.advanceTimersByTimeAsync(2_000);
+    const [tick, stamp, drawer, letter] = played()!;
+    expect(names()).toEqual(["tick", "stamp", "drawer", "letter"]);
+    expect([stamp!.at - tick!.at, drawer!.at - tick!.at, letter!.at - tick!.at]).toEqual([260, 520, 800]);
   });
 
   it("leaves each sound room to end before the next begins, by the length each has (SOUND_MS)", async () => {
     vi.useFakeTimers();
     const { previewSounds, SOUND_MS } = await page();
-    previewSounds(() => new FakeContext().asAudio);
-    vi.advanceTimersByTime(1_000);
+    previewSounds(yes, () => new FakeContext().asAudio);
+    await vi.advanceTimersByTimeAsync(2_000);
     const heard = played()!;
-    expect(heard.map((entry) => entry.name)).toEqual(["tick", "stamp", "letter"]);
+    expect(heard.map((entry) => entry.name)).toEqual(["tick", "stamp", "drawer", "letter"]);
     for (let i = 1; i < heard.length; i += 1) {
       const before = heard[i - 1]!;
       expect(heard[i]!.at - before.at, `${heard[i]!.name} begins after ${before.name} has ended`).toBeGreaterThanOrEqual(SOUND_MS[before.name as SoundName]);
     }
   });
 
-  it("makes the page's one context, and plays all three into it", async () => {
+  it("asks main right before each of the four sounds, and plays only the ones it says may be", async () => {
+    vi.useFakeTimers();
+    const { previewSounds } = await page();
+    const context = new FakeContext();
+    // A recording starts during the Preview: main says yes to the Tick and the Stamp, and no to what is left.
+    const answers = [true, true, false, false];
+    const may = vi.fn(() => Promise.resolve(answers.shift()!));
+    previewSounds(may, () => context.asAudio);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(may).toHaveBeenCalledTimes(4);
+    expect(names()).toEqual(["tick", "stamp"]);
+  });
+
+  it("plays nothing, and makes no audio context, while main says a recording runs", async () => {
+    vi.useFakeTimers();
+    const { previewSounds } = await page();
+    const make = vi.fn(() => new FakeContext().asAudio);
+    const may = vi.fn(() => Promise.resolve(false));
+    previewSounds(may, make);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(names()).toEqual([]);
+    expect(make).not.toHaveBeenCalled();
+    expect(may).toHaveBeenCalledTimes(1); // the first answer was no, so it is not asked about the rest
+  });
+
+  it("plays nothing when main can't be asked, and throws nothing: quiet is the safe side", async () => {
+    vi.useFakeTimers();
+    const { previewSounds } = await page();
+    const make = vi.fn(() => new FakeContext().asAudio);
+    previewSounds(() => Promise.reject(new Error("The window is closing.")), make);
+    await vi.advanceTimersByTimeAsync(2_000); // a rejection nobody caught would fail the run here
+    expect(names()).toEqual([]);
+    expect(make).not.toHaveBeenCalled();
+  });
+
+  it("makes the page's one context, and plays all four into it", async () => {
     vi.useFakeTimers();
     const { previewSounds } = await page();
     const context = new FakeContext();
     const make = vi.fn(() => context.asAudio);
-    previewSounds(make);
-    vi.advanceTimersByTime(1_000);
+    previewSounds(yes, make);
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(make).toHaveBeenCalledTimes(1);
     expect(context.oscillators.length).toBeGreaterThanOrEqual(4); // the Tick, the Stamp's thud, the Letter's two notes
-    expect(context.sources).toHaveLength(1); // and the Stamp's click
+    expect(context.sources).toHaveLength(2); // and the Stamp's click and the Drawer's rush
   });
 
   it("is a real AudioContext when no make is given", async () => {
@@ -586,10 +630,62 @@ describe("Preview sounds", () => {
     });
     vi.stubGlobal("AudioContext", Audio);
     const { previewSounds } = await page();
-    previewSounds();
-    vi.advanceTimersByTime(1_000);
+    previewSounds(yes);
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(Audio).toHaveBeenCalledTimes(1);
-    expect(names()).toEqual(["tick", "stamp", "letter"]);
+    expect(names()).toEqual(["tick", "stamp", "drawer", "letter"]);
+  });
+});
+
+// What a window does when its Play sounds switch changes, once the change is saved.
+describe("Switching sounds on or off in a window", () => {
+  const names = () => (played() ?? []).map((entry) => entry.name);
+  const yes = () => Promise.resolve(true);
+
+  it("plays the Stamp when they are switched on, if main says it may", async () => {
+    const { soundsSwitched } = await page();
+    const context = new FakeContext();
+    const may = vi.fn(yes);
+    soundsSwitched(true, may, () => context.asAudio);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(may).toHaveBeenCalledTimes(1);
+    expect(names()).toEqual(["stamp"]);
+  });
+
+  it("plays nothing, and makes no audio context, while main says a recording runs", async () => {
+    const { soundsSwitched } = await page();
+    const make = vi.fn(() => new FakeContext().asAudio);
+    soundsSwitched(true, () => Promise.resolve(false), make);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(names()).toEqual([]);
+    expect(make).not.toHaveBeenCalled();
+  });
+
+  it("plays nothing when main can't be asked, and throws nothing", async () => {
+    const { soundsSwitched } = await page();
+    const make = vi.fn(() => new FakeContext().asAudio);
+    expect(() => soundsSwitched(true, () => Promise.reject(new Error("The window is closing.")), make)).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0)); // a rejection nobody caught would fail the run here
+    expect(names()).toEqual([]);
+    expect(make).not.toHaveBeenCalled();
+  });
+
+  it("lets go of the window's audio device when they are switched off, without asking main and without a sound", async () => {
+    const { prepareSounds, soundsSwitched } = await page();
+    const context = new FakeContext();
+    prepareSounds(() => context.asAudio);
+    const may = vi.fn(yes);
+    soundsSwitched(false, may);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(context.closed).toBe(1);
+    expect(may).not.toHaveBeenCalled();
+    expect(names()).toEqual([]);
+  });
+
+  it("does nothing for a window that has no audio context to let go of", async () => {
+    const { soundsSwitched } = await page();
+    expect(() => soundsSwitched(false, () => Promise.resolve(true))).not.toThrow();
   });
 });
 

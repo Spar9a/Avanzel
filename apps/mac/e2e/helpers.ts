@@ -9,7 +9,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import { encodePng } from "../src/main/png.ts";
-import type { SetupSnapshot } from "../src/shared/ipc.ts";
+import { SOUND_MS } from "../src/renderer/common/sounds.ts";
+import type { SetupSnapshot, SoundName } from "../src/shared/ipc.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const appDir = path.resolve(here, "..");
@@ -413,11 +414,29 @@ export const shown = (app: ElectronApplication, name: string) =>
   app.evaluate(({ BrowserWindow }, page) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes(`/renderer/${page}/`) && w.isVisible()), name);
 
 /**
- * What the sounds a page played, by name, oldest first: the page's own record (`globalThis.__avanzelSounds`, renderer/common/sounds.ts),
- * which only the page can read. The capsule, setup and Settings each play their own.
+ * What the sounds a page played, oldest first, each with the time it was played (`performance.now()` in that page): the page's own record
+ * (`globalThis.__avanzelSounds`, renderer/common/sounds.ts), which only the page can read. The capsule, setup and Settings each play their own.
  */
-export const played = (page: Page): Promise<string[]> =>
-  page.evaluate(() => ((globalThis as { __avanzelSounds?: { name: string }[] }).__avanzelSounds ?? []).map((sound) => sound.name));
+export const playedAt = (page: Page): Promise<{ name: string; at: number }[]> =>
+  page.evaluate(() => (globalThis as { __avanzelSounds?: { name: string; at: number }[] }).__avanzelSounds ?? []);
+
+/** The names of what a page played (`playedAt`), oldest first. */
+export const played = async (page: Page): Promise<string[]> => (await playedAt(page)).map((sound) => sound.name);
+
+/**
+ * Preview sounds was pressed: the page plays the Tick, the Stamp, the Drawer and the Letter, one after the other, after the `already` that it played
+ * before. The page's own record says when (`playedAt`), so nothing here is a wall-clock bound from the press, which a busy Mac would break: each
+ * sound begins after the one before has ended (`SOUND_MS`), and the Letter comes about 0.8 s after the Tick.
+ */
+export async function expectPreviewPlayed(page: Page, already: string[] = []): Promise<void> {
+  await expect.poll(() => played(page), { timeout: 10_000 }).toEqual([...already, "tick", "stamp", "drawer", "letter"]);
+  const heard = (await playedAt(page)).slice(already.length);
+  for (let i = 1; i < heard.length; i += 1) {
+    const before = heard[i - 1]!;
+    expect(heard[i]!.at - before.at, `${heard[i]!.name} begins after ${before.name} has ended`).toBeGreaterThanOrEqual(SOUND_MS[before.name as SoundName]);
+  }
+  expect(heard[3]!.at - heard[0]!.at, "the Letter comes about 0.8 s after the Tick").toBeGreaterThanOrEqual(750);
+}
 
 /** Mutes every window that is open now, so that a test of sounds makes none on the Mac it runs on: the pages play all the same. */
 export const muteWindows = (app: ElectronApplication) =>

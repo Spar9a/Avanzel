@@ -3,9 +3,27 @@
 // `webContents.send`, as `watchCapsule` does, to read what main sent in order; what the page played it reads from the page's own record
 // (`__avanzelSounds`). Every window is muted first, so the suite makes no noise on the Mac it runs on: the page plays all the same.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
 import { dictate, launchOn, sleep } from "./capsule-helpers.ts";
-import { audioContexts, call, capsuleKind, filingClaude, firstRun, launch, makeLibrary, muteWindows, played, toDone, watchAudioContexts, windowFor } from "./helpers.ts";
+import {
+  audioContexts,
+  call,
+  capsuleKind,
+  expectPreviewPlayed,
+  filingClaude,
+  firstRun,
+  launch,
+  makeLibrary,
+  muteWindows,
+  played,
+  speechWav,
+  toDone,
+  watchAudioContexts,
+  windowFor,
+} from "./helpers.ts";
 import { setupSnap, settingsSnap } from "./setup-helpers.ts";
 
 /** One message to the capsule's page, as main sent it: a state (its kind), a sound (its name), a command, or the setting's state ("on" or "off"). */
@@ -498,8 +516,9 @@ test("the Tock is played after the microphone has been let go", async () => {
 // ---- The setting reaches the capsule's page ----
 //
 // Opening the audio device takes the page about a tenth of a second. If the page made its AudioContext at its first sound, that would be
-// the Tick's, which comes ahead of the listening card. So main tells the page when sounds go on (`capsule:sounds-setting`), and when it
-// loads with them on, and the page makes its context then; it closes it when they go off, or the device would stay open until Avanzel quits.
+// the Tick's, on the page's thread ahead of the recorder's start. So main tells the page when sounds go on (`capsule:sounds-setting`), and
+// when it loads with them on, and the page makes its context then; it closes it when they go off, or the device would stay open until Avanzel
+// quits. A sound that waits when they go off (the Tock for the microphone, the Stamp for the stamp to land) is dropped, not played on a new context.
 
 /** The capsule's page loads again, as it does at a launch: it says it listens (`capsule:ready`) and main tells it what it needs. */
 const reloadCapsule = (app: ElectronApplication) =>
@@ -583,6 +602,81 @@ test("a page that loads with sounds off is told nothing about sounds, and makes 
   await app.close();
 });
 
+test("a page that loads with sounds on is told after the commands held for it, so a held start doesn't wait for its context", async () => {
+  const { app } = await launchOn(await makeLibrary());
+  await soundsOn(app);
+  await watchSends(app);
+  await app.evaluate(async ({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/capsule/"))!;
+    const controller = (globalThis as unknown as { __avanzel: { toggleDictate(): Promise<void> } }).__avanzel;
+    const page = win.webContents.getURL();
+    await win.webContents.loadURL("about:blank"); // nothing listens until the capsule page is back
+    await controller.toggleDictate(); // Record a thought: its start waits for the page
+    void win.webContents.loadURL(page);
+  });
+  await expect.poll(async () => (await settingSent(app)).length, { timeout: 30_000 }).toBe(1);
+  const sent = await sentToPage(app);
+  const started = sent.findIndex(([channel, value]) => channel === "capsule:command" && value === "start");
+  const told = sent.findIndex(([channel]) => channel === "capsule:sounds-setting");
+  expect(started, "the start was sent").toBeGreaterThanOrEqual(0);
+  expect(told, "the page is told after the start, which would otherwise wait for the page to make its context").toBeGreaterThan(started);
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await call(app, "cancelRecording");
+  await app.close();
+});
+
+/** Sends the capsule's page these messages, as main would, one after the other in the same turn. */
+const sendToCapsule = (app: ElectronApplication, messages: [channel: string, value: unknown][]) =>
+  app.evaluate(({ BrowserWindow }, sends) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/capsule/"))!;
+    for (const [channel, value] of sends) win.webContents.send(channel, value);
+  }, messages);
+
+test("a Tock that waits for the microphone is dropped when sounds go off, and the audio device is not opened again for it", async () => {
+  const { app, capsule } = await launchOn(await makeLibrary());
+  await quiet(app);
+  await capsule.evaluate(watchAudioContexts);
+  await call(app, "setApp", { sounds: true });
+  await expect.poll(() => audioContexts(capsule)).toHaveLength(1);
+  // The Tock is held until the stop or the cancel after it has let go of the microphone. Sounds go off before it does: the held Tock goes
+  // with them, as the context does.
+  await sendToCapsule(app, [
+    ["capsule:sound", "tock"],
+    ["capsule:sounds-setting", false],
+    ["capsule:command", "cancel"],
+  ]);
+  // And on again, with a Tock after it that is played: this is how the test knows the first cancel has been dealt with by now.
+  await sendToCapsule(app, [
+    ["capsule:sounds-setting", true],
+    ["capsule:sound", "tock"],
+    ["capsule:command", "cancel"],
+  ]);
+  await expect.poll(() => played(capsule)).toEqual(["tock"]); // the second one only
+  const made = (await audioContexts(capsule))!;
+  expect(made, "no third context was made for the dropped Tock").toHaveLength(2);
+  expect(made[0]).toBe("closed");
+  await app.close();
+});
+
+test("a Stamp that would land after sounds went off is not heard, and the audio device is not opened again for it", async () => {
+  const { app, capsule } = await launchOn(await makeLibrary());
+  await quiet(app);
+  await capsule.evaluate(watchAudioContexts);
+  await call(app, "setApp", { sounds: true });
+  await expect.poll(() => audioContexts(capsule)).toHaveLength(1);
+  // A filed card is put up, which sends the Stamp to land 228 ms after the card is drawn, and sounds are switched off in the same turn of main.
+  await app.evaluate(async (_electron, card) => {
+    const controller = (globalThis as unknown as { __avanzel: { setCapsule(state: unknown): void; setApp(patch: unknown): Promise<unknown> } }).__avanzel;
+    controller.setCapsule(card);
+    await controller.setApp({ sounds: false });
+  }, filedCard());
+  await expect.poll(() => capsuleKind(app)).toBe("filed");
+  await sleep(900); // well past the 228 ms: a Stamp that was going to be played has been by now
+  expect(await played(capsule)).toEqual([]);
+  expect(await audioContexts(capsule), "the one context was closed, and the Stamp made no other").toEqual(["closed"]);
+  await app.close();
+});
+
 // ---- Setup ----
 
 test("setup offers sounds, off, with Preview sounds", async () => {
@@ -613,9 +707,9 @@ test("setup offers sounds, off, with Preview sounds", async () => {
   await expect(preview).toHaveAttribute("data-size", "small");
   expect((await preview.boundingBox())!.y).toBeGreaterThan(boxes[2]!.y + boxes[2]!.height);
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Start using Avanzel"]);
-  // It plays the Tick, the Stamp and the Letter, whatever the setting: sounds are off here, and stay off.
+  // It plays the Tick, the Stamp, the Drawer and the Letter, whatever the setting: sounds are off here, and stay off.
   await preview.click();
-  await expect.poll(() => played(setup), { timeout: 1_000, intervals: [50] }).toEqual(["tick", "stamp", "letter"]);
+  await expectPreviewPlayed(setup);
   await expect(sounds).toHaveAttribute("aria-checked", "false");
   expect((await settingsSnap(app)).app.sounds).toBe(false);
   expect(await audioContexts(setup)).toHaveLength(1);
@@ -624,13 +718,66 @@ test("setup offers sounds, off, with Preview sounds", async () => {
   await expect(sounds).toHaveAttribute("aria-checked", "true");
   await expect.poll(async () => (await settingsSnap(app)).app.sounds).toBe(true);
   expect((await setupSnap(app)).sounds).toBe(true);
-  await expect.poll(() => played(setup)).toEqual(["tick", "stamp", "letter", "stamp"]);
+  await expect.poll(() => played(setup)).toEqual(["tick", "stamp", "drawer", "letter", "stamp"]);
   expect(await audioContexts(setup)).toHaveLength(1);
   // Switching them off is saved and plays nothing, and the page lets go of its audio device.
   await sounds.click();
   await expect(sounds).toHaveAttribute("aria-checked", "false");
   await expect.poll(async () => (await settingsSnap(app)).app.sounds).toBe(false);
-  expect(await played(setup)).toEqual(["tick", "stamp", "letter", "stamp"]);
+  expect(await played(setup)).toEqual(["tick", "stamp", "drawer", "letter", "stamp"]);
   await expect.poll(() => audioContexts(setup)).toEqual(["closed"]);
+  await app.close();
+});
+
+test("setup's Preview sounds and Play sounds stay quiet while a recording runs, and play once it is over", async () => {
+  // A speech model that is ready (the stand-in) and a microphone that is a recording: ⌥Space on the last step starts a real recording.
+  const { env } = firstRun({ claude: filingClaude() });
+  const app = await launch({ ...env, AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October", AVANZEL_FAKE_AUDIO: speechWav("hello") });
+  const setup = await toDone(app);
+  await muteWindows(app);
+  const sounds = setup.getByRole("switch", { name: "Play sounds" });
+  const preview = setup.getByRole("button", { name: "Preview sounds" });
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await preview.click();
+  await sounds.click();
+  await expect.poll(async () => (await settingsSnap(app)).app.sounds).toBe(true); // switched on and saved all the same
+  await sleep(1_500); // longer than the Preview takes: a sound that was not held back has been played by now
+  expect(await played(setup), "no sound of the window's own is played over a recording").toEqual([]);
+  // The recording is given up. Now the window's sounds are heard, the Stamp for switching on among them.
+  await call(app, "cancelRecording");
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  await preview.click();
+  await expectPreviewPlayed(setup);
+  await sounds.click(); // off
+  await expect.poll(async () => (await settingsSnap(app)).app.sounds).toBe(false);
+  await sounds.click(); // and on again
+  await expect.poll(() => played(setup)).toEqual(["tick", "stamp", "drawer", "letter", "stamp"]);
+  await app.close();
+});
+
+test("a Play sounds that can't be saved in setup leaves the switch where it was, plays no Stamp and leaves no unhandled rejection", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({ ...firstRun({ claude: filingClaude() }).env, AVANZEL_USER_DATA: userData });
+  const setup = await toDone(app);
+  await muteWindows(app);
+  // A refusal that nothing catches is an unhandled rejection in the page, which is how a change that failed used to go unheard.
+  const unheard: string[] = [];
+  setup.on("pageerror", (error) => unheard.push(error.message));
+  // The app can't write its settings when a folder stands where the temporary file it writes first would go.
+  mkdirSync(path.join(userData, "settings.json.tmp"));
+  const sounds = setup.getByRole("switch", { name: "Play sounds" });
+  await sounds.click();
+  await sleep(700); // the refusal has come back by now, and nothing came of it
+  await expect(sounds).toHaveAttribute("aria-checked", "false");
+  expect((await settingsSnap(app)).app.sounds).toBe(false);
+  expect(await played(setup), "the Stamp is the sign that sounds are on, and they are not").toEqual([]);
+  expect(unheard).toEqual([]);
+  // Once the settings can be written, the switch works.
+  rmSync(path.join(userData, "settings.json.tmp"), { recursive: true });
+  await sounds.click();
+  await expect.poll(async () => (await settingsSnap(app)).app.sounds).toBe(true);
+  await expect.poll(() => played(setup)).toEqual(["stamp"]);
+  expect(unheard).toEqual([]);
   await app.close();
 });

@@ -38,6 +38,11 @@
 .settings-shelves {
   padding: var(--av-space-12);
 }
+/* Preview sounds, under the Play sounds switch in the same panel: in line with the switch's label, 12 in from the panel's edge, and 12
+   above the panel's end. The switch's row keeps its own 8 below its description, so the button sits close to it. */
+.settings-preview {
+  padding: 0 var(--av-space-12) var(--av-space-12);
+}
 /* Reviews' intro, a footnote between the heading and the first group: inset as a group's label and note are, 4 in from
    each side, so its words line up with theirs. */
 .settings-intro {

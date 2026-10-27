@@ -36,6 +36,7 @@ export function registerIpc(controller: Controller): void {
   // settings
   handle("settings:get", () => controller.snapshot());
   handle("settings:set-app", (_e, patch: Partial<AppSettings>) => controller.setApp(patch));
+  handle("settings:may-play-sounds", () => controller.mayPlayWindowSounds());
   handle("settings:set-library", (_e, patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }) =>
     controller.setLibrarySettings(patch));
   handle("settings:choose-library", () => controller.chooseLibrary());

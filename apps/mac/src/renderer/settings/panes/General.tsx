@@ -4,7 +4,7 @@
 import { Actions, Button, Group, GroupRow, Notice, Row, Segmented, SHELVES, ShelfTag, Stack, Switch, type SegmentedOption } from "@avanzel/ui";
 import type { ReactNode } from "react";
 import type { FileMode } from "../../../shared/ipc.ts";
-import { playSound, releaseSounds } from "../../common/sounds.ts";
+import { previewSounds, soundsSwitched } from "../../common/sounds.ts";
 import { fileModeLine, libraryLine } from "../copy.ts";
 import { attemptChange, NoLibrary, type PaneProps } from "../parts.tsx";
 import type { ReviewEdits } from "./Reviews.tsx";
@@ -84,18 +84,25 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
       <Group label="Sounds">
         <Switch
           label="Play sounds"
-          description="A soft tick when you start and stop, a stamp when a card is filed, and two notes when the evening review is done."
+          description="A tick as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two notes when the evening review is done."
           checked={snap.app.sounds}
           onChange={async (sounds) => {
             // The Stamp says that they are on, so it is played once that is saved: a change that wasn't kept (`attempt` tells it) plays none.
-            // Off lets go of this page's audio device; main tells the capsule's page to do the same.
+            // Off lets go of this page's audio device; main tells the capsule's page to do the same. Neither is played over a recording.
             const next = await attempt(() => api.setApp({ sounds }));
             if (!next) return;
             onChange(next);
-            if (sounds) playSound("stamp");
-            else releaseSounds();
+            soundsSwitched(sounds, api.mayPlaySounds);
           }}
         />
+        {/* Preview sounds, under the switch in the same panel, so it is plainly the switch's. A Group draws only its direct children as
+            rows and a Switch has no place for a button of its own, so it sits in a box of its own, as the library's shelves do. It plays
+            whatever the setting is, and not over a recording. */}
+        <div className="settings-preview">
+          <Actions align="start">
+            <Button size="small" variant="secondary" onClick={() => previewSounds(api.mayPlaySounds)}>Preview sounds</Button>
+          </Actions>
+        </div>
       </Group>
       <Group label="Startup">
         <Switch

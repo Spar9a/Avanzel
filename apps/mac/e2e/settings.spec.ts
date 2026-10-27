@@ -5,13 +5,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
+import { launchOn, sleep } from "./capsule-helpers.ts";
 import {
   agentCalls,
   answerDialogs,
   answerMenus,
   audioContexts,
   call,
+  capsuleKind,
   emptyHfCache,
+  expectPreviewPlayed,
   launch,
   makeLibrary,
   muteWindows,
@@ -97,7 +100,7 @@ test("Settings has Play sounds, off, in a group of its own before Startup, and s
   const sounds = settings.getByRole("switch", { name: "Play sounds" });
   await expect(sounds).toHaveAttribute("aria-checked", "false");
   await expect(sounds).toHaveAccessibleDescription(
-    "A soft tick when you start and stop, a stamp when a card is filed, and two notes when the evening review is done.",
+    "A tick as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two notes when the evening review is done.",
   );
   expect((await snapshot(app)).app.sounds).toBe(false);
   expect(await played(settings)).toEqual([]);
@@ -113,6 +116,56 @@ test("Settings has Play sounds, off, in a group of its own before Startup, and s
   await expect(sounds).toHaveAttribute("aria-checked", "false");
   expect(await played(settings)).toEqual(["stamp"]);
   await expect.poll(() => audioContexts(settings)).toEqual(["closed"]);
+  await app.close();
+});
+
+test("Settings has Preview sounds under Play sounds, in its group, and it plays four sounds whatever the setting", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app);
+  await muteWindows(app);
+  const sounds = settings.getByRole("switch", { name: "Play sounds" });
+  const group = settings.locator("section").filter({ has: sounds }); // the Sounds group, which Group draws as a section
+  const preview = group.getByRole("button", { name: "Preview sounds" });
+  await expect(preview).toHaveAttribute("data-variant", "secondary");
+  await expect(preview).toHaveAttribute("data-size", "small");
+  // Right under the switch's row, in its panel and in line with its label, so it is plainly the switch's: nearer to it than to the next group.
+  const row = (await sounds.locator("xpath=..").boundingBox())!;
+  const button = (await preview.boundingBox())!;
+  const next = (await settings.getByRole("heading", { level: 3, name: "Startup" }).boundingBox())!;
+  expect(button.y, "below the switch's row").toBeGreaterThanOrEqual(row.y + row.height);
+  expect(button.y - (row.y + row.height), "nearer to the switch than to the next group").toBeLessThan(next.y - (button.y + button.height));
+  expect(Math.abs(button.x - row.x - 12), "in line with the switch's label, 12 in from the panel's edge").toBeLessThan(1.5);
+  // It plays the Tick, the Stamp, the Drawer and the Letter, though sounds are off, and they stay off.
+  await expect(sounds).toHaveAttribute("aria-checked", "false");
+  await preview.click();
+  await expectPreviewPlayed(settings);
+  expect((await snapshot(app)).app.sounds).toBe(false);
+  await expect(sounds).toHaveAttribute("aria-checked", "false");
+  await app.close();
+});
+
+test("Settings' Preview sounds and Play sounds stay quiet while a recording runs, and play once it is over", async () => {
+  const { app } = await launchOn(await makeLibrary());
+  const settings = await openSettings(app);
+  await muteWindows(app);
+  const sounds = settings.getByRole("switch", { name: "Play sounds" });
+  const preview = settings.getByRole("button", { name: "Preview sounds" });
+  await call(app, "toggleDictate"); // Record a thought: the capsule listens
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await preview.click();
+  await sounds.click();
+  await expect.poll(async () => (await snapshot(app)).app.sounds).toBe(true); // switched on and saved all the same
+  await sleep(1_500); // longer than the Preview takes: a sound that was not held back has been played by now
+  expect(await played(settings), "no sound of the window's own is played over a recording").toEqual([]);
+  // The recording is given up. Now the window's sounds are heard, the Stamp for switching on among them.
+  await call(app, "cancelRecording");
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  await preview.click();
+  await expectPreviewPlayed(settings);
+  await sounds.click(); // off
+  await expect.poll(async () => (await snapshot(app)).app.sounds).toBe(false);
+  await sounds.click(); // and on again
+  await expect.poll(() => played(settings)).toEqual(["tick", "stamp", "drawer", "letter", "stamp"]);
   await app.close();
 });
 

@@ -964,20 +964,22 @@ export class Controller {
 
   /**
    * The capsule page is listening: it may have missed the state sent while it loaded, and gets the commands held for it. A page that loads
-   * with sounds on is told so, ahead of those commands: it makes its AudioContext then, and the Tick of a held start finds it made. With
-   * sounds off it is told nothing, which is how a page starts.
+   * with sounds on is told so after them: it makes its AudioContext then, which takes it about a tenth of a second, and a held start must
+   * not wait behind that. A Tick doesn't wait behind it either: a sound isn't held for a page that isn't listening (`sound`), so the first
+   * Tick of the page's life is sent after this, to a page with its context made. With sounds off it is told nothing, which is how a page starts.
    */
   capsuleReady(): void {
     this.capsuleListening = true;
     this.capsule.webContents.send("capsule:state", this.capsuleState);
-    if (this.store.get().sounds) this.capsule.webContents.send("capsule:sounds-setting", true);
     for (const command of this.heldCommands.splice(0)) this.capsule.webContents.send("capsule:command", command);
+    if (this.store.get().sounds) this.capsule.webContents.send("capsule:sounds-setting", true);
   }
 
   /**
-   * Tells the capsule's page that sounds went on or off (`capsule:sounds-setting`). On, it makes its AudioContext at once, off the dictation's
-   * path: opening the audio device takes about a tenth of a second, which would otherwise delay the listening card at the first Tick of
-   * a launch. Off, it closes the context, which lets go of the device. A page that isn't listening yet is told when it is (`capsuleReady`).
+   * Tells the capsule's page that sounds went on or off (`capsule:sounds-setting`). On, it makes its AudioContext at once, so that the next
+   * Tick finds it made: opening the audio device takes about a tenth of a second, which the first Tick would otherwise spend on the page's
+   * thread, ahead of the recorder's start. Off, it closes the context, which lets go of the device. A page that isn't listening yet is told
+   * when it is (`capsuleReady`).
    */
   private tellSoundsSetting(on: boolean): void {
     if (!this.capsuleListening || this.capsule.isDestroyed() || this.capsule.webContents.isDestroyed()) return;
@@ -1005,6 +1007,16 @@ export class Controller {
     if (this.capsule.isDestroyed() || this.capsule.webContents.isDestroyed()) return false;
     this.capsule.webContents.send("capsule:sound", name);
     return true;
+  }
+
+  /**
+   * Whether a window may play a sound of its own now: setup's and Settings' Preview sounds, and the Stamp that says sounds are switched on
+   * (the bridge's `mayPlaySounds`). Not while a recording runs, as for the capsule's own sounds (`sound`) and for the same reason: the
+   * recorder keeps no echo cancellation (recorder.ts), so a sound from a window would be heard in the words. The windows play outside the
+   * setting, since Preview is for hearing the sounds before they are on, so this is all they ask. They ask right before each sound.
+   */
+  mayPlayWindowSounds(): boolean {
+    return !this.recording;
   }
 
   /**

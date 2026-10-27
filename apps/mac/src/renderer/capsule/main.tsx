@@ -187,14 +187,15 @@ const STAMP_LANDS_MS = 228;
 /**
  * Plays the Stamp main sent with a filed card, as its stamp lands. Where the stamp is drawn already landed, that is at once: under Reduce
  * Motion, and on a Noted card, whose stamp does not animate. A card put away before the stamp lands makes no sound (`current` is read
- * again then): the stamp never landed, and a sound without its picture is not the twin it is meant to be.
+ * again then): the stamp never landed, and a sound without its picture is not the twin it is meant to be. Nor does one that sounds were
+ * switched off before it landed (`soundsOn` is read again too): playing it would make a new AudioContext, which the page has just let go of.
  */
-function playStamp(current: () => CapsuleState): void {
+function playStamp(current: () => CapsuleState, soundsOn: () => boolean): void {
   const state = current();
   const drawnLanded = matchMedia("(prefers-reduced-motion: reduce)").matches || (state.kind === "filed" && state.noted);
   if (drawnLanded) return playSound("stamp");
   setTimeout(() => {
-    if (current().kind === "filed") playSound("stamp");
+    if (current().kind === "filed" && soundsOn()) playSound("stamp");
   }, STAMP_LANDS_MS);
 }
 
@@ -203,6 +204,8 @@ function App() {
   const stateRef = useRef(state);
   /** A Tock main has sent, held until the stop or cancel that follows it has let go of the microphone. */
   const tockWaits = useRef(false);
+  /** Sounds are on, as main last said (`capsule:sounds-setting`): a sound that waits plays only while they still are. */
+  const soundsOn = useRef(false);
   const listening = state.kind === "listening";
   const { levels, push } = useLevels(listening, listening && state.fakeMic);
   const recorder = useRef(new Recorder((level) => push(level)));
@@ -220,13 +223,20 @@ function App() {
   // (below), and the Stamp for the stamp to land (`playStamp`).
   useEffect(() => api.onSound((name) => {
     if (name === "tock") tockWaits.current = true;
-    else if (name === "stamp") playStamp(() => stateRef.current);
+    else if (name === "stamp") playStamp(() => stateRef.current, () => soundsOn.current);
     else playSound(name);
   }), []);
 
   // Sounds on, or on at load: the page makes its AudioContext now, so that the first Tick doesn't wait for the audio device to open, which
-  // takes a tenth of a second and would delay the listening card. Off: it closes the context, which lets go of the device.
-  useEffect(() => api.onSoundsSetting((on) => (on ? prepareSounds() : releaseSounds())), []);
+  // takes a tenth of a second, with the recorder's start behind it. Off: it closes the context, which lets go of the device, and what
+  // waits to be played goes with it: a Tock that is held for the microphone, and (`playStamp`) a Stamp that is yet to land. Played
+  // after this, either would make a new context, and open the device again.
+  useEffect(() => api.onSoundsSetting((on) => {
+    soundsOn.current = on;
+    if (on) return prepareSounds();
+    tockWaits.current = false;
+    releaseSounds();
+  }), []);
 
   useEffect(() => api.onCommand(async (command) => {
     const current = stateRef.current;
