@@ -40,6 +40,11 @@ export interface MenuInput {
    */
   unregisteredShortcuts: readonly (keyof Shortcuts)[];
   undoableReview: boolean;
+  /**
+   * The last filing can be taken back from here (`Controller.undoableFiling`): a capsule or background filing ended well with a commit,
+   * no run has begun since, and no filing or review waits or runs. The menu then ends its recent pages with "Undo the last filing".
+   */
+  undoableFiling: boolean;
 }
 
 // Anything the owner has to read is an enabled item: macOS draws disabled items too dim to read.
@@ -154,6 +159,8 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     const press = dictate ? `Press ${prettyAccelerator(dictate)}` : "Record a thought";
     items.push({ type: "item", label: `Nothing filed yet. ${press} and say hello.`, action: "dictate" });
   }
+  // The newest filing can be taken back from here: the item closes the section that lists the pages filed.
+  if (input.undoableFiling) items.push({ type: "item", label: "Undo the last filing", action: "undo-filing" });
   items.push(SEP);
 
   if (input.tasks.length || input.undoableReview) {

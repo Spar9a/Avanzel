@@ -191,6 +191,7 @@ describe("MenuBar's menu", () => {
     shortcuts: DEFAULT_SETTINGS.shortcuts,
     unregisteredShortcuts: [],
     undoableReview: false,
+    undoableFiling: false,
   });
   type Item = { label?: string; sublabel?: string; icon?: { template: boolean; representations: { scaleFactor: number; buffer: Buffer }[] } };
   /** The items of the menu built last. */
@@ -278,6 +279,19 @@ describe("MenuBar's menu", () => {
     bar.update(menuInput([page("goals")]));
     const withIcons = itemsOf().filter((item) => item.icon).map((item) => item.label);
     expect(withIcons).toEqual([page("goals").title]);
+  });
+
+  it("offers Undo the last filing as a plain, enabled item whose click asks for its action, and only while the model offers it", () => {
+    const asked: string[] = [];
+    const bar = new MenuBar((action) => asked.push(action));
+    bar.update({ ...menuInput([page("goals")]), undoableFiling: true });
+    const undo = itemsOf().find((item) => item.label === "Undo the last filing") as (Item & { enabled?: boolean; click?: () => void }) | undefined;
+    expect(undo).toMatchObject({ label: "Undo the last filing", enabled: true });
+    expect(undo?.icon).toBeUndefined();
+    undo?.click?.();
+    expect(asked).toEqual(["undo-filing"]);
+    bar.update(menuInput([page("goals")]));
+    expect(itemsOf().some((item) => item.label === "Undo the last filing")).toBe(false);
   });
 
   it("passes each item's sublabel on, and sets the menu on the tray once for each update", () => {

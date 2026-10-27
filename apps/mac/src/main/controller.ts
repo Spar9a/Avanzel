@@ -398,6 +398,14 @@ export class Controller {
    * the log grows, so it is read where `recent` is (`readLog`, a filing's end), and again when the day turns (`tick`).
    */
   private filed = { day: "", count: 0 };
+  /**
+   * The filing the menu's Undo takes back (`undoLastFiling`): the last capsule or background filing that ended well with a commit, and
+   * the root of the library it filed in. Each filing's run clears it as it starts (`runFiling`) and so does the evening review's
+   * (`executeTask`); so does the take-back of its commit (`takeBack`, `revertFiling`) and a library that opens (`openLibrary`). A Stop on a
+   * filing that still waits in the queue clears nothing: no run has begun. Setup's first thought never sets it, and nor does the evening
+   * review: each has its own Undo.
+   */
+  private lastFiled: { commit: string; library: string; pages: FiledPage[]; job?: FilingJob } | null = null;
   private running = new Set<string>();
   private lastEveningCommits: string[] = [];
   private audioTimeout: NodeJS.Timeout | null = null;
@@ -494,6 +502,7 @@ export class Controller {
     this.vault = null;
     this.recent = [];
     this.filed = { day: "", count: 0 };
+    this.lastFiled = null; // a filing of the library that closes, whose menu is built again by whoever opens one
     this.dropTranscriber();
     this.libraryProblem = null;
     this.libraryMissing = null;
@@ -692,12 +701,14 @@ export class Controller {
     if (action === "setup") return this.setup.show();
     if (action === "open-library") return this.openLibraryFolder();
     if (action === "open-inbox" && this.vault) return void shell.openPath(this.vault.inbox);
-    // The capsule card's own path to a pane of Settings (`openSettingsFor`): the speech model's problem names Voice. The person comes
-    // to see what is wrong, so the voice settings are read again first: they show what is, not what was a minute ago.
-    if (action.startsWith("open-settings:")) {
+    // The speech model's problem names Settings → Voice, where its fix is. The person comes to see what is wrong, so the voice settings
+    // are read again first: they show what is, not what was a minute ago. Settings opens and nothing else changes: the card the capsule
+    // shows is about something of its own, which `openSettingsFor`, the path of a card's button, would hide if it were an error.
+    if (action === "open-settings:voice") {
       this.rereadVoiceSettings();
-      return this.openSettingsFor(action);
+      return this.showSettings("voice");
     }
+    if (action === "undo-filing") return this.undoLastFiling();
     if (action === "undo-review") return void this.undoEveningReview();
     if (action === "quit") return app.quit();
     if (action.startsWith("open:")) return this.openPage(action.slice(5));
@@ -730,7 +741,29 @@ export class Controller {
       shortcuts: this.store.get().shortcuts,
       unregisteredShortcuts: Object.keys(this.shortcutProblems) as (keyof Shortcuts)[],
       undoableReview: this.lastEveningCommits.length > 0,
+      undoableFiling: this.undoableFiling(),
     };
+  }
+
+  /**
+   * Whether the menu offers Undo the last filing: there is one (`lastFiled`), the library it filed in is the open one, Avanzel isn't
+   * quitting, and no filing or review waits or runs. A filing whose run has begun has cleared `lastFiled` already, so the filing
+   * that waits for its turn (`queuedToFile`) and the review that waits or runs (`running`) are what the item hides for.
+   */
+  private undoableFiling(): boolean {
+    const last = this.lastFiled;
+    return last !== null && this.vault?.root === last.library && !this.quitting && this.queuedToFile.size === 0 && this.running.size === 0;
+  }
+
+  /**
+   * The menu's Undo has nothing to take back: a filing's run begins (`runFiling`), the evening review's does (`executeTask`), or the
+   * commit of the filing it would take back is being taken back already (`takeBack`, `revertFiling`: `commit` is that commit, and any
+   * other filing's take-back leaves it be). The menu is built again, but only if it was holding a filing.
+   */
+  private clearLastFiled(commit?: string): void {
+    if (this.lastFiled === null || (commit !== undefined && this.lastFiled.commit !== commit)) return;
+    this.lastFiled = null;
+    this.refreshMenu();
   }
 
   /** Counts today's filings in the log of the library at `root` for the menu's head (`filedToday`), and notes the day they are for. */
@@ -743,7 +776,12 @@ export class Controller {
     const root = this.vault?.root;
     if (root) this.countFiled(root);
     else this.filed = { day: "", count: 0 };
-    this.recent = root ? recentFromLog(root) : [];
+    try {
+      this.recent = root ? recentFromLog(root) : [];
+    } catch (error) {
+      // Best effort: the menu keeps the pages it had. A library folder that can't be read is not worth failing the take-back that asked.
+      console.warn("recent pages", error);
+    }
   }
 
   refreshMenu(): void {
@@ -1615,9 +1653,14 @@ export class Controller {
     // The face thought of it while it waited. A filing that ends below, stopped or with its note gone, has no run to show that it doesn't.
     this.refreshTray();
     delete job.queuedAlone; // a Stop from here on waits for the run (`cancelFiling`)
-    if (job.abort.signal.aborted) return; // Edit, Cancel in setup or Stop in the capsule stopped it before its turn came
-    if (!existsSync(job.capturePath)) return this.noteGone(job); // already filed meanwhile (e.g. by another Avanzel on this library)
+    if (job.abort.signal.aborted) return this.leftWithoutRun(); // Edit, Cancel in setup or Stop in the capsule stopped it before its turn came
+    if (!existsSync(job.capturePath)) {
+      this.noteGone(job); // already filed meanwhile (e.g. by another Avanzel on this library)
+      return this.leftWithoutRun();
+    }
     const library = this.vault; // the note's own: another library may open while the agent runs
+    // Its run begins: the filing before it is not the last any more, whatever becomes of this one (it may fail, or be taken back).
+    this.clearLastFiled();
     this.startRun(job); // its turn: the seconds count from here, not from when the queue took it in
     let outcome: FileOutcome | undefined;
     const progress = (message: string) => this.filingProgress(job, message);
@@ -1655,6 +1698,8 @@ export class Controller {
     if (this.vault?.root === library.root) {
       this.recent = [...pages, ...this.recent.filter((p) => !pages.some((q) => q.path === p.path))].slice(0, 3);
       this.countFiled(library.root); // the run wrote its line in the log; the menu is built once below, as before
+      // The menu's Undo takes this filing back, if the run left a commit to take back. Setup's first thought has an Undo of its own, in its window.
+      if (outcome.commit && !job.setup) this.lastFiled = { commit: outcome.commit, library: library.root, pages, job };
     }
     this.keepDuration(job, library, seconds);
     this.noteFiled((capture) => capture === job.capturePath);
@@ -1971,6 +2016,7 @@ export class Controller {
       this.queuedToFile.delete(capturePath);
       this.refreshTray();
       if (!waiting) this.noteGone(job);
+      this.leftWithoutRun();
     });
   }
 
@@ -1992,6 +2038,15 @@ export class Controller {
     this.forgetWaits((capture) => capture === job.capturePath);
     if (this.setup.owns(job)) return this.setup.failed(job, null, null);
     if ((this.job === job && this.capsuleState.kind === "filing") || this.cardCapture === job.capturePath) this.setCapsule({ kind: "hidden" });
+  }
+
+  /**
+   * A filing that waited in the queue (`queuedToFile`) is out of it with no run: it was stopped before its turn, or its note was filed
+   * meanwhile, or is in the editor. While it waited the menu held Undo back (`undoableFiling`); the last filing, which this one never
+   * touched, can be undone again, and the menu is built again to offer it, if there is one. The face is shown again by the caller.
+   */
+  private leftWithoutRun(): void {
+    if (this.lastFiled !== null) this.refreshMenu();
   }
 
   /**
@@ -2345,6 +2400,7 @@ export class Controller {
   private async takeBack(job: FilingJob): Promise<string | null> {
     const commit = job.outcome?.commit;
     if (!commit) return null;
+    this.clearLastFiled(commit); // before the first await: the menu doesn't offer a commit that is being taken back
     let why: string | null;
     try {
       why = (await (await this.librarian()).undo([commit])) === 1 ? null : "Git refused to undo it; see the library's history.";
@@ -2352,6 +2408,10 @@ export class Controller {
       why = errorMessage(error);
     }
     if (why !== null) console.warn("take back", why);
+    // The menu's view of the log is read again. A take-back that git refused leaves the filing standing, in the log, and the run that
+    // Stop or Edit cut short returned before it counted it (`runFiling`).
+    this.readLog();
+    if (why !== null) this.refreshMenu(); // the card or notification that tells the refusal may be a notification, which builds nothing
     return why;
   }
 
@@ -2392,10 +2452,12 @@ export class Controller {
   }
 
   /**
-   * Undo, on the capsule's filed card or in setup: once the queue gets to it, git takes back `commit`, a filing's, which
-   * puts its capture back in the inbox. Whether it did; either way the menu's recent pages are read again.
+   * Undo, on the capsule's filed card, in the menu or in setup: once the queue gets to it, git takes back `commit`, a filing's, which
+   * puts its capture back in the inbox. Whether it did; either way the menu's recent pages are read again. The menu stops offering
+   * `commit` as the last filing as soon as it is asked for, whoever asks: it is taken back once.
    */
   private async revertFiling(commit: string): Promise<boolean> {
+    this.clearLastFiled(commit); // before the first await: the menu doesn't offer a commit that is being taken back
     try {
       return (await this.enqueue(async () => (await this.librarian()).undo([commit]))) === 1;
     } finally {
@@ -2423,11 +2485,45 @@ export class Controller {
       console.warn("undo", error); // a revert that threw is a refusal to the card: it would otherwise wait on its Undo for ever
       return false;
     });
-    const showing = this.job === job && this.capsuleState.kind === "filed";
-    if (!undone) return showing ? this.fail(undoRefused) : this.notify(undoRefused.title, undoRefused.body);
-    const note = undoneNote(this.openReview());
-    if (showing) this.setCapsule({ kind: "saved", text: job.text, note, undone: true }, 3500);
-    else this.notify("Undone", note);
+    this.tellUndone(job, undone);
+  }
+
+  /**
+   * Undo the last filing, from the menu: the filing the menu offers (`lastFiled`, `undoableFiling`) is taken back as the card's Undo
+   * does it (`revertFiling`), and the person is told once (`tellUndone`): on the filed card of that filing, if the capsule shows it,
+   * else by notification. It answers only while the menu offers it, and not for a filing whose card is taking it back already
+   * (`undoing`). The filing is taken before the first await, so a second press, the card's Undo and the menu all find it gone, and the
+   * revert is asked for once. That is its only try: a filing that git refuses to take back stands, and is not offered again.
+   */
+  async undoLastFiling(): Promise<void> {
+    const last = this.lastFiled;
+    if (!last || !this.undoableFiling() || last.job?.undoing) return;
+    if (last.job) last.job.undoing = true;
+    this.clearLastFiled();
+    const undone = await this.revertFiling(last.commit).catch((error) => {
+      console.warn("undo", error); // a revert that threw is a refusal, as it is on the card
+      return false;
+    });
+    this.tellUndone(last.job, undone);
+  }
+
+  /**
+   * How an Undo of `job`'s filing ended, told once, whoever asked for it (the filed card, or the menu): it worked (`undone`), or git
+   * refused it, or the revert threw. The filed card of that filing, if the capsule still shows it, turns to Undone or to the refusal; a
+   * newer card the person is using (a recording's, or an editor) is left as it is, and a notification says the same over it, and when
+   * the card has gone. The menu is built again for what the revert left; a card does that by itself (`setCapsule`), a notification not.
+   */
+  private tellUndone(job: FilingJob | undefined, undone: boolean): void {
+    const showing = job !== undefined && this.job === job && this.capsuleState.kind === "filed";
+    if (!undone) {
+      if (showing) this.fail(undoRefused);
+      else this.notify(undoRefused.title, undoRefused.body);
+    } else {
+      const note = undoneNote(this.openReview());
+      if (showing) this.setCapsule({ kind: "saved", text: job.text, note, undone: true }, 3500);
+      else this.notify("Undone", note);
+    }
+    if (!showing) this.refreshMenu();
   }
 
   openFiled(): void {
@@ -3460,6 +3556,7 @@ export class Controller {
     const agent = this.agentName(task.agent);
     try {
       if (task.kind === "evening-review") {
+        this.clearLastFiled(); // the review files too: the filing before it is not the last any more, and the review has its own Undo
         const left = new Set<string>();
         const result = await this.withRun(async (signal) =>
           (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions, signal, leave: this.leftAlone(left) }));

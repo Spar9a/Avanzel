@@ -23,6 +23,7 @@ function input(overrides: Partial<MenuInput> = {}): MenuInput {
     shortcuts: DEFAULT_SETTINGS.shortcuts,
     unregisteredShortcuts: [],
     undoableReview: false,
+    undoableFiling: false,
     ...overrides,
   };
 }
@@ -317,6 +318,64 @@ describe("tray menu", () => {
     it("gives way to the pages once there are some, and is not there for a library that isn't ready", () => {
       expect(labels(buildMenuModel(input(), now))).not.toContain("Nothing filed yet. Press ⌥Space and say hello.");
       expect(labels(buildMenuModel(input({ recent: [], libraryReady: false }), now))).toEqual(["Set up Avanzel…", "--", "Quit Avanzel"]);
+    });
+  });
+
+  describe("Undo the last filing", () => {
+    const undo = { type: "item", label: "Undo the last filing", action: "undo-filing" };
+    const withUndo = (overrides: Partial<MenuInput> = {}) => buildMenuModel(input({ undoableFiling: true, ...overrides }), now);
+
+    it("follows the recently filed pages, and is the last item of that section", () => {
+      const items = withUndo();
+      expect(labels(items)).toEqual([
+        "3 thoughts filed today. Evening review at 21:00.", "--",
+        "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "--",
+        "Recently filed", "Launch the indie game dev podcast", "Маленький сад на балконе", "Undo the last filing", "--",
+        "Scheduled reviews", "Evening review", "Weekly review", "--",
+        "Open library", "Settings…", "Quit Avanzel",
+      ]);
+      expect(items.filter((item) => item.type === "item" && item.action === "undo-filing")).toEqual([undo]);
+    });
+
+    it("is only there while the last filing can be undone", () => {
+      for (const items of [buildMenuModel(input(), now), buildMenuModel(input({ undoableFiling: false }), now)]) {
+        expect(labels(items)).not.toContain("Undo the last filing");
+        expect(JSON.stringify(items)).not.toContain("undo-filing");
+      }
+    });
+
+    it("leaves the rest of the menu as it is", () => {
+      const without = buildMenuModel(input(), now);
+      const items = withUndo();
+      expect(items.filter((item) => item.type !== "item" || item.action !== "undo-filing")).toEqual(without);
+    });
+
+    it("closes the section after three pages at most, or after the invitation while there are none", () => {
+      const pages = Array.from({ length: 5 }, (_, i) => ({ title: `Page ${i}`, shelf: "topics", path: `topics/${i}.md` }));
+      expect(labels(withUndo({ recent: pages })).slice(7, 12)).toEqual(["Recently filed", "Page 0", "Page 1", "Page 2", "Undo the last filing"]);
+      // A filing that wrote no page (the agent only logged the note) leaves the invitation to a first thought where the pages go: the
+      // filing can still be undone, and the item is after whatever that section holds.
+      const empty = labels(withUndo({ recent: [] }));
+      expect(empty.slice(7, 10)).toEqual(["Recently filed", "Nothing filed yet. Press ⌥Space and say hello.", "Undo the last filing"]);
+    });
+
+    it("is an item that can be read, not dimmed, with no shortcut, shelf or sublabel of its own", () => {
+      const item = withUndo().find((one) => one.type === "item" && one.action === "undo-filing");
+      expect(item).toEqual(undo);
+      expect(item).not.toHaveProperty("enabled", false);
+    });
+
+    it("is not offered where there is no library: setup or Settings come first", () => {
+      expect(labels(buildMenuModel(input({ libraryReady: false, undoableFiling: true }), now))).toEqual(["Set up Avanzel…", "--", "Quit Avanzel"]);
+    });
+
+    it("sits beside the evening review's own Undo, which it does not replace", () => {
+      const items = withUndo({ undoableReview: true });
+      expect(labels(items)).toContain("Undo the last filing");
+      expect(labels(items)).toContain("Undo last evening review");
+      expect(items.filter((item) => item.type === "item" && item.action === "undo-review")).toEqual([
+        { type: "item", label: "Undo last evening review", action: "undo-review" },
+      ]);
     });
   });
 
