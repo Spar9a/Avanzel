@@ -2,7 +2,7 @@
 // controller last gave the menu bar (`trayForTests`) and what macOS was given (`nativeTitle`), and the tests of a count read the
 // times of the changes too (`watchTray`), so no poll has to catch a face in the moment it shows.
 import { expect, test, type ElectronApplication } from "@playwright/test";
-import { mkdirSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, localDate, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
@@ -26,6 +26,7 @@ import {
   gitOut,
   hfSnapshot,
   launch,
+  letDialogsGo,
   limitedClaudeFor,
   makeLibrary,
   onceMarker,
@@ -1575,7 +1576,7 @@ test("running a review from the menu asks first, and runs it only on Run Now", a
         defaultId: 0,
         cancelId: 1,
         message: "Run “Evening review” now?",
-        detail: "It's an agent run with fake, so it uses your plan's quota.",
+        detail: "It's an agent run with fake, so it may use your plan's quota.",
       },
     },
   ]);
@@ -1604,7 +1605,7 @@ test("the question before a review names no agent where none can be named", asyn
   await call(app, "menuAction", "task:evening-review");
   const [asked, ...more] = await dialogsAsked(app);
   expect(more).toEqual([]);
-  expect(asked?.options).toMatchObject({ message: "Run “Evening review” now?", detail: "It's an agent run, so it uses your plan's quota." });
+  expect(asked?.options).toMatchObject({ message: "Run “Evening review” now?", detail: "It's an agent run, so it may use your plan's quota." });
   await app.close();
 });
 
@@ -1637,7 +1638,7 @@ test("Settings' Run now asks first, as a sheet on Settings, and runs the review 
         defaultId: 0,
         cancelId: 1,
         message: "Run “Weekly review” now?",
-        detail: "It's an agent run with fake, so it uses your plan's quota.",
+        detail: "It's an agent run with fake, so it may use your plan's quota.",
       },
     },
   ]);
@@ -1765,3 +1766,79 @@ for (const words of ["Plant tulips in October", ""]) {
     await app.close();
   });
 }
+
+test("a custom review is never asked about: it runs no agent, and only says it was skipped", async () => {
+  const library = await makeLibrary();
+  writeFileSync(path.join(library, "tasks", "standup.md"), "---\nname: Standup\nschedule: daily 09:00\nkind: custom\n---\nAsk about the day.\n");
+  const { app } = await hearing({}, library);
+  await answerDialogs(app, 1); // were it asked, Cancel would stop it
+  const skipped = { title: "Standup", body: "Avanzel doesn't run custom reviews yet, so this one was skipped." };
+  await call(app, "menuAction", "task:standup");
+  await call(app, "idleForTests");
+  expect(await dialogsAsked(app)).toEqual([]);
+  expect(await notified(app, "Standup")).toEqual([skipped]);
+  // Settings' Run now takes the same way.
+  await call(app, "runTaskFromSettings", "standup");
+  await call(app, "idleForTests");
+  expect(await dialogsAsked(app)).toEqual([]);
+  expect(await notified(app, "Standup")).toEqual([skipped, skipped]);
+  await app.close();
+});
+
+test("a review is not run in a library other than the one the question named", async () => {
+  const config = mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")); // the libraries that open are remembered here, not in ~/.config
+  const library = await makeLibrary();
+  new Vault(library).newCapture("An earlier thought", { source: "text" });
+  const { app } = await hearing({ XDG_CONFIG_HOME: config }, library);
+  await answerDialogs(app, 0, { hold: true }); // Run Now, once the test lets the question be answered
+  const pressed = call(app, "menuAction", "task:evening-review");
+  await expect.poll(() => dialogsAsked(app)).toHaveLength(1);
+  // The person opens another library while the question is up. It has an evening review of the same name, which they never asked for.
+  const other = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-")), "Avanzel");
+  await call(app, "createLibrary", other);
+  expect((await settingsSnap(app)).library?.path).toBe(other);
+  await letDialogsGo(app);
+  await pressed;
+  await call(app, "idleForTests");
+  expect(await lastRun(app, "evening-review")).toBeNull();
+  expect(await detailOf(app)).toMatch(NEXT_EVENING);
+  expect((await said(app)).filter((note) => note.title.startsWith("Evening review"))).toEqual([]);
+  expect(inbox(library)).toHaveLength(1); // nor was the first library's review run
+  expect(await dialogsAsked(app)).toHaveLength(1);
+  await app.close();
+});
+
+test("a review builds the menu once for each capture it counts, and at its start and its end", async () => {
+  const library = await makeLibrary();
+  new Vault(library).newCapture("First thought", { source: "text" });
+  new Vault(library).newCapture("Second thought", { source: "text" });
+  const { app } = await hearing({ FAKE_AGENT_STEP_MS: "300" }, library); // each filing takes its time
+  await watchReview(app);
+  await call(app, "runTask", "evening-review");
+  const seen = await seenToTheEnd(app);
+  // Its start builds the menu once, each of the two captures once, and its end once (the first entry is what the menu said before).
+  // tick() builds it too, every minute, and one may land in these seconds; a build at each report or step would be a dozen.
+  const builds = seen.length - 1;
+  expect(builds).toBeGreaterThanOrEqual(4);
+  expect(builds).toBeLessThanOrEqual(5);
+  await app.close();
+});
+
+test("a note the review can't read still counts, though the engine reports nothing of it", async () => {
+  const library = await makeLibrary();
+  const locked = path.join(library, "inbox", "0-locked.md"); // sorts first
+  writeFileSync(locked, "Can't be read");
+  chmodSync(locked, 0o000); // the engine takes it up, can't read it to adopt it, and goes on to the next
+  new Vault(library).newCapture("A note", { source: "text" });
+  const { app } = await hearing({ FAKE_AGENT_STEP_MS: "500" }, library);
+  try {
+    await watchReview(app);
+    await call(app, "runTask", "evening-review");
+    const seen = await seenToTheEnd(app);
+    const next = seen[0]?.detail ?? "";
+    expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "1 of 2", "2 of 2", next]);
+  } finally {
+    chmodSync(locked, 0o644);
+  }
+  await app.close();
+});

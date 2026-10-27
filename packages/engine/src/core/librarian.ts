@@ -118,7 +118,12 @@ export interface FileOptions {
   /** The owner's standing instructions for this run (a shadow task's body). */
   instructions?: string | null;
   signal?: AbortSignal;
-  /** Captures to leave in the inbox, unreported (say, ones the owner is editing); asked as each next capture is picked. */
+  /**
+   * Captures to leave in the inbox, unreported (say, ones the owner is editing); asked as each next capture is picked. A `false` answer
+   * is the pick: the capture is worked on from there, and `leave` is not asked of it again. So a caller hears one `false` for each
+   * capture the run works on, before that capture's first `progress`. A recording is one pick, though its words are filed under a name
+   * of their own, and a capture that can't be adopted is a pick that reports nothing.
+   */
   leave?: (capturePath: string) => boolean;
   /**
    * Told each step the agent takes while it files a capture, as it takes it: what Claude Code reads, searches and writes

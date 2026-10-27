@@ -15,7 +15,7 @@ import { defaultSettings } from "../../src/core/config.ts";
 import { Librarian } from "../../src/core/librarian.ts";
 import type { FilingStep } from "../../src/core/steps.ts";
 import { Vault, type Capture } from "../../src/core/vault.ts";
-import { AvanzelError } from "../../src/types.ts";
+import { AvanzelError, type Transcriber } from "../../src/types.ts";
 import { FAKE_AGENT, NOW, binScripts, write } from "./helpers.ts";
 import { fakeSettings, mode, only, read, recordRuns, tmp } from "./librarian-fixtures.ts";
 
@@ -396,6 +396,43 @@ describe("eveningReview", () => {
     expect(review.outcomes.map((outcome) => outcome.captureId)).toEqual([b.id]);
     expect(vault.pending()).toEqual([a.path]);
     expect(read(review.digestPath ?? "")).not.toContain(a.id); // left alone, not reported
+  });
+
+  it("asks leave as it picks each capture, and a false answer comes before that capture's first report", async () => {
+    // A caller that counts the captures of a review (the app's menu) counts the picks, not the reports: a recording is reported twice
+    // (transcribed, then filed under a name of its words' own), a silent one once, and one that can't be adopted not at all.
+    const transcriber: Transcriber = {
+      engine: "fake:asr",
+      transcribe: async (audio) => ({ text: typeof audio === "string" && basename(audio).includes("silence") ? "" : "call mom", engine: "fake:asr", seconds: 1 }),
+    };
+    librarian = new Librarian(vault, fakeSettings(), { transcriber, clock: () => NOW });
+    writeFileSync(join(vault.inbox, "a-left.md"), "left alone");
+    writeFileSync(join(vault.inbox, "b-locked.md"), "cannot be read");
+    chmodSync(join(vault.inbox, "b-locked.md"), 0o000);
+    writeFileSync(join(vault.inbox, "c-note.md"), "A plain note");
+    writeFileSync(join(vault.inbox, "d-memo.m4a"), "fake audio");
+    writeFileSync(join(vault.inbox, "e-silence.wav"), "quiet");
+    const events: string[] = [];
+    await librarian.eveningReview({
+      leave: (path) => {
+        const left = basename(path) === "a-left.md";
+        if (!left) events.push(`picked ${basename(path)}`);
+        return left;
+      },
+      progress: (message) => events.push(message),
+    });
+    const filing = expect.stringMatching(/^Filing .+\.md with fake…$/);
+    expect(events).toEqual([
+      "picked b-locked.md", // adopting it fails: nothing is reported of it
+      "picked c-note.md",
+      filing,
+      "picked d-memo.m4a",
+      "Transcribing d-memo.m4a locally…",
+      filing, // its words, under a name of their own: the same pick, not asked of leave again
+      "picked e-silence.wav",
+      "Transcribing e-silence.wav locally…", // no words, nothing to file
+    ]);
+    expect(vault.pending().map((path) => basename(path))).toEqual(["a-left.md", "b-locked.md"]);
   });
 
   it("never writes the digest through a link left where it would go", async () => {

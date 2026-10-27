@@ -447,22 +447,29 @@ export type DialogAsked = {
  * From now on, the native alerts Avanzel asks (`dialog.showMessageBox`) open nothing and answer with the button at index `response` (0 is
  * the first, "Run Now" for the question before a review runs), with no box ticked. No test opens a real alert, which would hold it until
  * it timed out, so every test whose app may ask one calls this first. Each call's arguments are kept for `dialogsAsked`, and each call
- * here starts a new record.
+ * here starts a new record. With `hold`, an alert waits, open as far as the app can tell, until `letDialogsGo`: the test changes what
+ * the app does meanwhile.
  */
-export async function answerDialogs(app: ElectronApplication, response: number): Promise<void> {
-  await app.evaluate(({ dialog }, answer) => {
+export async function answerDialogs(app: ElectronApplication, response: number, { hold = false } = {}): Promise<void> {
+  await app.evaluate(({ dialog }, { answer, holding }) => {
     const asked: DialogAsked[] = [];
-    (globalThis as { dialogsAsked?: DialogAsked[] }).dialogsAsked = asked;
+    const held: (() => void)[] = [];
+    Object.assign(globalThis, { dialogsAsked: asked, dialogsHeld: held });
     dialog.showMessageBox = (async (...args: unknown[]) => {
       const [parent, options] = args.length > 1 ? args : [null, args[0]];
       asked.push({ sheetOn: (parent as { getTitle(): string } | null)?.getTitle() ?? null, options: options as DialogAsked["options"] });
+      if (holding) await new Promise<void>((resolve) => held.push(resolve));
       return { response: answer, checkboxChecked: false };
     }) as typeof dialog.showMessageBox;
-  }, response);
+  }, { answer: response, holding: hold });
 }
 
 /** What the stand-in of `answerDialogs` was asked since it was set, oldest first. */
 export const dialogsAsked = (app: ElectronApplication) => app.evaluate(() => (globalThis as { dialogsAsked?: DialogAsked[] }).dialogsAsked ?? []);
+
+/** Answers the alerts that `answerDialogs(app, response, { hold: true })` is holding. */
+export const letDialogsGo = (app: ElectronApplication) =>
+  app.evaluate(() => void (globalThis as { dialogsHeld?: (() => void)[] }).dialogsHeld?.splice(0).forEach((resolve) => resolve()));
 
 /**
  * From now on, the native menus Settings pops up record their items and pick the one labelled `choice`, or close
