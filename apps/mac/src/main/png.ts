@@ -1,6 +1,5 @@
-// A tiny PNG encoder plus the menu bar glyph (voice bars standing on a shelf), Zel's faces and shelf-colour dots,
-// so the app needs no image files or image libraries. Plain TypeScript, so that Node's type stripping can run it
-// (scripts/make-icon.mjs does): no enums, no parameter properties.
+// A tiny PNG encoder plus Zel's menu bar faces and shelf-colour dots, so the app needs no image files or image libraries. Plain
+// TypeScript, so that Node's type stripping can run it (scripts/make-icon.mjs does): no enums, no parameter properties.
 import { deflateSync } from "node:zlib";
 import { menuBarFaceSvg, type MenuBarState } from "@avanzel/ui/menu-bar";
 import { rasterizeSvg } from "./raster.ts";
@@ -49,27 +48,6 @@ export interface Bitmap {
   width: number;
   height: number;
   rgba: Uint8Array;
-}
-
-// In 16-unit coordinates: four voice bars standing on a shelf line.
-const GLYPH: [x: number, y: number, w: number, h: number][] = [
-  [2, 7, 2, 5],
-  [5, 3, 2, 9],
-  [8, 6, 2, 6],
-  [11, 9, 2, 3],
-  [1, 13, 14, 2],
-];
-
-/** Black-on-transparent, for an Electron template image. */
-export function trayIcon(scale: 1 | 2): Bitmap {
-  const size = 16 * scale;
-  const rgba = new Uint8Array(size * size * 4);
-  for (const [x, y, w, h] of GLYPH) {
-    for (let py = y * scale; py < (y + h) * scale; py++) {
-      for (let px = x * scale; px < (x + w) * scale; px++) rgba[(py * size + px) * 4 + 3] = 255;
-    }
-  }
-  return { width: size, height: size, rgba };
 }
 
 /** Zel's menu bar face in `state`: 18 points square, black on transparent, for an Electron template image. */

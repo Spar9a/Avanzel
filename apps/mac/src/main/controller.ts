@@ -146,6 +146,7 @@ import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } f
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
 import { MenuBar } from "./tray.ts";
+import { nextTrayWake, reviewEndedAt, sleepsAfterReview, trayView, wholePercent, type TrayInput, type TrayView } from "./tray-state.ts";
 import {
   createAskWindow,
   createCapsuleWindow,
@@ -182,6 +183,8 @@ const HINT_CAPTURES = 10;
 // notification shows a few lines, so a line that went on would push out the sentence that says what is safe, and the button.
 // The windows don't clip, and tell the whole line.
 const CAPSULE_LINE_MAX = 100;
+// How long the menu bar's face wears the stamp of a filing that ended well (the filed face, §4.2).
+const FILED_FACE_MS = 2_000;
 
 /**
  * How much of `error`'s message a problem's card keeps: the whole of an AvanzelError, which Avanzel wrote for the person and which
@@ -372,8 +375,19 @@ export class Controller {
   private readonly signInWatches = new Map<string, SignInWatch>();
   /** The agents whose sign-in is being read again because the setup window has the focus again (`rereadSignIns`). */
   private readonly rereading = new Set<string>();
-  /** Avanzel is quitting, busy or not (`stopAgentChecks`): no agent check starts any more. */
+  /** Avanzel is quitting, busy or not (`stopAgentChecks`): no agent check starts any more, and the menu bar sets no timer. */
   private checksStopped = false;
+  /**
+   * The menu bar's one timer (`showTray`): it shows the icon again at the next whole second of a count its title shows, and when
+   * a filed stamp wears off. Set only while something counts down; cleared when Avanzel quits (`stopAgentChecks`).
+   */
+  private trayTimer: NodeJS.Timeout | null = null;
+  /** The icon is to be shown at the end of this turn of the event loop (`refreshTray`). */
+  private trayFlush: NodeJS.Immediate | null = null;
+  /** When the stamp of the last filing that ended well wears off (`markFiled`): the menu bar's face shows filed until then. */
+  private filedUntil: number | null = null;
+  /** An evening review finished at night (`fallAsleep`): the menu bar's face sleeps until the next capture or library (`wake`). */
+  private asleep = false;
   /** Where agent checks run while there is no library (`checkDir`): made at the first such check, kept for the app run. */
   private checkScratch: string | null = null;
   private recent: FiledPage[] = [];
@@ -473,6 +487,8 @@ export class Controller {
     this.dropTranscriber();
     this.libraryProblem = null;
     this.libraryMissing = null;
+    this.filedUntil = null; // a stamp for a filing in the library that closes
+    this.wake(); // and a night's sleep is for it too
     if (!libraryPath) return;
     const vault = new Vault(libraryPath);
     if (!vault.exists()) {
@@ -700,6 +716,101 @@ export class Controller {
     } catch (error) {
       console.error("menu", error);
     }
+    this.refreshTray();
+  }
+
+  // ---------------------------------------------------------------- menu bar icon
+
+  /**
+   * How the controller's state reads to the menu bar's face and title (`trayView` decides what shows). The face thinks while the
+   * capsule transcribes or shows a filing, a filing waits or runs, a review is queued or running, or an Ask runs: a download
+   * doesn't count, the title shows how far it is. `hiddenFilingSince` is the run of the latest filing while its run is going
+   * (`runs` keys each by the filing's `abort`: a missing outcome is no proof that a job is running, for a run that threw, a note
+   * that was gone and a Stop while queued all leave none), has begun its seconds (it isn't `waiting`), and the capsule is hidden.
+   */
+  private trayInput(): TrayInput {
+    const capsule = this.capsuleState.kind;
+    const job = this.job;
+    return {
+      setupOpen: this.setup.isOpen() || this.setup.upHereOpen(),
+      problem:
+        capsule === "error" ||
+        capsule === "model-failed" ||
+        capsule === "shortcut-taken" ||
+        this.libraryProblem !== null ||
+        this.libraryMissing !== null ||
+        this.model.kind === "error",
+      recordingSince: this.recording && !this.recording.stopping ? this.recording.startedAt : null,
+      busy:
+        capsule === "transcribing" ||
+        capsule === "filing" ||
+        this.queuedToFile.size > 0 ||
+        this.runs.size > 0 ||
+        this.running.size > 0 ||
+        this.giveUpAsk !== null,
+      hiddenFilingSince: job && capsule === "hidden" && !job.waiting && this.runs.has(job.abort) ? job.startedAt : null,
+      downloadPercent: this.model.kind === "downloading" ? wholePercent(this.model.receivedBytes, this.model.totalBytes) : null,
+      filedUntil: this.filedUntil,
+      asleep: this.asleep,
+    };
+  }
+
+  /**
+   * Asks for the menu bar icon to be shown as the controller's state says (`showTray`), at the end of this turn of the event loop. A
+   * change of state is often several calls in a row (a run ends, then its filing is stamped filed), and the icon should show where
+   * they end, not flash through the places between. Only the icon: the menu is not rebuilt (`refreshMenu` does that, and calls
+   * this), so a count may be shown every second, and a face swap costs nothing more.
+   */
+  private refreshTray(): void {
+    if (this.trayFlush || !this.menuBar) return; // one is coming already, or the menu bar isn't made yet (`start`)
+    this.trayFlush = setImmediate(() => {
+      this.trayFlush = null;
+      this.showTray();
+    });
+  }
+
+  /**
+   * Shows the menu bar icon as the controller's state asks (`trayInput`, `trayView`): Zel's face, and the title beside it. It also
+   * sets the one timer that shows it again when something counts down (`nextTrayWake`), and none once Avanzel is quitting. Best
+   * effort: the icon is never worth an exception, in a timer least of all.
+   */
+  private showTray(): void {
+    if (this.trayTimer) clearTimeout(this.trayTimer);
+    this.trayTimer = null;
+    try {
+      const input = this.trayInput();
+      const now = Date.now();
+      this.menuBar.show(trayView(input, now));
+      const wake = this.checksStopped ? null : nextTrayWake(input, now);
+      if (wake !== null) {
+        this.trayTimer = setTimeout(() => {
+          this.trayTimer = null;
+          this.showTray();
+        }, wake);
+      }
+    } catch (error) {
+      console.error("menu bar", error);
+    }
+  }
+
+  /** A filing ended well: the face wears its stamp for FILED_FACE_MS, and goes back when it wears off (`showTray` sets the timer). */
+  private markFiled(): void {
+    this.filedUntil = Date.now() + FILED_FACE_MS;
+    this.refreshTray();
+  }
+
+  /** An evening review has finished without throwing: at night (`sleepsAfterReview`) Zel sleeps, until the next capture or library. */
+  private fallAsleep(): void {
+    if (!sleepsAfterReview(reviewEndedAt(process.env))) return;
+    this.asleep = true;
+    this.refreshTray();
+  }
+
+  /** A capture begins, or a library opens: Zel wakes. */
+  private wake(): void {
+    if (!this.asleep) return;
+    this.asleep = false;
+    this.refreshTray();
   }
 
   /** The usable scheduled reviews; Settings → Reviews says what is wrong with the others. */
@@ -747,6 +858,7 @@ export class Controller {
       }
     }
     if (autoHideMs) this.scheduleHide(autoHideMs);
+    if (state.kind === "saved" && !state.undone) this.markFiled(); // words saved, for the evening review or as a screen comment: stamped
     this.refreshMenu();
   }
 
@@ -935,6 +1047,7 @@ export class Controller {
       }, maxSeconds * 1000),
     };
     this.recording = recording;
+    this.wake(); // the next capture wakes Zel
     this.setCapsule({
       kind: "listening",
       mode,
@@ -1384,8 +1497,12 @@ export class Controller {
     const waiting = message === WAITING;
     if (!!job.waiting === waiting) return;
     job.waiting = waiting;
-    if (waiting) this.refreshFiling(job);
-    else this.startRun(job);
+    if (waiting) {
+      this.refreshFiling(job);
+      this.refreshTray(); // a hidden filing that waits again counts no seconds
+    } else {
+      this.startRun(job);
+    }
     this.setup.waiting(job, waiting);
   }
 
@@ -1399,6 +1516,7 @@ export class Controller {
     job.startedAt = Date.now();
     job.stepAt = job.startedAt;
     this.refreshFiling(job);
+    this.refreshTray(); // a hidden filing counts from here
   }
 
   /**
@@ -1432,10 +1550,12 @@ export class Controller {
     if (this.quitting) abort.abort();
     const running = work(abort.signal);
     this.runs.set(abort, running);
+    this.refreshTray(); // the face thinks, and a hidden filing's count begins: `runs` is what both read
     try {
       return await running;
     } finally {
       this.runs.delete(abort);
+      this.refreshTray();
     }
   }
 
@@ -1484,6 +1604,7 @@ export class Controller {
     this.noteFiled((capture) => capture === job.capturePath);
     // Setup's thought is filed, which counts whether its window is still there to show it or has closed (§5.4).
     if (job.setup) this.firstRun.filed(new Date());
+    this.markFiled(); // whichever card, window or notification tells it
     if (this.setup.owns(job)) {
       this.setup.filed(job, outcome, job.pages);
     } else if (this.job === job && this.capsuleState.kind === "filing") {
@@ -2404,6 +2525,7 @@ export class Controller {
       this.fail(thoughtNotSavedProblem(errorMessage(error), reasonMax(error)), "type-a-thought", "Type a thought");
       throw error;
     }
+    this.wake();
     this.afterCapture(capture.path, trimmed, null);
   }
 
@@ -2446,6 +2568,7 @@ export class Controller {
     const abort = new AbortController();
     const giveUp = () => abort.abort();
     this.giveUpAsk = giveUp;
+    this.refreshTray(); // the face thinks while a question is answered
     if (win?.isDestroyed()) giveUp();
     else win?.once("closed", giveUp);
     try {
@@ -2464,7 +2587,10 @@ export class Controller {
       };
     } finally {
       if (win && !win.isDestroyed()) win.removeListener("closed", giveUp);
-      if (this.giveUpAsk === giveUp) this.giveUpAsk = null;
+      if (this.giveUpAsk === giveUp) {
+        this.giveUpAsk = null;
+        this.refreshTray();
+      }
     }
   }
 
@@ -2899,6 +3025,7 @@ export class Controller {
       obsidianInstalled: () => this.obsidianInstalled(),
       agentName: (harness) => this.agentName(harness),
       broadcast: () => this.broadcast(),
+      refreshTray: () => this.refreshTray(),
       downloadModel: () => this.downloadModel(),
       checkAgents: () => this.checkAgents(),
       runAgentCheck: (name, harness, prompt, again) => this.runAgentCheck(name, harness, prompt, again),
@@ -2916,7 +3043,11 @@ export class Controller {
       takeBack: (job) => this.takeBack(job),
       revert: (commit) => this.revertFiling(commit),
       answer: (question, abort, progress) => this.answerQuestion(question, abort, progress),
-      newCapture: (text, options) => this.requireVault().newCapture(text, options),
+      newCapture: (text, options) => {
+        const capture = this.requireVault().newCapture(text, options);
+        this.wake(); // a thought typed in setup is a capture too
+        return capture;
+      },
       firstRun: this.firstRun,
       queuedToFile: this.queuedToFile,
       noticed: this.noticed,
@@ -3002,10 +3133,12 @@ export class Controller {
   /**
    * When Avanzel quits, busy or not: stops every agent check still going on, its agent too (it runs detached, and its
    * timeout lives here), and no check starts after it. Quitting doesn't wait for them, and what they find is dropped.
-   * The scratch folder the checks ran in goes too.
+   * The scratch folder the checks ran in goes too, and so does the menu bar's timer.
    */
   stopAgentChecks(): void {
     this.checksStopped = true;
+    if (this.trayTimer) clearTimeout(this.trayTimer); // the menu bar's count stops where it is, and `showTray` sets no timer again
+    this.trayTimer = null;
     this.dropLibraryTimers();
     for (const abort of this.runningChecks) abort.abort();
     if (!this.checkScratch) return;
@@ -3097,6 +3230,7 @@ export class Controller {
     this.model = { kind: "downloading", receivedBytes: 0, totalBytes: bytes };
     this.broadcast();
     let lastBroadcast = 0;
+    let shownPercent = wholePercent(0, bytes); // what the menu bar's title reads now: it is shown again only when the whole percent changes
     void downloadModels(missing, this.modelsDir, {
       quantization: voice.quantization,
       baseUrl: process.env.AVANZEL_MODELS_URL || undefined, // unset: Hugging Face; the e2e tests set a local stand-in
@@ -3107,6 +3241,11 @@ export class Controller {
           lastBroadcast = Date.now();
           this.broadcastProgress();
           this.followDownload({ kind: "preparing", ...progress });
+          const percent = wholePercent(progress.receivedBytes, progress.totalBytes);
+          if (percent !== shownPercent) {
+            shownPercent = percent;
+            this.refreshTray();
+          }
         }
       },
     })
@@ -3249,6 +3388,7 @@ export class Controller {
         const left = new Set<string>();
         const result = await this.withRun(async (signal) =>
           (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions, signal, leave: this.leftAlone(left) }));
+        this.fallAsleep(); // it ran to its end, whatever it found to file
         if (!result.outcomes.length) {
           this.notify(task.name, nothingFiled(left.size));
           return;
@@ -3318,6 +3458,11 @@ export class Controller {
 
   menuForTests(): MenuItemModel[] {
     return buildMenuModel(this.menuInput(), new Date());
+  }
+
+  /** What the menu bar was last given (`MenuBar.show`) and the title macOS holds for the icon: for the e2e tests. */
+  trayForTests(): TrayView & { nativeTitle: string } {
+    return { ...this.menuBar.shown, nativeTitle: this.menuBar.tray.getTitle() };
   }
 
   /** The step the setup session is on, or null without one: for tests of steps whose body a later change builds. */

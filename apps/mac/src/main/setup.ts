@@ -109,6 +109,11 @@ export interface SetupHost {
   // What setup has the controller do.
   /** Settings, the setup window (`Setup.publish`) and the menu bar get what they show now. */
   broadcast(): void;
+  /**
+   * The menu bar icon is shown again (the controller's `refreshTray`) without its menu rebuilt: setup's window or Zel's bubble
+   * has opened or closed, and the icon's title gives way to it, or comes back.
+   */
+  refreshTray(): void;
   downloadModel(): Promise<SettingsSnapshot>;
   checkAgents(): SettingsSnapshot;
   runAgentCheck(name: string, harness: Harness, prompt: boolean, again?: AgentStatus): Promise<void>;
@@ -265,6 +270,11 @@ export class Setup {
     return this.session !== null;
   }
 
+  /** Zel's bubble is up under the menu bar icon (`openUpHere`) and hasn't been put away (`closeUpHere`). */
+  upHereOpen(): boolean {
+    return this.upHereWindow !== null && !this.upHereWindow.isDestroyed();
+  }
+
   /**
    * Brings the setup window forward, or opens a new one, which starts a new session on Hello once it has drawn. A new
    * session makes or uses the library at `place`, where Found starts; without one, at the library stored in the settings,
@@ -321,6 +331,7 @@ export class Setup {
       finished: false,
     };
     this.host.firstRun.entered("hello", new Date()); // the renderer starts there, and doesn't enter it
+    this.host.refreshTray(); // the icon's title gives way to the window, which flies to the icon's bounds at the end
   }
 
   /**
@@ -342,6 +353,7 @@ export class Setup {
     app.dock?.hide();
     if (!session.finished) this.host.firstRun.closed(session.step);
     this.session = null;
+    this.host.refreshTray();
   }
 
   /** Where a new session makes or uses the library unless `show` is given a place: the stored libraryPath, else ~/Avanzel. */
@@ -1198,6 +1210,7 @@ export class Setup {
     this.closeUpHere();
     const win = createUpHereWindow();
     this.upHereWindow = win;
+    this.host.refreshTray(); // no title beside the icon the bubble points at: it would widen the bounds the bubble centres on
     const { x, y } = upHerePlace(tray, screen.getDisplayMatching(tray).workArea, UP_HERE_SIZE);
     win.setPosition(x, y);
     app.focus({ steal: true });
@@ -1242,6 +1255,7 @@ export class Setup {
     const win = this.upHereWindow;
     this.upHereWindow = null;
     if (win && !win.isDestroyed()) win.close();
+    if (win) this.host.refreshTray(); // the icon's title may come back
   }
 
   /** The step the session is on, or null without one: for tests of steps whose body a later change builds. */

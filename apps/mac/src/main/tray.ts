@@ -1,7 +1,10 @@
-// The menu bar icon and its menu, rebuilt from MenuInput whenever something changes, and where the icon is on screen.
+// The menu bar icon (Zel's face, and a title beside it) and its menu, rebuilt from MenuInput whenever something changes, and where
+// the icon is on screen.
+import type { MenuBarState } from "@avanzel/ui/menu-bar";
 import { Menu, Tray, nativeImage, type MenuItemConstructorOptions, type NativeImage, type Rectangle } from "electron";
 import { buildMenuModel, menuLabel, type MenuInput } from "./menu-model.ts";
-import { dotIcon, encodePng, trayIcon } from "./png.ts";
+import { dotIcon, encodePng, faceIcon } from "./png.ts";
+import type { TrayView } from "./tray-state.ts";
 
 const SHELF_COLORS: Record<string, string> = {
   goals: "#34c759", ideas: "#ffcc00", problems: "#ff3b30", memories: "#af52de", people: "#007aff", topics: "#8e8e93",
@@ -26,10 +29,39 @@ function dot(shelf: string): NativeImage {
 
 export class MenuBar {
   readonly tray: Tray;
+  /** One image for each face, made the first time it shows: a template image, so macOS tints it for the menu bar and its appearance. */
+  private readonly faces = new Map<MenuBarState, NativeImage>();
+  private current: TrayView = { face: "idle", title: "" };
 
   constructor(private readonly onAction: (action: string) => void) {
-    this.tray = new Tray(image(trayIcon, true));
+    this.tray = new Tray(this.faceImage("idle"));
     this.tray.setToolTip("Avanzel");
+  }
+
+  /** What the icon and its title show now (`show`). */
+  get shown(): TrayView {
+    return this.current;
+  }
+
+  private faceImage(state: MenuBarState): NativeImage {
+    let face = this.faces.get(state);
+    if (!face) {
+      face = image((scale) => faceIcon(state, scale), true);
+      this.faces.set(state, face);
+    }
+    return face;
+  }
+
+  /**
+   * Shows `view`: Zel's face as the icon, and beside it the title, in digits of one width so that a count doesn't shake as it
+   * goes. Each is set only when it changes, and the menu is never rebuilt, so this may run as often as the count needs it.
+   * Nothing once the tray is destroyed.
+   */
+  show(view: TrayView): void {
+    if (this.tray.isDestroyed()) return;
+    if (view.face !== this.current.face) this.tray.setImage(this.faceImage(view.face));
+    if (view.title !== this.current.title) this.tray.setTitle(view.title, { fontType: "monospacedDigit" });
+    this.current = { face: view.face, title: view.title };
   }
 
   update(input: MenuInput, now = new Date()): void {

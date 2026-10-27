@@ -1,7 +1,7 @@
 import { inflateSync } from "node:zlib";
 import type { MenuBarState } from "@avanzel/ui/menu-bar";
 import { describe, expect, it } from "vitest";
-import { encodePng, faceIcon, tinted, trayIcon, type Bitmap } from "../src/main/png.ts";
+import { encodePng, faceIcon, tinted, type Bitmap } from "../src/main/png.ts";
 
 // Keyed by every MenuBarState, so a state the design system adds fails the typecheck here until its face is tested too.
 const FACE_STATES: Record<MenuBarState, true> = { idle: true, listening: true, filing: true, filed: true, "needs-you": true, asleep: true };
@@ -20,17 +20,6 @@ describe("png", () => {
     const idatLength = png.readUInt32BE(33);
     expect(png.toString("ascii", 37, 41)).toBe("IDAT");
     expect([...inflateSync(png.subarray(41, 41 + idatLength))]).toEqual([0, 255, 0, 0, 255, 0, 0, 255, 128]);
-  });
-
-  it("draws the tray glyph as black-on-transparent at 1x and 2x", () => {
-    for (const scale of [1, 2] as const) {
-      const { width, height, rgba } = trayIcon(scale);
-      expect([width, height]).toEqual([16 * scale, 16 * scale]);
-      const alphas = [...rgba].filter((_, i) => i % 4 === 3);
-      expect(alphas.some((a) => a === 255)).toBe(true);
-      expect(alphas.some((a) => a === 0)).toBe(true);
-      expect([...rgba].filter((_, i) => i % 4 !== 3).every((v) => v === 0)).toBe(true);
-    }
   });
 });
 
