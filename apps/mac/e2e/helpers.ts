@@ -437,6 +437,33 @@ export async function stubPicker(app: ElectronApplication, dir: string): Promise
 
 export const pickerAsked = (app: ElectronApplication) => app.evaluate(() => (globalThis as { pickerAsked?: unknown }).pickerAsked ?? null);
 
+/** One native alert Avanzel asked (`answerDialogs`): the title of the window it came up as a sheet on, null for an alert of its own, and its options. */
+export type DialogAsked = {
+  sheetOn: string | null;
+  options: { type?: string; buttons?: string[]; defaultId?: number; cancelId?: number; message?: string; detail?: string };
+};
+
+/**
+ * From now on, the native alerts Avanzel asks (`dialog.showMessageBox`) open nothing and answer with the button at index `response` (0 is
+ * the first, "Run Now" for the question before a review runs), with no box ticked. No test opens a real alert, which would hold it until
+ * it timed out, so every test whose app may ask one calls this first. Each call's arguments are kept for `dialogsAsked`, and each call
+ * here starts a new record.
+ */
+export async function answerDialogs(app: ElectronApplication, response: number): Promise<void> {
+  await app.evaluate(({ dialog }, answer) => {
+    const asked: DialogAsked[] = [];
+    (globalThis as { dialogsAsked?: DialogAsked[] }).dialogsAsked = asked;
+    dialog.showMessageBox = (async (...args: unknown[]) => {
+      const [parent, options] = args.length > 1 ? args : [null, args[0]];
+      asked.push({ sheetOn: (parent as { getTitle(): string } | null)?.getTitle() ?? null, options: options as DialogAsked["options"] });
+      return { response: answer, checkboxChecked: false };
+    }) as typeof dialog.showMessageBox;
+  }, response);
+}
+
+/** What the stand-in of `answerDialogs` was asked since it was set, oldest first. */
+export const dialogsAsked = (app: ElectronApplication) => app.evaluate(() => (globalThis as { dialogsAsked?: DialogAsked[] }).dialogsAsked ?? []);
+
 /**
  * From now on, the native menus Settings pops up record their items and pick the one labelled `choice`, or close
  * without a pick when it is null. Each call starts a new record. The stand-in keeps the order a real menu has on macOS:

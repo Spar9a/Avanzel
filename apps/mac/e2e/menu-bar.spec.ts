@@ -12,9 +12,11 @@ import { dictate, inbox, launchOn, notified, reachedUndo, sleep, undoCalls, undo
 import {
   agentStubs,
   answerAs,
+  answerDialogs,
   call,
   capsuleKind,
   closeModelHubs,
+  dialogsAsked,
   emptyHfCache,
   exists,
   fakeModelHub,
@@ -28,6 +30,7 @@ import {
   makeLibrary,
   onceMarker,
   onlyAgentsIn,
+  openSettings,
   shown,
   speechWav,
   stopAtTheEnd,
@@ -1501,6 +1504,264 @@ for (const card of [
     const settings = await windowFor(app, "settings");
     await expect(settings.getByRole("radio", { name: "Voice", exact: true })).toHaveAttribute("aria-checked", "true");
     expect(await call(app, "capsuleStateForTests")).toEqual(card);
+    await app.close();
+  });
+}
+
+// ---------------------------------------------------------------- a scheduled review asks before it runs, and shows how far it is
+
+/** The words beside the review `id` in the menu now: the time it runs next, "Running…", or how far it is ("1 of 2"). */
+async function detailOf(app: ElectronApplication, id = "evening-review"): Promise<string | undefined> {
+  const item = (await menuOf(app)).find((candidate) => candidate.type === "item" && candidate.action === `task:${id}`);
+  return item?.type === "item" ? item.detail : undefined;
+}
+
+/** When the review `id` last ran, in the library's run state: null before it has. */
+const lastRun = async (app: ElectronApplication, id: string) => (await settingsSnap(app)).tasks.find((task) => task.id === id)?.lastRun ?? null;
+
+/** What a review's next time reads as in the menu: today's, or tomorrow's once 21:00 has passed. */
+const NEXT_EVENING = /^(Tomorrow )?21:00$/;
+
+/** What one rebuild of the menu said of the evening review: the model's detail beside it, and the label of the item the tray holds. */
+type ReviewSaid = { detail: string | undefined; held: string | undefined };
+
+/**
+ * From now on, notes what each rebuild of the tray's menu (`MenuBar.update`) says of the evening review (`reviewSeen`), beginning with
+ * what it says now, so that no poll has to catch a count in the moment it shows.
+ */
+async function watchReview(app: ElectronApplication): Promise<void> {
+  await call(app, "capsuleStateForTests");
+  await app.evaluate(() => {
+    type Item = { type: string; action?: string; detail?: string };
+    type Bar = { menu: { items: { label: string }[] } | null; update(input: unknown, now?: Date): void };
+    const controller = (globalThis as unknown as { __avanzel: { menuForTests(): Item[]; menuBar: Bar } }).__avanzel;
+    const seen: ReviewSaid[] = [];
+    const note = () => {
+      const item = controller.menuForTests().find((candidate) => candidate.type === "item" && candidate.action === "task:evening-review");
+      seen.push({ detail: item?.detail, held: controller.menuBar.menu?.items.find((held) => /^Evening review( \(|$)/.test(held.label))?.label });
+    };
+    Object.assign(globalThis, { reviewSeen: seen });
+    note();
+    const update = controller.menuBar.update.bind(controller.menuBar);
+    controller.menuBar.update = (input, now) => {
+      update(input, now);
+      note();
+    };
+  });
+}
+
+const reviewSeen = (app: ElectronApplication) => app.evaluate(() => (globalThis as { reviewSeen?: ReviewSaid[] }).reviewSeen ?? []);
+
+/** The list without a value that repeats the one before it: a rebuild for another reason says what was said already. */
+const inARow = <T>(list: T[]): T[] => list.filter((value, at) => value !== list[at - 1]);
+
+/** Once the review has said how it ended, waits for its run to be over and the menu to show its time again; returns what the menu said meanwhile. */
+async function seenToTheEnd(app: ElectronApplication): Promise<ReviewSaid[]> {
+  await reviewSaid(app);
+  await expect.poll(() => detailOf(app), { timeout: 30_000 }).toMatch(NEXT_EVENING);
+  return reviewSeen(app);
+}
+
+test("running a review from the menu asks first, and runs it only on Run Now", async () => {
+  const { app, library } = await withNote("12");
+  await answerDialogs(app, 1); // Cancel
+  await call(app, "menuAction", "task:evening-review");
+  expect(await dialogsAsked(app)).toEqual([
+    {
+      sheetOn: null, // the menu is no window to be a sheet on
+      options: {
+        type: "question",
+        buttons: ["Run Now", "Cancel"],
+        defaultId: 0,
+        cancelId: 1,
+        message: "Run “Evening review” now?",
+        detail: "It's an agent run with fake, so it uses your plan's quota.",
+      },
+    },
+  ]);
+  // Cancel: nothing ran. The note waits in the inbox, the review never ran, and no review said anything.
+  await call(app, "idleForTests");
+  expect(await lastRun(app, "evening-review")).toBeNull();
+  expect(await detailOf(app)).toMatch(NEXT_EVENING);
+  expect(inbox(library)).toHaveLength(1);
+  expect((await said(app)).filter((note) => note.title.startsWith("Evening review"))).toEqual([]);
+  // Run Now: it runs, and was asked about once.
+  await answerDialogs(app, 0);
+  await call(app, "menuAction", "task:evening-review");
+  expect(await dialogsAsked(app)).toHaveLength(1);
+  expect(await reviewSaid(app)).toMatchObject({ title: "Evening review: 1 thing filed" });
+  await call(app, "idleForTests");
+  expect(await lastRun(app, "evening-review")).not.toBeNull();
+  expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("the question before a review names no agent where none can be named", async () => {
+  const library = await makeLibrary();
+  saveSettings(library, { ...loadSettings(library), harness: "auto" }); // whichever agent is installed, and this Mac has none
+  const { app } = await launchOn(library, onlyAgentsIn(mkdtempSync(path.join(tmpdir(), "avz-e2e-bin-"))));
+  await answerDialogs(app, 1);
+  await call(app, "menuAction", "task:evening-review");
+  const [asked, ...more] = await dialogsAsked(app);
+  expect(more).toEqual([]);
+  expect(asked?.options).toMatchObject({ message: "Run “Evening review” now?", detail: "It's an agent run, so it uses your plan's quota." });
+  await app.close();
+});
+
+test("a review that is running isn't asked about", async () => {
+  const { app } = await withNote("12", { FAKE_AGENT_DELAY_MS: "5000", FAKE_AGENT_DELAY_TASK: "file" }); // its filing holds the library for 5 s
+  await call(app, "runTask", "evening-review");
+  expect(await detailOf(app)).toMatch(/^(Running…|1 of 1)$/);
+  await answerDialogs(app, 0);
+  await call(app, "menuAction", "task:evening-review"); // its item stays in the menu while it runs: pressed, it does nothing
+  expect(await dialogsAsked(app)).toEqual([]);
+  expect(await reviewSaid(app)).toMatchObject({ title: "Evening review: 1 thing filed" });
+  await call(app, "idleForTests");
+  expect(await dialogsAsked(app)).toEqual([]);
+  await app.close();
+});
+
+test("Settings' Run now asks first, as a sheet on Settings, and runs the review only on Run Now", async () => {
+  const { app } = await hearing();
+  const settings = await openSettings(app, "Reviews");
+  const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  await answerDialogs(app, 1); // Cancel
+  await weekly.getByRole("button", { name: "Run now" }).click();
+  await expect.poll(() => dialogsAsked(app)).toHaveLength(1);
+  expect(await dialogsAsked(app)).toEqual([
+    {
+      sheetOn: "Avanzel Settings",
+      options: {
+        type: "question",
+        buttons: ["Run Now", "Cancel"],
+        defaultId: 0,
+        cancelId: 1,
+        message: "Run “Weekly review” now?",
+        detail: "It's an agent run with fake, so it uses your plan's quota.",
+      },
+    },
+  ]);
+  // Cancel: the review did not run, and Settings still says it never has.
+  await call(app, "idleForTests");
+  expect(await lastRun(app, "weekly-review")).toBeNull();
+  await expect(weekly.getByText("Not run yet.", { exact: true })).toBeVisible();
+  // Run Now: it runs, and was asked about once.
+  await answerDialogs(app, 0);
+  await weekly.getByRole("button", { name: "Run now" }).click();
+  await expect.poll(() => lastRun(app, "weekly-review")).not.toBeNull();
+  await call(app, "idleForTests");
+  expect(await dialogsAsked(app)).toHaveLength(1);
+  expect(await notified(app, "Weekly review is ready")).toHaveLength(1);
+  await app.close();
+});
+
+test("a review that comes due on its schedule runs without asking", async () => {
+  const { app, library, userData } = await withNote("12");
+  await answerDialogs(app, 1); // were it asked, Cancel would stop it
+  // Its schedule last found it two days ago: the next tick finds it due.
+  const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString();
+  writeFileSync(path.join(userData, "run-state.json"), JSON.stringify({ [path.resolve(library)]: { checked: { "evening-review": twoDaysAgo } } }));
+  await call(app, "tick");
+  expect(await reviewSaid(app)).toMatchObject({ title: "Evening review: 1 thing filed" });
+  await call(app, "idleForTests");
+  expect(await lastRun(app, "evening-review")).not.toBeNull();
+  expect(await dialogsAsked(app)).toEqual([]);
+  await app.close();
+});
+
+test("a running review shows how far it is, and its time again once it ends", async () => {
+  const library = await makeLibrary();
+  new Vault(library).newCapture("First thought", { source: "text" });
+  new Vault(library).newCapture("Second thought", { source: "text" });
+  const { app } = await hearing({ FAKE_AGENT_STEP_MS: "500" }, library); // each filing takes a moment
+  await watchReview(app);
+  await call(app, "runTask", "evening-review");
+  // Each capture counts as the review takes it up, and the item says so instead of "Running…".
+  await expect.poll(() => detailOf(app), { timeout: 30_000 }).toBe("1 of 2");
+  expect((await menuOf(app)).find((item) => item.type === "item" && item.action === "task:evening-review")).toMatchObject({ label: "Evening review", detail: "1 of 2" });
+  const seen = await seenToTheEnd(app);
+  const next = seen[0]?.detail ?? "";
+  expect(next).toMatch(NEXT_EVENING);
+  expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "1 of 2", "2 of 2", next]);
+  // The tray's menu was given the same, in parentheses (menuLabel).
+  expect(inARow(seen.map((entry) => entry.held))).toEqual([
+    `Evening review (${next})`,
+    "Evening review (Running…)",
+    "Evening review (1 of 2)",
+    "Evening review (2 of 2)",
+    `Evening review (${next})`,
+  ]);
+  // Run again, on an empty inbox: it begins with "Running…", not with the count the last run ended on.
+  const before = seen.length;
+  await call(app, "runTask", "evening-review");
+  await expect.poll(async () => (await notified(app, "Evening review")).length, { timeout: 30_000 }).toBe(1); // "Inbox was empty."
+  await expect.poll(() => detailOf(app), { timeout: 30_000 }).toMatch(NEXT_EVENING);
+  expect(inARow((await reviewSeen(app)).slice(before).map((entry) => entry.detail))).toEqual(["Running…", next]);
+  await app.close();
+});
+
+test("a capture that arrives while the review runs is filed too, and the count rises to meet it", async () => {
+  const library = await makeLibrary();
+  new Vault(library).newCapture("First thought", { source: "text" });
+  new Vault(library).newCapture("Second thought", { source: "text" });
+  const { app } = await hearing({ FAKE_AGENT_STEP_MS: "500" }, library);
+  await watchReview(app);
+  await call(app, "runTask", "evening-review");
+  await expect.poll(() => detailOf(app), { timeout: 30_000 }).toBe("1 of 2");
+  new Vault(library).newCapture("Third thought", { source: "text" }); // the review reads the inbox again after each capture
+  const seen = await seenToTheEnd(app);
+  const next = seen[0]?.detail ?? "";
+  expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "1 of 2", "2 of 2", "3 of 3", next]);
+  expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+test("the count leaves out a thought the review leaves alone", async () => {
+  const library = await makeLibrary();
+  new Vault(library).newCapture("An earlier thought", { source: "text" });
+  const { app } = await hearing({ FAKE_AGENT_STEP_MS: "300" }, library);
+  await watchReview(app);
+  await holdTheQueue(app);
+  await call(app, "runTask", "evening-review"); // waits for its turn
+  await dictate(app); // the thought's note is in the inbox, and its own filing waits behind the review: the review leaves it to that
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
+  await letTheQueueGo(app);
+  const seen = await seenToTheEnd(app);
+  const next = seen[0]?.detail ?? "";
+  // Two notes waited when it began, and one of them was not its to file.
+  expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "1 of 1", next]);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed"); // the thought's own filing came after the review
+  await app.close();
+});
+
+// A recording in the inbox is reported twice by the engine: transcribed, then filed under the name of its transcript. It is one capture.
+for (const words of ["Plant tulips in October", ""]) {
+  test(`a recording in the inbox counts once${words ? ", though the engine reports it twice" : ", and the note after it counts too, though it had no words"}`, async () => {
+    const library = await makeLibrary();
+    writeFileSync(path.join(library, "inbox", "2020-01-01-0000-recording.wav"), ""); // sorts before the note
+    new Vault(library).newCapture("A note", { source: "text" });
+    const { app } = await hearing({ FAKE_AGENT_STEP_MS: "500" }, library);
+    // The speech model is no matter of this test: the engine's transcription is stood in for. The recording leaves the inbox for the
+    // archive as it does, and its words (none, for a silent recording) become a capture of their own.
+    await app.evaluate((_electron, spoken) => {
+      type Made = { vault: { archive(file: string): string; newCapture(text: string, options: { source: string }): { path: string } }; captureAudio(audio: string): Promise<{ path: string } | null> };
+      const controller = (globalThis as unknown as { __avanzel: { librarian(harness?: string): Promise<Made> } }).__avanzel;
+      const librarian = controller.librarian.bind(controller);
+      controller.librarian = async (harness) => {
+        const made = await librarian(harness);
+        made.captureAudio = async (audio) => {
+          made.vault.archive(audio);
+          return spoken ? made.vault.newCapture(spoken, { source: "audio" }) : null;
+        };
+        return made;
+      };
+    }, words);
+    await watchReview(app);
+    await call(app, "runTask", "evening-review");
+    const seen = await seenToTheEnd(app);
+    const next = seen[0]?.detail ?? "";
+    expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "1 of 2", "2 of 2", next]);
+    expect(inbox(library)).toEqual([]);
     await app.close();
   });
 }

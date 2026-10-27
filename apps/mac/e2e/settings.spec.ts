@@ -5,7 +5,23 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { agentCalls, answerMenus, call, emptyHfCache, launch, makeLibrary, openedWith, openSettings, read, shownMenus, snap, stubOpening, stubPicker, windowFor } from "./helpers.ts";
+import {
+  agentCalls,
+  answerDialogs,
+  answerMenus,
+  call,
+  emptyHfCache,
+  launch,
+  makeLibrary,
+  openedWith,
+  openSettings,
+  read,
+  shownMenus,
+  snap,
+  stubOpening,
+  stubPicker,
+  windowFor,
+} from "./helpers.ts";
 
 /** What Settings is sent now. */
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
@@ -381,6 +397,7 @@ test("a change the app can't keep says so wherever it is made, and stays as it w
   // Reviews: Run now first keeps when the review ran, in run-state.json, so with that file blocked the run doesn't start. It saves
   // no setting, so its Notice is headed by what didn't happen, and says why and no more.
   await fresh("Reviews");
+  await answerDialogs(app, 0); // Run Now, each time it is pressed: Settings asks before it runs a review
   const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
   await weekly.getByRole("button", { name: "Run now" }).click();
   const notStarted = settings.getByRole("alert").filter({ hasText: "Weekly review didn't start." });
@@ -432,6 +449,7 @@ test("Run now refused for lack of permission says that a file was refused, in a 
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
   const settings = await openSettings(app, "Reviews");
+  await answerDialogs(app, 0); // Run Now
   // The file that keeps when a review last ran is written through a temporary file that is there already, and can't be written to.
   const tmp = path.join(userData, "run-state.json.tmp");
   writeFileSync(tmp, "");
@@ -549,6 +567,7 @@ test("a change that is refused after the person has gone to another pane is told
   writeFileSync(evening, readFileSync(evening, "utf8").replace("enabled: true", "enabled: false"));
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_DELAY_MS: "6000", FAKE_AGENT_DELAY_TASK: "review" });
   const settings = await openSettings(app, "Reviews");
+  await answerDialogs(app, 0); // Run Now
   const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
   await weekly.getByRole("button", { name: "Run now" }).click();
   await expect(weekly.getByText("Running now…", { exact: true })).toBeVisible();

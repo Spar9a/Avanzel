@@ -42,7 +42,7 @@ export function registerIpc(controller: Controller): void {
   handle("settings:download-model", () => controller.downloadModel());
   handle("settings:save-task", (_e, task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">) =>
     controller.saveTaskFromSettings(task));
-  handle("settings:run-task", (_e, id: string) => controller.runTask(id));
+  handle("settings:run-task", (_e, id: string) => controller.runTaskFromSettings(id));
   handle("settings:check-agents", () => controller.checkAgents());
   handle("settings:check-agent", (_e, name: string) => controller.checkAgent(name));
   handle("settings:request-permission", (_e, kind: "microphone" | "screen") => controller.requestPermission(kind));

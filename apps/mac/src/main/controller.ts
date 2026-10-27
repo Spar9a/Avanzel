@@ -408,6 +408,8 @@ export class Controller {
    */
   private lastFiled: { commit: string; library: string; pages: FiledPage[]; job?: FilingJob } | null = null;
   private running = new Set<string>();
+  /** How far each running review is ("2 of 5", by task id) once it has begun a capture (`countReview`): the menu shows it in place of "Running…". */
+  private reviewing = new Map<string, string>();
   private lastEveningCommits: string[] = [];
   private audioTimeout: NodeJS.Timeout | null = null;
   /** Whether the capsule page listens yet; commands for its recorder wait until it does. */
@@ -713,7 +715,11 @@ export class Controller {
     if (action === "undo-review") return void this.undoEveningReview();
     if (action === "quit") return app.quit();
     if (action.startsWith("open:")) return this.openPage(action.slice(5));
-    if (action.startsWith("task:")) return void this.runTask(action.slice(5));
+    if (action.startsWith("task:")) {
+      // A person's press asks first, as Settings' Run now does (`confirmRun`): the run uses their plan. One that comes due (`tick`) doesn't.
+      const id = action.slice(5);
+      if (await this.confirmRun(id)) void this.runTask(id);
+    }
   }
 
   private menuInput(): MenuInput {
@@ -735,6 +741,7 @@ export class Controller {
         at: t.enabled ? nextRun(t.schedule, now) : null,
         enabled: t.enabled,
         running: this.running.has(t.id),
+        progress: this.reviewing.get(t.id),
       })),
       speechProblem: speech?.title ?? null,
       ...(speech ? { speechRetry: speech.retry } : {}),
@@ -3525,7 +3532,40 @@ export class Controller {
     return this.snapshot();
   }
 
-  /** Run a shadow task now: by hand (the menu, Run now), or because it is due (`tick`). */
+  /**
+   * Asks whether to run the review `taskId` now, before a person's press runs it (the menu's item, Settings' Run now): it is an agent
+   * run, which uses their plan's quota. `parent`, Settings' window, makes the question a sheet on it. True only for Run Now. False, with
+   * nothing asked, where `runTask` would do nothing: there is no library, no such review, or it runs already (its item stays in the
+   * menu while it does). `runTask` itself never asks: a review that comes due (`tick`) is on the schedule the person set.
+   */
+  async confirmRun(taskId: string, parent?: BrowserWindow): Promise<boolean> {
+    const vault = this.vault;
+    const task = vault && !this.running.has(taskId) ? this.safeTasks(vault).find((t) => t.id === taskId) : undefined;
+    if (!task) return false;
+    // The agent is named when one can be (as the notification that ends the run names it); where none can, the question says no more.
+    const named = this.selectedHarness(task.agent);
+    const options = {
+      type: "question" as const,
+      buttons: ["Run Now", "Cancel"], // title case, as a native alert's buttons are (like "Use This Folder")
+      defaultId: 0,
+      cancelId: 1,
+      message: `Run “${task.name}” now?`,
+      detail: `It's an agent run${named ? ` with ${harnessName(named)}` : ""}, so it uses your plan's quota.`,
+    };
+    // A menu bar app isn't the frontmost app when its menu is used: without this the question would come up behind the others.
+    app.focus({ steal: true });
+    const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+    return response === 0;
+  }
+
+  /** Settings' Run now: the question comes up as a sheet on Settings (`confirmRun`), and the review runs on Run Now. Cancel changes nothing. */
+  async runTaskFromSettings(id: string): Promise<SettingsSnapshot> {
+    const win = this.settingsWindow;
+    const asked = await this.confirmRun(id, win && !win.isDestroyed() ? win : undefined);
+    return asked ? this.runTask(id) : this.snapshot();
+  }
+
+  /** Run a shadow task now: by hand (the menu, Run now, once `confirmRun` has been answered), or because it is due (`tick`). */
   async runTask(id: string): Promise<SettingsSnapshot> {
     const vault = this.vault;
     if (!vault || this.running.has(id)) return this.snapshot();
@@ -3536,6 +3576,7 @@ export class Controller {
     this.broadcast();
     void this.enqueue(() => this.executeTask(task)).finally(() => {
       this.running.delete(id);
+      this.reviewing.delete(id);
       this.readLog();
       this.broadcast();
     });
@@ -3555,6 +3596,40 @@ export class Controller {
     };
   }
 
+  /**
+   * The `leave` and `progress` an evening review runs with (`eveningReview`), which count its captures for the menu: "2 of 5" beside the
+   * review, in place of "Running…" (`reviewing`).
+   * - The total is what waits in the inbox as the review begins, less what it leaves alone (`leftAlone`, which notes in `left` what it
+   *   did). The engine reads the inbox again after each capture and files what arrived meanwhile, so the total rises to meet the count:
+   *   the menu never reads "3 of 2".
+   * - A capture counts once, at the first thing the engine says of it: that it transcribes a recording, or files a note. The engine asks
+   *   `leave` as it takes each capture up, so the report that follows is that capture's first. The reports can't tell by themselves: a
+   *   recording is reported twice (transcribed, then filed under its transcript's name), and one with no words is reported once and
+   *   followed by the next note's report.
+   * - The menu is built once for each capture, never for each report or step.
+   */
+  private countReview(id: string, left: Set<string>): { leave: (capturePath: string) => boolean; progress: (message: string) => void } {
+    const wouldLeave = this.leftAlone(new Set()); // only asked: the review's own `left` is for what the review did leave
+    const total = this.requireVault().pending().filter((capturePath) => !wouldLeave(capturePath)).length;
+    const leave = this.leftAlone(left);
+    let done = 0;
+    let unreported = false; // the engine took a capture up, and has said nothing of it yet
+    return {
+      leave: (capturePath) => {
+        const theirs = leave(capturePath);
+        if (!theirs) unreported = true;
+        return theirs;
+      },
+      progress: (message) => {
+        if (message === WAITING || !unreported) return; // waiting for the library isn't a capture; nor is the rest of one already counted
+        unreported = false;
+        done += 1;
+        this.reviewing.set(id, `${done} of ${Math.max(total, done)}`);
+        this.refreshMenu();
+      },
+    };
+  }
+
   private async executeTask(task: ShadowTask): Promise<void> {
     const agent = this.agentName(task.agent);
     try {
@@ -3564,8 +3639,11 @@ export class Controller {
       if (task.kind === "evening-review" || task.kind === "review") this.clearLastFiled();
       if (task.kind === "evening-review") {
         const left = new Set<string>();
-        const result = await this.withRun(async (signal) =>
-          (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions, signal, leave: this.leftAlone(left) }));
+        const result = await this.withRun(async (signal) => {
+          const librarian = await this.librarian(task.agent);
+          // The count's total is read here, as the review begins.
+          return librarian.eveningReview({ instructions: task.instructions, signal, ...this.countReview(task.id, left) });
+        });
         this.fallAsleep(); // it ran to its end, whatever it found to file
         if (!result.outcomes.length) {
           this.notify(task.name, nothingFiled(left.size));

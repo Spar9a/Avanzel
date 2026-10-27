@@ -12,6 +12,11 @@ export interface MenuTask {
   at: Date | null;
   enabled: boolean;
   running: boolean;
+  /**
+   * How far the review is while it runs, "2 of 5": the menu shows it beside the review in place of "Running…". The evening review counts
+   * its captures (`Controller.countReview`); a review that has begun none, or doesn't count, has none, and says "Running…".
+   */
+  progress?: string;
 }
 
 export interface MenuInput {
@@ -166,7 +171,7 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
   if (input.tasks.length || input.undoableReview) {
     items.push({ type: "header", label: "Scheduled reviews" });
     for (const task of input.tasks) {
-      const detail = task.running ? "Running…" : task.enabled && task.at ? formatWhen(task.at, now) : "Off";
+      const detail = task.running ? (task.progress ?? "Running…") : task.enabled && task.at ? formatWhen(task.at, now) : "Off";
       items.push({ type: "item", label: task.name, action: `task:${task.id}`, detail });
     }
     if (input.undoableReview) items.push({ type: "item", label: "Undo last evening review", action: "undo-review" });

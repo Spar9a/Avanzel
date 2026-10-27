@@ -184,6 +184,43 @@ describe("tray menu", () => {
     expect(weekly).toMatchObject({ action: "task:weekly-review", detail: "Sun 18:00" });
   });
 
+  describe("a review's detail", () => {
+    const review = (task: Partial<MenuTask>) => {
+      const tasks: MenuTask[] = [
+        { id: "evening-review", name: "Evening review", kind: "evening-review", at: new Date(2026, 9, 20, 21, 0), enabled: true, running: false, ...task },
+      ];
+      return buildMenuModel(input({ tasks }), now).find((item) => item.type === "item" && item.action === "task:evening-review");
+    };
+
+    it("is the time it runs next while it isn't running", () => {
+      expect(review({})).toMatchObject({ label: "Evening review", detail: "21:00" });
+      expect(review({ at: new Date(2026, 9, 21, 21, 0) })).toMatchObject({ detail: "Tomorrow 21:00" });
+    });
+
+    it("says Off for a review that is off", () => {
+      expect(review({ enabled: false, at: null })).toMatchObject({ label: "Evening review", detail: "Off" });
+    });
+
+    it("says Running… while it runs and has begun no capture", () => {
+      expect(review({ running: true })).toMatchObject({ label: "Evening review", detail: "Running…" });
+    });
+
+    it("says how far a running review is, in place of Running…", () => {
+      expect(review({ running: true, progress: "1 of 2" })).toMatchObject({ label: "Evening review", detail: "1 of 2" });
+      expect(review({ running: true, progress: "5 of 5" })).toMatchObject({ detail: "5 of 5" });
+    });
+
+    it("is its time again once it has stopped, whatever count it was left with", () => {
+      expect(review({ running: false, progress: "2 of 2" })).toMatchObject({ detail: "21:00" });
+    });
+
+    it("keeps the label plain and puts the count in parentheses where the tray draws it", () => {
+      const item = review({ running: true, progress: "2 of 5" });
+      expect(item).toMatchObject({ type: "item", label: "Evening review", action: "task:evening-review", detail: "2 of 5" });
+      expect(menuLabel(item as { label: string; detail?: string })).toBe("Evening review (2 of 5)");
+    });
+  });
+
   describe("Recently filed shows each page's shelf", () => {
     const recent = (overrides: Partial<MenuInput> = {}) => {
       const items = buildMenuModel(input(overrides), now);

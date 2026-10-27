@@ -8,9 +8,11 @@ import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import {
   agentPath,
+  answerDialogs,
   answerMenus,
   call,
   capsuleKind,
+  dialogsAsked,
   exists,
   filesUnder,
   firstRun,
@@ -233,6 +235,7 @@ test("Run now runs a review at once, and the review says when it last ran", asyn
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Reviews");
   const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
+  await answerDialogs(app, 0); // Run Now: Settings asks before it runs a review
   await weekly.getByRole("button", { name: "Run now" }).click();
   // The run has started once main notes when it ran; then it runs to its end.
   await expect
@@ -249,6 +252,7 @@ test("a review's save waits behind a run, and nothing else saves that review ove
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_DELAY_MS: "4000", FAKE_AGENT_DELAY_TASK: "review" });
   const settings = await openSettings(app, "Reviews");
+  await answerDialogs(app, 0); // Run Now, each time hold() presses Run now
   const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
   const evening = settings.getByRole("group", { name: "Evening review", exact: true });
   const on = evening.getByRole("switch", { name: "Run on schedule", exact: true });
@@ -581,14 +585,7 @@ test("a system folder is refused as a library before any question is asked, and 
   await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.exists).toBe(true); // it is open
   // A folder that holds files is asked about first (Turn it into your library?): this box is never answered yes, so nothing is
   // made, whatever the app does, and its calls are kept.
-  await app.evaluate(({ dialog }) => {
-    const asked: unknown[] = [];
-    Object.assign(globalThis, { confirmsAsked: asked });
-    dialog.showMessageBox = (async (...args: unknown[]) => {
-      asked.push(args);
-      return { response: 1, checkboxChecked: false };
-    }) as typeof dialog.showMessageBox;
-  });
+  await answerDialogs(app, 1);
   // macOS's own folders, where nothing can be made or nothing is kept, send the person to their home folder.
   for (const place of ["/Applications", "/usr", "/tmp"]) {
     await stubPicker(app, place);
@@ -598,7 +595,7 @@ test("a system folder is refused as a library before any question is asked, and 
   const home = path.join("/System/Volumes/Data", homedir());
   await stubPicker(app, home);
   await expect(call(app, "chooseLibrary")).rejects.toThrow(`${home} is too broad for a library. Choose or make a folder inside it.`);
-  expect(await app.evaluate(() => (globalThis as { confirmsAsked?: unknown[] }).confirmsAsked)).toEqual([]);
+  expect(await dialogsAsked(app)).toEqual([]);
   expect(((await call(app, "snapshot")) as SettingsSnapshot).library).toMatchObject({ path: library, exists: true });
   expect(exists("/Applications", ".avanzel")).toBe(false);
   expect(exists("/usr", ".avanzel")).toBe(false);
@@ -611,14 +608,7 @@ test("Change… on a folder that is too broad says so in Settings, asks nothing,
   const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
   const settings = await openSettings(app);
   // A folder that holds files is asked about first (Turn it into your library?): this box is never answered yes, and its calls are kept.
-  await app.evaluate(({ dialog }) => {
-    const asked: unknown[] = [];
-    Object.assign(globalThis, { confirmsAsked: asked });
-    dialog.showMessageBox = (async (...args: unknown[]) => {
-      asked.push(args);
-      return { response: 1, checkboxChecked: false };
-    }) as typeof dialog.showMessageBox;
-  });
+  await answerDialogs(app, 1);
   await stubPicker(app, "/Applications");
   await settings.getByRole("button", { name: "Change…" }).click();
   const problem = settings.getByRole("alert");
@@ -630,7 +620,7 @@ test("Change… on a folder that is too broad says so in Settings, asks nothing,
   await expect(problem).not.toContainText("Error invoking remote method");
   await snap(settings, "settings-library-too-broad");
   // No box asked anything, and the library is the one it was.
-  expect(await app.evaluate(() => (globalThis as { confirmsAsked?: unknown[] }).confirmsAsked)).toEqual([]);
+  expect(await dialogsAsked(app)).toEqual([]);
   expect(((await call(app, "snapshot")) as SettingsSnapshot).library).toMatchObject({ path: library, exists: true });
   await expect(settings.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
   // A folder that works is the next change, and the Notice goes with it.
@@ -691,20 +681,13 @@ test("Change… on a folder with files asks first, and promises git history only
       ...(git ? {} : { AVANZEL_GIT_USABLE: "0" }),
     });
     // The question is a native box: this one keeps what it is asked, and answers Cancel.
-    await app.evaluate(({ dialog }) => {
-      const asked: { message?: string; detail?: string }[] = [];
-      Object.assign(globalThis, { confirmsAsked: asked });
-      dialog.showMessageBox = (async (options: { message?: string; detail?: string }) => {
-        asked.push(options);
-        return { response: 1, checkboxChecked: false };
-      }) as unknown as typeof dialog.showMessageBox;
-    });
+    await answerDialogs(app, 1);
     await stubPicker(app, folder);
     await call(app, "chooseLibrary");
-    const [asked, ...more] = await app.evaluate(() => (globalThis as { confirmsAsked?: { message?: string; detail?: string }[] }).confirmsAsked ?? []);
+    const [asked, ...more] = await dialogsAsked(app);
     expect(more).toEqual([]);
-    expect(asked?.message).toBe(`Turn “${path.basename(folder)}” into your Avanzel library?`);
-    expect(asked?.detail).toBe(
+    expect(asked?.options.message).toBe(`Turn “${path.basename(folder)}” into your Avanzel library?`);
+    expect(asked?.options.detail).toBe(
       git
         ? "It already has files. Avanzel will add its shelves, an AGENTS.md for your agent, and git history that includes the existing files."
         : "It already has files. Avanzel will add its shelves and an AGENTS.md for your agent. This Mac has no git yet, so changes can't be undone.",
