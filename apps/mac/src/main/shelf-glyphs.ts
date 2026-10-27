@@ -49,10 +49,15 @@ export const SHELF_GLYPH_SVG: Record<Shelf, string> = {
   ),
 };
 
-const isShelf = (folder: string): folder is Shelf => (SHELVES as readonly string[]).includes(folder);
+/** Whether a library folder is one of the six shelves, by its exact name. A folder the person made is none, whatever it is called. */
+export const isShelf = (folder: string): folder is Shelf => (SHELVES as readonly string[]).includes(folder);
 
-/** A shelf's glyph in the shelf's colour, 12 points square, for a menu item; null for a folder that isn't a shelf. */
-export function shelfGlyphIcon(shelf: string, dark: boolean, scale: 1 | 2): Bitmap | null {
-  if (!isShelf(shelf)) return null;
+/** A shelf's glyph in the shelf's colour for the light or the dark menu, 12 points square. */
+export function shelfGlyph(shelf: Shelf, dark: boolean, scale: 1 | 2): Bitmap {
   return tinted(rasterizeSvg(SHELF_GLYPH_SVG[shelf], scale), SHELF_COLORS[dark ? "dark" : "light"][shelf]);
+}
+
+/** `shelfGlyph` for a library folder: null for one that isn't a shelf. */
+export function shelfGlyphIcon(shelf: string, dark: boolean, scale: 1 | 2): Bitmap | null {
+  return isShelf(shelf) ? shelfGlyph(shelf, dark, scale) : null;
 }

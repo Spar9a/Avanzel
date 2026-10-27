@@ -6,6 +6,7 @@ import {
   dialog,
   globalShortcut,
   nativeImage,
+  nativeTheme,
   Notification,
   powerMonitor,
   shell,
@@ -39,6 +40,7 @@ import {
   lastDue,
   loadSettings,
   loadTasksReport,
+  localDate,
   locateModel,
   makeTranscriber,
   missingModels,
@@ -113,8 +115,8 @@ import type {
 import { frontContext } from "./front-app.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
-import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "./library-info.ts";
-import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
+import { answeredFrom, captureMeta, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "./library-info.ts";
+import { buildMenuModel, speechProblemOf, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
 import { pickRequest, popupChoice } from "./popup.ts";
@@ -391,6 +393,11 @@ export class Controller {
   /** Where agent checks run while there is no library (`checkDir`): made at the first such check, kept for the app run. */
   private checkScratch: string | null = null;
   private recent: FiledPage[] = [];
+  /**
+   * How many thoughts today's lines of the log say were filed (`filedToday`), and the day they are for. The menu is built often and
+   * the log grows, so it is read where `recent` is (`readLog`, a filing's end), and again when the day turns (`tick`).
+   */
+  private filed = { day: "", count: 0 };
   private running = new Set<string>();
   private lastEveningCommits: string[] = [];
   private audioTimeout: NodeJS.Timeout | null = null;
@@ -433,6 +440,8 @@ export class Controller {
     });
     this.capsule.on("closed", () => app.quit());
     this.menuBar = new MenuBar((action) => void this.menuAction(action));
+    // The shelf glyphs in the menu are drawn for the light or the dark appearance: built again when it turns.
+    nativeTheme.on("updated", () => this.refreshMenu());
     const envLibrary = process.env.AVANZEL_LIBRARY;
     if (envLibrary) this.store.update({ libraryPath: envLibrary });
     this.openLibrary(this.store.get().libraryPath);
@@ -484,6 +493,7 @@ export class Controller {
     this.dropLibraryTimers(); // a wait or a watch is for the library that closes; the next one's waits are armed again by whoever opens it
     this.vault = null;
     this.recent = [];
+    this.filed = { day: "", count: 0 };
     this.dropTranscriber();
     this.libraryProblem = null;
     this.libraryMissing = null;
@@ -498,8 +508,10 @@ export class Controller {
     try {
       ensureDefaultTasks(vault);
       this.recent = recentFromLog(vault.root);
+      this.countFiled(vault.root);
     } catch (error) {
       this.recent = [];
+      this.filed = { day: "", count: 0 };
       this.libraryProblem = `Avanzel couldn't open the library at ${vault.root}: ${errorMessage(error)}`;
       return;
     }
@@ -680,6 +692,12 @@ export class Controller {
     if (action === "setup") return this.setup.show();
     if (action === "open-library") return this.openLibraryFolder();
     if (action === "open-inbox" && this.vault) return void shell.openPath(this.vault.inbox);
+    // The capsule card's own path to a pane of Settings (`openSettingsFor`): the speech model's problem names Voice. The person comes
+    // to see what is wrong, so the voice settings are read again first: they show what is, not what was a minute ago.
+    if (action.startsWith("open-settings:")) {
+      this.rereadVoiceSettings();
+      return this.openSettingsFor(action);
+    }
     if (action === "undo-review") return void this.undoEveningReview();
     if (action === "quit") return app.quit();
     if (action.startsWith("open:")) return this.openPage(action.slice(5));
@@ -690,24 +708,42 @@ export class Controller {
     const vault = this.vault;
     const now = new Date();
     const tasks = vault ? this.safeTasks(vault) : [];
+    const speech = speechProblemOf(this.model);
     return {
       libraryReady: !!vault,
       problem: this.libraryProblem,
       missingLibrary: this.libraryMissing === null ? null : tildePath(this.libraryMissing, homedir()),
       inbox: vault ? vault.pending().length : 0,
       recent: this.recent,
+      filedToday: this.filed.count,
       tasks: tasks.map((t) => ({
         id: t.id,
         name: t.name,
+        kind: t.kind,
         at: t.enabled ? nextRun(t.schedule, now) : null,
         enabled: t.enabled,
         running: this.running.has(t.id),
       })),
+      speechProblem: speech?.title ?? null,
+      ...(speech ? { speechRetry: speech.retry } : {}),
       recording: !!this.recording,
       shortcuts: this.store.get().shortcuts,
       unregisteredShortcuts: Object.keys(this.shortcutProblems) as (keyof Shortcuts)[],
       undoableReview: this.lastEveningCommits.length > 0,
     };
+  }
+
+  /** Counts today's filings in the log of the library at `root` for the menu's head (`filedToday`), and notes the day they are for. */
+  private countFiled(root: string, now = new Date()): void {
+    this.filed = { day: localDate(now), count: filedToday(root, now) };
+  }
+
+  /** The menu's view of the log, read again: the pages filed most recently, and how many thoughts were filed today. */
+  private readLog(): void {
+    const root = this.vault?.root;
+    if (root) this.countFiled(root);
+    else this.filed = { day: "", count: 0 };
+    this.recent = root ? recentFromLog(root) : [];
   }
 
   refreshMenu(): void {
@@ -1616,7 +1652,10 @@ export class Controller {
     // takes them only while that library is the open one: not once it has closed, or another has opened.
     const pages = filedPages(library.root, outcome.changes);
     job.pages = pages;
-    if (this.vault?.root === library.root) this.recent = [...pages, ...this.recent.filter((p) => !pages.some((q) => q.path === p.path))].slice(0, 3);
+    if (this.vault?.root === library.root) {
+      this.recent = [...pages, ...this.recent.filter((p) => !pages.some((q) => q.path === p.path))].slice(0, 3);
+      this.countFiled(library.root); // the run wrote its line in the log; the menu is built once below, as before
+    }
     this.keepDuration(job, library, seconds);
     this.noteFiled((capture) => capture === job.capturePath);
     // Setup's thought is filed, which counts whether its window is still there to show it or has closed (§5.4).
@@ -2360,7 +2399,7 @@ export class Controller {
     try {
       return (await this.enqueue(async () => (await this.librarian()).undo([commit]))) === 1;
     } finally {
-      this.recent = this.vault ? recentFromLog(this.vault.root) : [];
+      this.readLog();
     }
   }
 
@@ -3354,7 +3393,24 @@ export class Controller {
     );
     if (baseline.length) this.writeRunState(vault, markChecked(state, baseline, now));
     for (const id of due) void this.runTask(id);
+    if (this.filed.day !== localDate(now)) this.countFiled(vault.root, now); // a new day: the head counts it from the log
+    this.rereadVoiceSettings();
     this.refreshMenu();
+  }
+
+  /**
+   * Voice settings Avanzel can't use are mended by hand in the config file, and nothing watches it. They are read again every minute
+   * (`tick`) and when the person chooses the menu's item about them, as the dictation shortcut reads them at each press
+   * (`readyToListen`): one read of one small file, and only while they are in error. The face and the menu follow what is found, so
+   * a mended file takes the problem out of both.
+   */
+  private rereadVoiceSettings(): void {
+    const model = this.model;
+    if (model.kind !== "error" || model.cause !== "settings") return;
+    const fresh = this.modelStatus();
+    if (fresh.kind === "error" && fresh.message === model.message) return; // the same trouble: nothing to tell anyone
+    this.model = fresh;
+    this.broadcast();
   }
 
   /** Task and settings files are protected during agent runs, so writes wait for the filing queue. */
@@ -3381,7 +3437,7 @@ export class Controller {
     this.broadcast();
     void this.enqueue(() => this.executeTask(task)).finally(() => {
       this.running.delete(id);
-      this.recent = this.vault ? recentFromLog(this.vault.root) : [];
+      this.readLog();
       this.broadcast();
     });
     return this.snapshot();
@@ -3444,7 +3500,7 @@ export class Controller {
     if (!commits.length) return;
     this.lastEveningCommits = [];
     const undone = await this.enqueue(async () => (await this.librarian()).undo(commits));
-    this.recent = this.vault ? recentFromLog(this.vault.root) : [];
+    this.readLog();
     this.notify("Evening review undone", undone === commits.length ? "Everything it filed is back in the inbox." : `${undone} of ${commits.length} changes were undone; see the library's history.`);
     this.refreshMenu();
   }

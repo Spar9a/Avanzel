@@ -2,10 +2,12 @@
 // controller last gave the menu bar (`trayForTests`) and what macOS was given (`nativeTitle`), and the tests of a count read the
 // times of the changes too (`watchTray`), so no poll has to catch a face in the moment it shows.
 import { expect, test, type ElectronApplication } from "@playwright/test";
-import { mkdtempSync, renameSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Vault } from "../../../packages/engine/src/index.ts";
+import { loadSettings, localDate, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
+import type { MenuItemModel } from "../src/main/menu-model.ts";
+import { SHELF_COLORS } from "../src/main/shelf-glyphs.ts";
 import { dictate, launchOn, notified, reachedUndo, sleep, watchUndos, type Left } from "./capsule-helpers.ts";
 import {
   call,
@@ -731,4 +733,276 @@ test("quitting on either path stops the count where it was", async () => {
     expect(await barOf(app), quit).toEqual({ face: "idle", title: "", nativeTitle: "" });
     await app.close();
   }
+});
+
+// ---------------------------------------------------------------- the menu says how today went
+
+/** The default evening review's next run as the status line says it: tomorrow once 21:00 has passed today. */
+const eveningWhen = () => (new Date().getHours() >= 21 ? "tomorrow at 21:00" : "at 21:00");
+
+/** The menu's model now. */
+const menuOf = async (app: ElectronApplication) => (await call(app, "menuForTests")) as MenuItemModel[];
+
+/** The words of the menu's head now. */
+const headOf = async (app: ElectronApplication) => {
+  const [head] = await menuOf(app);
+  return head?.type === "item" ? head.label : "";
+};
+
+/** The items right under the Recently filed header, up to the next separator. */
+const recentOf = async (app: ElectronApplication) => {
+  const items = await menuOf(app);
+  const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
+  return items.slice(at + 1, items.findIndex((item, i) => i > at && item.type === "separator"));
+};
+
+/** What the tray holds for one menu item: its words, and the colour its icon is drawn in (the most opaque pixel, "#rrggbb"), or null without one. */
+type Held = { label: string; sublabel: string; icon: string | null };
+
+/** The menu the tray holds now, as macOS was given it. */
+const heldMenu = (app: ElectronApplication): Promise<Held[]> =>
+  app.evaluate(() => {
+    type Item = { label: string; sublabel?: string; icon?: { toBitmap(options: { scaleFactor: number }): Buffer } | string };
+    const bar = (globalThis as unknown as { __avanzel: { menuBar: { menu: { items: Item[] } | null } } }).__avanzel.menuBar;
+    return (bar.menu?.items ?? []).map((item) => {
+      let icon: string | null = null;
+      if (item.icon && typeof item.icon !== "string") {
+        const pixels = item.icon.toBitmap({ scaleFactor: 2 }); // BGRA
+        let best = 0;
+        for (let at = 0; at < pixels.length; at += 4) if ((pixels[at + 3] ?? 0) > (pixels[best + 3] ?? 0)) best = at;
+        icon = `#${[pixels[best + 2], pixels[best + 1], pixels[best]].map((channel) => (channel ?? 0).toString(16).padStart(2, "0")).join("")}`;
+      }
+      return { label: item.label, sublabel: item.sublabel ?? "", icon };
+    });
+  });
+
+/** A date `days` from now, at noon: a day other than today, whatever the hour is. */
+const onDay = (days: number) => {
+  const at = new Date();
+  at.setDate(at.getDate() + days);
+  at.setHours(12, 0, 0, 0);
+  return at;
+};
+
+/** A page `title` in the folder `folder` of `library`, and a line in its log that says a thought was filed into it at `when`. */
+function filedInto(library: string, folder: string, name: string, title: string, when: Date): void {
+  mkdirSync(path.join(library, folder), { recursive: true });
+  writeFileSync(path.join(library, folder, `${name}.md`), `# ${title}\n`);
+  new Vault(library).appendLog("file", `[[capture-${name}]] → [[${name}]]`, when);
+}
+
+/** A library whose log says three thoughts were filed today, each into a page on its own shelf, the last off the shelves, and one yesterday. */
+async function shelved(): Promise<string> {
+  const library = await makeLibrary();
+  const today = new Date();
+  filedInto(library, "topics", "old-news", "Old news", onDay(-1));
+  filedInto(library, "goals", "finish-the-prototype", "Finish the prototype", today);
+  filedInto(library, "people", "maya", "Maya", today);
+  filedInto(library, "projects", "trip", "Trip to Lisbon", today);
+  return library;
+}
+
+test("the status line counts today's filings", async () => {
+  const library = await makeLibrary();
+  // What isn't a filing today isn't counted: yesterday's, a review and an Ask.
+  const vault = new Vault(library);
+  vault.appendLog("file", "[[2026-01-01-000000]] → [[old-page]]", onDay(-1));
+  vault.appendLog("review", "[[2026-01-01]]");
+  vault.appendLog("ask", "what did I file → [[old-page]]");
+  const { app } = await hearing({}, library);
+  expect(await menuOf(app)).toContainEqual({ type: "item", label: `Nothing filed today. Evening review ${eveningWhen()}.`, action: "open-inbox" });
+  // A fake filing: the count goes up, and the evening review's time is said as the clock says it.
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  expect(await headOf(app)).toBe(`1 thought filed today. Evening review ${eveningWhen()}.`);
+  await dictate(app);
+  await expect.poll(() => headOf(app), { timeout: 30_000 }).toBe(`2 thoughts filed today. Evening review ${eveningWhen()}.`);
+  // The menu the tray holds says the same, with the notes in the inbox under it (none: both are filed).
+  const [held] = await heldMenu(app);
+  expect(held).toEqual({ label: `2 thoughts filed today. Evening review ${eveningWhen()}.`, sublabel: "", icon: null });
+  await app.close();
+});
+
+test("Undo takes a filing off the count", async () => {
+  const { app } = await hearing({}, await makeLibrary({ git: true })); // a library with git, for Undo to take a commit back
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  await dictate(app);
+  await expect.poll(() => headOf(app), { timeout: 30_000 }).toBe(`2 thoughts filed today. Evening review ${eveningWhen()}.`);
+  await call(app, "undo");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
+  await expect.poll(() => headOf(app), { timeout: 30_000 }).toBe(`1 thought filed today. Evening review ${eveningWhen()}.`);
+  await app.close();
+});
+
+test("the status line names the evening review by its own name, and leaves it out when it is off", async () => {
+  const { app } = await hearing();
+  const saved = (name: string, enabled: boolean) =>
+    call(app, "saveTaskFromSettings", { id: "evening-review", name, schedule: "daily 21:00", agent: "auto", enabled, instructions: "Sort the inbox." });
+  expect(await headOf(app)).toBe(`Nothing filed today. Evening review ${eveningWhen()}.`);
+  await saved("Nightly sweep", true);
+  await expect.poll(() => headOf(app)).toBe(`Nothing filed today. Nightly sweep ${eveningWhen()}.`);
+  await saved("Nightly sweep", false);
+  await expect.poll(() => headOf(app)).toBe("Nothing filed today.");
+  expect(JSON.stringify(await menuOf(app))).not.toMatch(/letter/i); // there is no letter yet
+  await app.close();
+});
+
+test("Recently filed shows each page's shelf", async () => {
+  const { app } = await hearing({}, await shelved());
+  // Read from the log as the library opened: three thoughts today (yesterday's is not counted).
+  expect(await headOf(app)).toBe(`3 thoughts filed today. Evening review ${eveningWhen()}.`);
+  // The shelf's name as the design system names it, or the folder's name for a page the person put elsewhere.
+  expect(await recentOf(app)).toEqual([
+    { type: "item", label: "Trip to Lisbon", action: "open:projects/trip.md", shelf: "projects", sublabel: "projects" },
+    { type: "item", label: "Maya", action: "open:people/maya.md", shelf: "people", sublabel: "People" },
+    { type: "item", label: "Finish the prototype", action: "open:goals/finish-the-prototype.md", shelf: "goals", sublabel: "Goals" },
+  ]);
+  // A fake filing: its page comes first, on the ideas shelf, and the count goes on from the log.
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+  expect(await recentOf(app)).toMatchObject([
+    { label: "Plant tulips in October", shelf: "ideas", sublabel: "Ideas" },
+    { label: "Trip to Lisbon", sublabel: "projects" },
+    { label: "Maya", sublabel: "People" },
+  ]);
+  expect(await headOf(app)).toBe(`4 thoughts filed today. Evening review ${eveningWhen()}.`);
+  await app.close();
+});
+
+test("a library that opens brings the count of its own log, and its own pages", async () => {
+  const { app } = await hearing(); // an empty library to begin with
+  expect(await headOf(app)).toBe(`Nothing filed today. Evening review ${eveningWhen()}.`);
+  await call(app, "createLibrary", await shelved()); // opens at once: no minute has come round to count it
+  expect(await headOf(app)).toBe(`3 thoughts filed today. Evening review ${eveningWhen()}.`);
+  expect((await recentOf(app)).map((item) => item.type === "item" && [item.label, item.sublabel])).toEqual([
+    ["Trip to Lisbon", "projects"],
+    ["Maya", "People"],
+    ["Finish the prototype", "Goals"],
+  ]);
+  expect((await heldMenu(app))[0]).toMatchObject({ label: `3 thoughts filed today. Evening review ${eveningWhen()}.` });
+  await app.close();
+});
+
+/** Makes the app's appearance `to`, as the Mac's setting does, and waits until the menu the tray holds is drawn for it (Maya's page is on the people shelf). */
+async function inAppearance(app: ElectronApplication, to: "light" | "dark"): Promise<void> {
+  await app.evaluate(({ nativeTheme }, source) => void (nativeTheme.themeSource = source), to);
+  const maya = async () => (await heldMenu(app)).find((item) => item.label === "Maya")?.icon ?? null;
+  await expect.poll(maya, { timeout: 10_000, intervals: [50] }).toBe(SHELF_COLORS[to].people);
+}
+
+test("the shelf glyphs in the menu are drawn in the shelf's colour, and follow the appearance", async () => {
+  const { app } = await hearing({}, await shelved());
+  await inAppearance(app, "light");
+  let held = await heldMenu(app);
+  const glyph = (label: string) => held.find((item) => item.label === label);
+  expect(glyph("Maya")).toMatchObject({ sublabel: "People", icon: SHELF_COLORS.light.people });
+  expect(glyph("Finish the prototype")).toMatchObject({ sublabel: "Goals", icon: SHELF_COLORS.light.goals });
+  // A page off the shelves shows its folder's name and no glyph.
+  expect(glyph("Trip to Lisbon")).toMatchObject({ sublabel: "projects", icon: null });
+  // Nothing else in the menu has an icon.
+  expect(held.filter((item) => item.icon).map((item) => item.label).sort()).toEqual(["Finish the prototype", "Maya"]);
+  // The appearance turns dark: the menu is built again, with the shelves' colours for dark.
+  await countCalls(app, "refreshMenu");
+  await inAppearance(app, "dark");
+  held = await heldMenu(app);
+  expect(glyph("Maya")).toMatchObject({ icon: SHELF_COLORS.dark.people });
+  expect(glyph("Finish the prototype")).toMatchObject({ icon: SHELF_COLORS.dark.goals });
+  expect(await calls(app, "refreshMenu")).toBeGreaterThanOrEqual(1);
+  await inAppearance(app, "light");
+  held = await heldMenu(app);
+  expect(glyph("Finish the prototype")).toMatchObject({ icon: SHELF_COLORS.light.goals });
+  await app.close();
+});
+
+test("a failed speech-model download is named in the menu", async () => {
+  const hub = await fakeModelHub("missing");
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
+  await expect.poll(() => barOf(app), { timeout: 20_000 }).toMatchObject({ face: "needs-you", title: "" });
+  const model = (await settingsSnap(app)).model;
+  expect(model).toMatchObject({ kind: "error", cause: "download" });
+  const [head, problem, after] = await menuOf(app);
+  expect(head).toMatchObject({ action: "open-inbox" });
+  // The capsule's own title, and the fix: Settings → Voice, where Try again is. It says what trying again does.
+  const resumable = "resumable" in model && model.resumable;
+  expect(problem).toEqual({
+    type: "item",
+    label: "The speech model didn't finish downloading.",
+    action: "open-settings:voice",
+    sublabel: `Try again in Settings → Voice. It ${resumable ? "continues where it stopped" : "starts the download over"}.`,
+  });
+  expect(after).toEqual({ type: "separator" });
+  // The menu the tray holds has it right after the head.
+  expect((await heldMenu(app)).slice(0, 2).map((item) => item.label)).toEqual([await headOf(app), "The speech model didn't finish downloading."]);
+  // Its action is the capsule card's own path: Settings opens on Voice, which tells it in the same words.
+  await call(app, "menuAction", "open-settings:voice");
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("radio", { name: "Voice", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(settings.getByRole("alert").getByText("The speech model didn't finish downloading.")).toBeVisible();
+  await app.close();
+});
+
+test("voice settings Avanzel can't use are named in the menu until a fix is read again", async () => {
+  const library = await makeLibrary();
+  const config = loadSettings(library);
+  saveSettings(library, { ...config, voice: { ...config.voice, model: "parakeet-v9" } });
+  const hub = await fakeModelHub("stall");
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
+  const title = "Avanzel can't use the voice settings in this library's config file.";
+  await expect.poll(() => barOf(app), { timeout: 20_000 }).toMatchObject({ face: "needs-you" });
+  expect((await menuOf(app))[1]).toEqual({
+    type: "item",
+    label: title,
+    action: "open-settings:voice",
+    sublabel: "Fix the config file. Avanzel reads it again within a minute.",
+  });
+  // Fixed by hand, with Avanzel running. Nothing watches the file, so it is not found at once; the minute that comes round reads it.
+  saveSettings(library, config);
+  expect((await menuOf(app))[1]).toMatchObject({ label: title });
+  await call(app, "tick");
+  await expect.poll(async () => (await menuOf(app))[1], { timeout: 10_000 }).toEqual({ type: "separator" });
+  await expect.poll(() => faceOf(app), { timeout: 10_000, intervals: [50] }).toBe("idle");
+  expect((await heldMenu(app)).map((item) => item.label)).not.toContain(title);
+  expect(hub.requests).toEqual([]); // finding the fix downloads nothing: the shortcut does that
+  await app.close();
+});
+
+test("choosing the voice settings problem in the menu reads them again, so Settings shows what is wrong now", async () => {
+  const library = await makeLibrary();
+  const config = loadSettings(library);
+  saveSettings(library, { ...config, voice: { ...config.voice, model: "parakeet-v9" } });
+  const hub = await fakeModelHub("stall");
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
+  const title = "Avanzel can't use the voice settings in this library's config file.";
+  await expect.poll(() => barOf(app), { timeout: 20_000 }).toMatchObject({ face: "needs-you" });
+  expect((await menuOf(app))[1]).toMatchObject({ label: title });
+  // Mended by hand a moment ago, before the minute came round: the person chooses the item to see what is wrong.
+  saveSettings(library, config);
+  await call(app, "menuAction", "open-settings:voice");
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("radio", { name: "Voice", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(settings.getByText("Speech model", { exact: true })).toBeVisible(); // the pane has read what is now
+  await expect(settings.getByText(title)).toHaveCount(0);
+  expect((await menuOf(app))[1]).toEqual({ type: "separator" });
+  await expect.poll(() => faceOf(app), { timeout: 10_000, intervals: [50] }).toBe("idle");
+  await app.close();
+});
+
+test("the count is read from the log once, and again when the day turns", async () => {
+  const { app } = await hearing();
+  const kept = (day: string, count: number) =>
+    app.evaluate((_electron, cache) => void ((globalThis as unknown as { __avanzel: { filed: unknown } }).__avanzel.filed = cache), { day, count });
+  const when = eveningWhen();
+  expect(await headOf(app)).toBe(`Nothing filed today. Evening review ${when}.`);
+  // The menu is built from what was counted, not from the log, at every rebuild and every tick: a count planted for today stands.
+  await kept(localDate(new Date()), 7);
+  await call(app, "refreshMenu");
+  await call(app, "tick");
+  expect(await headOf(app)).toBe(`7 thoughts filed today. Evening review ${when}.`);
+  expect((await heldMenu(app))[0]).toMatchObject({ label: `7 thoughts filed today. Evening review ${when}.` });
+  // A count for a day that has passed is read again, from the log, by the next tick: nothing was filed today.
+  await kept("2000-01-01", 7);
+  await call(app, "tick");
+  expect(await headOf(app)).toBe(`Nothing filed today. Evening review ${when}.`);
+  await app.close();
 });

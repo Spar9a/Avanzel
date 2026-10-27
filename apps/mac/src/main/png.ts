@@ -1,5 +1,5 @@
-// A tiny PNG encoder plus Zel's menu bar faces and shelf-colour dots, so the app needs no image files or image libraries. Plain
-// TypeScript, so that Node's type stripping can run it (scripts/make-icon.mjs does): no enums, no parameter properties.
+// A tiny PNG encoder plus Zel's menu bar faces, so the app needs no image files or image libraries. Plain TypeScript, so that Node's
+// type stripping can run it (scripts/make-icon.mjs does): no enums, no parameter properties.
 import { deflateSync } from "node:zlib";
 import { menuBarFaceSvg, type MenuBarState } from "@avanzel/ui/menu-bar";
 import { rasterizeSvg } from "./raster.ts";
@@ -62,22 +62,4 @@ export function tinted(bitmap: Bitmap, hex: string): Bitmap {
   const rgba = new Uint8Array(bitmap.rgba.length);
   for (let i = 0; i < rgba.length; i += 4) rgba.set([r, g, b, bitmap.rgba[i + 3] ?? 0], i);
   return { width: bitmap.width, height: bitmap.height, rgba };
-}
-
-/** A filled, anti-aliased circle in `hex` colour, for menu items that show a shelf. */
-export function dotIcon(hex: string, scale: 1 | 2): Bitmap {
-  const size = 12 * scale;
-  const rgba = new Uint8Array(size * size * 4);
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
-  const centre = size / 2;
-  const radius = 4 * scale;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const distance = Math.hypot(x + 0.5 - centre, y + 0.5 - centre);
-      const coverage = Math.max(0, Math.min(1, radius + 0.5 - distance));
-      const i = (y * size + x) * 4;
-      rgba.set([r, g, b, Math.round(coverage * 255)], i);
-    }
-  }
-  return { width: size, height: size, rgba };
 }

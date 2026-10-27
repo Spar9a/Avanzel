@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "../src/main/library-info.ts";
+import { answeredFrom, captureMeta, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "../src/main/library-info.ts";
 
 function library() {
   const root = mkdtempSync(path.join(tmpdir(), "avz-lib-"));
@@ -34,6 +34,69 @@ describe("library info", () => {
 
   it("lists recently filed pages, newest first, from the log", () => {
     expect(recentFromLog(library()).map((p) => p.path)).toEqual(["ideas/balcony-garden.md", "goals/launch-podcast.md", "people/mark.md"]);
+  });
+
+  describe("how many thoughts were filed today", () => {
+    /** A library whose log.md holds `lines` under its heading, and nothing else: no page the lines name is there. */
+    function logged(...lines: string[]): string {
+      const root = mkdtempSync(path.join(tmpdir(), "avz-log-"));
+      writeFileSync(path.join(root, "log.md"), ["# Log", ...lines, ""].join("\n"));
+      return root;
+    }
+    const noon = new Date(2026, 9, 20, 12, 0); // Tue 20 Oct 2026, local
+
+    it("counts the file lines of the library's log that are dated today, and no page is looked up for them", () => {
+      expect(filedToday(library(), noon)).toBe(2);
+      // The pages these lines name aren't in the library, and the count doesn't ask.
+      expect(filedToday(logged("- 2026-10-20 09:00 | file | [[a]] → [[nowhere]]", "- 2026-10-20 09:05 | file | [[b]] → [[nowhere-either]], [[nor-this]]"), noon)).toBe(2);
+    });
+
+    it("ignores the review and ask lines, and a line that is not a log line", () => {
+      const root = logged(
+        "- 2026-10-20 09:00 | file | [[a]] → [[x]]",
+        "- 2026-10-20 18:00 | review | [[2026-10-20]]",
+        "- 2026-10-20 18:05 | ask | what did I file today → [[x]]",
+        "- 2026-10-20 18:06 | ask | does the log say | file | in a question → [[x]]", // the words of an Ask, not a filing
+        "2026-10-20 19:00 | file | [[b]] → [[x]]", // no dash: not a line the log wrote
+        "A note about 2026-10-20 | file | [[c]]",
+      );
+      expect(filedToday(root, noon)).toBe(1);
+    });
+
+    it("counts by the library's own local days: yesterday's and tomorrow's lines are not today's", () => {
+      const root = logged(
+        "- 2026-10-19 23:59 | file | [[a]] → [[x]]",
+        "- 2026-10-20 00:00 | file | [[b]] → [[x]]",
+        "- 2026-10-20 23:59 | file | [[c]] → [[x]]",
+        "- 2026-10-21 00:00 | file | [[d]] → [[x]]",
+      );
+      expect(filedToday(root, noon)).toBe(2);
+      expect(filedToday(root, new Date(2026, 9, 20, 0, 0))).toBe(2); // the first minute of the day
+      expect(filedToday(root, new Date(2026, 9, 20, 23, 59))).toBe(2); // the last
+      expect(filedToday(root, new Date(2026, 9, 19, 23, 59))).toBe(1);
+      expect(filedToday(root, new Date(2026, 9, 21, 0, 0))).toBe(1);
+      expect(filedToday(root, new Date(2026, 9, 22, 12, 0))).toBe(0);
+    });
+
+    it("reads the month and day as the log writes them, with a leading zero", () => {
+      const root = logged("- 2026-01-05 08:00 | file | [[a]] → [[x]]", "- 2026-10-05 08:00 | file | [[b]] → [[x]]");
+      expect(filedToday(root, new Date(2026, 0, 5, 12, 0))).toBe(1);
+      expect(filedToday(root, new Date(2026, 9, 5, 12, 0))).toBe(1);
+    });
+
+    it("is 0 for a log with no lines, and for a library without a log, a folder where the log should be, or no library", () => {
+      expect(filedToday(logged(), noon)).toBe(0);
+      const without = mkdtempSync(path.join(tmpdir(), "avz-nolog-"));
+      expect(filedToday(without, noon)).toBe(0);
+      mkdirSync(path.join(without, "log.md"));
+      expect(filedToday(without, noon)).toBe(0);
+      expect(filedToday(path.join(without, "no-such-library"), noon)).toBe(0);
+    });
+
+    it("counts through a long log", () => {
+      const many = Array.from({ length: 5_000 }, (_, i) => `- 2026-10-${i < 4_990 ? "19" : "20"} 10:${String(i % 60).padStart(2, "0")} | file | [[c${i}]] → [[x]]`);
+      expect(filedToday(logged(...many), noon)).toBe(10);
+    });
   });
 
   it("finds a page by its wikilink name, shelves before sources", () => {

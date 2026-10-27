@@ -1,10 +1,14 @@
 // What the menu bar menu shows, as plain data; tray.ts turns it into an Electron menu.
-import type { FiledPage, Shortcuts } from "../shared/ipc.ts";
+import type { FiledPage, ModelStatus, Shortcuts } from "../shared/ipc.ts";
+import { downloadFailedProblem, voiceSettingsProblem } from "../shared/problems.ts";
+import { SHELF_NAMES, isShelf } from "./shelf-glyphs.ts";
 import { prettyAccelerator } from "./shortcuts.ts";
 
 export interface MenuTask {
   id: string;
   name: string;
+  /** The kind of review the task file says it is: "evening-review", "review" or "custom". The status line names the evening review. */
+  kind: string;
   at: Date | null;
   enabled: boolean;
   running: boolean;
@@ -18,7 +22,16 @@ export interface MenuInput {
   missingLibrary?: string | null;
   inbox: number;
   recent: FiledPage[];
+  /** How many thoughts the library's log says were filed today (`filedToday`): the head counts them. */
+  filedToday: number;
   tasks: MenuTask[];
+  /**
+   * The capsule's own title for why the speech model can't be used (`speechProblemOf`), or null when nothing is wrong with it. The menu
+   * names it right under the head, and its action opens Settings on Voice, where the fix is.
+   */
+  speechProblem: string | null;
+  /** What trying again does about `speechProblem`, said under it. Nothing without a problem. */
+  speechRetry?: string;
   recording: boolean;
   shortcuts: Shortcuts;
   /**
@@ -64,6 +77,38 @@ export function menuLabel(item: { label: string; detail?: string }): string {
   return item.detail ? `${item.label} (${item.detail})` : item.label;
 }
 
+/**
+ * How today went, for the head of the menu: "Nothing filed today.", "1 thought filed today." or "3 thoughts filed today.", and when an
+ * evening review is on, its own name and its next time after that ("Evening review at 21:00.", "Evening review tomorrow at 21:00.").
+ * `evening` is the soonest evening review that is on and has a time to say. It is a review, not a letter: no letter is built yet.
+ */
+export function statusLine(filedToday: number, evening: MenuTask | undefined, now: Date): string {
+  const filed = filedToday <= 0 ? "Nothing filed today." : filedToday === 1 ? "1 thought filed today." : `${filedToday} thoughts filed today.`;
+  return evening?.at ? `${filed} ${evening.name} ${nextPhrase(evening.at, now)}.` : filed;
+}
+
+/**
+ * What is wrong with the speech model, for the menu to name: the capsule's own title for it (the builders the capsule's card and
+ * Settings → Voice use too), and what trying again does. A download that failed is tried again in Settings → Voice, from the part it
+ * kept if it kept one. Voice settings Avanzel can't use have no Try again: they are fixed in the config file, which Avanzel reads
+ * again every minute and at each press of the dictation shortcut. Null while the model is ready, on its way or still to be fetched:
+ * none of those is a problem.
+ */
+export function speechProblemOf(model: ModelStatus): { title: string; retry: string } | null {
+  if (model.kind !== "error") return null;
+  if (model.cause === "settings") {
+    return { title: voiceSettingsProblem(model.message).title, retry: "Fix the config file. Avanzel reads it again within a minute." };
+  }
+  const again = model.resumable ? "continues where it stopped" : "starts the download over";
+  return { title: downloadFailedProblem(model.message, model.resumable).title, retry: `Try again in Settings → Voice. It ${again}.` };
+}
+
+/** A recently filed page's second line: its shelf's name, or the folder it is in when the person made that folder; none without one. */
+function shelfLine(folder: string): string | undefined {
+  if (!folder) return undefined;
+  return isShelf(folder) ? SHELF_NAMES[folder] : folder;
+}
+
 export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
   if (!input.libraryReady) {
     // A library that couldn't be opened, or isn't there any more, is explained, and fixed, in Settings; otherwise setup makes one.
@@ -75,14 +120,18 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     ];
   }
 
-  const inbox = input.inbox === 0 ? "Inbox is empty" : input.inbox === 1 ? "1 note in the inbox" : `${input.inbox} notes in the inbox`;
-  const upcoming = input.tasks
-    .filter((t): t is MenuTask & { at: Date } => t.enabled && t.at !== null)
+  const inbox = input.inbox === 1 ? "1 note in the inbox" : `${input.inbox} notes in the inbox`;
+  // The soonest evening review that is on and has a time: the head names it. The other reviews are listed further down.
+  const evening = input.tasks
+    .filter((t): t is MenuTask & { at: Date } => t.kind === "evening-review" && t.enabled && t.at !== null)
     .sort((a, b) => a.at.getTime() - b.at.getTime())[0];
 
   const shortcut = (key: keyof Shortcuts) => (input.unregisteredShortcuts.includes(key) ? {} : { accelerator: input.shortcuts[key] });
   const items: MenuItemModel[] = [
-    { type: "item", label: inbox, action: "open-inbox", sublabel: upcoming && `Next: ${upcoming.name} ${nextPhrase(upcoming.at, now)}` },
+    { type: "item", label: statusLine(input.filedToday, evening, now), action: "open-inbox", ...(input.inbox > 0 ? { sublabel: inbox } : {}) },
+    ...(input.speechProblem
+      ? [{ type: "item" as const, label: input.speechProblem, action: "open-settings:voice", ...(input.speechRetry ? { sublabel: input.speechRetry } : {}) }]
+      : []),
     SEP,
     { type: "item", label: input.recording ? "Stop recording" : "Record a thought", action: "dictate", ...shortcut("dictate") },
     { type: "item", label: "Capture screen with a comment", action: "capture", ...shortcut("capture") },
@@ -94,7 +143,8 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
   items.push({ type: "header", label: "Recently filed" });
   if (input.recent.length) {
     for (const page of input.recent.slice(0, 3)) {
-      items.push({ type: "item", label: page.title, action: `open:${page.path}`, shelf: page.shelf });
+      const shelf = shelfLine(page.shelf);
+      items.push({ type: "item", label: page.title, action: `open:${page.path}`, shelf: page.shelf, ...(shelf ? { sublabel: shelf } : {}) });
     }
   } else {
     // Nothing filed yet invites a first thought. What the owner has to read is an enabled item (see MenuItemModel), so this is

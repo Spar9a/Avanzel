@@ -1,6 +1,7 @@
 // Read-only views of the library for the UI: page titles, recent filings, wikilink lookup.
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, type Stats } from "node:fs";
 import path from "node:path";
+import { localDate } from "@avanzel/engine";
 import type { FiledPage } from "../shared/ipc.ts";
 import { answerSources } from "./setup-model.ts";
 
@@ -135,6 +136,30 @@ export function recentFromLog(root: string, limit = 3): FiledPage[] {
     }
   }
   return recent;
+}
+
+// A log line as Vault.logLine writes it, `- 2026-10-20 14:03 | file | [[capture]] → [[page]]`, and only a filing's: the operation is
+// "file", so the words of an Ask that mention " | file | " are not one. Group 1 is the day, in the library's local time.
+const FILE_LINE = /^- (\d{4}-\d{2}-\d{2})[^|]*\| file \| /;
+
+/**
+ * How many thoughts the library's log says were filed on the local day of `now`: its "file" lines dated that day. A review's lines
+ * and an Ask's are no filings. It looks up no page (`recentFromLog` does, for the lines it shows), so it is cheap to ask at each
+ * filing; a library with no log, or one that can't be read, has filed nothing.
+ */
+export function filedToday(root: string, now: Date): number {
+  let text: string;
+  try {
+    text = readFileSync(path.join(root, "log.md"), "utf8");
+  } catch {
+    return 0;
+  }
+  const today = localDate(now);
+  let count = 0;
+  for (const line of text.split("\n")) {
+    if (FILE_LINE.exec(line)?.[1] === today) count += 1;
+  }
+  return count;
 }
 
 export interface CaptureMeta {
