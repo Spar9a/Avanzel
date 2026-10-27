@@ -400,10 +400,11 @@ export class Controller {
   private filed = { day: "", count: 0 };
   /**
    * The filing the menu's Undo takes back (`undoLastFiling`): the last capsule or background filing that ended well with a commit, and
-   * the root of the library it filed in. Each filing's run clears it as it starts (`runFiling`) and so does the evening review's
-   * (`executeTask`); so does the take-back of its commit (`takeBack`, `revertFiling`) and a library that opens (`openLibrary`). A Stop on a
-   * filing that still waits in the queue clears nothing: no run has begun. Setup's first thought never sets it, and nor does the evening
-   * review: each has its own Undo.
+   * the root of the library it filed in. Each filing's run clears it as it starts (`runFiling`) and so does each review's, the evening
+   * review's and the weekly one's (`executeTask`): they write to the library, and a revert of the filing would meet their later commits;
+   * so does the take-back of its commit (`takeBack`, `revertFiling`) and a library that opens (`openLibrary`). A Stop on a filing that
+   * still waits in the queue clears nothing: no run has begun. Setup's first thought never sets it, and nor does the evening review: each
+   * has its own Undo.
    */
   private lastFiled: { commit: string; library: string; pages: FiledPage[]; job?: FilingJob } | null = null;
   private running = new Set<string>();
@@ -756,9 +757,9 @@ export class Controller {
   }
 
   /**
-   * The menu's Undo has nothing to take back: a filing's run begins (`runFiling`), the evening review's does (`executeTask`), or the
-   * commit of the filing it would take back is being taken back already (`takeBack`, `revertFiling`: `commit` is that commit, and any
-   * other filing's take-back leaves it be). The menu is built again, but only if it was holding a filing.
+   * The menu's Undo has nothing to take back: a filing's run begins (`runFiling`), a review's does (`executeTask`), or the commit of
+   * the filing it would take back is being taken back already (`takeBack`, `revertFiling`: `commit` is that commit, and any other
+   * filing's take-back leaves it be). The menu is built again, but only if it was holding a filing.
    */
   private clearLastFiled(commit?: string): void {
     if (this.lastFiled === null || (commit !== undefined && this.lastFiled.commit !== commit)) return;
@@ -1493,9 +1494,11 @@ export class Controller {
    */
   private beginFiling(job: FilingJob): void {
     if (this.queued > 0) job.waiting = true;
-    this.showFiling(job);
+    // In the queue before the card shows: the menu is built as the card is set (`setCapsule`), and holds Undo back while a filing waits
+    // (`undoableFiling`). The record itself is cleared by the run, when its turn comes (`runFiling`).
     this.queuedToFile.add(job.capturePath);
     job.queuedAlone = true;
+    this.showFiling(job);
     void this.enqueue(() => this.runFiling(job));
   }
 
@@ -3555,8 +3558,11 @@ export class Controller {
   private async executeTask(task: ShadowTask): Promise<void> {
     const agent = this.agentName(task.agent);
     try {
+      // A review that runs writes to the library: the evening review files, and the weekly one appends to the log and commits. The filing
+      // before it is not the last any more, and a revert of it would meet the review's later commit and be refused. A custom review is
+      // skipped below and changes nothing, so the last filing stands.
+      if (task.kind === "evening-review" || task.kind === "review") this.clearLastFiled();
       if (task.kind === "evening-review") {
-        this.clearLastFiled(); // the review files too: the filing before it is not the last any more, and the review has its own Undo
         const left = new Set<string>();
         const result = await this.withRun(async (signal) =>
           (await this.librarian(task.agent)).eveningReview({ instructions: task.instructions, signal, leave: this.leftAlone(left) }));

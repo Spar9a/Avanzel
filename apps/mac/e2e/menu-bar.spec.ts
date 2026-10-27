@@ -1017,7 +1017,7 @@ test("the count is read from the log once, and again when the day turns", async 
 // ---------------------------------------------------------------- Undo the last filing, from the menu
 //
 // "Undo the last filing" takes back the filing the controller keeps as `lastFiled`: the last capsule or background filing that ended
-// well with a commit, while nothing has run since. Every filing's run clears it as it starts, and so does the evening review's; so does a
+// well with a commit, while nothing has run since. Every filing's run clears it as it starts, and so does each review's; so does a
 // take-back of its commit and a library that opens. Setup's first thought and the evening review never set it: each has its own Undo.
 // A filing has a commit to take back only in a library with git, so these tests make one (`makeLibrary({ git: true })`).
 
@@ -1310,12 +1310,17 @@ test("Undo from the menu is not offered after an evening review that filed", asy
   await app.close();
 });
 
-for (const { review, name, comesBack } of [
-  { review: "weekly-review", name: "Weekly review", comesBack: true },
-  { review: "evening-review", name: "Evening review", comesBack: false },
+// A review that runs writes to the library: the evening review files, and the weekly one commits the owner's changes and appends its own
+// line to the log. A revert of the filing before it would meet that later commit, so the review's start ends the offer, whichever review
+// it is. A custom review is skipped and changes nothing: the last filing stands.
+for (const { review, name, ends } of [
+  { review: "weekly-review", name: "Weekly review", ends: true },
+  { review: "evening-review", name: "Evening review", ends: true },
+  { review: "standup", name: "Standup", ends: false },
 ]) {
-  test(`Undo from the menu hides while the ${name.toLowerCase()} waits and runs, and ${comesBack ? "is back after it" : "is gone after it"}`, async () => {
+  test(`Undo from the menu hides while the ${name.toLowerCase()} waits and runs, and is ${ends ? "gone" : "back"} after it`, async () => {
     const library = await makeLibrary({ git: true });
+    writeFileSync(path.join(library, "tasks", "standup.md"), "---\nname: Standup\nschedule: daily 09:00\nkind: custom\n---\nAsk about the day.\n");
     const { app } = await hearing({}, library);
     await watchUndos(app);
     await filedFromTheCapsule(app);
@@ -1327,15 +1332,14 @@ for (const { review, name, comesBack } of [
     await letTheQueueGo(app);
     await expect.poll(async () => (await said(app)).some((note) => note.title.startsWith(name)), { timeout: 60_000 }).toBe(true);
     await call(app, "idleForTests");
-    // The evening review's start ended the last filing's Undo. The weekly review files nothing, so the last filing stands.
-    if (comesBack) {
-      await expect.poll(() => trayOffersUndo(app), { timeout: 10_000 }).toBe(true);
-      expect(await undoItem(app)).toBeDefined();
-    } else {
+    if (ends) {
       expect(await undoItem(app)).toBeUndefined();
       expect(await trayOffersUndo(app)).toBe(false);
       await pressUndo(app);
       expect(await undoCalls(app)).toBe(0);
+    } else {
+      await expect.poll(() => trayOffersUndo(app), { timeout: 10_000 }).toBe(true);
+      expect(await undoItem(app)).toBeDefined();
     }
     await app.close();
   });
@@ -1387,8 +1391,10 @@ test("a Stop on a filing that still waits in the queue leaves the last filing to
   await holdTheQueue(app); // something else has the queue, so the next filing waits for its turn
   await dictate(app);
   await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
-  // A filing waits: the menu doesn't offer Undo for the one before it meanwhile.
+  // A filing waits: the menu doesn't offer Undo for the one before it meanwhile, in the model and in the menu the tray holds (which
+  // the card's own rebuild made, as the filing joined the queue).
   expect(await undoItem(app)).toBeUndefined();
+  expect(await trayOffersUndo(app)).toBe(false);
   await capsule.evaluate(() => window.avanzel.capsule.cancelFiling()); // Stop: nothing has touched the note, so the card says Stopped at once
   await expect.poll(() => capsuleKind(app)).toBe("cancelled");
   await call(app, "dismiss");
