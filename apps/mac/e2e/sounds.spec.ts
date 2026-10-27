@@ -285,7 +285,7 @@ test("a review's Letter comes with a silent notification", async () => {
   // Sounds on, and a note to file: the Letter is sent, and the notification makes no sound of its own, since the Letter is its sound.
   await call(app, "runTask", "evening-review");
   await expect.poll(async () => (await reviewNotes(app)).length, { timeout: 60_000 }).toBe(1);
-  expect((await reviewNotes(app))[0]).toMatchObject({ title: "Evening review: 1 thing filed", silent: true });
+  expect((await reviewNotes(app))[0]).toMatchObject({ title: "Evening review: 1 thought filed", silent: true });
   await call(app, "idleForTests");
   expect(await soundsSent(app)).toEqual(["letter"]);
   await expect.poll(() => played(capsule)).toEqual(["letter"]);
@@ -319,7 +319,7 @@ test("no app sound plays over a recording: a review that ends while a thought is
   await expect.poll(async () => (await reviewNotes(app)).length, { timeout: 60_000 }).toBe(1);
   expect(await capsuleKind(app)).toBe("listening");
   const review = (await reviewNotes(app))[0]!;
-  expect(review.title).toBe("Evening review: 1 thing filed");
+  expect(review.title).toBe("Evening review: 1 thought filed");
   expect(review).not.toHaveProperty("silent"); // nothing played in its place
   expect(await soundsSent(app)).toEqual(["tick"]); // the recording's own Tick, and no Letter
   // Once the recording is over the sounds are back: its Tock, and the Stamp of its filing.
@@ -684,24 +684,24 @@ test("setup offers sounds, off, with Preview sounds", async () => {
   const setup = await toDone(app);
   await muteWindows(app);
   await setup.evaluate(watchAudioContexts);
-  // The three switches are rows of one Group, in this order: opening at login (the first, which the step has turned on), Play sounds, off,
-  // and the library's evening review.
+  // The three switches are rows of one Group, in this order: opening at login (the first, which the step has turned on), the library's
+  // evening review, and Play sounds, off, last: Preview sounds sits below the Group, so the switch it belongs to has to be the one above it.
   const switches = setup.getByRole("switch");
   await expect(switches).toHaveCount(3);
-  const [login, sounds, review] = [switches.nth(0), switches.nth(1), switches.nth(2)];
+  const [login, review, sounds] = [switches.nth(0), switches.nth(1), switches.nth(2)];
   await expect(login).toHaveAccessibleName("Open Avanzel when I log in");
   await expect(login).toHaveAttribute("aria-checked", "true");
+  await expect(review).toHaveAccessibleName("Review my inbox every day at 21:00");
   await expect(sounds).toHaveAccessibleName("Play sounds");
   await expect(sounds).toHaveAttribute("aria-checked", "false");
-  await expect(review).toHaveAccessibleName("Review my inbox every day at 21:00");
   expect((await setupSnap(app)).sounds).toBe(false);
   expect((await settingsSnap(app)).app.sounds).toBe(false);
   // They stand one above the other with their switches in a column: a row that held Preview sounds would push its switch aside.
-  const boxes = await Promise.all([login, sounds, review].map(async (control) => (await control.boundingBox())!));
+  const boxes = await Promise.all([login, review, sounds].map(async (control) => (await control.boundingBox())!));
   expect(boxes[1]!.y).toBeGreaterThan(boxes[0]!.y);
   expect(boxes[2]!.y).toBeGreaterThan(boxes[1]!.y);
   for (const box of boxes) expect(Math.abs(box.x - boxes[0]!.x), "the switches are in one column").toBeLessThan(0.5);
-  // Preview sounds is a small secondary button below the Group, and Start using Avanzel is still the one primary.
+  // Preview sounds is a small secondary button below the Group, under Play sounds, its last row, and Start using Avanzel is still the one primary.
   const preview = setup.getByRole("button", { name: "Preview sounds" });
   await expect(preview).toHaveAttribute("data-variant", "secondary");
   await expect(preview).toHaveAttribute("data-size", "small");

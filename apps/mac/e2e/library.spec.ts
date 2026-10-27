@@ -574,7 +574,7 @@ test("a remembered library that is missing at launch can be chosen again where i
   await expect(settings.getByRole("alert")).toHaveCount(0);
   // Back in use, the menu is the library's own.
   const [top] = (await call(app, "menuForTests")) as MenuItemModel[];
-  expect(top).toMatchObject({ action: "open-inbox" });
+  expect(top).toMatchObject({ action: "open-library" }); // the new library's inbox is empty, so the head's words don't name it
   expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
   await app.close();
 });

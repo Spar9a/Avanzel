@@ -6,6 +6,7 @@ import { encodePng, faceIcon } from "../src/main/png.ts";
 import { SHELVES, shelfGlyphIcon } from "../src/main/shelf-glyphs.ts";
 import { DEFAULT_SETTINGS } from "../src/main/store.ts";
 import { MenuBar } from "../src/main/tray.ts";
+import { trayTooltip } from "../src/main/tray-state.ts";
 
 // Electron isn't there to run: a stand-in Tray and nativeImage note what the menu bar is told, and nothing else.
 const electron = vi.hoisted(() => {
@@ -21,13 +22,17 @@ const electron = vi.hoisted(() => {
   }
   class FakeTray {
     readonly told: string[] = [];
+    /** Every tooltip the icon was given, oldest first: a tooltip has no getter to read it back from. */
+    readonly tips: string[] = [];
     title = "";
     menu: unknown = null;
     destroyed = false;
     constructor(public image: Image) {
       electron.trays.push(this);
     }
-    setToolTip(): void {}
+    setToolTip(tip: string): void {
+      this.tips.push(tip);
+    }
     setImage(image: Image): void {
       this.told.push("setImage");
       this.image = image;
@@ -106,6 +111,43 @@ describe("MenuBar", () => {
     expect(tray?.image.representations.map((one) => one.scaleFactor)).toEqual([1, 2]);
     expect(tray?.image.representations.map((one) => sizeOf(one.buffer))).toEqual([[18, 18], [36, 36]]);
     expect(tray?.told).toEqual([]);
+    expect(tray?.tips).toEqual(["Avanzel"]);
+    expect(bar.tooltip).toBe("Avanzel");
+  });
+
+  it("gives the icon the words of each face when the face changes, and at no other time", () => {
+    const bar = new MenuBar(() => {});
+    const [tray] = electron.trays;
+    bar.show({ face: "idle", title: "" }); // nothing new
+    bar.show({ face: "listening", title: "0:00" });
+    expect(bar.tooltip).toBe("Avanzel is recording");
+    bar.show({ face: "listening", title: "0:01" }); // a tick of the count: the same state, the same words
+    bar.show({ face: "filing", title: "" });
+    bar.show({ face: "filed", title: "" });
+    bar.show({ face: "needs-you", title: "37%" });
+    bar.show({ face: "needs-you", title: "38%" });
+    bar.show({ face: "asleep", title: "" });
+    bar.show({ face: "idle", title: "" });
+    expect(tray?.tips).toEqual([
+      "Avanzel",
+      "Avanzel is recording",
+      "Avanzel is filing",
+      "Avanzel filed it",
+      "Avanzel needs you",
+      "The evening review is done",
+      "Avanzel",
+    ]);
+    expect(bar.tooltip).toBe("Avanzel");
+  });
+
+  it("holds the words of the face it shows, for every face", () => {
+    const bar = new MenuBar(() => {});
+    const [tray] = electron.trays;
+    for (const face of FACES) {
+      bar.show({ face, title: "" });
+      expect(bar.tooltip, face).toBe(trayTooltip(face));
+      expect(tray?.tips.at(-1), face).toBe(trayTooltip(face));
+    }
   });
 
   it("sets the image only when the face changes, and the title only when the title does", () => {
@@ -164,10 +206,13 @@ describe("MenuBar", () => {
     bar.show({ face: "listening", title: "0:03" });
     tray!.destroyed = true;
     const told = [...tray!.told];
+    const tips = [...tray!.tips];
     bar.show({ face: "filing", title: "" });
     bar.show({ face: "needs-you", title: "37%" });
     expect(tray?.told).toEqual(told);
+    expect(tray?.tips).toEqual(tips);
     expect(bar.shown).toEqual({ face: "listening", title: "0:03" });
+    expect(bar.tooltip).toBe("Avanzel is recording");
   });
 
   it("never rebuilds the menu", () => {
@@ -198,10 +243,8 @@ describe("MenuBar's menu", () => {
   const itemsOf = (): Item[] => (electron.menus.at(-1)?.template ?? []) as Item[];
   /** The item whose label is the page's title. */
   const itemFor = (shelf: string) => itemsOf().find((item) => item.label === page(shelf).title);
-  /** The image the menu was given for the page on `shelf`, as the 1x and 2x PNGs the glyph is, or null. */
-  const pngsOf = (shelf: string) => itemFor(shelf)?.icon?.representations.map((one) => [one.scaleFactor, one.buffer] as const) ?? null;
-  const glyphPng = (shelf: string, dark: boolean, scale: 1 | 2) => {
-    const art = shelfGlyphIcon(shelf, dark, scale)!;
+  const glyphPng = (shelf: string, scale: 1 | 2) => {
+    const art = shelfGlyphIcon(shelf, scale)!;
     return encodePng(art.width, art.height, art.rgba);
   };
 
@@ -214,37 +257,26 @@ describe("MenuBar's menu", () => {
     }
   }
 
-  it("gives each page the glyph of its shelf, in the shelf's colour, as an image that keeps its colours", () => {
+  it("gives each page the glyph of its shelf, black, as a template image that macOS tints for the menu and its highlight", () => {
     const bar = new MenuBar(() => {});
     const seen: string[] = [];
     eachShelf(bar, (shelf) => {
       const icon = itemFor(shelf)?.icon;
       expect(icon, shelf).toBeDefined();
-      expect(icon?.template, `${shelf} is no template image: macOS would take its colour away`).toBe(false);
+      expect(icon?.template, `${shelf} is a template image: macOS draws it in the menu's ink, and white on the highlight`).toBe(true);
       expect(icon?.representations.map((one) => one.scaleFactor), shelf).toEqual([1, 2]);
       for (const { scaleFactor, buffer } of icon?.representations ?? []) {
-        expect(buffer.equals(glyphPng(shelf, false, scaleFactor as 1 | 2)), `${shelf} at ${scaleFactor}x`).toBe(true);
+        expect(buffer.equals(glyphPng(shelf, scaleFactor as 1 | 2)), `${shelf} at ${scaleFactor}x`).toBe(true);
       }
       expect(icon?.representations.map((one) => sizeOf(one.buffer)), shelf).toEqual([[12, 12], [24, 24]]);
       seen.push(icon?.representations[1]?.buffer.toString("base64") ?? "");
     });
-    // Six glyphs in six colours: no two alike.
+    // Six shelves, six drawings: no two alike.
     expect(seen).toHaveLength(6);
     expect(new Set(seen).size).toBe(6);
   });
 
-  it("draws the glyphs for a dark menu while the appearance is dark, and for a light one when it is light again", () => {
-    const bar = new MenuBar(() => {});
-    electron.theme.shouldUseDarkColors = true;
-    eachShelf(bar, (shelf) => {
-      for (const [scale, buffer] of pngsOf(shelf) ?? []) expect(buffer.equals(glyphPng(shelf, true, scale as 1 | 2)), `${shelf} dark at ${scale}x`).toBe(true);
-      expect(pngsOf(shelf)?.[1]?.[1]?.equals(glyphPng(shelf, false, 2)), `${shelf} isn't the light glyph`).toBe(false);
-    });
-    electron.theme.shouldUseDarkColors = false;
-    eachShelf(bar, (shelf) => expect(pngsOf(shelf)?.[1]?.[1]?.equals(glyphPng(shelf, false, 2)), `${shelf} light again`).toBe(true));
-  });
-
-  it("makes each glyph once for its shelf and appearance, and gives the same image to every menu after", () => {
+  it("makes each glyph once for its shelf, and gives the same image to every menu after, whatever the appearance", () => {
     const bar = new MenuBar(() => {});
     const faces = electron.images.length; // the idle face the icon starts on
     bar.update(menuInput([page("goals"), page("ideas")]));
@@ -254,16 +286,15 @@ describe("MenuBar's menu", () => {
     bar.update(menuInput([page("goals"), page("ideas"), page("people")]));
     expect(itemFor("goals")?.icon).toBe(goals); // not a new image
     expect(electron.images.length - faces).toBe(3); // only people's is new
-    // The other appearance has its own images, and the first are kept for when it comes back.
+    // The appearance turning changes nothing: a template image is tinted by macOS, so the same images serve the dark menu and the light.
     electron.theme.shouldUseDarkColors = true;
-    bar.update(menuInput([page("goals")]));
-    const dark = itemFor("goals")?.icon;
-    expect(dark).not.toBe(goals);
-    expect(electron.images.length - faces).toBe(4);
+    bar.update(menuInput([page("goals"), page("ideas"), page("people")]));
+    expect(itemFor("goals")?.icon).toBe(goals);
+    expect(electron.images.length - faces).toBe(3);
     electron.theme.shouldUseDarkColors = false;
     bar.update(menuInput([page("goals")]));
     expect(itemFor("goals")?.icon).toBe(goals);
-    expect(electron.images.length - faces).toBe(4);
+    expect(electron.images.length - faces).toBe(3);
   });
 
   it("gives a page off the shelves no icon, and makes none for it", () => {

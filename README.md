@@ -45,7 +45,7 @@ and wakes up on a shortcut.
 | ⌥⇧A | Ask your library; the answer links to the pages it used. |
 
 The **evening review** (a scheduled review, 21:00 by default) files the day's inbox, writes a
-summary to `reviews/`, and can be taken back with **Undo last evening review** in the menu bar
+summary to `reviews/`, and can be taken back with **Undo the last evening review** in the menu bar
 menu. A **weekly review** looks over the whole library. Scheduled reviews are Markdown files in
 `tasks/`; edit their times, agents and instructions in Settings → Reviews (a file Avanzel can't
 read is listed there with what is wrong with it).

@@ -1,7 +1,7 @@
 import { inflateSync } from "node:zlib";
 import type { MenuBarState } from "@avanzel/ui/menu-bar";
 import { describe, expect, it } from "vitest";
-import { encodePng, faceIcon, tinted, type Bitmap } from "../src/main/png.ts";
+import { encodePng, faceIcon, type Bitmap } from "../src/main/png.ts";
 
 // Keyed by every MenuBarState, so a state the design system adds fails the typecheck here until its face is tested too.
 const FACE_STATES: Record<MenuBarState, true> = { idle: true, listening: true, filing: true, filed: true, "needs-you": true, asleep: true };
@@ -70,24 +70,5 @@ describe("faceIcon", () => {
     // the same art, drawn finer: both scales cover about the same share of the face
     const share = (face: Bitmap) => alphas(face).reduce((sum, a) => sum + a, 0) / 255 / (face.width * face.height);
     expect(Math.abs(share(faceIcon("idle", 2)) - share(faceIcon("idle", 1)))).toBeLessThan(0.01);
-  });
-});
-
-describe("tinted", () => {
-  it("keeps the alpha and sets every pixel's colour, leaving the bitmap it was given alone", () => {
-    const face = faceIcon("idle", 1);
-    const before = Array.from(face.rgba);
-    const blue = tinted(face, "#007aff");
-    expect([blue.width, blue.height]).toEqual([face.width, face.height]);
-    expect(alphas(blue)).toEqual(alphas(face));
-    for (let i = 0; i < blue.rgba.length; i += 4) expect(Array.from(blue.rgba.subarray(i, i + 3))).toEqual([0, 122, 255]);
-    expect(Array.from(face.rgba)).toEqual(before);
-  });
-
-  it("takes upper case, and refuses what is not #rrggbb", () => {
-    expect(Array.from(tinted(faceIcon("idle", 1), "#AF52DE").rgba.subarray(0, 3))).toEqual([175, 82, 222]);
-    for (const bad of ["", "007aff", "#07f", "#007aff00", "#00zzff", "blue"]) {
-      expect(() => tinted(faceIcon("idle", 1), bad), bad).toThrow(/#rrggbb/);
-    }
   });
 });

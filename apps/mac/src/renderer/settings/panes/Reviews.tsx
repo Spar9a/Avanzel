@@ -35,7 +35,7 @@ const REPEATS: readonly SegmentedOption<Every>[] = [
 const LIBRARY_AGENT = "The library's agent";
 
 /** The evening review's note: what takes its last run back. */
-const EVENING_NOTE = "Undo last evening review, in the menu bar menu, takes back its last run.";
+const EVENING_NOTE = "Undo the last evening review, in the menu bar menu, takes back its last run.";
 
 /** What a review's save may change; the rest is saved as stored. */
 export type Fields = Partial<Pick<TaskInfo, "schedule" | "agent" | "enabled" | "instructions">>;

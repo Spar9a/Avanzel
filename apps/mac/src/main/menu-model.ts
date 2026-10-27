@@ -1,6 +1,6 @@
 // What the menu bar menu shows, as plain data; tray.ts turns it into an Electron menu.
 import type { FiledPage, ModelStatus, Shortcuts } from "../shared/ipc.ts";
-import { downloadFailedProblem, voiceSettingsProblem } from "../shared/problems.ts";
+import { downloadFailedProblem, TYPED_THOUGHTS_SAVED, TYPING_WORKS_MEANWHILE, voiceSettingsProblem } from "../shared/problems.ts";
 import { SHELF_NAMES, isShelf } from "./shelf-glyphs.ts";
 import { prettyAccelerator } from "./shortcuts.ts";
 
@@ -13,8 +13,9 @@ export interface MenuTask {
   enabled: boolean;
   running: boolean;
   /**
-   * How far the review is while it runs, "2 of 5": the menu shows it beside the review in place of "Running…". The evening review counts
-   * its captures (`Controller.countReview`); a review that has begun none, or doesn't count, has none, and says "Running…".
+   * How far the review is while it runs, "Filing 2 of 5" (`reviewProgress`): the menu shows it beside the review in place of "Running…".
+   * The evening review counts its captures (`Controller.countReview`); a review that has begun none, or doesn't count, has none, and
+   * says "Running…".
    */
   progress?: string;
 }
@@ -35,8 +36,8 @@ export interface MenuInput {
    * names it right under the head, and its action opens Settings on Voice, where the fix is.
    */
   speechProblem: string | null;
-  /** What trying again does about `speechProblem`, said under it. Nothing without a problem. */
-  speechRetry?: string;
+  /** The second line under `speechProblem`: what is safe meanwhile and where the fix is (`speechProblemOf`). Nothing without a problem. */
+  speechSublabel?: string;
   recording: boolean;
   shortcuts: Shortcuts;
   /**
@@ -98,19 +99,26 @@ export function statusLine(filedToday: number, evening: MenuTask | undefined, no
 }
 
 /**
- * What is wrong with the speech model, for the menu to name: the capsule's own title for it (the builders the capsule's card and
- * Settings → Voice use too), and what trying again does. A download that failed is tried again in Settings → Voice, from the part it
- * kept if it kept one. Voice settings Avanzel can't use have no Try again: they are fixed in the config file, which Avanzel reads
- * again every minute and at each press of the dictation shortcut. Null while the model is ready, on its way or still to be fetched:
- * none of those is a problem.
+ * How far an evening review is, for `MenuTask.progress`: "Filing 2 of 5", capitalised like the other details ("Running…", "Off"). The
+ * total never falls short of the count, since a capture that arrives meanwhile is filed too: the menu never reads "Filing 3 of 2".
  */
-export function speechProblemOf(model: ModelStatus): { title: string; retry: string } | null {
+export function reviewProgress(done: number, total: number): string {
+  return `Filing ${done} of ${Math.max(total, done)}`;
+}
+
+/**
+ * What is wrong with the speech model, for the menu to name: the capsule's own title for it, and a second line under it that says what
+ * is safe meanwhile and where the fix is, as the capsule's card and Settings → Voice do (the title and the safe sentence are the
+ * builders' own, in shared/problems.ts). A download that failed is tried again in Settings → Voice, which tells whether it continues
+ * where it stopped or starts over: the menu leaves that there. Voice settings Avanzel can't use have no Try again: they are fixed in
+ * the config file. Null while the model is ready, on its way or still to be fetched: none of those is a problem.
+ */
+export function speechProblemOf(model: ModelStatus): { title: string; sublabel: string } | null {
   if (model.kind !== "error") return null;
   if (model.cause === "settings") {
-    return { title: voiceSettingsProblem(model.message).title, retry: "Fix the config file. Avanzel reads it again within a minute." };
+    return { title: voiceSettingsProblem(model.message).title, sublabel: `${TYPED_THOUGHTS_SAVED} Fix the config file.` };
   }
-  const again = model.resumable ? "continues where it stopped" : "starts the download over";
-  return { title: downloadFailedProblem(model.message, model.resumable).title, retry: `Try again in Settings → Voice. It ${again}.` };
+  return { title: downloadFailedProblem(model.message, model.resumable).title, sublabel: `${TYPING_WORKS_MEANWHILE}. Try again in Settings → Voice.` };
 }
 
 /** A recently filed page's second line: its shelf's name, or the folder it is in when the person made that folder; none without one. */
@@ -137,10 +145,14 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     .sort((a, b) => a.at.getTime() - b.at.getTime())[0];
 
   const shortcut = (key: keyof Shortcuts) => (input.unregisteredShortcuts.includes(key) ? {} : { accelerator: input.shortcuts[key] });
+  // The click goes where the words say: while the head's second line names the inbox it opens the inbox, and with the inbox empty, when
+  // its words no longer mention it, it opens the library.
+  const status = statusLine(input.filedToday, evening, now);
+  const head: MenuItemModel = input.inbox > 0 ? { type: "item", label: status, action: "open-inbox", sublabel: inbox } : { type: "item", label: status, action: "open-library" };
   const items: MenuItemModel[] = [
-    { type: "item", label: statusLine(input.filedToday, evening, now), action: "open-inbox", ...(input.inbox > 0 ? { sublabel: inbox } : {}) },
+    head,
     ...(input.speechProblem
-      ? [{ type: "item" as const, label: input.speechProblem, action: "open-settings:voice", ...(input.speechRetry ? { sublabel: input.speechRetry } : {}) }]
+      ? [{ type: "item" as const, label: input.speechProblem, action: "open-settings:voice", ...(input.speechSublabel ? { sublabel: input.speechSublabel } : {}) }]
       : []),
     SEP,
     { type: "item", label: input.recording ? "Stop recording" : "Record a thought", action: "dictate", ...shortcut("dictate") },
@@ -174,7 +186,7 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
       const detail = task.running ? (task.progress ?? "Running…") : task.enabled && task.at ? formatWhen(task.at, now) : "Off";
       items.push({ type: "item", label: task.name, action: `task:${task.id}`, detail });
     }
-    if (input.undoableReview) items.push({ type: "item", label: "Undo last evening review", action: "undo-review" });
+    if (input.undoableReview) items.push({ type: "item", label: "Undo the last evening review", action: "undo-review" });
     items.push(SEP);
   }
 

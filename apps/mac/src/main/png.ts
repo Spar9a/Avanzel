@@ -54,12 +54,3 @@ export interface Bitmap {
 export function faceIcon(state: MenuBarState, scale: 1 | 2): Bitmap {
   return rasterizeSvg(menuBarFaceSvg(state), scale);
 }
-
-/** `bitmap` with every pixel's colour set to `hex` ("#rrggbb") and its alpha kept. */
-export function tinted(bitmap: Bitmap, hex: string): Bitmap {
-  if (!/^#[0-9a-f]{6}$/i.test(hex)) throw new Error(`tinted: "${hex}" isn't a #rrggbb colour`);
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
-  const rgba = new Uint8Array(bitmap.rgba.length);
-  for (let i = 0; i < rgba.length; i += 4) rgba.set([r, g, b, bitmap.rgba[i + 3] ?? 0], i);
-  return { width: bitmap.width, height: bitmap.height, rgba };
-}

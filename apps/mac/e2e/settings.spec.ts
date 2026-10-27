@@ -100,7 +100,7 @@ test("Settings has Play sounds, off, in a group of its own before Startup, and s
   const sounds = settings.getByRole("switch", { name: "Play sounds" });
   await expect(sounds).toHaveAttribute("aria-checked", "false");
   await expect(sounds).toHaveAccessibleDescription(
-    "A tick as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two notes when the evening review is done.",
+    "A tick and a tock as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two soft bell tones when the evening review is done.",
   );
   expect((await snapshot(app)).app.sounds).toBe(false);
   expect(await played(settings)).toEqual([]);
@@ -116,6 +116,32 @@ test("Settings has Play sounds, off, in a group of its own before Startup, and s
   await expect(sounds).toHaveAttribute("aria-checked", "false");
   expect(await played(settings)).toEqual(["stamp"]);
   await expect.poll(() => audioContexts(settings)).toEqual(["closed"]);
+  await app.close();
+});
+
+test("Settings opens on General at its default size without a scroll, with the Startup switch in view", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app);
+  // General with its Library, After you speak, Sounds and Startup groups needs 557 px of pane: the window gives it room (the pane scrolls when
+  // another pane or a Notice needs more, and the window's least height stays).
+  const { size, least } = await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes("/renderer/settings/"))!;
+    return { size: win.getSize(), least: win.getMinimumSize() };
+  });
+  expect(size).toEqual([680, 660]);
+  expect(least, "the window can still be made small").toEqual([640, 440]);
+  const pane = settings.locator("main.settings-pane");
+  const room = await pane.evaluate((el) => ({ needs: el.scrollHeight, has: el.clientHeight }));
+  expect(room.needs, `the pane needs ${room.needs} px and has ${room.has} px`).toBeLessThanOrEqual(room.has);
+  await expect(settings.getByRole("switch", { name: "Open Avanzel when you log in" })).toBeInViewport({ ratio: 1 });
+  await app.close();
+});
+
+test("the Reviews pane names the evening review's Undo as the menu bar menu does", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app, "Reviews");
+  const evening = settings.getByRole("group", { name: "Evening review", exact: true });
+  await expect(evening.getByText("Undo the last evening review, in the menu bar menu, takes back its last run.", { exact: true })).toBeVisible();
   await app.close();
 });
 

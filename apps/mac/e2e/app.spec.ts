@@ -1070,7 +1070,7 @@ test("an evening review that files nothing says why", async () => {
   await call(app, "runTask", "evening-review");
   await call(app, "idleForTests");
   expect(await call(app, "notificationsForTests")).toContainEqual({
-    title: "Evening review: 0 things filed",
+    title: "Evening review: 0 thoughts filed",
     body: expect.stringContaining(`Could not start \`${agent}\``),
   });
   expect(inbox(library)).toHaveLength(1);

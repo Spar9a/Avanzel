@@ -506,7 +506,7 @@ test("every setup step and the bubble are readable in light and dark", async () 
   await expect(setup.getByText("Pages I used:", { exact: true })).toBeVisible({ timeout: 30_000 });
   found.push(...(await readable(app, setup, "Setup › Ask, answered", desktops)));
 
-  // Done, with its three switches (opening at login, Play sounds, the evening review) and Preview sounds.
+  // Done, with its three switches (opening at login, the evening review, Play sounds) and Preview sounds.
   await setup.getByRole("button", { name: "Continue" }).click();
   await expect(setup.getByRole("heading", { name: "You're all set." })).toBeVisible();
   await expect(setup.getByRole("switch")).toHaveCount(3);

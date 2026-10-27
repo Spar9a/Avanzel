@@ -1,13 +1,13 @@
-// The menu bar icon: Zel's face and the title beside it show what Avanzel is doing (tray-state.ts). Every test reads what the
-// controller last gave the menu bar (`trayForTests`) and what macOS was given (`nativeTitle`), and the tests of a count read the
-// times of the changes too (`watchTray`), so no poll has to catch a face in the moment it shows.
+// The menu bar icon: Zel's face and the title beside it show what Avanzel is doing (tray-state.ts), and the icon's tooltip says it in
+// words. Every test reads what the controller last gave the menu bar (`trayForTests`), what macOS was given (`nativeTitle`) and the
+// words of the face (`tooltip`), and the tests of a count read the times of the changes too (`watchTray`), so no poll has to catch a
+// face in the moment it shows.
 import { expect, test, type ElectronApplication } from "@playwright/test";
 import { chmodSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, localDate, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
-import { SHELF_COLORS } from "../src/main/shelf-glyphs.ts";
 import { dictate, inbox, launchOn, notified, reachedUndo, sleep, undoCalls, undone, watchUndos, type Left } from "./capsule-helpers.ts";
 import {
   agentStubs,
@@ -46,11 +46,26 @@ test.afterEach(closeModelHubs);
 
 /** What the menu bar shows (`face`, `title`) and the title macOS was given. */
 type Bar = { face: string; title: string; nativeTitle: string };
+/** A sample of the menu bar, with the words the icon's tooltip was given. */
+type Sample = Bar & { tooltip: string };
 /** A change of what the menu bar shows, and when it came. */
 type Change = { face: string; title: string; at: number };
 
-/** Every sample of the menu bar a test took: at the end, each must have given macOS the title the menu bar shows. */
-const sampled: Bar[] = [];
+/**
+ * The icon's tooltip for each face, written out here and not read from tray-state.ts: it is the only text VoiceOver or a hover can
+ * get of the icon (Electron's Tray has no accessibility label), and the filing face reads like idle at 18 pt.
+ */
+const TOOLTIPS: Record<string, string> = {
+  idle: "Avanzel",
+  listening: "Avanzel is recording",
+  filing: "Avanzel is filing",
+  filed: "Avanzel filed it",
+  "needs-you": "Avanzel needs you",
+  asleep: "The evening review is done",
+};
+
+/** Every sample of the menu bar a test took: at the end, each must have given macOS the title the menu bar shows, and its face's words. */
+const sampled: Sample[] = [];
 test.beforeEach(() => {
   sampled.length = 0;
 });
@@ -59,14 +74,27 @@ test.afterEach(() => {
     sampled.filter((bar) => bar.nativeTitle !== bar.title),
     "macOS was given the title the menu bar shows, at every sample",
   ).toEqual([]);
+  expect(
+    sampled.filter((bar) => bar.tooltip !== TOOLTIPS[bar.face]).map((bar) => `${bar.face}: ${bar.tooltip}`),
+    "the icon's tooltip was its face's words, at every sample",
+  ).toEqual([]);
 });
 
-/** The menu bar now. */
+/** The menu bar now, tooltip and all. */
+async function sampleOf(app: ElectronApplication): Promise<Sample> {
+  const sample = (await call(app, "trayForTests")) as Sample;
+  sampled.push(sample);
+  return sample;
+}
+
+/** The menu bar now: the face, the title and the title macOS holds. */
 async function barOf(app: ElectronApplication): Promise<Bar> {
-  const bar = (await call(app, "trayForTests")) as Bar;
-  sampled.push(bar);
+  const { tooltip: _words, ...bar } = await sampleOf(app);
   return bar;
 }
+
+/** Just the icon's tooltip now. */
+const tooltipOf = async (app: ElectronApplication) => (await sampleOf(app)).tooltip;
 
 /** Just the face now, as a poll reads it. */
 const faceOf = async (app: ElectronApplication) => (await barOf(app)).face;
@@ -160,7 +188,7 @@ async function reviewSaid(app: ElectronApplication): Promise<{ title: string; bo
 /** Runs the evening review, and returns once it has filed the note and said so. */
 async function reviewed(app: ElectronApplication): Promise<void> {
   await call(app, "runTask", "evening-review");
-  expect(await reviewSaid(app), "how the review ended").toMatchObject({ title: "Evening review: 1 thing filed" });
+  expect(await reviewSaid(app), "how the review ended").toMatchObject({ title: "Evening review: 1 thought filed" });
   await call(app, "idleForTests");
 }
 
@@ -218,6 +246,8 @@ test("the face listens and the title counts while recording, then it files, stam
   const since = Date.now();
   await call(app, "toggleDictate");
   await expect.poll(() => barOf(app), { intervals: [50] }).toMatchObject({ face: "listening", title: expect.stringMatching(/^0:0[0-9]$/) });
+  // The face says it in words too, for VoiceOver and for a hover: they change with the face, and a tick of the count leaves them be.
+  await expect.poll(() => sampleOf(app), { intervals: [50] }).toMatchObject({ face: "listening", tooltip: "Avanzel is recording" });
   // After two seconds the count has moved on.
   await expect.poll(() => titleOf(app), { timeout: 10_000, intervals: [100] }).toMatch(/^0:0[2-9]$/);
   expect(await faceOf(app)).toBe("listening");
@@ -226,8 +256,11 @@ test("the face listens and the title counts while recording, then it files, stam
   expect(Math.abs(secondsOf(inBar) - secondsOf(await titleOf(app)))).toBeLessThanOrEqual(1);
   await call(app, "toggleDictate"); // stop
   await expect.poll(() => barOf(app), { intervals: [50] }).toMatchObject({ face: "filing", title: "" });
+  await expect.poll(() => sampleOf(app), { intervals: [50] }).toMatchObject({ face: "filing", tooltip: "Avanzel is filing" }); // not idle's: it reads like it at 18 pt
   await expect.poll(() => faceOf(app), { timeout: 30_000, intervals: [50] }).toBe("filed");
+  await expect.poll(() => sampleOf(app), { timeout: 30_000, intervals: [50] }).toMatchObject({ face: "filed", tooltip: "Avanzel filed it" });
   await expect.poll(() => barOf(app), { timeout: 10_000, intervals: [100] }).toEqual({ face: "idle", title: "", nativeTitle: "" });
+  expect(await tooltipOf(app)).toBe("Avanzel");
 
   const list = await changes(app);
   // One face after another, none left out, and none put in between (a flash of idle as the transcription hands over to the filing).
@@ -355,8 +388,10 @@ test("a problem shows needs-you until its card is hidden", async () => {
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error"); // the failed filing's card
   await expect.poll(() => barOf(app), { intervals: [50] }).toMatchObject({ face: "needs-you", title: "" });
+  await expect.poll(() => sampleOf(app), { intervals: [50] }).toMatchObject({ face: "needs-you", tooltip: "Avanzel needs you" });
   await call(app, "dismiss"); // Hide
   await expect.poll(() => barOf(app), { intervals: [50] }).toMatchObject({ face: "idle", title: "" });
+  expect(await tooltipOf(app)).toBe("Avanzel");
   await app.close();
 });
 
@@ -376,6 +411,7 @@ test("after an evening review Zel sleeps until the next capture", async () => {
   const since = Date.now();
   await reviewed(app);
   await expect.poll(() => barOf(app), { intervals: [100] }).toMatchObject({ face: "asleep", title: "" });
+  await expect.poll(() => sampleOf(app), { intervals: [100] }).toMatchObject({ face: "asleep", tooltip: "The evening review is done" });
   expect(facesFrom(await changes(app), since)).toEqual(["filing", "asleep"]); // the review thinks, then Zel sleeps
   // The next dictation wakes Zel, who listens; a recording given up leaves Zel awake.
   await call(app, "toggleDictate");
@@ -414,7 +450,7 @@ test("a typed thought and a library that opens wake Zel too", async () => {
   // Another night, another review, and this time the person opens another library.
   new Vault(library).newCapture("Another thought", { source: "text" });
   await call(app, "runTask", "evening-review");
-  await expect.poll(() => notified(app, "Evening review: 1 thing filed"), { timeout: 60_000 }).toHaveLength(2);
+  await expect.poll(() => notified(app, "Evening review: 1 thought filed"), { timeout: 60_000 }).toHaveLength(2);
   await call(app, "idleForTests");
   await expect.poll(() => faceOf(app), { intervals: [100] }).toBe("asleep");
   await call(app, "createLibrary", path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-")), "Avanzel"));
@@ -677,7 +713,7 @@ for (const { stage, env, begin, atReviewEnd, end } of MID_THOUGHT) {
     await watchTray(app);
     const since = Date.now();
     await begin(app);
-    expect(await reviewSaid(app), "how the review ended").toMatchObject({ title: "Evening review: 1 thing filed" });
+    expect(await reviewSaid(app), "how the review ended").toMatchObject({ title: "Evening review: 1 thought filed" });
     await atReviewEnd(app);
     await end?.(app);
     await expect.poll(() => faceOf(app), { timeout: 30_000, intervals: [50] }).toBe("filed");
@@ -767,21 +803,26 @@ const recentOf = async (app: ElectronApplication) => {
   return items.slice(at + 1, items.findIndex((item, i) => i > at && item.type === "separator"));
 };
 
-/** What the tray holds for one menu item: its words, and the colour its icon is drawn in (the most opaque pixel, "#rrggbb"), or null without one. */
-type Held = { label: string; sublabel: string; icon: string | null };
+/**
+ * What the tray holds for one menu item: its words, and its icon, or null without one. An icon is a template image or not (macOS tints a
+ * template image for the menu: its ink, and white on the highlight), and the colour its pixels are drawn in (the most opaque one, "#rrggbb").
+ */
+type Held = { label: string; sublabel: string; icon: { template: boolean; ink: string } | null };
 
 /** The menu the tray holds now, as macOS was given it. */
 const heldMenu = (app: ElectronApplication): Promise<Held[]> =>
   app.evaluate(() => {
-    type Item = { label: string; sublabel?: string; icon?: { toBitmap(options: { scaleFactor: number }): Buffer } | string };
+    type Icon = { isTemplateImage(): boolean; toBitmap(options: { scaleFactor: number }): Buffer };
+    type Item = { label: string; sublabel?: string; icon?: Icon | string };
     const bar = (globalThis as unknown as { __avanzel: { menuBar: { menu: { items: Item[] } | null } } }).__avanzel.menuBar;
     return (bar.menu?.items ?? []).map((item) => {
-      let icon: string | null = null;
+      let icon: { template: boolean; ink: string } | null = null;
       if (item.icon && typeof item.icon !== "string") {
         const pixels = item.icon.toBitmap({ scaleFactor: 2 }); // BGRA
         let best = 0;
         for (let at = 0; at < pixels.length; at += 4) if ((pixels[at + 3] ?? 0) > (pixels[best + 3] ?? 0)) best = at;
-        icon = `#${[pixels[best + 2], pixels[best + 1], pixels[best]].map((channel) => (channel ?? 0).toString(16).padStart(2, "0")).join("")}`;
+        const ink = `#${[pixels[best + 2], pixels[best + 1], pixels[best]].map((channel) => (channel ?? 0).toString(16).padStart(2, "0")).join("")}`;
+        icon = { template: item.icon.isTemplateImage(), ink };
       }
       return { label: item.label, sublabel: item.sublabel ?? "", icon };
     });
@@ -821,7 +862,8 @@ test("the status line counts today's filings", async () => {
   vault.appendLog("review", "[[2026-01-01]]");
   vault.appendLog("ask", "what did I file → [[old-page]]");
   const { app } = await hearing({}, library);
-  expect(await menuOf(app)).toContainEqual({ type: "item", label: `Nothing filed today. Evening review ${eveningWhen()}.`, action: "open-inbox" });
+  // Nothing waits in the inbox, so the head's words don't mention it, and the click opens the library instead.
+  expect(await menuOf(app)).toContainEqual({ type: "item", label: `Nothing filed today. Evening review ${eveningWhen()}.`, action: "open-library" });
   // A fake filing: the count goes up, and the evening review's time is said as the clock says it.
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
@@ -831,6 +873,19 @@ test("the status line counts today's filings", async () => {
   // The menu the tray holds says the same, with the notes in the inbox under it (none: both are filed).
   const [held] = await heldMenu(app);
   expect(held).toEqual({ label: `2 thoughts filed today. Evening review ${eveningWhen()}.`, sublabel: "", icon: null });
+  await app.close();
+});
+
+test("the head opens the inbox while a note waits in it and its words say so, and the library when none does", async () => {
+  const { app } = await withNote("12");
+  // A note waits: the second line names the inbox, and the click opens the inbox.
+  expect((await menuOf(app))[0]).toMatchObject({ type: "item", action: "open-inbox", sublabel: "1 note in the inbox" });
+  expect((await heldMenu(app))[0]).toMatchObject({ sublabel: "1 note in the inbox" });
+  // The review files it: the second line goes with the note, and the click goes to the library, where the page is.
+  await reviewed(app);
+  await expect.poll(async () => (await menuOf(app))[0], { timeout: 10_000 }).toMatchObject({ type: "item", action: "open-library" });
+  expect((await menuOf(app))[0]).not.toHaveProperty("sublabel");
+  expect((await heldMenu(app))[0]).toMatchObject({ sublabel: "" });
   await app.close();
 });
 
@@ -895,34 +950,42 @@ test("a library that opens brings the count of its own log, and its own pages", 
   await app.close();
 });
 
-/** Makes the app's appearance `to`, as the Mac's setting does, and waits until the menu the tray holds is drawn for it (Maya's page is on the people shelf). */
-async function inAppearance(app: ElectronApplication, to: "light" | "dark"): Promise<void> {
-  await app.evaluate(({ nativeTheme }, source) => void (nativeTheme.themeSource = source), to);
-  const maya = async () => (await heldMenu(app)).find((item) => item.label === "Maya")?.icon ?? null;
-  await expect.poll(maya, { timeout: 10_000, intervals: [50] }).toBe(SHELF_COLORS[to].people);
-}
-
-test("the shelf glyphs in the menu are drawn in the shelf's colour, and follow the appearance", async () => {
+test("the shelf glyphs in the menu are black template images, which macOS tints, and the appearance turning builds no new menu", async () => {
   const { app } = await hearing({}, await shelved());
-  await inAppearance(app, "light");
   let held = await heldMenu(app);
   const glyph = (label: string) => held.find((item) => item.label === label);
-  expect(glyph("Maya")).toMatchObject({ sublabel: "People", icon: SHELF_COLORS.light.people });
-  expect(glyph("Finish the prototype")).toMatchObject({ sublabel: "Goals", icon: SHELF_COLORS.light.goals });
+  // A template image is black on transparent: macOS gives it the menu's ink in light and in dark, and white on the highlight, where a
+  // coloured image kept its colour (People's blue vanished on the default blue, and Ideas' yellow was 1.35:1 on a light menu).
+  expect(glyph("Maya")).toMatchObject({ sublabel: "People", icon: { template: true, ink: "#000000" } });
+  expect(glyph("Finish the prototype")).toMatchObject({ sublabel: "Goals", icon: { template: true, ink: "#000000" } });
   // A page off the shelves shows its folder's name and no glyph.
   expect(glyph("Trip to Lisbon")).toMatchObject({ sublabel: "projects", icon: null });
   // Nothing else in the menu has an icon.
   expect(held.filter((item) => item.icon).map((item) => item.label).sort()).toEqual(["Finish the prototype", "Maya"]);
-  // The appearance turns dark: the menu is built again, with the shelves' colours for dark.
+  // The appearance turns dark, and light again. The menu was drawn for neither: no new menu is built, and the glyphs are as they were.
+  const dark = () => app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
+  await app.evaluate(({ nativeTheme }) => void (nativeTheme.themeSource = "light")); // a known place to turn from, whatever this Mac is set to
+  await expect.poll(dark).toBe(false);
+  await sleep(300); // an update for that, if this Mac was dark, has been told by now
   await countCalls(app, "refreshMenu");
-  await inAppearance(app, "dark");
+  await app.evaluate(({ nativeTheme }) => {
+    (globalThis as { themeUpdates?: number }).themeUpdates = 0;
+    nativeTheme.on("updated", () => {
+      (globalThis as { themeUpdates?: number }).themeUpdates = ((globalThis as { themeUpdates?: number }).themeUpdates ?? 0) + 1;
+    });
+  });
+  const updates = () => app.evaluate(() => (globalThis as { themeUpdates?: number }).themeUpdates ?? 0);
+  for (const to of ["dark", "light"] as const) {
+    const seen = await updates();
+    await app.evaluate(({ nativeTheme }, source) => void (nativeTheme.themeSource = source), to);
+    await expect.poll(dark).toBe(to === "dark");
+    // The appearance's own update has come: the controller's listener, had it one, was added before this one and has run.
+    await expect.poll(updates, { timeout: 10_000, intervals: [50] }).toBeGreaterThan(seen);
+  }
+  expect(await calls(app, "refreshMenu"), "no menu was built for the appearance").toBe(0);
   held = await heldMenu(app);
-  expect(glyph("Maya")).toMatchObject({ icon: SHELF_COLORS.dark.people });
-  expect(glyph("Finish the prototype")).toMatchObject({ icon: SHELF_COLORS.dark.goals });
-  expect(await calls(app, "refreshMenu")).toBeGreaterThanOrEqual(1);
-  await inAppearance(app, "light");
-  held = await heldMenu(app);
-  expect(glyph("Finish the prototype")).toMatchObject({ icon: SHELF_COLORS.light.goals });
+  expect(glyph("Maya")).toMatchObject({ icon: { template: true, ink: "#000000" } });
+  expect(glyph("Finish the prototype")).toMatchObject({ icon: { template: true, ink: "#000000" } });
   await app.close();
 });
 
@@ -933,14 +996,14 @@ test("a failed speech-model download is named in the menu", async () => {
   const model = (await settingsSnap(app)).model;
   expect(model).toMatchObject({ kind: "error", cause: "download" });
   const [head, problem, after] = await menuOf(app);
-  expect(head).toMatchObject({ action: "open-inbox" });
-  // The capsule's own title, and the fix: Settings → Voice, where Try again is. It says what trying again does.
-  const resumable = "resumable" in model && model.resumable;
+  expect(head).toMatchObject({ action: "open-library" }); // nothing waits in the inbox
+  // The capsule's own title, what is safe meanwhile (the capsule's and Settings → Voice's own words), and the fix: Settings → Voice,
+  // where Try again is. What Try again does, whether it continues or starts over, is told there.
   expect(problem).toEqual({
     type: "item",
     label: "The speech model didn't finish downloading.",
     action: "open-settings:voice",
-    sublabel: `Try again in Settings → Voice. It ${resumable ? "continues where it stopped" : "starts the download over"}.`,
+    sublabel: "Typing works meanwhile. Try again in Settings → Voice.",
   });
   expect(after).toEqual({ type: "separator" });
   // The menu the tray holds has it right after the head.
@@ -965,7 +1028,7 @@ test("voice settings Avanzel can't use are named in the menu until a fix is read
     type: "item",
     label: title,
     action: "open-settings:voice",
-    sublabel: "Fix the config file. Avanzel reads it again within a minute.",
+    sublabel: "Typed thoughts are still saved to the inbox. Fix the config file.",
   });
   // Fixed by hand, with Avanzel running. Nothing watches the file, so it is not found at once; the minute that comes round reads it.
   saveSettings(library, config);
@@ -1307,7 +1370,11 @@ test("Undo from the menu is not offered after an evening review that filed", asy
   // The review began, so the capsule's filing is no longer the last one; and the review's own commits are taken back by its own item.
   expect(await undoItem(app)).toBeUndefined();
   expect(await trayOffersUndo(app)).toBe(false);
-  expect((await menuOf(app)).some((item) => item.type === "item" && item.action === "undo-review")).toBe(true);
+  // The review's item reads like the filing's own ("Undo the last filing"), in the menu the model gave and the one the tray holds.
+  expect((await menuOf(app)).filter((item) => item.type === "item" && item.action === "undo-review")).toEqual([
+    { type: "item", label: "Undo the last evening review", action: "undo-review" },
+  ]);
+  expect((await heldMenu(app)).map((item) => item.label)).toContain("Undo the last evening review");
   await pressUndo(app);
   expect(await undoCalls(app)).toBe(0);
   expect(filesUnder(library, "ideas")).toHaveLength(2); // the capsule's filing, and the review's
@@ -1511,7 +1578,7 @@ for (const card of [
 
 // ---------------------------------------------------------------- a scheduled review asks before it runs, and shows how far it is
 
-/** The words beside the review `id` in the menu now: the time it runs next, "Running…", or how far it is ("1 of 2"). */
+/** The words beside the review `id` in the menu now: the time it runs next, "Running…", or how far it is ("Filing 1 of 2"). */
 async function detailOf(app: ElectronApplication, id = "evening-review"): Promise<string | undefined> {
   const item = (await menuOf(app)).find((candidate) => candidate.type === "item" && candidate.action === `task:${id}`);
   return item?.type === "item" ? item.detail : undefined;
@@ -1576,7 +1643,7 @@ test("running a review from the menu asks first, and runs it only on Run Now", a
         defaultId: 0,
         cancelId: 1,
         message: "Run “Evening review” now?",
-        detail: "It's an agent run with fake, so it may use your plan's quota.",
+        detail: "It runs with fake on your plan, so it may count toward your usage limit.",
       },
     },
   ]);
@@ -1590,7 +1657,7 @@ test("running a review from the menu asks first, and runs it only on Run Now", a
   await answerDialogs(app, 0);
   await call(app, "menuAction", "task:evening-review");
   expect(await dialogsAsked(app)).toHaveLength(1);
-  expect(await reviewSaid(app)).toMatchObject({ title: "Evening review: 1 thing filed" });
+  expect(await reviewSaid(app)).toMatchObject({ title: "Evening review: 1 thought filed" });
   await call(app, "idleForTests");
   expect(await lastRun(app, "evening-review")).not.toBeNull();
   expect(inbox(library)).toEqual([]);
@@ -1605,18 +1672,18 @@ test("the question before a review names no agent where none can be named", asyn
   await call(app, "menuAction", "task:evening-review");
   const [asked, ...more] = await dialogsAsked(app);
   expect(more).toEqual([]);
-  expect(asked?.options).toMatchObject({ message: "Run “Evening review” now?", detail: "It's an agent run, so it may use your plan's quota." });
+  expect(asked?.options).toMatchObject({ message: "Run “Evening review” now?", detail: "It runs on your plan, so it may count toward your usage limit." });
   await app.close();
 });
 
 test("a review that is running isn't asked about", async () => {
   const { app } = await withNote("12", { FAKE_AGENT_DELAY_MS: "5000", FAKE_AGENT_DELAY_TASK: "file" }); // its filing holds the library for 5 s
   await call(app, "runTask", "evening-review");
-  expect(await detailOf(app)).toMatch(/^(Running…|1 of 1)$/);
+  expect(await detailOf(app)).toMatch(/^(Running…|Filing 1 of 1)$/);
   await answerDialogs(app, 0);
   await call(app, "menuAction", "task:evening-review"); // its item stays in the menu while it runs: pressed, it does nothing
   expect(await dialogsAsked(app)).toEqual([]);
-  expect(await reviewSaid(app)).toMatchObject({ title: "Evening review: 1 thing filed" });
+  expect(await reviewSaid(app)).toMatchObject({ title: "Evening review: 1 thought filed" });
   await call(app, "idleForTests");
   expect(await dialogsAsked(app)).toEqual([]);
   await app.close();
@@ -1638,7 +1705,7 @@ test("Settings' Run now asks first, as a sheet on Settings, and runs the review 
         defaultId: 0,
         cancelId: 1,
         message: "Run “Weekly review” now?",
-        detail: "It's an agent run with fake, so it may use your plan's quota.",
+        detail: "It runs with fake on your plan, so it may count toward your usage limit.",
       },
     },
   ]);
@@ -1663,7 +1730,7 @@ test("a review that comes due on its schedule runs without asking", async () => 
   const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString();
   writeFileSync(path.join(userData, "run-state.json"), JSON.stringify({ [path.resolve(library)]: { checked: { "evening-review": twoDaysAgo } } }));
   await call(app, "tick");
-  expect(await reviewSaid(app)).toMatchObject({ title: "Evening review: 1 thing filed" });
+  expect(await reviewSaid(app)).toMatchObject({ title: "Evening review: 1 thought filed" });
   await call(app, "idleForTests");
   expect(await lastRun(app, "evening-review")).not.toBeNull();
   expect(await dialogsAsked(app)).toEqual([]);
@@ -1678,18 +1745,18 @@ test("a running review shows how far it is, and its time again once it ends", as
   await watchReview(app);
   await call(app, "runTask", "evening-review");
   // Each capture counts as the review takes it up, and the item says so instead of "Running…".
-  await expect.poll(() => detailOf(app), { timeout: 30_000 }).toBe("1 of 2");
-  expect((await menuOf(app)).find((item) => item.type === "item" && item.action === "task:evening-review")).toMatchObject({ label: "Evening review", detail: "1 of 2" });
+  await expect.poll(() => detailOf(app), { timeout: 30_000 }).toBe("Filing 1 of 2");
+  expect((await menuOf(app)).find((item) => item.type === "item" && item.action === "task:evening-review")).toMatchObject({ label: "Evening review", detail: "Filing 1 of 2" });
   const seen = await seenToTheEnd(app);
   const next = seen[0]?.detail ?? "";
   expect(next).toMatch(NEXT_EVENING);
-  expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "1 of 2", "2 of 2", next]);
+  expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "Filing 1 of 2", "Filing 2 of 2", next]);
   // The tray's menu was given the same, in parentheses (menuLabel).
   expect(inARow(seen.map((entry) => entry.held))).toEqual([
     `Evening review (${next})`,
     "Evening review (Running…)",
-    "Evening review (1 of 2)",
-    "Evening review (2 of 2)",
+    "Evening review (Filing 1 of 2)",
+    "Evening review (Filing 2 of 2)",
     `Evening review (${next})`,
   ]);
   // Run again, on an empty inbox: it begins with "Running…", not with the count the last run ended on.
@@ -1708,11 +1775,11 @@ test("a capture that arrives while the review runs is filed too, and the count r
   const { app } = await hearing({ FAKE_AGENT_STEP_MS: "500" }, library);
   await watchReview(app);
   await call(app, "runTask", "evening-review");
-  await expect.poll(() => detailOf(app), { timeout: 30_000 }).toBe("1 of 2");
+  await expect.poll(() => detailOf(app), { timeout: 30_000 }).toBe("Filing 1 of 2");
   new Vault(library).newCapture("Third thought", { source: "text" }); // the review reads the inbox again after each capture
   const seen = await seenToTheEnd(app);
   const next = seen[0]?.detail ?? "";
-  expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "1 of 2", "2 of 2", "3 of 3", next]);
+  expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "Filing 1 of 2", "Filing 2 of 2", "Filing 3 of 3", next]);
   expect(inbox(library)).toEqual([]);
   await app.close();
 });
@@ -1730,7 +1797,7 @@ test("the count leaves out a thought the review leaves alone", async () => {
   const seen = await seenToTheEnd(app);
   const next = seen[0]?.detail ?? "";
   // Two notes waited when it began, and one of them was not its to file.
-  expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "1 of 1", next]);
+  expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "Filing 1 of 1", next]);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed"); // the thought's own filing came after the review
   await app.close();
 });
@@ -1761,7 +1828,7 @@ for (const words of ["Plant tulips in October", ""]) {
     await call(app, "runTask", "evening-review");
     const seen = await seenToTheEnd(app);
     const next = seen[0]?.detail ?? "";
-    expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "1 of 2", "2 of 2", next]);
+    expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "Filing 1 of 2", "Filing 2 of 2", next]);
     expect(inbox(library)).toEqual([]);
     await app.close();
   });
@@ -1836,7 +1903,7 @@ test("a note the review can't read still counts, though the engine reports nothi
     await call(app, "runTask", "evening-review");
     const seen = await seenToTheEnd(app);
     const next = seen[0]?.detail ?? "";
-    expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "1 of 2", "2 of 2", next]);
+    expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "Filing 1 of 2", "Filing 2 of 2", next]);
   } finally {
     chmodSync(locked, 0o644);
   }

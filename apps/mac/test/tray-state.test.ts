@@ -1,7 +1,7 @@
 import type { MenuBarState } from "@avanzel/ui/menu-bar";
 import { describe, expect, it } from "vitest";
 import { clock } from "../src/shared/clock.ts";
-import { elapsed, nextTrayWake, reviewEndedAt, sleepsAfterReview, trayView, wholePercent, type TrayInput } from "../src/main/tray-state.ts";
+import { elapsed, nextTrayWake, reviewEndedAt, sleepsAfterReview, trayTooltip, trayView, wholePercent, type TrayInput } from "../src/main/tray-state.ts";
 
 const NOW = 1_000_000;
 /** Nothing going on: the idle face, no title. */
@@ -107,6 +107,36 @@ describe("trayView's title", () => {
   it("counts a hidden filing from the start of its run", () => {
     expect(trayView(input({ hiddenFilingSince: NOW }), NOW).title).toBe("0:00");
     expect(trayView(input({ hiddenFilingSince: NOW - 12_999 }), NOW).title).toBe("0:12");
+  });
+});
+
+describe("trayTooltip", () => {
+  // Keyed by every MenuBarState, so a state the design system adds fails the typecheck here until its words are pinned too.
+  const WORDS: Record<MenuBarState, string> = {
+    idle: "Avanzel",
+    listening: "Avanzel is recording",
+    filing: "Avanzel is filing",
+    filed: "Avanzel filed it",
+    "needs-you": "Avanzel needs you",
+    asleep: "The evening review is done",
+  };
+  const FACES = Object.keys(WORDS) as MenuBarState[];
+
+  it.each(FACES)("gives the %s face its words", (face) => {
+    expect(trayTooltip(face)).toBe(WORDS[face]);
+  });
+
+  it("gives every face words of its own, since the face alone is all a state has at 18 pt", () => {
+    expect(new Set(FACES.map(trayTooltip)).size).toBe(FACES.length);
+  });
+
+  it("follows the copy rules: sentence case, plain, no exclamation mark, no emoji, no Letter", () => {
+    for (const face of FACES) {
+      const words = trayTooltip(face);
+      expect(words, face).toMatch(/^[A-Z]/);
+      expect(words, face).not.toMatch(/[!.]$/); // a tooltip is a label, not a sentence
+      expect(words, face).not.toMatch(/!|oops|letter|\p{Extended_Pictographic}/iu);
+    }
   });
 });
 

@@ -84,7 +84,7 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
       <Group label="Sounds">
         <Switch
           label="Play sounds"
-          description="A tick as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two notes when the evening review is done."
+          description="A tick and a tock as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two soft bell tones when the evening review is done."
           checked={snap.app.sounds}
           onChange={async (sounds) => {
             // The Stamp says that they are on, so it is played once that is saved: a change that wasn't kept (`attempt` tells it) plays none.

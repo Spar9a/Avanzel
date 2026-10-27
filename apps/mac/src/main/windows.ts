@@ -64,12 +64,13 @@ export function placeCapsule(win: BrowserWindow): void {
 /**
  * Settings: an opaque window, as setup is, with the traffic lights inset over the page's drag strip and the panes'
  * toolbar under it. `pane`: the pane the page opens on, passed in its address (?pane=voice); without one it opens on
- * General.
+ * General. The height lets General show whole (its pane needs 557 px under the 87 px toolbar, so 644 would do): the pane it opens
+ * on shouldn't need a scroll to reach its Startup switch. Another pane can scroll, down to the least height.
  */
 export function createSettingsWindow(pane?: SettingsPane): BrowserWindow {
   const win = new BrowserWindow({
     width: 680,
-    height: 600,
+    height: 660,
     minWidth: 640,
     minHeight: 440,
     show: false,

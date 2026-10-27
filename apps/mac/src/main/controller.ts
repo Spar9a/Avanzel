@@ -6,7 +6,6 @@ import {
   dialog,
   globalShortcut,
   nativeImage,
-  nativeTheme,
   Notification,
   powerMonitor,
   shell,
@@ -117,7 +116,7 @@ import { frontContext } from "./front-app.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import { answeredFrom, captureMeta, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "./library-info.ts";
-import { buildMenuModel, speechProblemOf, type MenuInput, type MenuItemModel } from "./menu-model.ts";
+import { buildMenuModel, reviewProgress, speechProblemOf, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
 import { pickRequest, popupChoice } from "./popup.ts";
@@ -452,8 +451,6 @@ export class Controller {
     });
     this.capsule.on("closed", () => app.quit());
     this.menuBar = new MenuBar((action) => void this.menuAction(action));
-    // The shelf glyphs in the menu are drawn for the light or the dark appearance: built again when it turns.
-    nativeTheme.on("updated", () => this.refreshMenu());
     const envLibrary = process.env.AVANZEL_LIBRARY;
     if (envLibrary) this.store.update({ libraryPath: envLibrary });
     this.openLibrary(this.store.get().libraryPath);
@@ -745,7 +742,7 @@ export class Controller {
         progress: this.reviewing.get(t.id),
       })),
       speechProblem: speech?.title ?? null,
-      ...(speech ? { speechRetry: speech.retry } : {}),
+      ...(speech ? { speechSublabel: speech.sublabel } : {}),
       recording: !!this.recording,
       shortcuts: this.store.get().shortcuts,
       unregisteredShortcuts: Object.keys(this.shortcutProblems) as (keyof Shortcuts)[],
@@ -3606,7 +3603,7 @@ export class Controller {
 
   /**
    * Asks whether to run the review `taskId` now, before a person's press runs it (the menu's item, Settings' Run now): an agent run may
-   * use their plan's quota. `parent`, Settings' window, makes the question a sheet on it. True for Run Now, unless the library changed
+   * count toward their plan's usage limit. `parent`, Settings' window, makes the question a sheet on it. True for Run Now, unless the library changed
    * while the question was open: Run Now was for the review of the library it named, and `runTask` would run the one of the same name
    * in the other. False, with nothing asked, where `runTask` would do nothing: there is no library, no such review, or it runs already
    * (its item stays in the menu while it does). True, with nothing asked, for a review that runs no agent: `executeTask` only says a
@@ -3617,7 +3614,7 @@ export class Controller {
     if (!vault || this.running.has(taskId)) return false;
     const task = this.safeTasks(vault).find((t) => t.id === taskId);
     if (!task) return false;
-    // A question about the plan's quota would say the opposite of what happens to a review that runs no agent.
+    // A question about the plan's usage limit would say the opposite of what happens to a review that runs no agent.
     if (task.kind !== "evening-review" && task.kind !== "review") return true;
     // The agent is named when one can be (as the notification that ends the run names it); where none can, the question says no more.
     const named = this.selectedHarness(task.agent);
@@ -3627,7 +3624,7 @@ export class Controller {
       defaultId: 0,
       cancelId: 1,
       message: `Run “${task.name}” now?`,
-      detail: `It's an agent run${named ? ` with ${harnessName(named)}` : ""}, so it may use your plan's quota.`,
+      detail: `It runs${named ? ` with ${harnessName(named)}` : ""} on your plan, so it may count toward your usage limit.`,
     };
     // A menu bar app isn't the frontmost app when its menu is used: without this the question would come up behind the others.
     app.focus({ steal: true });
@@ -3694,7 +3691,7 @@ export class Controller {
       const theirs = leave(capturePath);
       if (!theirs) {
         done += 1;
-        this.reviewing.set(id, `${done} of ${Math.max(total, done)}`);
+        this.reviewing.set(id, reviewProgress(done, total));
         this.refreshMenu();
       }
       return theirs;
@@ -3730,7 +3727,7 @@ export class Controller {
         const filed = result.outcomes.length - failed.length;
         const digest = result.digestPath;
         this.notify(
-          `${task.name}: ${filed} ${filed === 1 ? "thing" : "things"} filed`,
+          `${task.name}: ${filed} ${filed === 1 ? "thought" : "thoughts"} filed`,
           failed.length ? notFiled(failed, filed) : `${agent} sorted today's inbox. Click to read the summary.`,
           digest ? () => this.openPage(path.relative(this.requireVault().root, digest)) : undefined,
           silent,
@@ -3791,9 +3788,12 @@ export class Controller {
     return buildMenuModel(this.menuInput(), new Date());
   }
 
-  /** What the menu bar was last given (`MenuBar.show`) and the title macOS holds for the icon: for the e2e tests. */
-  trayForTests(): TrayView & { nativeTitle: string } {
-    return { ...this.menuBar.shown, nativeTitle: this.menuBar.tray.getTitle() };
+  /**
+   * What the menu bar was last given (`MenuBar.show`), the title macOS holds for the icon and the words its tooltip was given (the
+   * tooltip has no getter, so `MenuBar` keeps them): for the e2e tests.
+   */
+  trayForTests(): TrayView & { nativeTitle: string; tooltip: string } {
+    return { ...this.menuBar.shown, nativeTitle: this.menuBar.tray.getTitle(), tooltip: this.menuBar.tooltip };
   }
 
   /** The step the setup session is on, or null without one: for tests of steps whose body a later change builds. */

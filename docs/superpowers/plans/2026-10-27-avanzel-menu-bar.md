@@ -13,7 +13,7 @@
   - Main also tells the capsule's page when sounds go on or off (`capsule:sounds-setting`, and at load while they are on). On, the page makes its AudioContext at once, off the dictation's path; off, it lets go of it.
   - Setup and Settings play their own sounds: a Preview that plays four of the five, and the Stamp when sounds are switched on. Each asks main first (`settings:may-play-sounds`) and stays quiet while a recording runs, since the recorder has no echo cancellation.
 
-**Tech Stack:** Electron 44 (Tray, nativeImage, nativeTheme, dialog), TypeScript, React 19 renderers on `@avanzel/ui`, Vitest, Playwright for Electron.
+**Tech Stack:** Electron 44 (Tray, nativeImage, dialog), TypeScript, React 19 renderers on `@avanzel/ui`, Vitest, Playwright for Electron.
 
 **Spec:** `/Users/aksimemor/git-reps/avanzel/reports/Avanzel UX and first-run design.md`:
 - §6.5 Menu bar (line 364) and §4.6 Sound (line 224).
@@ -36,6 +36,7 @@ Where this plan sits:
   - Task 5: `916b4f0`, `d929c6b`.
   - Task 6: `10d4eb1`.
   - Task 7: `6a5542d`, `4239057`.
+  - Task 8, step 4 (the design review's fixes): `mac: the menu bar reads as one design`. Its seven changes are listed under Task 8, and they supersede the task text below where the two differ.
 - **This plan now says what was built.** Where a review's ruling changed what a task's text first said, the text follows the ruling. Owner items 11 to 20 are the ones the work found, and the Review Focus lists carry the final rulings.
 
 ## Global Constraints
@@ -51,7 +52,7 @@ Where this plan sits:
 - **Main and `@avanzel/ui`.**
   - Main imports values only from `@avanzel/ui/menu-bar`. From the root it takes types only, with `import type`.
   - Under `verbatimModuleSyntax`, a mixed `import { type … }` stays as a side-effect import.
-  - The root's index pulls in CSS and .woff2 fonts, and main's build has no font loader (scripts/build.mjs:18-28). So the shelves, their names and their colours are copied into `main/shelf-glyphs.ts`.
+  - The root's index pulls in CSS and .woff2 fonts, and main's build has no font loader (scripts/build.mjs:18-28). So the shelves and their names are copied into `main/shelf-glyphs.ts`. The glyphs are black template images that macOS tints, so main holds no shelf colours.
 - **png.ts and raster.ts stay plain TypeScript** that Node's type stripping can run: no enums, no parameter properties. `scripts/make-icon.mjs:7` imports png.ts under plain Node.
 - **The face** is `menuBarFaceSvg()` as an 18 × 18-point template image.
   - Its states are `MenuBarState`: `"idle" | "listening" | "filing" | "filed" | "needs-you" | "asleep"`.
@@ -87,9 +88,10 @@ These are stand-ins and choices for the owner. Each task names the ones it creat
    - Setup's Play sounds has no description: two lines would scroll its tallest state.
 3. **The evening letter.** The evening review stands in for it: the status line names the review, the Letter sound plays when it finishes, and Zel sleeps after it (§4.2 line 172 says after the letter). "Tonight's letter" waits for Phase 2.
 4. **Open and Undo on the filed notification** (§6.1, §6.3) need a signed build. They aren't in 1d.
-5. **The shelf glyphs, names and colours are copied into main** (`main/shelf-glyphs.ts`).
+5. **The shelf glyphs and names are copied into main** (`main/shelf-glyphs.ts`).
    - Shelf.tsx's `GLYPHS` is private JSX, and main can't import a value from the package root.
    - A test keeps the copy equal to the design system. A plain-TypeScript export next to `menu-bar.ts` would remove the copy.
+   - The menu draws them in black, as template images (the design review's fix). A coloured glyph is an owner option: an ink variant per shelf, in `@avanzel/ui/menu-bar`, which would also remove the copy of the colours main no longer holds.
 6. **Choices the spec leaves open:**
    - The face is `idle` with no library.
    - Downloading doesn't make the face busy; the title shows the percent.
@@ -115,10 +117,10 @@ These are stand-ins and choices for the owner. Each task names the ones it creat
     - The shell check matches only `.tsx`, `.css` and `.html` (`guard.mjs:43`), while `config.mjs:6` makes `renderer/**/*.ts` window code.
     - A script edited `renderer/common/sounds.ts` unrefused. Its after-shell step still ran the design check, which passed.
     - Widening the regex is the owner's call.
-14. **Words for the owner to read.** The implementers wrote all three:
-    - The speech item's second line: "Try again in Settings → Voice. It continues where it stopped.", or "… It starts the download over.", and for voice settings Avanzel can't use "Fix the config file. Avanzel reads it again within a minute."
-    - The review question's detail: "It's an agent run with Claude Code, so it may use your plan's quota." "May", because "uses" is untrue for an empty inbox and for a local model.
-    - Settings' description of Play sounds: "A tick as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two notes when the evening review is done." The stop sound is the Tock, which the line doesn't name.
+14. **Words for the owner to read.** The implementers wrote all three, and the design review's fixes reworded them:
+    - The speech item's second line says what is safe and where to go, from the capsule's and Settings → Voice's own sentences: "Typing works meanwhile. Try again in Settings → Voice.", and for voice settings Avanzel can't use "Typed thoughts are still saved to the inbox. Fix the config file." What Try again does (continue or start over) is left to Settings → Voice.
+    - The review question's detail: "It runs with Claude Code on your plan, so it may count toward your usage limit." (with no agent: "It runs on your plan, so it may count toward your usage limit."). "May", because "uses" is untrue for an empty inbox and for a local model. The capsule says "usage limit" and Settings says "on your plan".
+    - Settings' description of Play sounds: "A tick and a tock as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two soft bell tones when the evening review is done." It says "tones", since "notes" is the app's word for a capture.
 15. **The audio device stays open while sounds are on.**
     - The capsule's page makes its AudioContext when sounds go on, and at launch while they are on. The first Tick is then played about 25 ms after the listening card, where making the context at the first Tick took about 150 ms and delayed the card.
     - With sounds on, an idle Mac may keep a Bluetooth headset in its playback profile. By hand: leave it idle for 10 minutes with AirPods and check, with `pmset -g assertions`, and decide whether idle should let the device go.
@@ -651,7 +653,15 @@ Owner items: 2, 14, 15, 17.
   - setup's Done step and Settings → General, in light and dark.
 
   Use a throwaway spec, archived as `.txt` in the flight pack's `archive/1d-work/` and never committed.
-- [ ] **Step 4: The design review.** The controller runs the `design-reviewer` agent on the Done step, General and the face shots. Fix its findings in one commit: `mac: the menu bar reads as one design`.
+- [x] **Step 4: The design review.** The controller ran the `design-reviewer` agent on the Done step, General and the face shots, and ruled a list. It is fixed in one commit, `mac: the menu bar reads as one design`:
+  1. **The face's six states have words.** `trayTooltip(face)` (tray-state.ts) gives the icon's tooltip, set whenever the face changes ("Avanzel", "Avanzel is recording", "Avanzel is filing", "Avanzel filed it", "Avanzel needs you", "The evening review is done"). Electron's Tray has no accessibility label, so the tooltip is all the text a hover or VoiceOver gets, and the filing face reads like idle at 18 pt. `trayForTests` gives `tooltip`.
+  2. **In setup, Preview sounds sits under Play sounds.** The Done step's switches are the login switch, the review's and Play sounds, last. Preview, below the Group, is tied to its switch by place alone (owner item 2), so the place has to be right.
+  3. **The menu's speech item says what is safe.** See owner item 14. `TYPING_WORKS_MEANWHILE` and `TYPED_THOUGHTS_SAVED` (problems.ts) are the builders' own words; `MenuInput.speechRetry` is now `speechSublabel`.
+  4. **The app's own words.** The review question's detail and the sounds description (owner item 14), and the review's notification: "Evening review: 1 thought filed" or "N thoughts filed", as the menu's head counts them.
+  5. **Settings opens without scrolling.** The window is 680 × 660, where General needs 557 px of pane (it had 513 at 600). The least height stays 440.
+  6. **Three menu wordings.** The running review's count is "Filing 1 of 2" (`reviewProgress`), the Undo item is "Undo the last evening review" (the menu, the Reviews pane's note and the README), and the head opens the inbox only while its second line names it: with an empty inbox it opens the library.
+  7. **Ink glyphs in the menu.** The shelf glyphs are black template images, so macOS tints them for a light menu, a dark menu and the highlight (the coloured ones fell under 3:1 on a light menu, 1.35:1 for Ideas, and kept their colour on the selection). The per-appearance cache, the `nativeTheme` rebuild, `SHELF_COLORS` and `tinted` are gone: the images are cached per shelf.
+  - Left as they are, for the owner: the filing face's dots merge with the base at menu-bar size (owner item 11), and Run Now stays the review question's default button.
 - [ ] **Step 5: List the by-hand checks** in the flight pack as pending for the owner, never as done:
   - with sounds on, record with the Mac's microphone and with AirPods: the Tick isn't heard in the saved recording (`raw/audio/`, the first half-second; owner item 16);
   - on macOS 27, the shelf images show in the menu, in light and dark (owner item 8);

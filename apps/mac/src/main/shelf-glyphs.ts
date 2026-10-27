@@ -1,9 +1,9 @@
-// The six shelves as the menu shows them: their names, their colours and their glyphs. The design system draws the glyphs in React
+// The six shelves as the menu shows them: their names and their glyphs. The design system draws the glyphs in React
 // (packages/ui/src/components/Shelf.tsx), and its package root pulls in CSS and fonts that main's build can't load, so main keeps
 // copies here. test/shelf-glyphs.test.ts renders the design system's own ShelfGlyph for each shelf and checks that its elements and
-// attributes (currentColor read as black) are SHELF_GLYPH_SVG's, and that the shelves, names and colours equal the design system's
-// exports and its tokens.css, in light and in dark.
-import { tinted, type Bitmap } from "./png.ts";
+// attributes (currentColor read as black) are SHELF_GLYPH_SVG's, and that the shelves and names equal the design system's exports.
+// The menu draws the glyphs in black, as template images, which macOS tints for the menu: so main holds no shelf colours.
+import type { Bitmap } from "./png.ts";
 import { rasterizeSvg } from "./raster.ts";
 
 /** The library's shelves, in the order the menu lists them (packages/ui/src/generated/tokens.ts). */
@@ -20,13 +20,7 @@ export const SHELF_NAMES: Record<Shelf, string> = {
   topics: "Topics",
 };
 
-/** Each shelf's colour, from the `--av-shelf-*` tokens in light and in dark (packages/ui/src/generated/tokens.css). */
-export const SHELF_COLORS: { light: Record<Shelf, string>; dark: Record<Shelf, string> } = {
-  light: { goals: "#34c759", ideas: "#ffcc00", problems: "#ff3b30", memories: "#af52de", people: "#007aff", topics: "#8e8e93" },
-  dark: { goals: "#30d158", ideas: "#ffd60a", problems: "#ff453a", memories: "#bf5af2", people: "#0a84ff", topics: "#98989d" },
-};
-
-// Shelf.tsx's `stroke`, with black for currentColor: shelfGlyphIcon tints the result.
+// Shelf.tsx's `stroke`, with black for currentColor: the glyph is black on transparent, and macOS tints it as a template image.
 const OUTLINE = 'fill="none" stroke="black" stroke-linecap="round" stroke-linejoin="round"';
 const glyph = (shapes: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" width="12" height="12">${shapes}</svg>`;
 
@@ -52,12 +46,12 @@ export const SHELF_GLYPH_SVG: Record<Shelf, string> = {
 /** Whether a library folder is one of the six shelves, by its exact name. A folder the person made is none, whatever it is called. */
 export const isShelf = (folder: string): folder is Shelf => (SHELVES as readonly string[]).includes(folder);
 
-/** A shelf's glyph in the shelf's colour for the light or the dark menu, 12 points square. */
-export function shelfGlyph(shelf: Shelf, dark: boolean, scale: 1 | 2): Bitmap {
-  return tinted(rasterizeSvg(SHELF_GLYPH_SVG[shelf], scale), SHELF_COLORS[dark ? "dark" : "light"][shelf]);
+/** A shelf's glyph, 12 points square: black on transparent, for an Electron template image. */
+export function shelfGlyph(shelf: Shelf, scale: 1 | 2): Bitmap {
+  return rasterizeSvg(SHELF_GLYPH_SVG[shelf], scale);
 }
 
 /** `shelfGlyph` for a library folder: null for one that isn't a shelf. */
-export function shelfGlyphIcon(shelf: string, dark: boolean, scale: 1 | 2): Bitmap | null {
-  return isShelf(shelf) ? shelfGlyph(shelf, dark, scale) : null;
+export function shelfGlyphIcon(shelf: string, scale: 1 | 2): Bitmap | null {
+  return isShelf(shelf) ? shelfGlyph(shelf, scale) : null;
 }

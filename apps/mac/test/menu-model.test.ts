@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildMenuModel, formatWhen, menuLabel, speechProblemOf, statusLine, type MenuInput, type MenuTask } from "../src/main/menu-model.ts";
+import { buildMenuModel, formatWhen, menuLabel, reviewProgress, speechProblemOf, statusLine, type MenuInput, type MenuTask } from "../src/main/menu-model.ts";
 import { DEFAULT_SETTINGS } from "../src/main/store.ts";
-import { downloadFailedProblem, voiceSettingsProblem } from "../src/shared/problems.ts";
+import { downloadFailedProblem, TYPED_THOUGHTS_SAVED, TYPING_WORKS_MEANWHILE, voiceSettingsProblem } from "../src/shared/problems.ts";
 
 const now = new Date(2026, 9, 20, 14, 3); // Tue 20 Oct 2026, 14:03 local
 
@@ -46,9 +46,26 @@ describe("tray menu", () => {
     expect(buildMenuModel(input({ inbox: 1 }), now)[0]).toMatchObject({ action: "open-inbox", sublabel: "1 note in the inbox" });
     expect(buildMenuModel(input({ inbox: 7 }), now)[0]).toMatchObject({ sublabel: "7 notes in the inbox" });
     const [head] = buildMenuModel(input({ inbox: 0 }), now);
-    expect(head).toEqual({ type: "item", label: "3 thoughts filed today. Evening review at 21:00.", action: "open-inbox" });
+    expect(head).toEqual({ type: "item", label: "3 thoughts filed today. Evening review at 21:00.", action: "open-library" });
     expect(head).not.toHaveProperty("sublabel");
     expect(JSON.stringify(buildMenuModel(input({ inbox: 0 }), now))).not.toMatch(/Inbox is empty|Next:/);
+  });
+
+  it("opens the inbox only while its second line names the inbox, and the library when it doesn't", () => {
+    // The click goes where the words say: with a note waiting, "2 notes in the inbox" is under the head, and the click opens the inbox.
+    for (const inbox of [1, 2, 40]) {
+      const [head] = buildMenuModel(input({ inbox }), now);
+      expect(head, `${inbox} in the inbox`).toMatchObject({ action: "open-inbox", sublabel: expect.stringMatching(/in the inbox$/) });
+    }
+    // With the inbox empty the words no longer mention it, so the click opens the library: an empty folder to look at would say nothing.
+    const [empty] = buildMenuModel(input({ inbox: 0 }), now);
+    expect(empty).toMatchObject({ action: "open-library" });
+    expect(JSON.stringify(empty)).not.toMatch(/inbox/i);
+    // However the rest of the head reads, the action follows the second line alone.
+    for (const overrides of [{ filedToday: 0 }, { filedToday: 1 }, { tasks: [] }, { recording: true }, { undoableReview: true }, { recent: [] }]) {
+      expect(buildMenuModel(input({ ...overrides, inbox: 0 }), now)[0], JSON.stringify(overrides)).toMatchObject({ action: "open-library" });
+      expect(buildMenuModel(input({ ...overrides, inbox: 3 }), now)[0], JSON.stringify(overrides)).toMatchObject({ action: "open-inbox" });
+    }
   });
 
   describe("the head says how today went", () => {
@@ -206,18 +223,35 @@ describe("tray menu", () => {
     });
 
     it("says how far a running review is, in place of Running…", () => {
-      expect(review({ running: true, progress: "1 of 2" })).toMatchObject({ label: "Evening review", detail: "1 of 2" });
-      expect(review({ running: true, progress: "5 of 5" })).toMatchObject({ detail: "5 of 5" });
+      expect(review({ running: true, progress: "Filing 1 of 2" })).toMatchObject({ label: "Evening review", detail: "Filing 1 of 2" });
+      expect(review({ running: true, progress: "Filing 5 of 5" })).toMatchObject({ detail: "Filing 5 of 5" });
     });
 
     it("is its time again once it has stopped, whatever count it was left with", () => {
-      expect(review({ running: false, progress: "2 of 2" })).toMatchObject({ detail: "21:00" });
+      expect(review({ running: false, progress: "Filing 2 of 2" })).toMatchObject({ detail: "21:00" });
     });
 
     it("keeps the label plain and puts the count in parentheses where the tray draws it", () => {
-      const item = review({ running: true, progress: "2 of 5" });
-      expect(item).toMatchObject({ type: "item", label: "Evening review", action: "task:evening-review", detail: "2 of 5" });
-      expect(menuLabel(item as { label: string; detail?: string })).toBe("Evening review (2 of 5)");
+      const item = review({ running: true, progress: "Filing 2 of 5" });
+      expect(item).toMatchObject({ type: "item", label: "Evening review", action: "task:evening-review", detail: "Filing 2 of 5" });
+      expect(menuLabel(item as { label: string; detail?: string })).toBe("Evening review (Filing 2 of 5)");
+    });
+  });
+
+  describe("reviewProgress", () => {
+    it("says what the review is doing and how far, capitalised like the other details (Running…, Off, 21:00)", () => {
+      expect(reviewProgress(1, 2)).toBe("Filing 1 of 2");
+      expect(reviewProgress(5, 5)).toBe("Filing 5 of 5");
+      expect(reviewProgress(1, 1)).toBe("Filing 1 of 1");
+    });
+
+    it("never lets the total fall short of the count: a capture that arrives meanwhile raises it", () => {
+      expect(reviewProgress(3, 2)).toBe("Filing 3 of 3");
+      expect(reviewProgress(1, 0)).toBe("Filing 1 of 1");
+    });
+
+    it("reads as a detail in the menu, in parentheses after the review's name", () => {
+      expect(menuLabel({ label: "Evening review", detail: reviewProgress(1, 2) })).toBe("Evening review (Filing 1 of 2)");
     });
   });
 
@@ -282,10 +316,10 @@ describe("tray menu", () => {
       }
     });
 
-    it("says what trying again does, when it is told", () => {
-      const retry = "Try again in Settings → Voice. It continues where it stopped.";
-      const items = buildMenuModel(input({ speechProblem: downloading, speechRetry: retry }), now);
-      expect(items[1]).toEqual({ type: "item", label: downloading, action: "open-settings:voice", sublabel: retry });
+    it("puts what is safe and where to go under it, when it is told", () => {
+      const sublabel = "Typing works meanwhile. Try again in Settings → Voice.";
+      const items = buildMenuModel(input({ speechProblem: downloading, speechSublabel: sublabel }), now);
+      expect(items[1]).toEqual({ type: "item", label: downloading, action: "open-settings:voice", sublabel });
     });
 
     it("is an item that can be read, not dimmed", () => {
@@ -297,8 +331,8 @@ describe("tray menu", () => {
       const items = buildMenuModel(input({ speechProblem: null }), now);
       expect(items[1]).toEqual({ type: "separator" });
       expect(JSON.stringify(items)).not.toContain("open-settings");
-      // And a retry line alone, with no problem to put it under, shows nothing.
-      expect(JSON.stringify(buildMenuModel(input({ speechProblem: null, speechRetry: "Try again" }), now))).not.toContain("Try again");
+      // And a second line alone, with no problem to put it under, shows nothing.
+      expect(JSON.stringify(buildMenuModel(input({ speechProblem: null, speechSublabel: "Try again" }), now))).not.toContain("Try again");
     });
 
     it("leaves the rest of the menu as it is", () => {
@@ -409,9 +443,9 @@ describe("tray menu", () => {
     it("sits beside the evening review's own Undo, which it does not replace", () => {
       const items = withUndo({ undoableReview: true });
       expect(labels(items)).toContain("Undo the last filing");
-      expect(labels(items)).toContain("Undo last evening review");
+      expect(labels(items)).toContain("Undo the last evening review");
       expect(items.filter((item) => item.type === "item" && item.action === "undo-review")).toEqual([
-        { type: "item", label: "Undo last evening review", action: "undo-review" },
+        { type: "item", label: "Undo the last evening review", action: "undo-review" },
       ]);
     });
   });
@@ -432,8 +466,8 @@ describe("tray menu", () => {
 
   it("says nothing of an empty inbox, and offers undo after an evening review", () => {
     const items = buildMenuModel(input({ inbox: 0, undoableReview: true }), now);
-    expect(items[0]).toEqual({ type: "item", label: "3 thoughts filed today. Evening review at 21:00.", action: "open-inbox" });
-    expect(labels(items)).toContain("Undo last evening review");
+    expect(items[0]).toEqual({ type: "item", label: "3 thoughts filed today. Evening review at 21:00.", action: "open-library" });
+    expect(labels(items)).toContain("Undo the last evening review");
   });
 
   it("only offers setup when there is no library yet", () => {
@@ -478,29 +512,41 @@ describe("tray menu", () => {
 });
 
 describe("speechProblemOf", () => {
-  it("names a download that didn't finish with the capsule's own title, and says what Try again does", () => {
+  it("names a download that didn't finish with the capsule's own title, and says what is safe and where to try again", () => {
     const kept = speechProblemOf({ kind: "error", cause: "download", message: "silero_vad.onnx: the connection dropped", resumable: true });
     expect(kept).toEqual({
       title: "The speech model didn't finish downloading.",
-      retry: "Try again in Settings → Voice. It continues where it stopped.",
+      sublabel: "Typing works meanwhile. Try again in Settings → Voice.",
     });
+    // Whether part of the download was kept is for Settings → Voice to say, beside its Try again: the menu says the same either way.
     const gone = speechProblemOf({ kind: "error", cause: "download", message: "silero_vad.onnx: what arrived was damaged", resumable: false });
-    expect(gone).toEqual({
-      title: "The speech model didn't finish downloading.",
-      retry: "Try again in Settings → Voice. It starts the download over.",
-    });
-    // The title is the card's: one builder, wherever the problem is told.
-    expect(kept?.title).toBe(downloadFailedProblem("anything", true).title);
-    expect(gone?.title).toBe(downloadFailedProblem("anything", false).title);
+    expect(gone).toEqual(kept);
+    // The title and what is safe are the card's and Settings → Voice's own: one builder, wherever the problem is told.
+    for (const resumable of [true, false]) {
+      const told = downloadFailedProblem("anything", resumable);
+      expect(told.title).toBe(kept?.title);
+      expect(told.body).toContain(`${TYPING_WORKS_MEANWHILE}, and Try again`);
+      expect(kept?.sublabel.startsWith(`${TYPING_WORKS_MEANWHILE}. `)).toBe(true);
+    }
   });
 
-  it("names voice settings Avanzel can't use with the capsule's own title, and says they are read again", () => {
+  it("names voice settings Avanzel can't use with the capsule's own title, and says what is safe and where they are fixed", () => {
     const problem = speechProblemOf({ kind: "error", cause: "settings", message: "Speech model 'parakeet-v9' is not supported", resumable: false });
     expect(problem).toEqual({
       title: "Avanzel can't use the voice settings in this library's config file.",
-      retry: "Fix the config file. Avanzel reads it again within a minute.",
+      sublabel: "Typed thoughts are still saved to the inbox. Fix the config file.",
     });
-    expect(problem?.title).toBe(voiceSettingsProblem("anything").title);
+    const told = voiceSettingsProblem("anything");
+    expect(problem?.title).toBe(told.title);
+    expect(told.body).toContain(TYPED_THOUGHTS_SAVED);
+    expect(problem?.sublabel.startsWith(`${TYPED_THOUGHTS_SAVED} `)).toBe(true);
+  });
+
+  it("leaves what Try again does, whether it continues or starts over, to Settings → Voice", () => {
+    for (const resumable of [true, false]) {
+      const download = speechProblemOf({ kind: "error", cause: "download", message: "x", resumable });
+      expect(download?.sublabel, `resumable ${resumable}`).not.toMatch(/continues|starts the download|downloads it again/);
+    }
   });
 
   it("is nothing while the model is ready, on its way, or still to be fetched", () => {
@@ -512,7 +558,7 @@ describe("speechProblemOf", () => {
   it("says nothing the copy rules forbid: sentence case, no exclamation mark, never Letter", () => {
     for (const cause of ["download", "settings"] as const) {
       const problem = speechProblemOf({ kind: "error", cause, message: "x", resumable: true });
-      for (const line of [problem?.title ?? "", problem?.retry ?? ""]) {
+      for (const line of [problem?.title ?? "", problem?.sublabel ?? ""]) {
         expect(line).toMatch(/^[A-Z]/);
         expect(line).toMatch(/\.$/);
         expect(line).not.toMatch(/!|oops|letter/i);

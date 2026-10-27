@@ -35,6 +35,25 @@ export interface TrayView {
   title: string;
 }
 
+/**
+ * The words of each face, for the icon's tooltip. Electron's Tray has no accessibility label, so the tooltip is all the text a hover or
+ * VoiceOver gets of the icon: the states carry words, not just a face (DESIGN.md, Accessibility). The filing face needs them most, since
+ * at 18 pt it reads like idle.
+ */
+const TOOLTIPS: Record<MenuBarState, string> = {
+  idle: "Avanzel",
+  listening: "Avanzel is recording",
+  filing: "Avanzel is filing",
+  filed: "Avanzel filed it",
+  "needs-you": "Avanzel needs you",
+  asleep: "The evening review is done",
+};
+
+/** The tooltip for `face`: what the icon says in words while it shows that face. */
+export function trayTooltip(face: MenuBarState): string {
+  return TOOLTIPS[face];
+}
+
 /** What the title counts: a recording, else a hidden filing's run; null when neither does. */
 function countingSince(input: TrayInput): number | null {
   return input.recordingSince ?? input.hiddenFilingSince;

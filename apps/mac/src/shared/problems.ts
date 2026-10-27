@@ -250,6 +250,18 @@ export function askProblem(f: AgentFailure, changedFiles: number, now: Date): As
 }
 
 /**
+ * What is safe while the speech model can't be had: typing works. It begins the sentence `downloadFailedProblem` says in the capsule's
+ * card and in Settings → Voice, and the menu bar's item for the problem begins its second line with it (`speechProblemOf`).
+ */
+export const TYPING_WORKS_MEANWHILE = "Typing works meanwhile";
+
+/**
+ * What is safe while the library's voice settings can't be used: a typed thought is saved to the inbox. The sentence every place that
+ * tells the problem says (`voiceSettingsProblem`: the capsule's card, Settings → Voice, and the menu bar's item).
+ */
+export const TYPED_THOUGHTS_SAVED = "Typed thoughts are still saved to the inbox.";
+
+/**
  * A speech-model download that didn't finish, as the capsule and Settings → Voice tell it. `reason` is the engine's: the file
  * and why, without the URL it came from. Typing works meanwhile; `resumable` says part of the download was kept, so Try
  * again continues where it stopped, and otherwise it downloads the file again. It promises nothing of a recording, since
@@ -259,7 +271,7 @@ export function downloadFailedProblem(reason: string, resumable: boolean): Probl
   const tryAgain = resumable ? "continues where it stopped" : "downloads it again";
   return {
     title: "The speech model didn't finish downloading.",
-    body: [ownLine(reason), `Typing works meanwhile, and Try again ${tryAgain}.`].filter(Boolean).join(" "),
+    body: [ownLine(reason), `${TYPING_WORKS_MEANWHILE}, and Try again ${tryAgain}.`].filter(Boolean).join(" "),
   };
 }
 
@@ -425,7 +437,7 @@ export function thoughtNotSavedProblem(reason: string, lineMax?: number): Proble
  * and Settings → Voice tells it in these words.
  */
 export function voiceSettingsProblem(reason: string): Problem {
-  return { title: "Avanzel can't use the voice settings in this library's config file.", body: sentences(ownLine(reason), "Typed thoughts are still saved to the inbox.") };
+  return { title: "Avanzel can't use the voice settings in this library's config file.", body: sentences(ownLine(reason), TYPED_THOUGHTS_SAVED) };
 }
 
 /**
