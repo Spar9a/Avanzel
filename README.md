@@ -99,6 +99,10 @@ Good to know:
   filing there says the stopped run's edits stay as they are, because nothing recorded them.
 - **Setup** keeps the times of its milestones in `first-run.json` in Avanzel's own folder, on this
   Mac only.
+- **The capsule** keeps a bare count of the recordings the library has kept in `captures.json`
+  (only a number, which decides when its key hints stop), and the seconds of each agent's last
+  filings in `run-state.json` (which set the time its card says a filing takes), in Avanzel's own
+  folder, on this Mac only.
 
 Run it from this repository (Node 22+):
 
