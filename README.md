@@ -108,7 +108,7 @@ Run it from this repository (Node 22+):
 
 ```bash
 npm install
-npm run dev -w @avanzel/mac          # build and start it (menu bar icon: four bars on a shelf)
+npm run dev -w @avanzel/mac          # build and start it (menu bar icon: Zel's face, which shows what it's doing)
 npm run dist -w @avanzel/mac         # or build apps/mac/release/mac-arm64/Avanzel.app
 ```
 
