@@ -14,6 +14,7 @@ const bridge: AvanzelBridge = {
     ready: () => ipcRenderer.send("capsule:ready"),
     onCommand: (callback) => listen<"start" | "stop" | "cancel">("capsule:command", callback),
     onSound: (callback) => listen<SoundName>("capsule:sound", callback),
+    onSoundsSetting: (callback) => listen<boolean>("capsule:sounds-setting", callback),
     sendAudio: (samples) => ipcRenderer.invoke("capsule:audio", samples),
     reportMicError: (message) => ipcRenderer.send("capsule:mic-error", message),
     setInteractive: (interactive) => ipcRenderer.send("capsule:interactive", interactive),

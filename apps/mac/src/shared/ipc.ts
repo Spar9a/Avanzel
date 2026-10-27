@@ -621,6 +621,8 @@ export interface SetupSnapshot {
   launchAtLogin: boolean;
   /** The library's evening review, the shadow task whose kind is "evening-review"; null without a library, or one that has none. */
   eveningReview: TaskInfo | null;
+  /** The five sounds are on (AppSettings.sounds): off until the person switches them on, as the last step offers. */
+  sounds: boolean;
 }
 
 /** What Zel's bubble says, once setup has ended in the menu bar. */
@@ -673,6 +675,12 @@ export interface AvanzelBridge {
      * `stop` or `cancel` that ends the recording: the page plays that one once the command has let go of the microphone, not before.
      */
     onSound(callback: (name: SoundName) => void): () => void;
+    /**
+     * Whether sounds are on (AppSettings.sounds), told when they are switched on or off and when the page loads with them on: not when it
+     * loads with them off, which is how it starts. The page makes its AudioContext on `true`, so that the first Tick doesn't wait for the
+     * audio device to open, and closes it on `false`, which lets go of the device.
+     */
+    onSoundsSetting(callback: (on: boolean) => void): () => void;
     sendAudio(samples: Float32Array): Promise<void>;
     reportMicError(message: string): void;
     setInteractive(interactive: boolean): void;

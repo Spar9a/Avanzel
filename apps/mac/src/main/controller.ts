@@ -962,11 +962,26 @@ export class Controller {
     this.refreshMenu();
   }
 
-  /** The capsule page is listening: it may have missed the state sent while it loaded, and gets the commands held for it. */
+  /**
+   * The capsule page is listening: it may have missed the state sent while it loaded, and gets the commands held for it. A page that loads
+   * with sounds on is told so, ahead of those commands: it makes its AudioContext then, and the Tick of a held start finds it made. With
+   * sounds off it is told nothing, which is how a page starts.
+   */
   capsuleReady(): void {
     this.capsuleListening = true;
     this.capsule.webContents.send("capsule:state", this.capsuleState);
+    if (this.store.get().sounds) this.capsule.webContents.send("capsule:sounds-setting", true);
     for (const command of this.heldCommands.splice(0)) this.capsule.webContents.send("capsule:command", command);
+  }
+
+  /**
+   * Tells the capsule's page that sounds went on or off (`capsule:sounds-setting`). On, it makes its AudioContext at once, off the dictation's
+   * path: opening the audio device takes about a tenth of a second, which would otherwise delay the listening card at the first Tick of
+   * a launch. Off, it closes the context, which lets go of the device. A page that isn't listening yet is told when it is (`capsuleReady`).
+   */
+  private tellSoundsSetting(on: boolean): void {
+    if (!this.capsuleListening || this.capsule.isDestroyed() || this.capsule.webContents.isDestroyed()) return;
+    this.capsule.webContents.send("capsule:sounds-setting", on);
   }
 
   /** A command for the capsule's recorder. Sent while its page loads, it would be lost: so it waits. */
@@ -3072,6 +3087,7 @@ export class Controller {
    * set: on the step itself, or in Settings → Voice, where the step's Open Settings leads. Opening at login is saved,
    * and macOS's login items follow it in a packaged Avanzel. Not with AVANZEL_TEST=1, which leaves this Mac's login
    * items be, nor in a development run, whose app is node_modules' Electron.app: the setting is kept all the same.
+   * Sounds switched on or off, once saved, are told to the capsule's page (`tellSoundsSetting`).
    */
   private async changeApp(patch: Partial<AppSettings>, picked?: keyof Shortcuts): Promise<SettingsSnapshot> {
     const before = this.store.get();
@@ -3084,6 +3100,7 @@ export class Controller {
     if (patch.launchAtLogin !== undefined && process.env.AVANZEL_TEST !== "1" && app.isPackaged) {
       app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
     }
+    if (before.sounds !== after.sounds) this.tellSoundsSetting(after.sounds);
     this.broadcast();
     return this.snapshot();
   }

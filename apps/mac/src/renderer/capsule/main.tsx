@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
 import type { CapsuleState } from "../../shared/ipc.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
-import { playSound } from "../common/sounds.ts";
+import { playSound, prepareSounds, releaseSounds } from "../common/sounds.ts";
 import { api, type StateOf } from "./api.ts";
 import { editorScene } from "./editor.tsx";
 import { filedScene } from "./filed.tsx";
@@ -223,6 +223,10 @@ function App() {
     else if (name === "stamp") playStamp(() => stateRef.current);
     else playSound(name);
   }), []);
+
+  // Sounds on, or on at load: the page makes its AudioContext now, so that the first Tick doesn't wait for the audio device to open, which
+  // takes a tenth of a second and would delay the listening card. Off: it closes the context, which lets go of the device.
+  useEffect(() => api.onSoundsSetting((on) => (on ? prepareSounds() : releaseSounds())), []);
 
   useEffect(() => api.onCommand(async (command) => {
     const current = stateRef.current;

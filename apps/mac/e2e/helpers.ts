@@ -412,6 +412,45 @@ export async function windowFor(app: ElectronApplication, name: string): Promise
 export const shown = (app: ElectronApplication, name: string) =>
   app.evaluate(({ BrowserWindow }, page) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes(`/renderer/${page}/`) && w.isVisible()), name);
 
+/**
+ * What the sounds a page played, by name, oldest first: the page's own record (`globalThis.__avanzelSounds`, renderer/common/sounds.ts),
+ * which only the page can read. The capsule, setup and Settings each play their own.
+ */
+export const played = (page: Page): Promise<string[]> =>
+  page.evaluate(() => ((globalThis as { __avanzelSounds?: { name: string }[] }).__avanzelSounds ?? []).map((sound) => sound.name));
+
+/** Mutes every window that is open now, so that a test of sounds makes none on the Mac it runs on: the pages play all the same. */
+export const muteWindows = (app: ElectronApplication) =>
+  app.evaluate(({ BrowserWindow }) => {
+    for (const win of BrowserWindow.getAllWindows()) win.webContents.setAudioMuted(true);
+  });
+
+/**
+ * Notes each AudioContext a page makes from now on, for `audioContexts`. A page makes its one context when it first needs it (renderer/common/
+ * sounds.ts), by `new AudioContext()`, so this stands a counting one in its place. Run it in a page (`page.evaluate`) to watch that page as it
+ * is, or give it to `app.context().addInitScript` to watch every page that loads after it, from its first line.
+ */
+export function watchAudioContexts(): void {
+  const Real = window.AudioContext;
+  const made: AudioContext[] = [];
+  (window as unknown as { audioContextsMade: AudioContext[] }).audioContextsMade = made;
+  window.AudioContext = class extends Real {
+    constructor(options?: AudioContextOptions) {
+      super(options);
+      made.push(this);
+    }
+  };
+}
+
+/**
+ * The state of each AudioContext a page made since `watchAudioContexts`, in the order made; null for a page that isn't watched, and for one
+ * that is loading again, which has no answer yet (a test that reloads a page polls this until the new page answers).
+ */
+export const audioContexts = (page: Page): Promise<string[] | null> =>
+  page
+    .evaluate(() => (window as unknown as { audioContextsMade?: AudioContext[] }).audioContextsMade?.map((context) => context.state) ?? null)
+    .catch(() => null);
+
 /** Opens Settings (showSettings) and moves to `pane` on its toolbar; returns the window once that pane's heading shows. */
 export async function openSettings(app: ElectronApplication, pane = "General"): Promise<Page> {
   await call(app, "showSettings");

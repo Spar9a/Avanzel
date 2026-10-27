@@ -119,6 +119,9 @@ class FakeContext {
   readonly sampleRate = 48000;
   readonly destination = new FakeNode();
   resumed = 0;
+  /** How many times the page closed it, and whether closing fails (a real context rejects if the device has gone, or it is closed already). */
+  closed = 0;
+  closeFails = false;
   readonly oscillators: FakeOscillator[] = [];
   readonly gains: FakeGain[] = [];
   readonly filters: FakeFilter[] = [];
@@ -128,6 +131,12 @@ class FakeContext {
   async resume(): Promise<void> {
     this.resumed += 1;
     this.state = "running";
+  }
+
+  async close(): Promise<void> {
+    this.closed += 1;
+    if (this.closeFails) throw new Error("The audio device has gone.");
+    this.state = "closed";
   }
 
   createOscillator(): FakeOscillator {
@@ -343,6 +352,244 @@ describe("the page's AudioContext", () => {
     const running = new FakeContext();
     other.playSound("tick", () => running.asAudio);
     expect(running.resumed).toBe(0);
+  });
+});
+
+// Main tells the capsule's page when sounds go on and off (`capsule:sounds-setting`), and the page gets its AudioContext ready then:
+// opening the audio device takes a tenth of a second, and it should not be the Tick's, which comes ahead of the listening card.
+describe("getting the page's AudioContext ready, and letting go of it", () => {
+  it("prepareSounds makes the context and plays nothing, and the first sound after it is played on that context", async () => {
+    const { playSound, prepareSounds } = await page();
+    const context = new FakeContext();
+    const make = vi.fn(() => context.asAudio);
+    prepareSounds(make);
+    expect(make).toHaveBeenCalledTimes(1);
+    expect(context.allSources()).toHaveLength(0);
+    expect(played() ?? []).toEqual([]); // a context made is not a sound played
+    const another = vi.fn(() => new FakeContext().asAudio);
+    playSound("tick", another);
+    expect(another).not.toHaveBeenCalled();
+    expect(context.oscillators).toHaveLength(1);
+    expect(played()?.map((entry) => entry.name)).toEqual(["tick"]);
+  });
+
+  it("makes one context however often it is prepared, and a sound before it has made it", async () => {
+    const { playSound, prepareSounds } = await page();
+    const context = new FakeContext();
+    const make = vi.fn(() => context.asAudio);
+    prepareSounds(make);
+    prepareSounds(make);
+    playSound("stamp", make);
+    prepareSounds(make);
+    expect(make).toHaveBeenCalledTimes(1);
+
+    const first = await page(); // and the other way about: a context a sound made is the one prepare keeps
+    const made = new FakeContext();
+    const makeLate = vi.fn(() => made.asAudio);
+    first.playSound("tock", makeLate);
+    first.prepareSounds(makeLate);
+    expect(makeLate).toHaveBeenCalledTimes(1);
+  });
+
+  it("wakes a context that is suspended as it is prepared, and leaves one that runs", async () => {
+    const { prepareSounds } = await page();
+    const suspended = new FakeContext();
+    suspended.state = "suspended";
+    prepareSounds(() => suspended.asAudio);
+    expect(suspended.resumed).toBe(1);
+    prepareSounds(() => suspended.asAudio); // running now
+    expect(suspended.resumed).toBe(1);
+
+    const other = await page();
+    const running = new FakeContext();
+    other.prepareSounds(() => running.asAudio);
+    expect(running.resumed).toBe(0);
+  });
+
+  it("is a real AudioContext when no make is given, made when it is prepared and not before", async () => {
+    const context = new FakeContext();
+    const Audio = vi.fn(function () {
+      return context;
+    });
+    vi.stubGlobal("AudioContext", Audio);
+    const { prepareSounds } = await page();
+    expect(Audio).not.toHaveBeenCalled();
+    prepareSounds();
+    expect(Audio).toHaveBeenCalledTimes(1);
+  });
+
+  it("never throws for a page without audio: nothing is made, and the next prepare, or the next sound, tries again", async () => {
+    const { playSound, prepareSounds } = await page();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(() =>
+      prepareSounds(() => {
+        throw new Error("no audio output");
+      }),
+    ).not.toThrow();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const context = new FakeContext();
+    const make = vi.fn(() => context.asAudio);
+    prepareSounds(make);
+    expect(make).toHaveBeenCalledTimes(1);
+    expect(played() ?? []).toEqual([]);
+    playSound("tick", make);
+    expect(make).toHaveBeenCalledTimes(1);
+
+    const other = await page(); // a sound after a failed prepare makes the context itself
+    other.prepareSounds(() => {
+      throw new Error("no audio output");
+    });
+    const late = new FakeContext();
+    other.playSound("tock", () => late.asAudio);
+    expect(late.oscillators).toHaveLength(1);
+  });
+
+  it("releaseSounds closes the context and lets go of it, so that the next sound makes another", async () => {
+    const { playSound, prepareSounds, releaseSounds } = await page();
+    const first = new FakeContext();
+    prepareSounds(() => first.asAudio);
+    releaseSounds();
+    expect(first.closed).toBe(1);
+    expect(first.state).toBe("closed");
+    const second = new FakeContext();
+    const make = vi.fn(() => second.asAudio);
+    playSound("tick", make);
+    expect(make).toHaveBeenCalledTimes(1);
+    expect(second.oscillators).toHaveLength(1);
+    expect(first.allSources()).toHaveLength(0); // nothing went to the one that was closed
+    releaseSounds();
+    expect(second.closed).toBe(1);
+    expect(first.closed).toBe(1); // and the first is not closed again
+  });
+
+  it("lets go of a context that a sound made, as well as one that was prepared", async () => {
+    const { playSound, releaseSounds } = await page();
+    const context = new FakeContext();
+    playSound("stamp", () => context.asAudio);
+    releaseSounds();
+    expect(context.closed).toBe(1);
+  });
+
+  it("releaseSounds for a page with no context does nothing, however often, and a context made after it is not closed by it", async () => {
+    const { prepareSounds, releaseSounds } = await page();
+    expect(() => {
+      releaseSounds();
+      releaseSounds();
+    }).not.toThrow();
+    const context = new FakeContext();
+    prepareSounds(() => context.asAudio);
+    expect(context.closed).toBe(0);
+    expect(context.state).toBe("running");
+  });
+
+  it("lets go of a context that will not close all the same, without an error", async () => {
+    const { playSound, releaseSounds } = await page();
+    const stuck = new FakeContext();
+    stuck.closeFails = true;
+    playSound("tick", () => stuck.asAudio);
+    expect(() => releaseSounds()).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0)); // a rejection nobody caught would fail the run here
+    expect(stuck.closed).toBe(1);
+    const fresh = new FakeContext();
+    playSound("tock", () => fresh.asAudio);
+    expect(fresh.oscillators).toHaveLength(1);
+  });
+
+  it("is made again by a prepare after a release, as when sounds go on, off and on", async () => {
+    const { prepareSounds, releaseSounds } = await page();
+    const first = new FakeContext();
+    const second = new FakeContext();
+    const makeSecond = vi.fn(() => second.asAudio);
+    prepareSounds(() => first.asAudio);
+    releaseSounds();
+    prepareSounds(makeSecond);
+    expect(makeSecond).toHaveBeenCalledTimes(1); // the context that was closed is not the one kept
+    expect([first.closed, second.closed]).toEqual([1, 0]);
+    expect(second.state).toBe("running");
+  });
+});
+
+// Setup's Preview sounds: the Tick, the Stamp and the Letter, one after the other, whether sounds are on or not.
+describe("Preview sounds", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const names = () => (played() ?? []).map((entry) => entry.name);
+
+  it("plays the Tick at once, the Stamp 260 ms after it and the Letter 760 ms after it", async () => {
+    vi.useFakeTimers();
+    const { previewSounds } = await page();
+    const context = new FakeContext();
+    previewSounds(() => context.asAudio);
+    expect(names()).toEqual(["tick"]);
+    vi.advanceTimersByTime(259);
+    expect(names()).toEqual(["tick"]);
+    vi.advanceTimersByTime(1);
+    expect(names()).toEqual(["tick", "stamp"]);
+    vi.advanceTimersByTime(499);
+    expect(names()).toEqual(["tick", "stamp"]);
+    vi.advanceTimersByTime(1);
+    expect(names()).toEqual(["tick", "stamp", "letter"]);
+    vi.advanceTimersByTime(5_000);
+    expect(names()).toEqual(["tick", "stamp", "letter"]); // once each
+    const [tick, stamp, letter] = played()!;
+    expect([stamp!.at - tick!.at, letter!.at - tick!.at]).toEqual([260, 760]);
+  });
+
+  it("counts from the press, not from the end of the Tick: a first sound that takes its time to open the device moves nothing", async () => {
+    vi.useFakeTimers();
+    const { previewSounds } = await page();
+    const context = new FakeContext();
+    // Opening the audio device blocks the page's thread for about a tenth of a second, the first time.
+    const slow = () => {
+      vi.advanceTimersByTime(100);
+      return context.asAudio;
+    };
+    previewSounds(slow);
+    vi.advanceTimersByTime(160);
+    expect(names()).toEqual(["tick", "stamp"]); // 260 ms after the press, though only 160 after the Tick returned
+    vi.advanceTimersByTime(500);
+    expect(names()).toEqual(["tick", "stamp", "letter"]);
+  });
+
+  it("leaves each sound room to end before the next begins, by the length each has (SOUND_MS)", async () => {
+    vi.useFakeTimers();
+    const { previewSounds, SOUND_MS } = await page();
+    previewSounds(() => new FakeContext().asAudio);
+    vi.advanceTimersByTime(1_000);
+    const heard = played()!;
+    expect(heard.map((entry) => entry.name)).toEqual(["tick", "stamp", "letter"]);
+    for (let i = 1; i < heard.length; i += 1) {
+      const before = heard[i - 1]!;
+      expect(heard[i]!.at - before.at, `${heard[i]!.name} begins after ${before.name} has ended`).toBeGreaterThanOrEqual(SOUND_MS[before.name as SoundName]);
+    }
+  });
+
+  it("makes the page's one context, and plays all three into it", async () => {
+    vi.useFakeTimers();
+    const { previewSounds } = await page();
+    const context = new FakeContext();
+    const make = vi.fn(() => context.asAudio);
+    previewSounds(make);
+    vi.advanceTimersByTime(1_000);
+    expect(make).toHaveBeenCalledTimes(1);
+    expect(context.oscillators.length).toBeGreaterThanOrEqual(4); // the Tick, the Stamp's thud, the Letter's two notes
+    expect(context.sources).toHaveLength(1); // and the Stamp's click
+  });
+
+  it("is a real AudioContext when no make is given", async () => {
+    vi.useFakeTimers();
+    const context = new FakeContext();
+    const Audio = vi.fn(function () {
+      return context;
+    });
+    vi.stubGlobal("AudioContext", Audio);
+    const { previewSounds } = await page();
+    previewSounds();
+    vi.advanceTimersByTime(1_000);
+    expect(Audio).toHaveBeenCalledTimes(1);
+    expect(names()).toEqual(["tick", "stamp", "letter"]);
   });
 });
 

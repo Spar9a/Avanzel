@@ -1,9 +1,10 @@
 // Settings → General: the library, where it is and what it holds, with its six shelves under it; when a thought is
-// filed; and opening at login. Without a library, the Notice that says why stands where the library would be, and the
-// other two groups follow as usual. Each control applies at once.
+// filed; the sounds; and opening at login. Without a library, the Notice that says why stands where the library would be,
+// and the other groups follow as usual. Each control applies at once.
 import { Actions, Button, Group, GroupRow, Notice, Row, Segmented, SHELVES, ShelfTag, Stack, Switch, type SegmentedOption } from "@avanzel/ui";
 import type { ReactNode } from "react";
 import type { FileMode } from "../../../shared/ipc.ts";
+import { playSound, releaseSounds } from "../../common/sounds.ts";
 import { fileModeLine, libraryLine } from "../copy.ts";
 import { attemptChange, NoLibrary, type PaneProps } from "../parts.tsx";
 import type { ReviewEdits } from "./Reviews.tsx";
@@ -80,6 +81,22 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
           They're safe there.
         </Notice>
       )}
+      <Group label="Sounds">
+        <Switch
+          label="Play sounds"
+          description="A soft tick when you start and stop, a stamp when a card is filed, and two notes when the evening review is done."
+          checked={snap.app.sounds}
+          onChange={async (sounds) => {
+            // The Stamp says that they are on, so it is played once that is saved: a change that wasn't kept (`attempt` tells it) plays none.
+            // Off lets go of this page's audio device; main tells the capsule's page to do the same.
+            const next = await attempt(() => api.setApp({ sounds }));
+            if (!next) return;
+            onChange(next);
+            if (sounds) playSound("stamp");
+            else releaseSounds();
+          }}
+        />
+      </Group>
       <Group label="Startup">
         <Switch
           label="Open Avanzel when you log in"

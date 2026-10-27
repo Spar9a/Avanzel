@@ -2,19 +2,21 @@
 // of the UX prototypes (reports/Avanzel UX prototypes/first-run.html:503-511), until the owner's recordings replace them (spec §11).
 // Sounds are off by default and each has a visual twin (spec §4.6): each is under 0.6 s and quiet, no layer peaks over 0.35, and the
 // Stamp's two layers together peak at 0.48. A window plays one with `playSound`; the capsule's page plays what main sends it
-// (`capsule:sound`), and main decides when, and whether the setting allows it (controller.ts, `sound`).
+// (`capsule:sound`), and main decides when, and whether the setting allows it (controller.ts, `sound`). A page holds one AudioContext,
+// which holds the audio device open: the capsule's is made ahead of its first Tick (`prepareSounds`, when main says sounds are on) and
+// closed when they go off (`releaseSounds`), and setup's Preview (`previewSounds`) plays all three of its sounds, whatever the setting.
 import type { SoundName } from "../../shared/ipc.ts";
 
 /** What of an `AudioContext` the sounds use. The page's own is one, and a fake stands in for it in the tests. */
 export type AudioContextLike = Pick<
   AudioContext,
-  "currentTime" | "sampleRate" | "state" | "destination" | "resume" | "createOscillator" | "createGain" | "createBiquadFilter" | "createBuffer" | "createBufferSource"
+  "currentTime" | "sampleRate" | "state" | "destination" | "resume" | "close" | "createOscillator" | "createGain" | "createBiquadFilter" | "createBuffer" | "createBufferSource"
 >;
 
 /**
  * When each sound's last sample plays, in milliseconds after it starts: it is over by then. The synth sets them. A tone stops 20 ms
  * after it has faded (`tone`), and a burst of noise ends with its buffer (`noise`); the Letter's second note starts 0.1 s late. All are
- * under 0.6 s (spec §4.6). The Preview in setup and Settings spaces its sounds by them.
+ * under 0.6 s (spec §4.6). Setup's Preview spaces its sounds by them (`PREVIEW_AT_MS`).
  */
 export const SOUND_MS: Record<SoundName, number> = { tick: 80, tock: 90, stamp: 200, drawer: 220, letter: 570 };
 
@@ -83,8 +85,21 @@ const SYNTH: Record<SoundName, (context: AudioContextLike) => void> = {
   },
 };
 
-/** The page's one AudioContext, made at the first sound. Each context holds the audio device open, so there is one for a page, not one for a sound. */
+/**
+ * The page's one AudioContext, made at the first sound or by `prepareSounds`, whichever comes first, and let go of by `releaseSounds`. Each
+ * context holds the audio device open, so there is one for a page, not one for a sound.
+ */
 let shared: AudioContextLike | null = null;
+
+/** A real one. Read when it is made, not when the module loads: a page that never plays makes none. */
+const newContext = (): AudioContextLike => new AudioContext();
+
+/** The page's AudioContext: the one it has, else a new one by `make`, woken if it is suspended. Throws when none can be made. */
+function context(make: () => AudioContextLike): AudioContextLike {
+  const ready = (shared ??= make());
+  if (ready.state === "suspended") void ready.resume().catch(() => undefined);
+  return ready;
+}
 
 /** How many plays `__avanzelSounds` keeps. */
 const KEPT = 20;
@@ -99,17 +114,64 @@ function note(name: SoundName): void {
 }
 
 /**
- * Plays `name` now. The page's AudioContext is made by the first play (`make`, which the tests give a fake) and woken if it is
- * suspended. Each play is noted in `globalThis.__avanzelSounds` for the tests, the last 20. A sound that can't play is left unheard,
- * and nothing else is affected: a Mac with no way to play audio is a Mac without sounds, never an error in a window.
+ * Plays `name` now. The page's AudioContext is made by the first play, unless `prepareSounds` made it first (`make`, which the tests
+ * give a fake), and woken if it is suspended. Each play is noted in `globalThis.__avanzelSounds` for the tests, the last 20. A sound
+ * that can't play is left unheard, and nothing else is affected: a Mac with no way to play audio is a Mac without sounds, never an
+ * error in a window.
  */
-export function playSound(name: SoundName, make: () => AudioContextLike = () => new AudioContext()): void {
+export function playSound(name: SoundName, make: () => AudioContextLike = newContext): void {
   try {
-    const context = (shared ??= make());
-    if (context.state === "suspended") void context.resume().catch(() => undefined);
-    SYNTH[name](context);
+    SYNTH[name](context(make));
     note(name);
   } catch (error) {
     console.warn(`The ${name} sound could not play.`, error);
   }
+}
+
+/**
+ * Makes the page's AudioContext now, with no sound, so that the first sound finds it made. Opening the audio device takes a tenth of a
+ * second, and for the capsule that would be the Tick's, ahead of the listening card: main says sounds are on (`capsule:sounds-setting`,
+ * when they are switched on and when the page loads with them on), and the page prepares them then, off the dictation's path. Like
+ * `playSound`, it never throws: a Mac with no way to play audio is a Mac without sounds, and the next sound tries again.
+ */
+export function prepareSounds(make: () => AudioContextLike = newContext): void {
+  try {
+    context(make);
+  } catch (error) {
+    console.warn("The sounds could not be made ready.", error);
+  }
+}
+
+/**
+ * Closes the page's AudioContext and lets go of it, which lets go of the audio device: an open context keeps the device, and with it
+ * a Bluetooth headset's playback mode, until the page ends. Main says sounds are off (`capsule:sounds-setting`), and the page releases
+ * them then; a window that plays by itself releases them when its own switch goes off. A sound played after it makes a new context, as
+ * the first one did. It does nothing for a page that has none, and a context that will not close is let go of all the same.
+ */
+export function releaseSounds(): void {
+  const held = shared;
+  shared = null;
+  if (!held) return;
+  try {
+    void held.close().catch(() => undefined);
+  } catch {
+    // Let go of all the same: there is nothing else to do for a context that will not close.
+  }
+}
+
+/**
+ * When setup's Preview plays the Stamp and the Letter, in milliseconds after it plays the Tick, which is at once. Each begins after the
+ * one before has ended (`SOUND_MS`), with room to hear it end.
+ */
+export const PREVIEW_AT_MS = { stamp: 260, letter: 760 } as const;
+
+/**
+ * Plays the Tick, the Stamp and the Letter one after the other, for a person to hear what the sounds are before they switch them on. It
+ * plays whatever the setting is: the person asked for it, and the setting is main's to hold for the capsule (controller.ts, `sound`), not
+ * a window's own. The times count from the press, so a first sound that takes its time to open the audio device moves none of them.
+ */
+export function previewSounds(make: () => AudioContextLike = newContext): void {
+  setTimeout(() => playSound("stamp", make), PREVIEW_AT_MS.stamp);
+  setTimeout(() => playSound("letter", make), PREVIEW_AT_MS.letter);
+  playSound("tick", make);
 }

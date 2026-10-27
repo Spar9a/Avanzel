@@ -27,9 +27,10 @@ import { closeSetup, dockShown, filedFirstThought, reduceMotion, settingsSnap, w
 
 test.afterEach(closeModelHubs);
 
-// You're all set: the last step. Entering it turns opening at login on, and its two switches, opening at login and the
-// library's evening review, apply at once, as Settings' own do. Start using Avanzel ends setup: the window closes, and
-// Avanzel waits in the menu bar. With AVANZEL_TEST=1 the login setting is saved, and this Mac's login items are left be.
+// You're all set: the last step. Entering it turns opening at login on, and its switches, opening at login, Play sounds (its
+// test is in sounds.spec.ts) and the library's evening review, apply at once, as Settings' own do. Start using Avanzel ends
+// setup: the window closes, and Avanzel waits in the menu bar. With AVANZEL_TEST=1 the login setting is saved, and this Mac's
+// login items are left be.
 
 /**
  * Stands in for macOS's login items: from now on, each call that would change them is noted for `loginItemCalls`, and
@@ -97,7 +98,7 @@ test("the last step turns on opening at login, and both switches apply at once",
   rmSync(path.join(library, "tasks", "evening-review.md"));
   await login.click();
   await expect(login).toHaveAttribute("aria-checked", "true");
-  await expect(setup.getByRole("switch")).toHaveCount(1);
+  await expect(setup.getByRole("switch")).toHaveCount(2); // opening at login, and Play sounds
   // None of it reached this Mac's login items.
   expect(await loginItemCalls(app)).toEqual([]);
   await app.close();

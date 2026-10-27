@@ -9,17 +9,21 @@ import {
   agentCalls,
   answerDialogs,
   answerMenus,
+  audioContexts,
   call,
   emptyHfCache,
   launch,
   makeLibrary,
+  muteWindows,
   openedWith,
   openSettings,
+  played,
   read,
   shownMenus,
   snap,
   stubOpening,
   stubPicker,
+  watchAudioContexts,
   windowFor,
 } from "./helpers.ts";
 
@@ -81,6 +85,34 @@ test("General shows the library with its shelves, and each of its controls appli
   await expect(
     settings.getByText("Your first thought will fill a shelf. This folder has no git history, so changes can't be undone.", { exact: true }),
   ).toBeVisible();
+  await app.close();
+});
+
+test("Settings has Play sounds, off, in a group of its own before Startup, and switching it on plays the Stamp", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app);
+  await muteWindows(app); // the page plays all the same; the Mac it runs on does not hear it
+  await settings.evaluate(watchAudioContexts);
+  expect((await settings.getByRole("heading", { level: 3 }).allTextContents()).slice(-2)).toEqual(["Sounds", "Startup"]);
+  const sounds = settings.getByRole("switch", { name: "Play sounds" });
+  await expect(sounds).toHaveAttribute("aria-checked", "false");
+  await expect(sounds).toHaveAccessibleDescription(
+    "A soft tick when you start and stop, a stamp when a card is filed, and two notes when the evening review is done.",
+  );
+  expect((await snapshot(app)).app.sounds).toBe(false);
+  expect(await played(settings)).toEqual([]);
+  // On: saved, and the Stamp is played, as the sign that it is on.
+  await sounds.click();
+  await expect.poll(async () => (await snapshot(app)).app.sounds).toBe(true);
+  await expect(sounds).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => played(settings)).toEqual(["stamp"]);
+  expect(await audioContexts(settings)).toHaveLength(1);
+  // Off: saved, nothing is played, and the page lets go of its audio device.
+  await sounds.click();
+  await expect.poll(async () => (await snapshot(app)).app.sounds).toBe(false);
+  await expect(sounds).toHaveAttribute("aria-checked", "false");
+  expect(await played(settings)).toEqual(["stamp"]);
+  await expect.poll(() => audioContexts(settings)).toEqual(["closed"]);
   await app.close();
 });
 
@@ -442,6 +474,27 @@ test("an app setting the disk won't take is told as Avanzel's own, in plain word
   } finally {
     rmSync(tmp, { force: true });
   }
+  await app.close();
+});
+
+test("Play sounds that can't be saved is told, stays off and plays no Stamp, and works once the settings can be written", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
+  const settings = await openSettings(app);
+  await muteWindows(app);
+  // The app can't write its settings when a folder stands where the temporary file it writes first would go.
+  mkdirSync(path.join(userData, "settings.json.tmp"));
+  const sounds = settings.getByRole("switch", { name: "Play sounds" });
+  await sounds.click();
+  await expect(notSaved(settings)).toBeVisible();
+  await expect(sounds).toHaveAttribute("aria-checked", "false");
+  expect((await snapshot(app)).app.sounds).toBe(false);
+  expect(await played(settings), "the Stamp is the sign that sounds are on, and they are not").toEqual([]);
+  rmSync(path.join(userData, "settings.json.tmp"), { recursive: true });
+  await sounds.click();
+  await expect.poll(async () => (await snapshot(app)).app.sounds).toBe(true);
+  await expect(notSaved(settings)).toHaveCount(0);
+  await expect.poll(() => played(settings)).toEqual(["stamp"]);
   await app.close();
 });
 

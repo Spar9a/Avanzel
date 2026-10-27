@@ -1,11 +1,14 @@
 // Step 6, You're all set: how to talk to Avanzel from now on, and where it waits, beside Zel at rest. Until the speech
 // model is ready, it promises no talking: it says why it can't hear yet, as the first-thought step does, and how to
-// type a thought instead (Type a thought's shortcut while it works, else the menu bar's Type a thought…). Two switches
-// apply at once, as Settings' own do: opening at login, which this step turned on the first time it showed, and the
-// library's evening review, which isn't there when the library has none. Each comes back through setup:changed. Start
+// type a thought instead (Type a thought's shortcut while it works, else the menu bar's Type a thought…). Three switches
+// apply at once, as Settings' own do: opening at login, which this step turned on the first time it showed, Play sounds,
+// which is off until the person turns it on, and the library's evening review, which isn't there when the library has
+// none. Each comes back through setup:changed. Preview sounds plays the sounds whatever the setting; it sits below the
+// Group, since a Group draws only its direct children as rows and a Switch has no place for a button of its own. Start
 // using Avanzel ends setup (`finish`): the window flies into the menu bar. There is no Back.
-import { Button, Group, Kbd, Stack, Switch, Text, Zel } from "@avanzel/ui";
+import { Actions, Button, Group, Kbd, Stack, Switch, Text, Zel } from "@avanzel/ui";
 import { prettyAccelerator } from "../../../main/shortcuts.ts";
+import { playSound, previewSounds, releaseSounds } from "../../common/sounds.ts";
 import { earsLine, reviewLabel } from "../copy.ts";
 import { Frame, type StepProps } from "../frame.tsx";
 
@@ -46,6 +49,12 @@ export function Done({ snap, finish }: StepProps & { finish(): void }) {
         )}
         <Group>
           <Switch label="Open Avanzel when I log in" checked={snap.launchAtLogin} onChange={(on) => void settings.setApp({ launchAtLogin: on })} />
+          <Switch
+            label="Play sounds"
+            checked={snap.sounds}
+            // Once saved: the Stamp says that they are on, so it isn't played for a change that wasn't kept. Off lets go of the audio device.
+            onChange={(sounds) => void settings.setApp({ sounds }).then(() => (sounds ? playSound("stamp") : releaseSounds()))}
+          />
           {review && (
             <Switch
               label={reviewLabel(review.schedule)}
@@ -58,6 +67,9 @@ export function Done({ snap, finish }: StepProps & { finish(): void }) {
             />
           )}
         </Group>
+        <Actions align="start">
+          <Button size="small" variant="secondary" onClick={() => previewSounds()}>Preview sounds</Button>
+        </Actions>
       </Stack>
     </Frame>
   );
