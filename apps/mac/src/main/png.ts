@@ -1,6 +1,9 @@
-// A tiny PNG encoder plus the menu bar glyph (voice bars standing on a shelf) and shelf-colour dots,
-// so the app needs no image files or image libraries.
+// A tiny PNG encoder plus the menu bar glyph (voice bars standing on a shelf), Zel's faces and shelf-colour dots,
+// so the app needs no image files or image libraries. Plain TypeScript, so that Node's type stripping can run it
+// (scripts/make-icon.mjs does): no enums, no parameter properties.
 import { deflateSync } from "node:zlib";
+import { menuBarFaceSvg, type MenuBarState } from "@avanzel/ui/menu-bar";
+import { rasterizeSvg } from "./raster.ts";
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   let c = n;
@@ -67,6 +70,20 @@ export function trayIcon(scale: 1 | 2): Bitmap {
     }
   }
   return { width: size, height: size, rgba };
+}
+
+/** Zel's menu bar face in `state`: 18 points square, black on transparent, for an Electron template image. */
+export function faceIcon(state: MenuBarState, scale: 1 | 2): Bitmap {
+  return rasterizeSvg(menuBarFaceSvg(state), scale);
+}
+
+/** `bitmap` with every pixel's colour set to `hex` ("#rrggbb") and its alpha kept. */
+export function tinted(bitmap: Bitmap, hex: string): Bitmap {
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) throw new Error(`tinted: "${hex}" isn't a #rrggbb colour`);
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
+  const rgba = new Uint8Array(bitmap.rgba.length);
+  for (let i = 0; i < rgba.length; i += 4) rgba.set([r, g, b, bitmap.rgba[i + 3] ?? 0], i);
+  return { width: bitmap.width, height: bitmap.height, rgba };
 }
 
 /** A filled, anti-aliased circle in `hex` colour, for menu items that show a shelf. */
