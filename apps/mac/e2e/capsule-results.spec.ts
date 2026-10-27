@@ -70,7 +70,7 @@ const filedCard = (over: Record<string, unknown> = {}) => ({
 const savedCard = (over: Record<string, unknown> = {}) => ({
   kind: "saved",
   text: "Call the plumber on Monday",
-  note: "Saved to your inbox for the evening review at 21:00.",
+  note: "Saved to the inbox for the evening review at 21:00.",
   ...over,
 });
 
@@ -179,7 +179,7 @@ test("a filed card lists three pages and counts the rest: four pages are three r
   await app.close();
 });
 
-test("a filed card clips long words to two lines while its pages show, and the most it can hold fits the panel", async () => {
+test("a filed card clips long words to three lines while its pages show, and the most it can hold fits the panel", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
   const long = "I want to launch my podcast about indie game development before the end of the year, and ask Mark to co-host. ".repeat(12).trim();
   const title = "An idea page whose title goes on and on about indie game development and the podcast that Mark may co-host this year";
@@ -198,7 +198,7 @@ test("a filed card clips long words to two lines while its pages show, and the m
   const words = card.getByText(long, { exact: true });
   await expect(words).toBeVisible();
   const cut = await words.evaluate((el) => ({ shown: el.clientHeight, whole: el.scrollHeight, pitch: parseFloat(getComputedStyle(el).lineHeight) }));
-  expect(cut.shown).toBe(2 * cut.pitch);
+  expect(cut.shown).toBe(3 * cut.pitch);
   expect(cut.whole).toBeGreaterThan(cut.shown);
   const cardBox = (await card.boundingBox())!;
   for (const row of await card.getByRole("listitem").all()) {
@@ -220,6 +220,38 @@ test("a filed card clips long words to two lines while its pages show, and the m
   await call(app, "setCapsule", filedCard({ text: long, noted: true, pages: [] }));
   const roomy = await card.getByText(long, { exact: true }).evaluate((el) => ({ shown: el.clientHeight, pitch: parseFloat(getComputedStyle(el).lineHeight) }));
   expect(roomy.shown).toBe(4 * roomy.pitch);
+  await expectInPanel(capsule);
+  await app.close();
+});
+
+test("a thought the filing card showed whole is shown whole on the card that is stamped: the stamp shortens the first line, so a third line is kept", async () => {
+  const { app, capsule } = await launchOn(await makeLibrary());
+  // Two lines on the filing card, which has nothing in its corner. The filed card's stamp stands where the first line would run on, and the
+  // first line wraps around it: the same words need three lines, and a limit of two ended them at "...and ask Mark to co-" as the stamp landed.
+  const thought = "I want to launch my podcast about indie game development before the end of the year, and ask Mark to co-host.";
+  const card = capsule.getByRole("article");
+  const room = () => card.getByText(thought, { exact: true }).evaluate((el) => ({ shown: el.clientHeight, whole: el.scrollHeight, pitch: parseFloat(getComputedStyle(el).lineHeight) }));
+  await call(app, "setCapsule", {
+    kind: "filing", text: thought, agent: "Claude Code", transcribedIn: 1.4, onThisMac: true, canEdit: true, rows: [], startedAt: Date.now(), estimate: 15, stepAt: Date.now(),
+  });
+  await expect(card.getByText(thought, { exact: true })).toBeVisible();
+  const filing = await room();
+  expect(filing.whole).toBe(2 * filing.pitch);
+  expect(filing.shown).toBe(filing.whole);
+  // Filed, with its pages listed under it: three lines, all of them shown.
+  await call(app, "setCapsule", filedCard({ text: thought }));
+  await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toBeVisible();
+  const filed = await room();
+  expect(filed.whole).toBe(3 * filed.pitch);
+  expect(filed.shown).toBe(filed.whole); // its end, "co-host.", is not cut off
+  await expectInPanel(capsule);
+  // A screen comment of two lines is saved the same way: its stamp takes the first line's end, and the picture is under the words.
+  const thumbnail = `data:image/png;base64,${readFileSync(screenshotFixture()).toString("base64")}`;
+  await call(app, "setCapsule", savedCard({ text: thought, thumbnail, context: { app: "Safari", title: "Growing basil", url: "https://example.com/basil" } }));
+  await expect(card.getByRole("img", { name: `Saved, ${stampDay()}`, exact: true })).toBeVisible();
+  const saved = await room();
+  expect(saved.whole).toBe(3 * saved.pitch);
+  expect(saved.shown).toBe(saved.whole);
   await expectInPanel(capsule);
   await app.close();
 });
@@ -263,13 +295,13 @@ test("a thought saved for the evening review is stamped Saved, and the card says
   await expect(card.getByRole("img", { name: `Saved, ${stampDay()}`, exact: true })).toBeVisible();
   await expect(card.getByRole("img", { name: `Saved, ${stampDay()}`, exact: true })).not.toHaveAttribute("data-animate"); // only a filing's stamp lands
   // The note under the words: when the review files it, or only that it is in the inbox while the review is off.
-  await expect(card.getByText("Saved to your inbox for the evening review at 21:00.", { exact: true })).toBeVisible();
-  await call(app, "setCapsule", savedCard({ note: "Saved to your inbox." }));
-  await expect(card.getByText("Saved to your inbox.", { exact: true })).toBeVisible();
+  await expect(card.getByText("Saved to the inbox for the evening review at 21:00.", { exact: true })).toBeVisible();
+  await call(app, "setCapsule", savedCard({ note: "Saved to the inbox." }));
+  await expect(card.getByText("Saved to the inbox.", { exact: true })).toBeVisible();
   // A line about the recording comes after the note.
   const detail = "Only your words were kept: the recording couldn't be saved.";
   await call(app, "setCapsule", savedCard({ detail }));
-  const note = card.getByText("Saved to your inbox for the evening review at 21:00.", { exact: true });
+  const note = card.getByText("Saved to the inbox for the evening review at 21:00.", { exact: true });
   await expect(card.getByText(detail, { exact: true })).toBeVisible();
   expect((await note.boundingBox())!.y).toBeLessThan((await card.getByText(detail, { exact: true }).boundingBox())!.y);
   await expectInPanel(capsule);
@@ -294,7 +326,7 @@ test("a screen comment's saved card is labelled with the app, shows its screensh
   await expect(picture).toBeVisible();
   const title = card.getByText("Shure MV7+ Podcast Microphone", { exact: true });
   const address = card.getByText("www.shure.com/mv7", { exact: true });
-  const note = card.getByText("Saved to your inbox for the evening review at 21:00.", { exact: true });
+  const note = card.getByText("Saved to the inbox for the evening review at 21:00.", { exact: true });
   await expect(title).toBeVisible();
   await expect(address).toBeVisible();
   await expect(note).toBeVisible();
@@ -309,7 +341,12 @@ test("a screen comment's saved card is labelled with the app, shows its screensh
   expect(noteBox!.y).toBeLessThan(detailBox!.y);
   expect(titleBox!.x).toBeGreaterThanOrEqual(pictureBox!.x + pictureBox!.width); // beside the picture, not under it
   const words = await card.getByText(long, { exact: true }).evaluate((el) => ({ shown: el.clientHeight, pitch: parseFloat(getComputedStyle(el).lineHeight) }));
-  expect(words.shown).toBe(2 * words.pitch); // the picture takes the room of the other two lines
+  expect(words.shown).toBe(2 * words.pitch); // the picture and the line about the recording, which takes two, leave the words two lines
+  await expectInPanel(capsule);
+  // Without that line about the recording the words have a third line: the stamp takes the first line's end, and a third line keeps theirs.
+  await call(app, "setCapsule", savedCard({ text: long, thumbnail, context }));
+  const roomier = await card.getByText(long, { exact: true }).evaluate((el) => ({ shown: el.clientHeight, pitch: parseFloat(getComputedStyle(el).lineHeight) }));
+  expect(roomier.shown).toBe(3 * roomier.pitch);
   await expectInPanel(capsule);
   // A comment with no words says so; with no app to name, the card is a screen's.
   await call(app, "setCapsule", savedCard({ text: "", thumbnail, context: { title: context.title } }));
@@ -324,12 +361,12 @@ test("a filing that was undone says so: the card has the words, unstamped, and t
   const { app, capsule } = await launchOn(await makeLibrary());
   const bar = capsule.getByRole("status");
   const card = capsule.getByRole("article");
-  await call(app, "setCapsule", savedCard({ text: "Plant tulips in October", note: "Undone. Your words are back in the inbox for the evening review at 21:00.", undone: true }));
+  await call(app, "setCapsule", savedCard({ text: "Plant tulips in October", note: "Your words are back in the inbox for the evening review at 21:00.", undone: true }));
   await expect(zel(capsule)).toHaveAttribute("data-mood", "filed");
   await expect(bar.getByText("Undone", { exact: true })).toBeVisible();
   expect(await namesOf(bar.getByRole("button"))).toEqual(["Hide"]);
   await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
-  await expect(card.getByText("Undone. Your words are back in the inbox for the evening review at 21:00.", { exact: true })).toBeVisible();
+  await expect(card.getByText("Your words are back in the inbox for the evening review at 21:00.", { exact: true })).toBeVisible();
   await expect(card).not.toHaveAttribute("data-stamped"); // the filing it would stamp is gone
   await expectInPanel(capsule);
   await app.close();
@@ -339,7 +376,7 @@ test("a Stopped filing says what is safe, and when the evening review files the 
   const { app, capsule } = await launchOn(await makeLibrary());
   const untouched = "Your words are back in the inbox, untouched, and nothing else changed.";
   const partial = "Your words are back in the inbox, untouched. Claude Code's partial edits are kept as their own commit in the library's history.";
-  const leftovers = "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them.";
+  const leftovers = "Your words are back in the inbox. Claude Code's partial edits stay as they are, because nothing recorded them.";
   await call(app, "setCapsule", cancelledCard());
   await snap(capsule, "6-stopped-card");
   await expectStoppedFiling(capsule, "Plant tulips in October", `${untouched} The evening review files your words at 21:00.`);
@@ -368,20 +405,20 @@ test("a Stopped transcription says the recording is in the inbox, and when the e
   const { app, capsule } = await launchOn(await makeLibrary());
   await call(app, "setCapsule", recordedCard());
   await snap(capsule, "2-stopped-recording-card");
-  await expectStoppedRecording(capsule, "It's in your inbox. The evening review turns it into words and files it at 21:00.");
+  await expectStoppedRecording(capsule, "It's in the inbox. The evening review turns it into words and files it at 21:00.");
   await call(app, "setCapsule", recordedCard({ review: "on Sundays at 18:00" }));
-  await expectStoppedRecording(capsule, "It's in your inbox. The evening review turns it into words and files it on Sundays at 18:00.");
+  await expectStoppedRecording(capsule, "It's in the inbox. The evening review turns it into words and files it on Sundays at 18:00.");
   await call(app, "setCapsule", recordedCard({ review: "" }));
-  await expectStoppedRecording(capsule, "It's in your inbox. The evening review turns it into words and files it.");
+  await expectStoppedRecording(capsule, "It's in the inbox. The evening review turns it into words and files it.");
   await call(app, "setCapsule", recordedCard({ review: null }));
-  await expectStoppedRecording(capsule, "It's in your inbox.");
+  await expectStoppedRecording(capsule, "It's in the inbox.");
   await expect(capsule.getByText(/evening review/)).toHaveCount(0);
   await app.close();
 });
 
 test("Hide puts away every result card", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
-  const undone = savedCard({ note: "Undone. Your words are back in the inbox for the evening review at 21:00.", undone: true });
+  const undone = savedCard({ note: "Your words are back in the inbox for the evening review at 21:00.", undone: true });
   for (const state of [filedCard(), filedCard({ noted: true, pages: [] }), savedCard(), undone, cancelledCard(), recordedCard()]) {
     await call(app, "setCapsule", state);
     await capsule.getByRole("status").getByRole("button", { name: "Hide", exact: true }).click();
@@ -598,7 +635,7 @@ test("a second Undo while the first runs does nothing, and the card says Undone,
     kind: "saved",
     undone: true,
     text: "Plant tulips in October",
-    note: "Undone. Your words are back in the inbox for the evening review at 21:00.",
+    note: "Your words are back in the inbox for the evening review at 21:00.",
   });
   await expect(capsule.getByRole("status").getByText("Undone", { exact: true })).toBeVisible();
   await expect(capsule.getByRole("alert")).toHaveCount(0);

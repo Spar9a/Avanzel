@@ -131,13 +131,13 @@ describe("setup copy", () => {
     );
   });
 
-  it("a cancelled filing that changed files nothing recorded (no git, or automatic commits off) says they stay as they are", () => {
-    const stay = "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them.";
-    expect(cancelledLine("Claude Code", false, 2)).toBe(stay);
-    expect(cancelledLine("Codex", false, 1)).toBe(stay); // one file reads the same: it doesn't count them
+  it("a cancelled filing that changed files nothing recorded (no git, or automatic commits off) says they stay as they are, and whose they are", () => {
+    const stay = (agent: string) => `Your words are back in the inbox. ${agent}'s partial edits stay as they are, because nothing recorded them.`;
+    expect(cancelledLine("Claude Code", false, 2)).toBe(stay("Claude Code"));
+    expect(cancelledLine("Codex", false, 1)).toBe(stay("Codex")); // one file reads the same: it doesn't count them
     // Edits that were committed are told as before, and a run that changed nothing keeps its line.
     expect(cancelledLine("Claude Code", true, 2)).toBe(cancelledLine("Claude Code", true, 0));
-    expect(cancelledLine("Claude Code", false, 0)).not.toBe(stay);
+    expect(cancelledLine("Claude Code", false, 0)).not.toBe(stay("Claude Code"));
   });
 
   it("Found's line under the library's place says this Mac has no git yet, in a new library and in a folder with files", () => {
@@ -293,7 +293,7 @@ describe("a failed filing in setup", () => {
       `Boom. ${SAFE}; the evening review will try again. Claude Code's partial edits are kept as their own commit in the library's history.`,
     );
     expect(failedFiling(failed({ ...claude, kind: "limit", resetsAt: at(0, 15) }, { partial: "uncommitted" }), now, true).body).toBe(
-      `It resets at 15:00. ${SAFE}; try again then. Its partial edits stay in the library, outside its history, so they can't be undone.`,
+      `It resets at 15:00. ${SAFE}; try again then. Claude Code's partial edits stay as they are, because nothing recorded them.`,
     );
   });
 

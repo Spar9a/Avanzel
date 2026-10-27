@@ -2,9 +2,11 @@
 // and Ask's window each keep a copy of it for now.
 import { useEffect, useState } from "react";
 
-export function useNow(ms: number): number {
+/** `ms` is how often the time is read again; null is never (nothing ticks, and the time is that of the last read). */
+export function useNow(ms: number | null): number {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
+    if (ms === null) return;
     const timer = setInterval(() => setNow(Date.now()), ms);
     return () => clearInterval(timer);
   }, [ms]);

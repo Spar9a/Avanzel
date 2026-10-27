@@ -1,0 +1,61 @@
+// What a state of the capsule draws, and the one bar it draws it in. Every state that has a bar says what is in it as a `BarSpec`, and
+// `Capsule` (main.tsx) draws that into ONE bar, so that the bar's live region stays mounted from listening through transcribing and
+// filing to filed: each change of state is then a change of what the region holds, which a screen reader hears. A region drawn again
+// for each state arrives with its line already in it, which it often does not read, and the capsule announces only the start and the end of
+// a filing.
+import { CapsuleBar, type CapsuleMood } from "@avanzel/ui";
+import { Fragment, type ReactNode } from "react";
+import { useNow } from "../common/use-now.ts";
+
+/** How often the time is read again: it shows whole seconds. */
+const TICK_MS = 250;
+
+/** How long a recording has run, as the bar draws it: "0:07". */
+function clock(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+/**
+ * What a state says in the bar. `line`: the bar's one line, which stays the same for a whole state, since the region is live (a
+ * listening bar has none). `levels` and `startedAt`: only a listening bar has them, the voice and how long the recording has run; nothing
+ * else ticks inside a live region. `actions`: the buttons, in the order they read.
+ */
+export interface BarSpec {
+  mood: CapsuleMood;
+  line?: ReactNode;
+  levels?: readonly number[];
+  /** Date.now() when the recording began: the bar draws how long it has run, in whole seconds. */
+  startedAt?: number;
+  actions?: ReactNode;
+}
+
+/**
+ * The pieces of a state's stack, from the top: a card (of paper, or of the capsule's glass) if it has one, the hint, and the bar. A state
+ * leaves out what it has none of: the editor has no bar, and a dictation's transcription has no card. Each piece is drawn in its own
+ * place, so that one that two states share, the bar and a screen comment's screenshot, stays the same piece from one state to the next.
+ */
+export interface Scene {
+  card?: ReactNode;
+  hint?: ReactNode;
+  bar?: BarSpec;
+}
+
+/**
+ * The capsule's bar for the state of `kind`. It is drawn in the same place for every state that has one, so React keeps it, and its
+ * live region, as the state changes; only what is in it changes. The buttons are the state's own, though: a button a state shares a
+ * place with in the next one (Stop, then Open) is a new button, as it would be in a bar drawn for each state.
+ */
+export function Bar({ kind, mood, line, levels, startedAt, actions }: BarSpec & { kind: string }) {
+  const now = useNow(startedAt === undefined ? null : TICK_MS);
+  return (
+    <CapsuleBar
+      mood={mood}
+      levels={levels}
+      time={startedAt === undefined ? undefined : clock(now - startedAt)}
+      actions={actions ? <Fragment key={kind}>{actions}</Fragment> : undefined}
+    >
+      {line}
+    </CapsuleBar>
+  );
+}

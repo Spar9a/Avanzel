@@ -22,7 +22,7 @@ import {
   throughFound,
   windowFor,
 } from "./helpers.ts";
-import { expectProblem, expectStoppedRecording } from "./capsule-helpers.ts";
+import { expectInPanel, expectProblem, expectStoppedRecording } from "./capsule-helpers.ts";
 import { pressShortcut, sentToCapsule, watchCapsule, zel } from "./setup-helpers.ts";
 
 const WAIT_FOR_AUDIO_MS = 3000; // AVANZEL_AUDIO_TIMEOUT_MS: how long the app waits for audio after a stop (15 s outside tests)
@@ -233,7 +233,7 @@ test("a long transcription offers Stop, and its recording waits in the inbox", a
   const stopped = Date.now();
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "recorded", review: "at 21:00" });
   // The card says so: Stopped, over an empty card, and that the recording is in the inbox, where the evening review turns it into words.
-  await expectStoppedRecording(capsule, "It's in your inbox. The evening review turns it into words and files it at 21:00.");
+  await expectStoppedRecording(capsule, "It's in the inbox. The evening review turns it into words and files it at 21:00.");
   // The recording itself, as audio the engine's queue transcribes: one .wav in the inbox, none left in raw/audio/, no capture written.
   const [name, ...others] = filesUnder(library, "inbox");
   expect(others).toEqual([]);
@@ -269,7 +269,7 @@ test("a long transcription's bar says it is still at it and offers Stop, whose p
   await expect.poll(() => capsuleKind(app)).toBe("recorded");
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "recorded", review: "at 21:00" });
   await snap(capsule, "2-stopped-recording");
-  await expectStoppedRecording(capsule, "It's in your inbox. The evening review turns it into words and files it at 21:00.");
+  await expectStoppedRecording(capsule, "It's in the inbox. The evening review turns it into words and files it at 21:00.");
   const [name, ...others] = filesUnder(library, "inbox");
   expect(others).toEqual([]);
   expect(name).toMatch(/^\d{4}-\d{2}-\d{2}-\d{6}\.wav$/);
@@ -473,7 +473,7 @@ test("a recording that can't be moved to the inbox is where the card says, which
     // Why, then where the recording is. The reason names two long paths: it is cut before the first, not through it, and the recording's
     // own place follows whole. The card says nothing of the recording staying: a transcription that finds no words removes it.
     const [recording] = filesUnder(library, "raw/audio");
-    const title = "Avanzel couldn't move the recording to your inbox.";
+    const title = "Avanzel couldn't move the recording to the inbox.";
     const body = `EACCES: permission denied… The transcription goes on, and your recording is in raw/audio/${recording}.`;
     expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: body });
     await expectProblem(capsule, { title, lines: [body] });
@@ -497,7 +497,7 @@ test("a recording the library keeps no copy of, that can't be written to the inb
   chmodSync(inbox, 0o555);
   try {
     await stopTranscribing(capsule);
-    const title = "Avanzel couldn't move the recording to your inbox.";
+    const title = "Avanzel couldn't move the recording to the inbox.";
     const body = "EACCES: permission denied… The transcription goes on, but no copy of your recording is saved.";
     expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: body });
     await expectProblem(capsule, { title, lines: [body] });
@@ -693,7 +693,7 @@ test("Stop keeps the recording in the library it was made in, and names that lib
   await stopTranscribing(capsule);
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "recorded", review: null });
   // This library's review is off, so the card says only where the recording is: it promises no review.
-  await expectStoppedRecording(capsule, "It's in your inbox.");
+  await expectStoppedRecording(capsule, "It's in the inbox.");
   await expect(capsule.getByText(/evening review/)).toHaveCount(0);
   expect(filesUnder(library, "inbox")).toHaveLength(1);
   expect(filesUnder(library, "raw")).toEqual([]);
@@ -793,10 +793,57 @@ test("a screen comment's transcription is never offered Stop: its words and scre
   await expect.poll(() => capsuleKind(app)).toBe("transcribing");
   await sleep(3 * SLOW_MS); // long enough for a dictation's transcription to have turned slow
   await stopTranscribing(capsule);
-  expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "transcribing", mode: "comment", onThisMac: true });
+  // Its state still carries the screenshot and what it is of, for the card above the bar; the press changed nothing of it.
+  expect(await call(app, "capsuleStateForTests")).toEqual({
+    kind: "transcribing",
+    mode: "comment",
+    onThisMac: true,
+    thumbnail: expect.stringMatching(/^data:image\/png;base64,/),
+    context: { app: "Safari", title: "Growing basil", url: "https://example.com/basil" },
+  });
   expect(filesUnder(library, "inbox")).toEqual([]);
   expect(filesUnder(library, "raw/audio")).toHaveLength(1);
   expect(capturesKept(userData)).toBe(0);
+  await app.close();
+});
+
+test("a screen comment keeps its screenshot card while its words are made: the same card, as large, above the bar", async () => {
+  const { app, capsule } = await launchSlowly(60_000, {
+    env: { AVANZEL_FAKE_SCREEN: screenshotFixture(), AVANZEL_FAKE_FRONT_APP: "Safari|Growing basil|https://example.com/basil" },
+  });
+  await call(app, "toggleCapture");
+  await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("listening");
+  const card = capsule.getByRole("article");
+  const picture = card.getByRole("img", { name: "Screenshot of Safari", exact: true });
+  await expect(card.getByText("Safari", { exact: true })).toBeVisible(); // the card is labelled with the app
+  await expect(picture).toBeVisible();
+  const listening = (await picture.boundingBox())!;
+  await card.evaluate((el) => Object.assign(el, { listeningCard: true })); // a card drawn again would not carry this
+  await call(app, "toggleCapture");
+  await expect.poll(() => capsuleKind(app)).toBe("transcribing");
+  // The bar says the words are being made, and the card above it is still there: the same node, with the same picture at the same size,
+  // so that it is not drawn away and again between listening and saved.
+  await expect(capsule.getByRole("status").getByText("Transcribing on this Mac…", { exact: true })).toBeVisible();
+  await expect(card).toHaveCount(1);
+  expect(await card.evaluate((el) => (el as unknown as { listeningCard?: boolean }).listeningCard === true)).toBe(true);
+  await expect(card.getByText("Safari", { exact: true })).toBeVisible();
+  await expect(picture).toBeVisible();
+  const transcribing = (await picture.boundingBox())!;
+  expect(transcribing.width).toBe(listening.width);
+  expect(transcribing.height).toBe(listening.height);
+  expect(transcribing.x).toBe(listening.x);
+  await expect(capsule.getByRole("button")).toHaveCount(0); // a comment's transcription is never offered Stop
+  await expectInPanel(capsule);
+  await app.close();
+});
+
+test("a dictation's transcription has a bar and no card above it", async () => {
+  const { app, capsule } = await launchSlowly(60_000);
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app)).toBe("transcribing");
+  await expect(capsule.getByRole("status").getByText("Transcribing on this Mac…", { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("article")).toHaveCount(0);
+  expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "transcribing", mode: "dictate", onThisMac: true });
   await app.close();
 });
 

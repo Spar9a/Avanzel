@@ -30,6 +30,7 @@ import {
 } from "./helpers.ts";
 import {
   archived,
+  blurs,
   cardNote,
   claudeLibrary,
   dictate,
@@ -41,10 +42,12 @@ import {
   type Left,
   namesOf,
   notified,
+  panelOf,
   reachedUndo,
   sleep,
   undoCalls,
   undone,
+  watchBlur,
   watchFilingStates,
   watchUndos,
   type Wrappable,
@@ -186,6 +189,40 @@ test("cancelling an Edit takes back what the stopped run did and files the words
   await app.close();
 });
 
+// The panel takes the keyboard only while the editor is open (owner item 9). When File or Cancel closes the editor, the next card is not
+// one the person types into: the keys must go back to the app they were in, or their first Space or Return would press the card's Hide.
+// That is read from the window (`isFocused()`), not from the page, whose focus a test can emulate. On a Mac whose screen is locked the test
+// app is never active, so no window of it is ever key and `isFocused()` reads false whatever the panel was told: these tests also count
+// the times the app tells the panel to give the keyboard up, which is the editor's closing and nothing else.
+for (const button of ["File", "Cancel"] as const) {
+  test(`${button} gives the keyboard back: the panel stays where it was, on screen, and is told to let go of the keys once`, async () => {
+    const { app, capsule } = await dictateToStallingAgent("Plant tulips in October");
+    await watchBlur(app);
+    expect(await panelOf(app)).toMatchObject({ key: false, focusable: false, visible: true }); // a filing card never takes the keyboard
+    await capsule.getByRole("button", { name: "Edit" }).click();
+    await expect.poll(() => capsuleKind(app)).toBe("editing");
+    const editing = await panelOf(app);
+    expect(editing).toMatchObject({ focusable: true, visible: true }); // the editor is typed into
+    if (!editing.key) test.info().annotations.push({ type: "note", description: "The panel is not the key window while the editor is open: this Mac's screen is locked, or the test app is not active." });
+    expect(await blurs(app)).toBe(0); // nothing gives the keyboard up while the editor has it
+    if (button === "File") {
+      await capsule.getByRole("textbox").fill("Plant tulips in November");
+      await capsule.getByRole("button", { name: "File", exact: true }).click();
+    } else {
+      await capsule.getByRole("button", { name: "Cancel", exact: true }).click();
+    }
+    await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toMatch(/^(filing|filed)$/);
+    // The card after the editor is on screen where the editor was, it is not the key window, and the panel was told to give the keys up.
+    expect(await panelOf(app)).toEqual({ key: false, focusable: false, visible: true, position: editing.position });
+    expect(await blurs(app)).toBe(1);
+    // The filed card too; and the filing's steps in between did not tell it again (that would order the panel back at every step).
+    await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+    expect(await panelOf(app)).toEqual({ key: false, focusable: false, visible: true, position: editing.position });
+    expect(await blurs(app)).toBe(1);
+    await app.close();
+  });
+}
+
 test("the editor is a card of paper with the words in a text area, and Cancel and File under it", async () => {
   const { library, app, capsule } = await dictateToStallingAgent("Plant tulips in October");
   await capsule.getByRole("button", { name: "Edit" }).click();
@@ -247,8 +284,8 @@ const BOTH_VERSIONS = "Usually a later change touched the same lines. The librar
 
 test("an Edit whose first try git won't take back says so, and that the note waits for the evening review", async () => {
   const { library, app, capsule, state } = await editWhoseFirstTryStays(true);
-  expect(state).toEqual({ kind: "error", message: FIRST_TRY, detail: `${BOTH_VERSIONS} The note waits in your inbox for the evening review.` });
-  await expectProblem(capsule, { title: FIRST_TRY, lines: [`${BOTH_VERSIONS} The note waits in your inbox for the evening review.`] }); // nothing to fix: Hide alone
+  expect(state).toEqual({ kind: "error", message: FIRST_TRY, detail: `${BOTH_VERSIONS} The note waits in the inbox for the evening review.` });
+  await expectProblem(capsule, { title: FIRST_TRY, lines: [`${BOTH_VERSIONS} The note waits in the inbox for the evening review.`] }); // nothing to fix: Hide alone
   // The corrected words wait in the inbox, and the change by hand stays.
   expect(inboxWords(library)).toEqual([expect.stringContaining("corrected words")]);
   expect(read(library, "goals/half.md")).toBe("# Half done, by hand\n");
@@ -392,18 +429,20 @@ test("corrected words that can't be saved yet are saved when Avanzel quits, and 
     expect(await call(app, "capsuleStateForTests")).toEqual({
       kind: "error",
       message: "Your corrected words weren't saved yet.",
-      detail: expect.stringMatching(/^EACCES: permission denied.*\nYour corrected words are saved to your inbox when you quit; the original note is still there\.$/),
+      detail: expect.stringMatching(/^EACCES: permission denied.* Your corrected words are saved to the inbox when you quit; the original note is still there\.$/),
     });
-    // The error names two long paths: its line is cut short, so the card shows all of it, what keeps the words last, on a line of its own.
+    // The error names two long paths: its line is cut short, so the card shows all of it, and what keeps the words follows it in the same
+    // paragraph, as in every other problem (a line break would give the reason a paragraph of its own).
     const { detail } = (await call(app, "capsuleStateForTests")) as { detail: string };
-    const [reason] = detail.split("\n");
-    expect(Array.from(reason!).length).toBeLessThanOrEqual(100);
-    expect(reason!.endsWith("…")).toBe(true);
-    expect((reason!.match(/'/g) ?? []).length % 2).toBe(0); // no path is cut: each quote it opens, it closes
-    await expectProblem(capsule, {
-      title: "Your corrected words weren't saved yet.",
-      lines: [reason!, "Your corrected words are saved to your inbox when you quit; the original note is still there."],
-    });
+    const kept = "Your corrected words are saved to the inbox when you quit; the original note is still there.";
+    expect(detail).not.toContain("\n");
+    expect(detail.endsWith(` ${kept}`)).toBe(true);
+    const reason = detail.slice(0, -(kept.length + 1));
+    expect(Array.from(reason).length).toBeLessThanOrEqual(100);
+    expect(reason.endsWith("…")).toBe(true);
+    expect((reason.match(/'/g) ?? []).length % 2).toBe(0); // no path is cut: each quote it opens, it closes
+    await expectProblem(capsule, { title: "Your corrected words weren't saved yet.", lines: [`${reason} ${kept}`] });
+    await expect(capsule.getByRole("alert").locator("p")).toHaveCount(2); // the title, and one paragraph of body: the reason has none of its own
     await call(app, "idleForTests"); // nothing left to do: the words are only in memory
   } finally {
     chmodSync(inboxDir, 0o755);
@@ -441,9 +480,13 @@ test("a second Edit on a refiled note keeps its words when the quit wait runs ou
 test("starting a new dictation with the editor open keeps the edit", async () => {
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
   const { library, app, capsule } = await dictateToStallingAgent("misheard words", { AVANZEL_USER_DATA: userData });
+  await watchBlur(app);
   await editTo(app, capsule, "corrected words");
+  expect(await blurs(app)).toBe(0); // the editor has the keyboard ...
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
+  expect((await panelOf(app)).key).toBe(false); // ... and the recording that takes the card gives it back to the person's app
+  expect(await blurs(app)).toBe(1);
   await call(app, "cancelRecording");
   await call(app, "idleForTests");
   expect(inboxWords(library)).toEqual([expect.stringContaining("corrected words")]);
@@ -469,11 +512,12 @@ test("an edit that can't be saved when another recording takes the card is told 
     expect(await call(app, "notificationsForTests")).toEqual([
       {
         title: "Your corrected words weren't saved yet.",
-        body: expect.stringMatching(/^EACCES: permission denied.*\nYour corrected words are saved to your inbox when you quit; the original note is still there\.$/),
+        body: expect.stringMatching(/^EACCES: permission denied.* Your corrected words are saved to the inbox when you quit; the original note is still there\.$/),
       },
     ]);
     const [note] = (await call(app, "notificationsForTests")) as { body: string }[];
-    expect(Array.from(note!.body.split("\n")[0]!).length).toBeLessThanOrEqual(100);
+    expect(note!.body).not.toContain("\n");
+    expect(Array.from(note!.body.split(" Your corrected words")[0]!).length).toBeLessThanOrEqual(100);
   } finally {
     chmodSync(inboxDir, 0o755);
   }
@@ -553,7 +597,7 @@ test("when a symlinked inbox keeps the agent's rewrite, the capsule says where t
   const detail =
     "A symlink in inbox/ kept Avanzel from putting back the words the agent changed. " +
     `Your words are kept in .avanzel/logs/${kept}, and the inbox holds the agent's version; the evening review will try again. ` +
-    "Its partial edits stay in the library, outside its history, so they can't be undone.";
+    "fake's partial edits stay as they are, because nothing recorded them.";
   expect(state.detail).toBe(detail);
   await expectProblem(capsule, { title: "fake couldn't file this note.", lines: [detail], fix: "Try again" });
   await app.close();
@@ -1376,7 +1420,7 @@ test("Stop in a library without git leaves the stopped run's edits as they are, 
   await expectStoppedFiling(
     capsule,
     "Plant tulips in October",
-    "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them. The evening review files your words at 21:00.",
+    "Your words are back in the inbox. fake's partial edits stay as they are, because nothing recorded them. The evening review files your words at 21:00.",
   );
   // What the run wrote stays, as the state says; the words are in the inbox.
   expect(exists(library, "goals/half.md")).toBe(true);
@@ -1619,7 +1663,7 @@ test("a Stop in a library without git, with its card hidden, notifies that the e
     {
       title: "Stopped, but some edits stay in your library.",
       body:
-        "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them. " +
+        "Your words are back in the inbox. fake's partial edits stay as they are, because nothing recorded them. " +
         "The evening review files your words at 21:00.",
     },
   ]);

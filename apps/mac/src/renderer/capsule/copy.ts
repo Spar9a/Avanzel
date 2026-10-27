@@ -95,5 +95,5 @@ export function moreLine(hidden: number): string {
  */
 export function recordedLine(review: string | null): string {
   const later = reviewDoes("The evening review turns it into words and files it", review);
-  return later === null ? "It's in your inbox." : `It's in your inbox. ${later}`;
+  return later === null ? "It's in the inbox." : `It's in the inbox. ${later}`;
 }

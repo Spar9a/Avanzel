@@ -48,8 +48,13 @@ body {
   overflow: clip;
   white-space: pre-wrap;
 }
-/* A card with more under its words, such as the pages a filing wrote or a screen comment's screenshot, leaves them room for two. */
-.words.short {
+/* A card with more under its words, such as the pages a filing wrote or a screen comment's screenshot, leaves them room for three: the
+   stamp that card has shortens the first line, so words that fill two lines without it need a third. One with still more, a screenshot
+   and the line about its recording (which may take two lines), leaves two: the panel has no room for a third beside them. */
+.words.lines-3 {
+  max-height: 3lh;
+}
+.words.lines-2 {
   max-height: 2lh;
 }
 /* The filed card's pages, a row each, in three columns that line up from row to row: the shelf (a chip, or the folder's name, which

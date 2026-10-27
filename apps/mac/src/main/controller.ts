@@ -699,6 +699,7 @@ export class Controller {
   /** `capture`: the note an error card is about (`cardCapture`), which stays only as long as that card is what the capsule shows. */
   private setCapsule(state: CapsuleState, autoHideMs?: number, capture?: string): void {
     if (state.kind !== "editing") this.keepEdit(); // whatever replaces the editor (a recording, a typed thought, an error) keeps its edit
+    const wasEditing = this.capsuleState.kind === "editing";
     this.capsuleState = state;
     this.cardCapture = capture ?? null;
     this.cardUnkept = null; // a card that has words without its promise sets them after (`fail`)
@@ -721,6 +722,10 @@ export class Controller {
         win.focus();
       } else {
         win.setFocusable(false);
+        // The editor took the keyboard (it is typed into), and `setFocusable(false)` does not take it back: a panel that stayed the key
+        // window would swallow the person's next keys, and their first Space or Return would press the card's focused Hide. So the key
+        // goes back to the app they were in, once, as the editor closes: not at every step of a filing.
+        if (wasEditing) win.blur();
       }
     }
     if (autoHideMs) this.scheduleHide(autoHideMs);
@@ -970,7 +975,8 @@ export class Controller {
     // This card is the capsule's now: an older transcription still running no longer has it, so neither its slow state nor Stop can
     // reach this recording's card (`slowTranscription`, `stopTranscribing`).
     this.transcribing = null;
-    this.setCapsule({ kind: "transcribing", mode: recording.mode, onThisMac });
+    // A screen comment keeps its screenshot's card while its words are made, as it had it while it listened.
+    this.setCapsule({ kind: "transcribing", mode: recording.mode, onThisMac, ...(recording.shot ? { thumbnail: recording.shot.thumbnail, context: recording.shot.context } : {}) });
     this.setup.moveThought(recording, { kind: "transcribing", startedAt: Date.now(), onThisMac });
     this.capsuleCommand("stop");
     this.clearAudioTimeout();

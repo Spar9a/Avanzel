@@ -8,14 +8,14 @@ import type { FileMode } from "./ipc.ts";
 /**
  * The file-mode button of a recording: what its words will do, in words that promise only what the app keeps. "Files now" when
  * they are filed at the stop. Saved for the evening review, they name when it files them (`review`, the review's words from
- * `reviewTime`: "at 21:00", "on Sundays at 18:00"): "Files at 21:00", "Files on Sundays at 18:00"; "Files at the review" for a
- * schedule that can't be read (""); and "Stays in your inbox" while the review is off (null), when nothing files them by itself.
+ * `reviewTime`: "at 21:00", "on Sundays at 18:00"): "Files at 21:00", "Files on Sundays at 18:00"; "Files at the evening review" for a
+ * schedule that can't be read (""); and "Stays in the inbox" while the review is off (null), when nothing files them by itself.
  * It never says "tonight": a weekly review isn't tonight's.
  */
 export function fileModeLabel(mode: FileMode, review: string | null): string {
   if (mode === "now") return "Files now";
-  if (review === null) return "Stays in your inbox";
-  return review === "" ? "Files at the review" : `Files ${review}`;
+  if (review === null) return "Stays in the inbox";
+  return review === "" ? "Files at the evening review" : `Files ${review}`;
 }
 
 /** The capsule's line while the words are made. */

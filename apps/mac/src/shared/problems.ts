@@ -4,7 +4,7 @@
 // person needs to know, and the window offers one fix. What a Stop says of how it ended is here too (`stoppedLine`): the
 // capsule's Stopped card says it, and a notification says the same when that card is gone. How a line of an error becomes a
 // sentence, and is cut to a card's room, is clip.ts's.
-import { ownLine, shortenedKeepingPaths, shortReason } from "./clip.ts";
+import { ownLine, shortReason } from "./clip.ts";
 
 // An agent's own line as a sentence is clip.ts's (its clippers need it); the windows and the main process keep importing it from here.
 export { ownLine };
@@ -123,6 +123,16 @@ function sentences(...parts: string[]): string {
   return parts.filter(Boolean).join(" ");
 }
 
+/**
+ * What a run left in the library that nothing recorded (a library without git, or with automatic commits off) is told in this one
+ * sentence wherever it is told: a failed filing's card, a Stopped filing's card and notification, and setup's Cancel. It names the agent,
+ * whose edits they are, as the sentence for edits that a commit holds does, and says only what is true: nothing recorded them, so nothing
+ * can take them back; whether the library keeps any history of its own is not said.
+ */
+function leftoverEdits(agent: string): string {
+  return `${agent}'s partial edits stay as they are, because nothing recorded them.`;
+}
+
 /** What a failed filing says, in the words of the copy table: the title, the body and, for a sign-in, the command to run. */
 export function filingProblem(f: AgentFailure, now: Date, o: FilingProblemOptions = {}): Problem {
   const { where, partial = null, after = "wait", eveningReview = true, lineMax } = o;
@@ -133,7 +143,7 @@ export function filingProblem(f: AgentFailure, now: Date, o: FilingProblemOption
     partial === "commit"
       ? ` ${f.agent}'s partial edits are kept as their own commit in the library's history.`
       : partial === "uncommitted"
-        ? " Its partial edits stay in the library, outside its history, so they can't be undone."
+        ? ` ${leftoverEdits(f.agent)}`
         : "";
   const done = (title: string, body: string, command?: string): Problem => ({ title, body: `${body}${left}`, ...(command ? { command } : {}) });
 
@@ -172,15 +182,17 @@ export function filingProblem(f: AgentFailure, now: Date, o: FilingProblemOption
 
 /**
  * The corrected words (File after Edit) couldn't be written to the inbox yet. Not an agent's failure: nothing ran. `lines` is
- * the error's last lines, cut to `lineMax` characters for a card that clips and for the notification that says the same (see
- * FilingProblemOptions.lineMax: such an error names two long paths, which are never cut through, `shortenedKeepingPaths`); the
- * words are kept in memory and saved to the inbox when Avanzel quits, and `originalKept` says the note they correct is still there.
+ * the error's last lines, which are one reason: joined into one, told as a sentence and cut to `lineMax` characters for a card that
+ * clips and for the notification that says the same (see FilingProblemOptions.lineMax: such an error names two long paths, which are
+ * never cut through, `shortReason`). What keeps the words follows it in the same paragraph, as in every other problem: the words are
+ * kept in memory and saved to the inbox when Avanzel quits, and `originalKept` says the note they correct is still there.
  */
 export function correctedWordsProblem(lines: string, originalKept: boolean, lineMax?: number): Problem {
   const original = originalKept ? "; the original note is still there" : "";
+  const reason = lines.split("\n").map((line) => line.trim()).filter(Boolean).join(" ");
   return {
     title: "Your corrected words weren't saved yet.",
-    body: `${shortenedKeepingPaths(lines, lineMax)}\nYour corrected words are saved to your inbox when you quit${original}.`,
+    body: sentences(shortReason(reason, lineMax), `Your corrected words are saved to the inbox when you quit${original}.`),
   };
 }
 
@@ -272,7 +284,7 @@ export const takeBackRefused: Problem = {
  * A note that is no longer in the inbox (filed meanwhile) is said to be nowhere.
  */
 export function takeBackRefusedProblem(inInbox: boolean, eveningReview: boolean): Problem {
-  const where = !inInbox ? "" : eveningReview ? " The note waits in your inbox for the evening review." : " Your note is safe in the inbox.";
+  const where = !inInbox ? "" : eveningReview ? " The note waits in the inbox for the evening review." : " Your note is safe in the inbox.";
   return { title: takeBackRefused.title, body: `${takeBackRefused.body}${where}` };
 }
 
@@ -293,7 +305,7 @@ export const stopRefused: Problem = {
  */
 export function cancelledLine(agent: string, partial: boolean, leftovers: number): string {
   if (partial) return `Your words are back in the inbox, untouched. ${agent}'s partial edits are kept as their own commit in the library's history.`;
-  if (leftovers > 0) return "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them.";
+  if (leftovers > 0) return `Your words are back in the inbox. ${leftoverEdits(agent)}`;
   return "Your words are back in the inbox, untouched, and nothing else changed.";
 }
 
@@ -336,7 +348,7 @@ export function stoppedNotice(agent: string, partial: boolean, leftovers: number
  */
 export function stopFailedProblem(reason: string, where: string | null, lineMax?: number): Problem {
   return {
-    title: "Avanzel couldn't move the recording to your inbox.",
+    title: "Avanzel couldn't move the recording to the inbox.",
     body: sentences(
       shortReason(reason, lineMax),
       where === null ? "The transcription goes on, but no copy of your recording is saved." : `The transcription goes on, and your recording is in ${where}.`,
@@ -413,7 +425,7 @@ export function thoughtNotSavedProblem(reason: string, lineMax?: number): Proble
  * and Settings → Voice tells it in these words.
  */
 export function voiceSettingsProblem(reason: string): Problem {
-  return { title: "Avanzel can't use the voice settings in this library's config file.", body: sentences(ownLine(reason), "Typed thoughts are still saved to your inbox.") };
+  return { title: "Avanzel can't use the voice settings in this library's config file.", body: sentences(ownLine(reason), "Typed thoughts are still saved to the inbox.") };
 }
 
 /**

@@ -1,20 +1,21 @@
 import "@avanzel/ui/base.css";
-import { Actions, Button, CapsuleBar, CapsuleNotice, Hud, Progress, Row, Stack, Text, Zel } from "@avanzel/ui";
+import { Actions, Button, CapsuleNotice, Hud, Kbd, Progress, Row, Stack, Text, Zel } from "@avanzel/ui";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
 import type { CapsuleState } from "../../shared/ipc.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
-import { api } from "./api.ts";
-import { Editor } from "./editor.tsx";
-import { Filed } from "./filed.tsx";
-import { Filing } from "./filing.tsx";
-import { Listening } from "./listening.tsx";
+import { api, type StateOf } from "./api.ts";
+import { editorScene } from "./editor.tsx";
+import { filedScene } from "./filed.tsx";
+import { filingScene } from "./filing.tsx";
+import { listeningScene } from "./listening.tsx";
 import { ProblemNotice } from "./problem-notice.tsx";
 import { Recorder } from "./recorder.ts";
-import { Saved } from "./saved.tsx";
-import { Recorded, Stopped } from "./stopped.tsx";
-import { Transcribing } from "./transcribing.tsx";
+import { savedScene } from "./saved.tsx";
+import { Bar, type Scene } from "./scene.tsx";
+import { recordedScene, stoppedScene } from "./stopped.tsx";
+import { transcribingScene } from "./transcribing.tsx";
 import "./styles.css";
 
 const BARS = 16;
@@ -33,38 +34,75 @@ function useLevels(listening: boolean, fake: boolean) {
   return { levels, push };
 }
 
-function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
+/** The states whose pieces stack up from the bottom of the panel, and so are drawn by a `Scene`: the others are one notice or card of their own. */
+type Stacked = Exclude<CapsuleState, { kind: "hidden" | "error" | "preparing" | "model-failed" | "shortcut-taken" }>;
+
+/**
+ * A free shortcut picked on the taken-shortcut notice works. A bar and nothing else, a piece of the stack as every bar is: the page's
+ * wrapper takes no pointer (see styles.css), so a bar outside the stack could not be hovered, and would be put away under the pointer.
+ * It is as wide as the others. The shortcut is set as a key, as the listening hint sets its keys.
+ */
+function pickedScene(state: StateOf<"shortcut-picked">): Scene {
+  return {
+    bar: {
+      mood: "filed",
+      line: (
+        <>
+          {ACTION_NAMES[state.key]} now uses <Kbd>{prettyAccelerator(state.accelerator)}</Kbd>
+        </>
+      ),
+    },
+  };
+}
+
+/**
+ * What each stacked state draws, from the top of its stack: its card, the hint, and its bar. Every kind of state is here: a kind added
+ * without a scene is a type error, not a blank panel, as `cancelled` and `recorded` were for two tasks.
+ */
+function sceneOf(state: Stacked, levels: readonly number[]): Scene {
+  switch (state.kind) {
+    case "listening":
+      return listeningScene(state, levels);
+    case "transcribing":
+      return transcribingScene(state);
+    case "filing":
+      return filingScene(state);
+    case "editing":
+      return editorScene(state);
+    case "filed":
+      return filedScene(state);
+    case "saved":
+      return savedScene(state);
+    case "cancelled":
+      return stoppedScene(state);
+    case "recorded":
+      return recordedScene(state);
+    case "shortcut-picked":
+      return pickedScene(state);
+    default: {
+      const unhandled: never = state;
+      return unhandled;
+    }
+  }
+}
+
+function Capsule({ state, levels }: { state: CapsuleState; levels: readonly number[] }) {
   switch (state.kind) {
     case "hidden":
       return null;
-    case "listening":
-      return <Listening state={state} levels={levels} />;
-    case "transcribing":
-      return <Transcribing state={state} />;
-    case "filing":
-      return <Filing state={state} />;
-    case "editing":
-      return <Editor text={state.text} />;
-    case "filed":
-      return <Filed state={state} />;
-    case "saved":
-      return <Saved state={state} />;
-    case "cancelled":
-      return <Stopped state={state} />;
-    case "recorded":
-      return <Recorded state={state} />;
     case "error":
       return <ProblemNotice state={state} />;
     case "preparing":
-      // Zel idles: no agent runs. Only the headline is a live region, so VoiceOver hears the start once, not each step.
+      // Zel idles: no agent runs. It looks to the right, towards the words, and never out at the person (DESIGN.md). Only the headline is a
+      // live region, so VoiceOver hears the start once, not each step.
       return (
         <div className="slot">
           <Hud>
             <Row gap={12} align="start">
-              <Zel mood="idle" size="small" />
+              <Zel mood="idle" size="small" look="right" />
               <div className="fill">
                 <Stack gap={8}>
-                  <div role="status"><Text variant="headline">The speech model is still downloading</Text></div>
+                  <div role="status"><Text variant="headline">The speech model is still downloading.</Text></div>
                   <Progress label="Downloading the speech model" value={state.totalBytes ? state.receivedBytes / state.totalBytes : undefined} />
                   <Text variant="footnote" tone="secondary" numeric>
                     {state.totalBytes > 0 && `${mb(state.receivedBytes)} of ${mb(state.totalBytes)} MB. `}Typing works now.
@@ -124,19 +162,17 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: number[] }) {
         </div>
       );
     }
-    case "shortcut-picked":
-      // A piece of the stack, as every bar is: the page's wrapper takes no pointer (see styles.css), so a bar outside the stack could not be
-      // hovered, and would be put away under the pointer. It is as wide as the others.
+    default: {
+      // The stack: a card if the state has one, the hint, and ONE bar, drawn in the same place for every state that has a bar, so that its
+      // live region stays mounted from listening through filing to filed. `key` keeps the stack from being taken for the notice above.
+      const { card, hint, bar } = sceneOf(state, levels);
       return (
-        <div className="stack">
-          <CapsuleBar mood="filed">{`${ACTION_NAMES[state.key]} now uses ${prettyAccelerator(state.accelerator)}`}</CapsuleBar>
+        <div className="stack" key="stack">
+          {card}
+          {hint}
+          {bar && <Bar kind={state.kind} {...bar} />}
         </div>
       );
-    default: {
-      // Every kind of state has its card above. A kind added without one is a type error here, not a blank panel, as `cancelled` and
-      // `recorded` were for two tasks.
-      const unhandled: never = state;
-      return unhandled;
     }
   }
 }

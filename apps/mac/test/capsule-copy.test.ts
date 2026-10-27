@@ -135,16 +135,16 @@ describe("stoppedLine: the Stopped filing's footer", () => {
 
 describe("recordedLine: the Stopped transcription's footer", () => {
   it("says the recording is in the inbox, and when the evening review turns it into words and files it", () => {
-    expect(recordedLine("at 21:00")).toBe("It's in your inbox. The evening review turns it into words and files it at 21:00.");
-    expect(recordedLine("on Sundays at 18:00")).toBe("It's in your inbox. The evening review turns it into words and files it on Sundays at 18:00.");
+    expect(recordedLine("at 21:00")).toBe("It's in the inbox. The evening review turns it into words and files it at 21:00.");
+    expect(recordedLine("on Sundays at 18:00")).toBe("It's in the inbox. The evening review turns it into words and files it on Sundays at 18:00.");
   });
 
   it("names no time for a review whose schedule can't be read", () => {
-    expect(recordedLine("")).toBe("It's in your inbox. The evening review turns it into words and files it.");
+    expect(recordedLine("")).toBe("It's in the inbox. The evening review turns it into words and files it.");
   });
 
   it("says only where the recording is while the review is off, which promises it nothing", () => {
-    expect(recordedLine(null)).toBe("It's in your inbox.");
+    expect(recordedLine(null)).toBe("It's in the inbox.");
   });
 });
 

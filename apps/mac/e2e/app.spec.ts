@@ -31,7 +31,7 @@ import {
   stubOpening,
   windowFor,
 } from "./helpers.ts";
-import { expectProblem } from "./capsule-helpers.ts";
+import { expectProblem, launchOn } from "./capsule-helpers.ts";
 
 const inbox = (root: string) => readdirSync(path.join(root, "inbox")).filter((n) => !n.startsWith("."));
 const archived = (root: string) => {
@@ -120,7 +120,7 @@ test("a screen capture with a spoken comment waits in the inbox with its screens
   await call(app, "toggleCapture");
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
   // The evening review files it, at the time the library's review runs.
-  expect(await call(app, "capsuleStateForTests")).toMatchObject({ note: "Saved to your inbox for the evening review at 21:00." });
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ note: "Saved to the inbox for the evening review at 21:00." });
   await snap(capsule, "7-capture-saved");
   // The card is the app's name over the comment, stamped Saved, with the screenshot, the page's title and its address (without
   // "https://") in its footer, over the note. The bar says Saved, with Hide alone.
@@ -133,7 +133,7 @@ test("a screen capture with a spoken comment waits in the inbox with its screens
   await expect(card.getByRole("img", { name: "Screenshot of Safari", exact: true })).toBeVisible();
   await expect(card.getByText("Shure MV7+ Podcast Microphone", { exact: true })).toBeVisible();
   await expect(card.getByText("www.shure.com/mv7", { exact: true })).toBeVisible();
-  await expect(card.getByText("Saved to your inbox for the evening review at 21:00.", { exact: true })).toBeVisible();
+  await expect(card.getByText("Saved to the inbox for the evening review at 21:00.", { exact: true })).toBeVisible();
   const [name] = inbox(library);
   const capture = read(library, `inbox/${name}`);
   expect(capture).toContain("source: screen");
@@ -347,14 +347,14 @@ test("Undo on the filed card takes the filing back, and the note waits in the in
   await expect(card.getByRole("listitem").getByText("new", { exact: true })).toBeVisible();
   await capsule.getByRole("button", { name: "Undo" }).click();
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
-  await expect(capsule.getByText("Undone. Your words are back in the inbox for the evening review at 21:00.")).toBeVisible();
+  await expect(capsule.getByText("Your words are back in the inbox for the evening review at 21:00.")).toBeVisible();
   // It is an Undone card: the state says so, the bar says Undone with Hide alone, and the card holds the words, with no stamp, as
   // the filing it would stamp is gone.
   expect(await call(app, "capsuleStateForTests")).toMatchObject({
     kind: "saved",
     undone: true,
     text: "Plant tulips in October",
-    note: "Undone. Your words are back in the inbox for the evening review at 21:00.",
+    note: "Your words are back in the inbox for the evening review at 21:00.",
   });
   await expect(bar.getByText("Undone", { exact: true })).toBeVisible();
   await expect(bar.getByRole("button")).toHaveCount(1);
@@ -1015,15 +1015,15 @@ test("a thought saved for the evening review says when that review runs, and pro
   const card = (await windowFor(app, "capsule")).getByRole("article");
   await call(app, "setApp", { fileMode: "evening" });
   await call(app, "submitQuick", "first thought");
-  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", note: "Saved to your inbox for the evening review at 20:30." });
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", note: "Saved to the inbox for the evening review at 20:30." });
   await expect(card.getByText("first thought", { exact: true })).toBeVisible();
-  await expect(card.getByText("Saved to your inbox for the evening review at 20:30.", { exact: true })).toBeVisible();
+  await expect(card.getByText("Saved to the inbox for the evening review at 20:30.", { exact: true })).toBeVisible();
   // With the review off nothing files the thought by itself: the capsule says only where it is.
   writeFileSync(review, readFileSync(review, "utf8").replace("enabled: true", "enabled: false"));
   await call(app, "submitQuick", "second thought");
-  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", note: "Saved to your inbox." });
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", note: "Saved to the inbox." });
   await expect(card.getByText("second thought", { exact: true })).toBeVisible();
-  await expect(card.getByText("Saved to your inbox.", { exact: true })).toBeVisible();
+  await expect(card.getByText("Saved to the inbox.", { exact: true })).toBeVisible();
   await expect(card.getByText(/evening review/)).toHaveCount(0);
   expect(inbox(library)).toHaveLength(2);
   await app.close();
@@ -1188,7 +1188,7 @@ test("a capture switched to tonight while it listens is saved for the evening re
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
   expect(await call(app, "capsuleStateForTests")).toMatchObject({
     text: "Plant tulips in October",
-    note: "Saved to your inbox for the evening review at 21:00.",
+    note: "Saved to the inbox for the evening review at 21:00.",
   });
   await call(app, "idleForTests");
   expect(inbox(library)).toHaveLength(1);
@@ -1246,6 +1246,103 @@ test("a screen comment has no file mode to switch, and the key that finishes it 
   await app.close();
 });
 
+// ---- One bar ----
+//
+// The capsule announces only the start and the end of a filing, through the bar's live region. A `status` region that arrives with its
+// line already in it is often not read, so the page keeps ONE bar mounted from listening through transcribing and filing to filed: each
+// change of state is a change of what the region holds, which a screen reader hears. The tests tag the bar's node in the page and ask,
+// at every change the page makes, whether the live region is still that node and still the only one.
+
+/** What the page has: the live regions in it, and whether the first is the node that was tagged. */
+type Regions = { regions: number; same: boolean; text: string };
+
+/** Tags the page's live region now, and from now on notes every change of the page (`regionsSeen`): how many live regions stand, and whether the first is the tagged one. */
+const tagBar = (page: Page) =>
+  page.evaluate(() => {
+    const tagged = document.querySelector('[role="status"]');
+    if (!tagged) throw new Error("There is no bar to tag.");
+    const seen: Regions[] = [];
+    Object.assign(window, { taggedBar: tagged, regionsSeen: seen });
+    const note = () => {
+      const all = document.querySelectorAll('[role="status"]');
+      seen.push({ regions: all.length, same: all[0] === tagged, text: all[0]?.textContent ?? "" });
+    };
+    new MutationObserver(note).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+  });
+
+const regionsSeen = (page: Page) => page.evaluate(() => (window as unknown as { regionsSeen: Regions[] }).regionsSeen);
+
+/** Whether the page's live regions are one, and the tagged node. */
+const isTheTaggedBar = (page: Page) =>
+  page.evaluate(() => {
+    const all = document.querySelectorAll('[role="status"]');
+    return { regions: all.length, same: all[0] === (window as unknown as { taggedBar: Element }).taggedBar };
+  });
+
+test("one bar serves a whole dictation: the same live region from listening through filing to filed", async () => {
+  const library = await makeLibrary();
+  const { app, capsule } = await launchHearing(library, newUserData(), { FAKE_AGENT_DELAY_MS: "1500" }); // the filing card stays long enough to be seen
+  await startListening(app);
+  const bar = capsule.getByRole("status");
+  await expect(bar).toHaveCount(1);
+  await tagBar(capsule);
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await expect(bar.getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
+  // At every change the page made, one live region stood, and it was the node that listening began with: a region that is drawn again for
+  // each state would arrive with its line already in it, which a screen reader often does not read.
+  const seen = await regionsSeen(capsule);
+  expect(seen.length).toBeGreaterThan(3);
+  expect(seen.filter((one) => one.regions !== 1 || !one.same)).toEqual([]);
+  // It said the filing's start and its end in turn: those are the two things the capsule announces.
+  expect(seen.some((one) => one.text.includes("Filing with fake…"))).toBe(true);
+  expect(seen.some((one) => /Filed by fake in \d+ s/.test(one.text))).toBe(true);
+  expect(await isTheTaggedBar(capsule)).toEqual({ regions: 1, same: true });
+  await app.close();
+});
+
+/** The states the capsule draws a bar for, as main sends them, each with the line its bar says (or the button it holds, where it has no line). */
+const BAR_STATES: [string, Record<string, unknown>, string][] = [
+  ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", review: "at 21:00", hint: null }, "Files now"],
+  ["transcribing", { kind: "transcribing", mode: "dictate", onThisMac: true }, "Transcribing on this Mac…"],
+  ["a slow transcription", { kind: "transcribing", mode: "dictate", onThisMac: true, slow: true }, "Still transcribing…"],
+  [
+    "filing",
+    { kind: "filing", text: "Plant tulips in October", agent: "Claude Code", transcribedIn: 1.4, onThisMac: true, canEdit: true, rows: [], startedAt: Date.now(), estimate: 15, stepAt: Date.now() },
+    "Filing with Claude Code…",
+  ],
+  ["filed", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: true, noted: false }, "Filed by Claude Code in 6 s"],
+  ["nothing new", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: false, noted: true }, "Nothing new to file"],
+  ["saved", { kind: "saved", text: "Plant tulips in October", note: "Saved to the inbox." }, "Saved"],
+  ["undone", { kind: "saved", text: "Plant tulips in October", note: "Your words are back in the inbox.", undone: true }, "Undone"],
+  ["a stopped filing", { kind: "cancelled", text: "Plant tulips in October", agent: "Claude Code", partial: false, leftovers: 0, review: "at 21:00" }, "Stopped"],
+  ["a stopped transcription", { kind: "recorded", review: "at 21:00" }, "Stopped"],
+  ["a picked shortcut", { kind: "shortcut-picked", key: "dictate", accelerator: "Control+Shift+Space" }, "Record a thought now uses ⌃⇧Space"],
+];
+
+test("every state that has a bar draws it in the one live region, and the editor and a problem draw none", async () => {
+  const { app, capsule } = await launchOn(await makeLibrary());
+  const bar = capsule.getByRole("status");
+  let tagged = false;
+  for (const [name, state, says] of BAR_STATES) {
+    await call(app, "setCapsule", state);
+    await expect(bar.getByText(says, { exact: true }), name).toBeVisible();
+    if (!tagged) {
+      await tagBar(capsule); // the first state's bar: the others must be this one
+      tagged = true;
+    }
+    expect(await isTheTaggedBar(capsule), name).toEqual({ regions: 1, same: true });
+  }
+  // The editor is only a card, and a problem is an alert: neither has a bar, so neither has a live region.
+  await call(app, "setCapsule", { kind: "editing", text: "Plant tulips in October" });
+  await expect(capsule.getByText("Edit before filing", { exact: true })).toBeVisible();
+  await expect(bar).toHaveCount(0);
+  await call(app, "setCapsule", { kind: "error", message: "Avanzel couldn't capture the screen.", detail: "Nothing was saved." });
+  await expect(capsule.getByRole("alert")).toBeVisible();
+  await expect(bar).toHaveCount(0);
+  await app.close();
+});
+
 // ---- The listening card: a bar whose one button is the file mode, with the hint above it ----
 
 test("a dictation listens on a bar whose one button is its file mode, and the first recordings' hint names the keys", async () => {
@@ -1290,7 +1387,7 @@ test("a dictation listens on a bar whose one button is its file mode, and the fi
   expect(shown).toBeGreaterThanOrEqual(elapsed - 2);
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
-  expect(await call(app, "capsuleStateForTests")).toMatchObject({ note: "Saved to your inbox for the evening review at 21:00." });
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ note: "Saved to the inbox for the evening review at 21:00." });
   expect(archived(library)).toEqual([]);
   expect(inbox(library)).toHaveLength(1);
   await app.close();
@@ -1351,7 +1448,7 @@ test("a pointer crossing the gap between a card and its bar keeps the card up, t
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const capsule = await windowFor(app, "capsule");
   const TIME_MS = 2_000;
-  await call(app, "setCapsule", { kind: "saved", text: "Plant tulips in October", note: "Saved to your inbox." }, TIME_MS);
+  await call(app, "setCapsule", { kind: "saved", text: "Plant tulips in October", note: "Saved to the inbox." }, TIME_MS);
   const shownAt = Date.now(); // the card's time began a moment before: the call's own round trip
   const card = (await capsule.getByRole("article").boundingBox())!;
   const bar = (await capsule.getByRole("status").boundingBox())!;
@@ -1444,16 +1541,16 @@ test("the file mode's button names when the evening review files the capture, an
   // ... and with the review off, nothing files the capture, so the button says only where it stays. Pressing it still switches.
   writeFileSync(review, readFileSync(review, "utf8").replace("enabled: true", "enabled: false"));
   await startListening(app);
-  await expect(button("Stays in your inbox")).toBeVisible();
+  await expect(button("Stays in the inbox")).toBeVisible();
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ fileMode: "evening", review: null });
-  await button("Stays in your inbox").click();
+  await button("Stays in the inbox").click();
   await expect(button("Files now")).toBeVisible();
   await button("Files now").click();
-  await expect(button("Stays in your inbox")).toBeVisible();
+  await expect(button("Stays in the inbox")).toBeVisible();
   // Stopped so, it is saved as the card says: in the inbox, and nothing files it by itself.
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
-  expect(await call(app, "capsuleStateForTests")).toMatchObject({ note: "Saved to your inbox." });
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ note: "Saved to the inbox." });
   expect(inbox(library)).toHaveLength(1);
   expect(archived(library)).toEqual([]);
   await app.close();

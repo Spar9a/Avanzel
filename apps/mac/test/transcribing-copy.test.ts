@@ -45,12 +45,20 @@ describe("fileModeLabel: the listening bar's file-mode button", () => {
     expect(fileModeLabel("evening", "on Sundays at 18:00")).toBe("Files on Sundays at 18:00");
   });
 
-  it("names no time for a schedule it can't read, only that the review files it", () => {
-    expect(fileModeLabel("evening", "")).toBe("Files at the review");
+  it("names no time for a schedule it can't read, only that the evening review files it", () => {
+    expect(fileModeLabel("evening", "")).toBe("Files at the evening review");
   });
 
-  it("promises no review while the review is off: nothing files the capture, which stays where it is", () => {
-    expect(fileModeLabel("evening", null)).toBe("Stays in your inbox");
+  it("promises no review while the review is off: nothing files the capture, which stays in the inbox", () => {
+    expect(fileModeLabel("evening", null)).toBe("Stays in the inbox");
+  });
+
+  it("calls the review by its name where it names it, the evening review, and the inbox the inbox, as every other card does", () => {
+    for (const review of [null, "", "at 21:00", "on Sundays at 18:00"]) {
+      const label = fileModeLabel("evening", review);
+      expect(label, String(review)).not.toMatch(/the review/);
+      expect(label, String(review)).not.toMatch(/your inbox/);
+    }
   });
 
   it("never says tonight: a weekly review isn't tonight's, and a review that is off files nothing", () => {

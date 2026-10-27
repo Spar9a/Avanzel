@@ -192,18 +192,18 @@ const UNREADABLE = [
 
 describe("what a thought saved for the evening review says", () => {
   it("names the review's own time while it is on, as General says when it runs", () => {
-    expect(savedNote({ schedule: "daily 21:00", enabled: true })).toBe("Saved to your inbox for the evening review at 21:00.");
-    expect(savedNote({ schedule: "daily 07:30", enabled: true })).toBe("Saved to your inbox for the evening review at 07:30.");
-    expect(savedNote({ schedule: "weekly sun 18:00", enabled: true })).toBe("Saved to your inbox for the evening review, Sundays at 18:00.");
+    expect(savedNote({ schedule: "daily 21:00", enabled: true })).toBe("Saved to the inbox for the evening review at 21:00.");
+    expect(savedNote({ schedule: "daily 07:30", enabled: true })).toBe("Saved to the inbox for the evening review at 07:30.");
+    expect(savedNote({ schedule: "weekly sun 18:00", enabled: true })).toBe("Saved to the inbox for the evening review on Sundays at 18:00.");
   });
 
   it("promises no review while it is off, or when the library has none: nothing files the thought by itself", () => {
-    expect(savedNote({ schedule: "daily 21:00", enabled: false })).toBe("Saved to your inbox.");
-    expect(savedNote(null)).toBe("Saved to your inbox.");
+    expect(savedNote({ schedule: "daily 21:00", enabled: false })).toBe("Saved to the inbox.");
+    expect(savedNote(null)).toBe("Saved to the inbox.");
   });
 
   it("names no time for a review whose schedule it can't read, and still promises the review", () => {
-    for (const schedule of UNREADABLE) expect(savedNote({ schedule, enabled: true }), schedule).toBe("Saved to your inbox for the evening review.");
+    for (const schedule of UNREADABLE) expect(savedNote({ schedule, enabled: true }), schedule).toBe("Saved to the inbox for the evening review.");
   });
 });
 
@@ -226,50 +226,93 @@ describe("when the evening review files a note that Stop left in the inbox", () 
     expect(reviewTime(null)).toBeNull();
   });
 
-  it("reads a schedule as savedNote does: the same time, worded for its own sentence", () => {
-    // The days and hours savedNote names are the ones reviewTime names, for every day of the week.
+  it("reads a schedule as savedNote does: the same time, in the same words", () => {
+    // The days and hours savedNote names are the ones reviewTime names, for every day of the week, and savedNote words them as it does.
     for (const [short, long] of Object.entries({ mon: "Mondays", tue: "Tuesdays", wed: "Wednesdays", thu: "Thursdays", fri: "Fridays", sat: "Saturdays", sun: "Sundays" })) {
       const review = { schedule: `weekly ${short} 06:05`, enabled: true };
       expect(reviewTime(review)).toBe(`on ${long} at 06:05`);
-      expect(savedNote(review)).toBe(`Saved to your inbox for the evening review, ${long} at 06:05.`);
+      expect(savedNote(review)).toBe(`Saved to the inbox for the evening review on ${long} at 06:05.`);
     }
   });
 });
 
 describe("what the capsule says once a filing is undone", () => {
   it("says the words are back in the inbox, and names when the evening review files them, as the review's schedule says", () => {
-    expect(undoneNote({ schedule: "daily 21:00", enabled: true })).toBe("Undone. Your words are back in the inbox for the evening review at 21:00.");
-    expect(undoneNote({ schedule: "daily 07:30", enabled: true })).toBe("Undone. Your words are back in the inbox for the evening review at 07:30.");
-    expect(undoneNote({ schedule: "weekly sun 18:00", enabled: true })).toBe("Undone. Your words are back in the inbox for the evening review on Sundays at 18:00.");
+    expect(undoneNote({ schedule: "daily 21:00", enabled: true })).toBe("Your words are back in the inbox for the evening review at 21:00.");
+    expect(undoneNote({ schedule: "daily 07:30", enabled: true })).toBe("Your words are back in the inbox for the evening review at 07:30.");
+    expect(undoneNote({ schedule: "weekly sun 18:00", enabled: true })).toBe("Your words are back in the inbox for the evening review on Sundays at 18:00.");
   });
 
   it("names no time for a review whose schedule it can't read, and still names the review", () => {
-    for (const schedule of UNREADABLE) expect(undoneNote({ schedule, enabled: true }), schedule).toBe("Undone. Your words are back in the inbox for the evening review.");
+    for (const schedule of UNREADABLE) expect(undoneNote({ schedule, enabled: true }), schedule).toBe("Your words are back in the inbox for the evening review.");
   });
 
   it("names no review while it is off, or when the library has none: nothing files the words by itself", () => {
-    expect(undoneNote({ schedule: "daily 21:00", enabled: false })).toBe("Undone. Your words are back in the inbox.");
-    expect(undoneNote({ schedule: "weekly sun 18:00", enabled: false })).toBe("Undone. Your words are back in the inbox.");
-    expect(undoneNote({ schedule: "not a schedule", enabled: false })).toBe("Undone. Your words are back in the inbox."); // off wins over a schedule nobody reads
-    expect(undoneNote(null)).toBe("Undone. Your words are back in the inbox.");
+    expect(undoneNote({ schedule: "daily 21:00", enabled: false })).toBe("Your words are back in the inbox.");
+    expect(undoneNote({ schedule: "weekly sun 18:00", enabled: false })).toBe("Your words are back in the inbox.");
+    expect(undoneNote({ schedule: "not a schedule", enabled: false })).toBe("Your words are back in the inbox."); // off wins over a schedule nobody reads
+    expect(undoneNote(null)).toBe("Your words are back in the inbox.");
   });
 
   it("words the time as the Stopped cards do, for every day of the week, and never says tonight", () => {
     for (const [short, long] of Object.entries({ mon: "Mondays", tue: "Tuesdays", wed: "Wednesdays", thu: "Thursdays", fri: "Fridays", sat: "Saturdays", sun: "Sundays" })) {
       const review = { schedule: `weekly ${short} 06:05`, enabled: true };
-      expect(undoneNote(review)).toBe(`Undone. Your words are back in the inbox for the evening review ${reviewTime(review)}.`);
-      expect(undoneNote(review)).toBe(`Undone. Your words are back in the inbox for the evening review on ${long} at 06:05.`);
+      expect(undoneNote(review)).toBe(`Your words are back in the inbox for the evening review ${reviewTime(review)}.`);
+      expect(undoneNote(review)).toBe(`Your words are back in the inbox for the evening review on ${long} at 06:05.`);
     }
     for (const review of [null, { schedule: "daily 21:00", enabled: true }, { schedule: "nonsense", enabled: true }]) expect(undoneNote(review)).not.toMatch(/tonight/i);
   });
 
-  it("is a sentence that follows the card's word, Undone, and is written as the design rules ask: no “!”, no three dots", () => {
+  it("does not say Undone again: the bar above it does, and the note starts at where the words are", () => {
+    for (const review of [null, { schedule: "daily 21:00", enabled: true }, { schedule: "weekly sun 18:00", enabled: true }, { schedule: "nonsense", enabled: true }]) {
+      expect(undoneNote(review)).not.toMatch(/undone/i);
+      expect(undoneNote(review)).toMatch(/^Your words are back in the inbox/);
+    }
+  });
+
+  it("is written as the design rules ask: a sentence, no “!”, no three dots", () => {
     for (const review of [null, { schedule: "daily 21:00", enabled: true }, { schedule: "weekly sun 18:00", enabled: true }, { schedule: "nonsense", enabled: true }]) {
       const note = undoneNote(review);
-      expect(note).toMatch(/^Undone\. Your words are back in the inbox/);
+      expect(note).toMatch(/^\p{Lu}/u);
       expect(note).not.toContain("!");
       expect(note).not.toContain("...");
       expect(note).toMatch(/\.$/);
     }
+  });
+});
+
+describe("the capsule's cards say where the words wait and when the review files them in one way", () => {
+  const REVIEWS = [
+    null,
+    { schedule: "daily 21:00", enabled: true },
+    { schedule: "weekly sun 18:00", enabled: true },
+    { schedule: "weekly mon 06:05", enabled: true },
+    { schedule: "nonsense", enabled: true },
+    { schedule: "daily 21:00", enabled: false },
+  ];
+
+  it("name the time as reviewTime words it: the Saved card and the Undone card carry it whole", () => {
+    for (const review of REVIEWS) {
+      const when = reviewTime(review);
+      if (when === null) continue;
+      expect(savedNote(review), JSON.stringify(review)).toBe(`Saved to the inbox for the evening review${when === "" ? "" : ` ${when}`}.`);
+      expect(undoneNote(review), JSON.stringify(review)).toBe(`Your words are back in the inbox for the evening review${when === "" ? "" : ` ${when}`}.`);
+    }
+  });
+
+  it("never say that the words are in your inbox: it is the inbox, as the design system writes it", () => {
+    for (const review of REVIEWS) {
+      expect(savedNote(review), JSON.stringify(review)).not.toMatch(/your inbox/i);
+      expect(undoneNote(review), JSON.stringify(review)).not.toMatch(/your inbox/i);
+      expect(savedNote(review), JSON.stringify(review)).toContain("the inbox");
+      expect(undoneNote(review), JSON.stringify(review)).toContain("the inbox");
+    }
+  });
+
+  it("never put a comma, or a bare day, where the others say “on Sundays at 18:00”", () => {
+    const weekly = { schedule: "weekly sun 18:00", enabled: true };
+    expect(savedNote(weekly)).not.toContain(", Sundays");
+    expect(savedNote(weekly)).toContain("on Sundays at 18:00");
+    expect(undoneNote(weekly)).toContain("on Sundays at 18:00");
   });
 });

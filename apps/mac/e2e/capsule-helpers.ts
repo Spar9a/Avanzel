@@ -17,6 +17,36 @@ export function stampDay(): string {
   return `${day.getDate()} ${MONTHS[day.getMonth()]} ${day.getFullYear()}`;
 }
 
+/**
+ * The capsule's window as the system holds it: whether it is the key window (the one the keyboard types into: not the page's
+ * `document.hasFocus()`, which a test can emulate), whether it can be, whether it is on screen, and where. The panel is the key window
+ * only while the editor is open, and only on a Mac where the test app can be active at all: while the screen is locked (the front app
+ * is loginwindow) no window of it is ever key, so `key` reads false there whatever the panel was told. `watchBlur` counts the telling.
+ */
+export const panelOf = (app: ElectronApplication) =>
+  app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/capsule/"));
+    if (!win) throw new Error("There is no capsule window.");
+    return { key: win.isFocused(), focusable: win.isFocusable(), visible: win.isVisible(), position: win.getPosition() };
+  });
+
+/** From now on, counts the times the app tells the capsule's window to give the keyboard up (`blur`, which `blurs` reads). */
+export async function watchBlur(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/capsule/"));
+    if (!win) throw new Error("There is no capsule window to watch.");
+    const blur = win.blur.bind(win);
+    const seen = { count: 0 };
+    Object.assign(globalThis, { capsuleBlurs: seen });
+    win.blur = () => {
+      seen.count += 1;
+      blur();
+    };
+  });
+}
+
+export const blurs = (app: ElectronApplication) => app.evaluate(() => (globalThis as { capsuleBlurs?: { count: number } }).capsuleBlurs?.count ?? 0);
+
 /** The names of `buttons`, in order: a button's label when it has only an icon, else its words. */
 export const namesOf = (buttons: Locator) => buttons.evaluateAll((all) => all.map((button) => button.getAttribute("aria-label") ?? button.textContent?.trim() ?? ""));
 

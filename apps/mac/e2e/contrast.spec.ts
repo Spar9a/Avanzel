@@ -171,7 +171,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
     [
       "listening, review off",
       { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null, review: null },
-      "Stays in your inbox",
+      "Stays in the inbox",
     ],
     // A screen comment: the screenshot on a card labelled with the app, the key that finishes it, and no file mode to switch.
     [
@@ -181,6 +181,8 @@ function capsuleStates(): [string, CapsuleState, string][] {
     ],
     ["transcribing", { kind: "transcribing", mode: "dictate", onThisMac: true }, "Transcribing on this Mac…"],
     ["transcribing, slow", { kind: "transcribing", mode: "dictate", onThisMac: true, slow: true }, "Still transcribing…"],
+    // A screen comment keeps the screenshot's card, labelled with the app, over the bar while its words are made.
+    ["transcribing, a screen comment", { kind: "transcribing", mode: "comment", onThisMac: true, thumbnail, context }, "Safari"],
     [
       "filing",
       {
@@ -267,8 +269,8 @@ function capsuleStates(): [string, CapsuleState, string][] {
     ],
     [
       "saved, a dictation",
-      { kind: "saved", text: "Call the plumber on Monday", note: "Saved to your inbox for the evening review at 21:00.", detail: "Only your words were kept: the recording couldn't be saved." },
-      "Saved to your inbox for the evening review at 21:00.",
+      { kind: "saved", text: "Call the plumber on Monday", note: "Saved to the inbox for the evening review at 21:00.", detail: "Only your words were kept: the recording couldn't be saved." },
+      "Saved to the inbox for the evening review at 21:00.",
     ],
     [
       "saved, a screen comment",
@@ -277,13 +279,13 @@ function capsuleStates(): [string, CapsuleState, string][] {
         text: "This mic looks right for the podcast",
         thumbnail,
         context,
-        note: "Saved to your inbox for the evening review at 21:00.",
+        note: "Saved to the inbox for the evening review at 21:00.",
         detail: "Only your words were kept: the recording couldn't be saved.",
       },
       "Safari",
     ],
-    ["saved, a screen comment with no words", { kind: "saved", text: "", thumbnail, context, note: "Saved to your inbox." }, "No comment"],
-    ["undone", { kind: "saved", text: said, note: "Undone. Your words are back in the inbox for the evening review at 21:00.", undone: true }, "Undone. Your words are back in the inbox for the evening review at 21:00."],
+    ["saved, a screen comment with no words", { kind: "saved", text: "", thumbnail, context, note: "Saved to the inbox." }, "No comment"],
+    ["undone", { kind: "saved", text: said, note: "Your words are back in the inbox for the evening review at 21:00.", undone: true }, "Your words are back in the inbox for the evening review at 21:00."],
     [
       "stopped, a filing",
       { kind: "cancelled", text: said, agent: "Claude Code", partial: false, leftovers: 0, review: "at 21:00" },
@@ -297,10 +299,10 @@ function capsuleStates(): [string, CapsuleState, string][] {
     [
       "stopped, a filing with the review off",
       { kind: "cancelled", text: said, agent: "Claude Code", partial: false, leftovers: 2, review: null },
-      "The agent's partial edits stay as they are",
+      "Claude Code's partial edits stay as they are",
     ],
     ["stopped, a transcription", { kind: "recorded", review: "at 21:00" }, "The evening review turns it into words and files it at 21:00."],
-    ["stopped, a transcription with the review off", { kind: "recorded", review: null }, "It's in your inbox."],
+    ["stopped, a transcription with the review off", { kind: "recorded", review: null }, "It's in the inbox."],
     // A problem is a notice: what happened, what is safe, Hide and the one fix. The fix's primary label, a command in the code face,
     // a notice with no fix, and the most one says (a title of two lines, and a body of several) are each read in both appearances.
     [
@@ -338,7 +340,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
         message: "Avanzel can't use the voice settings in this library's config file.",
         detail:
           "/Users/ana/Documents/Notes/Avanzel/.avanzel/config.toml: invalid TOML at line 2, column 17: incomplete key-value declaration, expected a value. " +
-          "Typed thoughts are still saved to your inbox.\nYour words are kept in raw/audio/2026/10/2026-10-27-101500.wav.",
+          "Typed thoughts are still saved to the inbox.\nYour words are kept in raw/audio/2026/10/2026-10-27-101500.wav.",
         action: "open-settings:voice",
         actionLabel: "Open Settings",
       },
@@ -356,7 +358,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
       },
       "That thought couldn't be saved.",
     ],
-    ["preparing", { kind: "preparing", receivedBytes: 412_000_000, totalBytes: 672_807_563 }, "The speech model is still downloading"],
+    ["preparing", { kind: "preparing", receivedBytes: 412_000_000, totalBytes: 672_807_563 }, "The speech model is still downloading."],
     [
       "model-failed",
       { kind: "model-failed", reason: "Could not download silero_vad.onnx: terminated (other side closed)", resumable: true },

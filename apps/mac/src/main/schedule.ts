@@ -28,26 +28,11 @@ function readSchedule(schedule: string): { time: string; day: string | null } | 
 }
 
 /**
- * What the capsule says of a thought saved for the evening review to file (Tonight, and every screen capture). While the
- * library's evening review is on, it names when that review runs, as Settings → General does: "at 21:00" for a daily one, and
- * by its day for a weekly one. `review` is that review, its schedule as main sends it ("daily 21:00", "weekly sun 18:00"); with
- * it off, or none (null), nothing files the thought by itself, and only where it is saved is said.
- */
-export function savedNote(review: { schedule: string; enabled: boolean } | null): string {
-  if (!review?.enabled) return "Saved to your inbox.";
-  const when = readSchedule(review.schedule);
-  if (!when) return "Saved to your inbox for the evening review.";
-  return when.day
-    ? `Saved to your inbox for the evening review, ${when.day}s at ${when.time}.`
-    : `Saved to your inbox for the evening review at ${when.time}.`;
-}
-
-/**
- * When the evening review files a note that Stop left in the inbox, worded to follow "files it" (the capsule's Stopped card): "at
- * 21:00" for a daily review, "on Sundays at 18:00" for a weekly one, read from its schedule as `savedNote` reads it. "" for a
- * schedule it can't read, so that the sentence names no time. Null while the review is off, or the library has none: nothing
- * files the note by itself then, and the sentence that names the review is left out. It never says "tonight": a weekly review
- * isn't tonight's.
+ * When the evening review files what is waiting in the inbox, worded to follow "files it" or "the evening review", for every card
+ * that names the review (the Saved and Undone cards' notes, the Stopped cards, and the file-mode button of a recording): "at 21:00"
+ * for a daily review, "on Sundays at 18:00" for a weekly one, read from its schedule. "" for a schedule it can't read, so that the
+ * sentence names no time. Null while the review is off, or the library has none: nothing files the note by itself then, and the
+ * sentence that names the review is left out. It never says "tonight": a weekly review isn't tonight's.
  */
 export function reviewTime(review: { schedule: string; enabled: boolean } | null): string | null {
   if (!review?.enabled) return null;
@@ -57,16 +42,29 @@ export function reviewTime(review: { schedule: string; enabled: boolean } | null
 }
 
 /**
+ * What the capsule says of a thought saved for the evening review to file (Tonight, and every screen capture): where it is, the
+ * inbox, then, while the library's evening review is on, when that review files it, worded as `reviewTime` words it for every card
+ * that names the review: "at 21:00" for a daily one, "on Sundays at 18:00" for a weekly one. `review` is that review, its schedule as
+ * main sends it ("daily 21:00", "weekly sun 18:00"); with it off, or none (null), nothing files the thought by itself, and only
+ * where it is saved is said.
+ */
+export function savedNote(review: { schedule: string; enabled: boolean } | null): string {
+  const when = reviewTime(review);
+  if (when === null) return "Saved to the inbox.";
+  return when === "" ? "Saved to the inbox for the evening review." : `Saved to the inbox for the evening review ${when}.`;
+}
+
+/**
  * What the capsule says once a filing is undone: its words are back in the inbox, and, while the evening review is on, that the
- * review files them again, when, worded as `reviewTime` words it: "Undone. Your words are back in the inbox for the evening review
- * at 21:00." or "… on Sundays at 18:00.". A review whose schedule can't be read is named without a time. While the review is off, or
+ * review files them again, when, worded as `reviewTime` words it: "Your words are back in the inbox for the evening review at
+ * 21:00." or "… on Sundays at 18:00.". A review whose schedule can't be read is named without a time. While the review is off, or
  * the library has none, nothing files the words by itself, and only where they are is said. It is the Undone card's note, as
- * `savedNote` is a Saved card's, and it never says "tonight".
+ * `savedNote` is a Saved card's, and it never says "tonight". It does not say Undone: the bar above it already does.
  */
 export function undoneNote(review: { schedule: string; enabled: boolean } | null): string {
   const when = reviewTime(review);
-  if (when === null) return "Undone. Your words are back in the inbox.";
-  return when === "" ? "Undone. Your words are back in the inbox for the evening review." : `Undone. Your words are back in the inbox for the evening review ${when}.`;
+  if (when === null) return "Your words are back in the inbox.";
+  return when === "" ? "Your words are back in the inbox for the evening review." : `Your words are back in the inbox for the evening review ${when}.`;
 }
 
 export function dueTasks(

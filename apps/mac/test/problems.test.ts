@@ -185,7 +185,7 @@ describe("filingProblem: a note the app set up nothing for (review)", () => {
   it("keeps what the run left behind and where the owner's words are", () => {
     const limit = failure({ kind: "limit", resetsAt: on(0, 15) });
     expect(filingProblem(limit, now, { ...review, where: KEPT, partial: "uncommitted" }).body).toBe(
-      `It resets at 15:00. ${ASIDE}; ${LATER} Its partial edits stay in the library, outside its history, so they can't be undone.`,
+      `It resets at 15:00. ${ASIDE}; ${LATER} Claude Code's partial edits stay as they are, because nothing recorded them.`,
     );
   });
 });
@@ -339,11 +339,25 @@ describe("filingProblem: partial edits and the owner's words", () => {
     );
   });
 
-  it("with no commit the partial edits stay, and can't be undone", () => {
+  it("with no commit the partial edits stay as they are, because nothing recorded them, and the agent is named as everywhere else", () => {
     expect(filingProblem(failure(), now, { partial: "uncommitted" }).body).toBe(
-      `Boom. ${SAFE}; ${LATER} Its partial edits stay in the library, outside its history, so they can't be undone.`,
+      `Boom. ${SAFE}; ${LATER} Claude Code's partial edits stay as they are, because nothing recorded them.`,
     );
     expect(filingProblem(failure(), now, { partial: null }).body).toBe(`Boom. ${SAFE}; ${LATER}`);
+    expect(filingProblem(failure(codex), now, { partial: "uncommitted" }).body).toMatch(/ Codex's partial edits stay as they are, because nothing recorded them\.$/);
+  });
+
+  it("tells the leftover edits as the Stopped card and setup's Cancel do: one sentence, which claims no more than the app knows", () => {
+    for (const agent of ["Claude Code", "Codex", "OpenCode"]) {
+      const sentence = `${agent}'s partial edits stay as they are, because nothing recorded them.`;
+      expect(filingProblem(failure({ agent }), now, { partial: "uncommitted" }).body.endsWith(` ${sentence}`), agent).toBe(true);
+      expect(cancelledLine(agent, false, 1).endsWith(` ${sentence}`), agent).toBe(true);
+      expect(stoppedLine(agent, false, 1, null).endsWith(` ${sentence}`), agent).toBe(true);
+    }
+    // A library without git may keep no history at all, so none is promised or denied; and the edits are the agent's, not "its".
+    for (const line of [filingProblem(failure(), now, { partial: "uncommitted" }).body, cancelledLine("Claude Code", false, 1)]) {
+      expect(line).not.toMatch(/history|undone|\bIts\b|The agent's/);
+    }
   });
 
   it("words kept aside replace the note being safe in the inbox", () => {
@@ -355,7 +369,7 @@ describe("filingProblem: partial edits and the owner's words", () => {
       `The agent changed the note. ${ASIDE}.`,
     );
     expect(filingProblem(failure({ kind: "timeout" }), now, { where: KEPT, partial: "uncommitted" }).body).toBe(
-      `${ASIDE}; ${LATER} Its partial edits stay in the library, outside its history, so they can't be undone.`,
+      `${ASIDE}; ${LATER} Claude Code's partial edits stay as they are, because nothing recorded them.`,
     );
     expect(filingProblem(failure({ kind: "gone" }), now, { where: KEPT }).body).toBe(
       `${ASIDE}. Settings → Agents can choose another agent, or has its install command.`,
@@ -367,50 +381,61 @@ describe("filingProblem: partial edits and the owner's words", () => {
 });
 
 describe("correctedWordsProblem", () => {
-  it("says the corrected words weren't saved yet, with the error's lines and what keeps them", () => {
+  const SAVED = "Your corrected words are saved to the inbox when you quit";
+
+  it("says the corrected words weren't saved yet, with the error's reason as a sentence and what keeps them", () => {
     expect(correctedWordsProblem("EACCES: permission denied, open 'inbox/a.md'", true)).toEqual({
       title: "Your corrected words weren't saved yet.",
-      body: "EACCES: permission denied, open 'inbox/a.md'\nYour corrected words are saved to your inbox when you quit; the original note is still there.",
+      body: `EACCES: permission denied, open 'inbox/a.md'. ${SAVED}; the original note is still there.`,
     });
   });
 
   it("leaves out the original note's clause once the note is gone", () => {
-    expect(correctedWordsProblem("EACCES: permission denied", false).body).toBe(
-      "EACCES: permission denied\nYour corrected words are saved to your inbox when you quit.",
-    );
+    expect(correctedWordsProblem("EACCES: permission denied", false).body).toBe(`EACCES: permission denied. ${SAVED}.`);
+  });
+
+  it("is one paragraph, built as its siblings are: the reason, then what is safe, with no line break between", () => {
+    for (const lines of ["EACCES: permission denied", "no space left on device\nwrite failed", "first\nsecond\nthird"]) {
+      for (const max of [undefined, 40, 100]) {
+        const { body } = correctedWordsProblem(lines, true, max);
+        expect(body, lines).not.toContain("\n");
+        expect(body.endsWith(` ${SAVED}; the original note is still there.`), body).toBe(true);
+      }
+    }
   });
 
   it("shortens a long error line when asked, for a card that clips, so what keeps the words is still said", () => {
     const lines =
       "EACCES: permission denied, rename '/Users/ana/Avanzel/inbox/2026-10-26-032519-misheard-words.md' -> '/Users/ana/Avanzel/inbox/.2026-10-26-032519-misheard-words.md.editing'";
-    const kept = "Your corrected words are saved to your inbox when you quit; the original note is still there.";
-    const [first, ...rest] = correctedWordsProblem(lines, true, 100).body.split("\n");
-    expect(Array.from(first!).length).toBeLessThanOrEqual(100);
-    expect(Array.from(first!).length).toBeGreaterThan(60);
-    expect(first!.endsWith("…")).toBe(true);
+    const kept = `${SAVED}; the original note is still there.`;
+    const body = correctedWordsProblem(lines, true, 100).body;
     // The first path fits and is kept whole; the arrow that led to the second goes, and the second is left out.
-    expect(first).toBe("EACCES: permission denied, rename '/Users/ana/Avanzel/inbox/2026-10-26-032519-misheard-words.md'…");
-    expect(rest).toEqual([kept]);
+    const cut = "EACCES: permission denied, rename '/Users/ana/Avanzel/inbox/2026-10-26-032519-misheard-words.md'…";
+    expect(body).toBe(`${cut} ${kept}`);
+    expect(Array.from(cut).length).toBeLessThanOrEqual(100);
+    expect(Array.from(cut).length).toBeGreaterThan(60);
     // The windows keep it whole, as does a card with a line that fits.
-    expect(correctedWordsProblem(lines, true).body).toBe(`${lines}\n${kept}`);
-    expect(correctedWordsProblem("EACCES: permission denied", true, 100).body).toBe(`EACCES: permission denied\n${kept}`);
+    expect(correctedWordsProblem(lines, true).body).toBe(`${lines}. ${kept}`);
+    expect(correctedWordsProblem("EACCES: permission denied", true, 100).body).toBe(`EACCES: permission denied. ${kept}`);
   });
 
   it("is never cut through a path whose folder has a space in its name: the cut is before it", () => {
-    const kept = "Your corrected words are saved to your inbox when you quit; the original note is still there.";
+    const kept = `${SAVED}; the original note is still there.`;
     for (const folder of ["My Notes", "Mobile Documents"]) {
       const lines = `EACCES: permission denied, rename '/Users/ana/Documents/${folder}/Avanzel/inbox/2026-10-26-032519-misheard-words.md' -> '/Users/ana/Documents/${folder}/Avanzel/inbox/.2026-10-26-032519-misheard-words.md.editing'`;
-      expect(correctedWordsProblem(lines, true, 100).body, folder).toBe(`EACCES: permission denied…\n${kept}`);
+      expect(correctedWordsProblem(lines, true, 100).body, folder).toBe(`EACCES: permission denied… ${kept}`);
     }
   });
 
-  it("keeps the line breaks of an error that has several lines, as far as it is kept", () => {
+  it("joins an error of several lines into one reason, cut as far as the room goes", () => {
     const lines = "first line of the error\nsecond line of the error that goes on a good while longer than the room";
-    expect(correctedWordsProblem(lines, false, 40).body.split("\n")).toEqual([
-      "first line of the error",
-      "second line of…",
-      "Your corrected words are saved to your inbox when you quit.",
-    ]);
+    expect(correctedWordsProblem(lines, false).body).toBe(`First line of the error second line of the error that goes on a good while longer than the room. ${SAVED}.`);
+    expect(correctedWordsProblem(lines, false, 40).body).toBe(`First line of the error second line of… ${SAVED}.`);
+  });
+
+  it("says the inbox, not your inbox, as every other card does", () => {
+    expect(correctedWordsProblem("EACCES: permission denied", true).body).not.toMatch(/your inbox/i);
+    expect(correctedWordsProblem("EACCES: permission denied", true).body).toContain("the inbox");
   });
 });
 
@@ -621,7 +646,7 @@ describe("a refused undo", () => {
   });
 
   it("after Edit adds where the note waits while it is in the inbox, and the evening review only while that is on", () => {
-    expect(takeBackRefusedProblem(true, true)).toEqual({ title: takeBackRefused.title, body: `${WHY} The note waits in your inbox for the evening review.` });
+    expect(takeBackRefusedProblem(true, true)).toEqual({ title: takeBackRefused.title, body: `${WHY} The note waits in the inbox for the evening review.` });
     // With the review off nothing is promised: the note is only safe.
     expect(takeBackRefusedProblem(true, false)).toEqual({ title: takeBackRefused.title, body: `${WHY} Your note is safe in the inbox.` });
     // A note that is no longer in the inbox (filed meanwhile) isn't said to wait there.
@@ -661,7 +686,7 @@ describe("stoppedNotice, for a Stop whose card is gone", () => {
     expect(stoppedNotice("Claude Code", false, 2, "on Sundays at 18:00")).toEqual({
       title: "Stopped, but some edits stay in your library.",
       body:
-        "Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them. " +
+        "Your words are back in the inbox. Claude Code's partial edits stay as they are, because nothing recorded them. " +
         "The evening review files your words on Sundays at 18:00.",
     });
   });
@@ -696,7 +721,7 @@ const WAV = "raw/audio/2026/10/2026-10-27-101500.wav";
 const RENAME_REFUSED = `EACCES: permission denied, rename '/Users/ana/Documents/Notes/Avanzel/${WAV}' -> '/Users/ana/Documents/Notes/Avanzel/inbox/2026-10-27-101500.wav'`;
 
 describe("stopFailedProblem", () => {
-  const TITLE = "Avanzel couldn't move the recording to your inbox.";
+  const TITLE = "Avanzel couldn't move the recording to the inbox.";
 
   it("says why, that the transcription goes on, and where the recording is", () => {
     expect(stopFailedProblem("EACCES: permission denied", WAV)).toEqual({
@@ -868,7 +893,7 @@ describe("voiceSettingsProblem", () => {
   it("says Avanzel can't use the voice settings in the library's config file, why, and that typed thoughts are still saved", () => {
     expect(voiceSettingsProblem("Speech model 'parakeet-v9' is not supported; choose parakeet-tdt-0.6b-v3")).toEqual({
       title: "Avanzel can't use the voice settings in this library's config file.",
-      body: "Speech model 'parakeet-v9' is not supported; choose parakeet-tdt-0.6b-v3. Typed thoughts are still saved to your inbox.",
+      body: "Speech model 'parakeet-v9' is not supported; choose parakeet-tdt-0.6b-v3. Typed thoughts are still saved to the inbox.",
     });
   });
 
@@ -878,11 +903,11 @@ describe("voiceSettingsProblem", () => {
 
   it("tells a long reason whole: it says what to mend", () => {
     const why = "/Users/ana/Avanzel/.avanzel/config.toml: invalid TOML at line 2, column 17: incomplete key-value declaration, expected a value";
-    expect(voiceSettingsProblem(why).body).toBe(`${why}. Typed thoughts are still saved to your inbox.`);
+    expect(voiceSettingsProblem(why).body).toBe(`${why}. Typed thoughts are still saved to the inbox.`);
   });
 
   it("has only what is true when the reason is empty", () => {
-    expect(voiceSettingsProblem("").body).toBe("Typed thoughts are still saved to your inbox.");
+    expect(voiceSettingsProblem("").body).toBe("Typed thoughts are still saved to the inbox.");
   });
 });
 
@@ -973,6 +998,23 @@ describe("the copy rules, for every problem a filing can have", () => {
       expect(body, body).toMatch(/[.?…]$/);
       for (const sentence of body.split(/(?<=[.?…])\s+/)) expect(sentence, body).toMatch(/^\p{Lu}/u);
     }
+  });
+
+  it("a body is one paragraph: the card gives a line break its own paragraph, so no body has one", () => {
+    for (const { body } of problems) expect(body, body).not.toContain("\n");
+  });
+
+  it("says the inbox, as the design system's own example does, and never “your inbox”", () => {
+    everyText((text) => expect(text).not.toMatch(/your inbox/i));
+    expect(problems.filter((problem) => /\binbox\b/.test(problem.body)).length).toBeGreaterThan(100);
+  });
+
+  it("tells edits that nothing recorded in one way, naming the agent whose they are", () => {
+    for (const { body } of problems) {
+      if (!/stay (in the library|as they are)/.test(body)) continue;
+      expect(body, body).toMatch(/(^| )(Claude Code|Codex|OpenCode|Avanzel)'s partial edits stay as they are, because nothing recorded them\./);
+    }
+    expect(problems.some((problem) => problem.body.includes("because nothing recorded them"))).toBe(true);
   });
 
   it("says no “!”, no apology or filler, no emoji, no three dots, and no gendered pronoun", () => {

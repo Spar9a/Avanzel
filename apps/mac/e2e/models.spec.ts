@@ -9,6 +9,7 @@ import { loadSettings, MODELS, saveSettings } from "../../../packages/engine/src
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import { ownLine } from "../src/shared/problems.ts";
 import { expectProblem } from "./capsule-helpers.ts";
+import { zel } from "./setup-helpers.ts";
 import { call, capsuleKind, closeModelHubs, emptyHfCache, fakeModelHub, hfSnapshot, launch, makeLibrary, openSettings, shown, snap, windowFor } from "./helpers.ts";
 
 const PARAKEET = "nemo-parakeet-tdt-0.6b-v3";
@@ -154,8 +155,12 @@ test("pressing the shortcut while the models download shows progress, and Type i
   const capsule = await windowFor(app, "capsule");
   await call(app, "toggleDictate");
   await expect(capsule.getByRole("progressbar", { name: "Downloading the speech model" })).toBeVisible();
-  // The headline is the card's only live region, so VoiceOver hears the start once, not each step of the progress.
-  await expect(capsule.getByRole("status")).toHaveText("The speech model is still downloading");
+  // The headline is the card's only live region, so VoiceOver hears the start once, not each step of the progress. It is a sentence,
+  // with its full stop, as the title of the card for a failed download is.
+  await expect(capsule.getByRole("status")).toHaveText("The speech model is still downloading.");
+  // Zel idles, with its eyes on the words (towards them, to the right), never on the person: no agent runs, and none looks out at them.
+  await expect(zel(capsule)).toHaveAttribute("data-mood", "idle");
+  await expect(zel(capsule)).toHaveAttribute("data-look", "right");
   await expect(capsule.getByRole("alert")).toHaveCount(0);
   // The hub sends 64 KB and holds on; the total is known before the first byte.
   await expect(capsule.getByText("0 of 673 MB. Typing works now.")).toBeVisible();
@@ -186,7 +191,7 @@ test("the download's card hides itself, though not while the pointer is on it, a
   await call(app, "toggleDictate");
   expect(await capsuleKind(app)).toBe("preparing");
   const capsule = await windowFor(app, "capsule");
-  await expect(capsule.getByText("The speech model is still downloading")).toBeVisible();
+  await expect(capsule.getByText("The speech model is still downloading.", { exact: true })).toBeVisible();
   await capsule.waitForTimeout(4_500); // past its 3 s
   expect(await capsuleKind(app)).toBe("preparing");
   await call(app, "setKeepOpen", false);
@@ -303,7 +308,7 @@ test("voice settings Avanzel can't use are named at the shortcut, and nothing do
   // file that doesn't parse stops a filing too). The one fix is Settings → Voice, where the config file's [voice] settings are named
   // (Try again can't help: nothing downloads).
   const title = "Avanzel can't use the voice settings in this library's config file.";
-  const why = /^Speech model 'parakeet-v9' is not supported; .*\. Typed thoughts are still saved to your inbox\.$/;
+  const why = /^Speech model 'parakeet-v9' is not supported; .*\. Typed thoughts are still saved to the inbox\.$/;
   await expectProblem(capsule, { title, lines: [why], fix: "Open Settings" });
   const state = (await call(app, "capsuleStateForTests")) as { detail: string };
   expect(state).toEqual({
@@ -339,7 +344,7 @@ test("a fixed [voice] setting works on the next press", async () => {
   saveSettings(library, config); // fixed by hand, with Avanzel running
   await call(app, "toggleDictate");
   await expect(capsule.getByRole("progressbar", { name: "Downloading the speech model" })).toBeVisible();
-  await expect(capsule.getByText("The speech model is still downloading")).toBeVisible();
+  await expect(capsule.getByText("The speech model is still downloading.", { exact: true })).toBeVisible();
   await expect.poll(() => hub.requests.length).toBeGreaterThan(0);
   await app.close();
 });

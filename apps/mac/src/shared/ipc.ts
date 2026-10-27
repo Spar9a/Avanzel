@@ -80,9 +80,11 @@ export type CapsuleState =
   /**
    * `onThisMac`: the library's speech-to-text runs on this Mac, which the card then says; a command can run anywhere. `slow`: it has run
    * past the controller's TRANSCRIBE_STOP_MS, so the card offers Stop (the controller's `stopTranscribing` tells the rest). Absent
-   * before then, and always for a screen comment and for setup's first spoken thought, which have no Stop.
+   * before then, and always for a screen comment and for setup's first spoken thought, which have no Stop. `thumbnail` and `context`:
+   * a screen comment's screenshot and what it is of, as it had them while it listened, so that the card above the bar stays while the
+   * words are made and the saved card that follows does not come after a gap.
    */
-  | { kind: "transcribing"; mode: CapsuleMode; onThisMac: boolean; slow?: true }
+  | { kind: "transcribing"; mode: CapsuleMode; onThisMac: boolean; slow?: true; thumbnail?: string; context?: ScreenContext }
   | {
       kind: "filing";
       text: string;

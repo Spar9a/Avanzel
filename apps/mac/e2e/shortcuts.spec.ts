@@ -37,6 +37,8 @@ test("a taken ⌥Space is named at launch, and a free one picked there says it w
   await capsule.mouse.move(0, 0); // off the capsule, which stays while the pointer is on it
   // The capsule says the pick works, in its live region (beside Zel, whose drawing VoiceOver skips), then goes by itself.
   await expect(capsule.getByRole("status").getByText("Record a thought now uses ⌃⌥R", { exact: true })).toBeVisible();
+  // The shortcut is set as a key, as the listening hint sets its keys, and not as plain text; the sentence still reads whole.
+  await expect(capsule.getByRole("status").locator("kbd")).toHaveText("⌃⌥R");
   await snap(capsule, "capsule-shortcut-picked");
   await expect.poll(() => capsuleKind(app), { timeout: 15_000 }).toBe("hidden");
   const after = await snapshot(app);

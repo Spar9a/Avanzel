@@ -316,7 +316,7 @@ test("Cancel in a library without git leaves the stopped run's edits as they are
   await setup.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(setup.getByRole("heading", { name: "Cancelled." })).toBeVisible({ timeout: 30_000 });
   await expect(
-    setup.getByText("Your words are back in the inbox. The agent's partial edits stay as they are, because nothing recorded them.", { exact: true }),
+    setup.getByText("Your words are back in the inbox. Claude Code's partial edits stay as they are, because nothing recorded them.", { exact: true }),
   ).toBeVisible();
   await expect(setup.getByText("nothing else changed", { exact: false })).toHaveCount(0);
   expect((await setupSnap(app)).filing).toMatchObject({ kind: "cancelled", partial: false, leftovers: 1 });
