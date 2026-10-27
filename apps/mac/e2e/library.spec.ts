@@ -1,8 +1,9 @@
 // The library around the captures: shadow tasks, their run state, and libraries that misbehave or aren't there.
 import { expect, test, type ElectronApplication } from "@playwright/test";
-import { chmodSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import {
@@ -752,6 +753,26 @@ test("a library that has .git, on a Mac with no usable git, files a thought with
     else expect(calls).toEqual([]);
     await app.close();
   }
+});
+
+test("a library that was a git repository already, with automatic commits off, keeps the inbox's recordings out of git once it opens", async () => {
+  // Its owner made the repository (an Obsidian vault, say), so Avanzel never made it, and with auto_commit off no commit of Avanzel's
+  // ever writes the exclude lines: a sync tool of the owner's could commit a recording that Stop left in the inbox.
+  const library = await makeLibrary(); // made with no repository ...
+  gitOut(library, "init", "-q"); // ... which its owner then makes
+  saveSettings(library, { ...loadSettings(library), autoCommit: false });
+  const exclude = path.join(library, ".git", "info", "exclude");
+  const lines = () => (existsSync(exclude) ? readFileSync(exclude, "utf8").split("\n") : []);
+  expect(lines()).not.toContain("inbox/*.[wW][aA][vV]");
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  await expect.poll(lines, { timeout: 15_000 }).toContain("inbox/*.[wW][aA][vV]");
+  await app.close();
+  // The owner's own git now passes over a recording that waits in the inbox, and still sees the note beside it.
+  writeFileSync(path.join(library, "inbox", "2026-10-27-101500.wav"), "sound");
+  writeFileSync(path.join(library, "inbox", "2026-10-27-101501.md"), "---\nid: 2026-10-27-101501\n---\n\nwords\n");
+  const untracked = gitOut(library, "status", "--porcelain", "--untracked-files=all", "--", "inbox");
+  expect(untracked).toContain("inbox/2026-10-27-101501.md");
+  expect(untracked).not.toContain(".wav");
 });
 
 test("Agents shows a library's problem as General does, and lists the agents once a folder is chosen", async () => {

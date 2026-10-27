@@ -484,6 +484,41 @@ export async function stubOpening(app: ElectronApplication): Promise<void> {
 export const openedWith = (app: ElectronApplication) => app.evaluate(() => (globalThis as { openedWith?: string[] }).openedWith ?? []);
 
 /**
+ * From now on, Stop on the capsule's card is pressed the moment the engine hands a filing's result back: the agent has finished, and
+ * the app has not yet looked at what it did. With `setup`, it is Cancel in the setup window instead. With `hold`, the result waits
+ * first (`reachedTheEnd` says that it does, and `letItEnd`, left in the main process, lets it go), so that the test can change the
+ * library in between. No press of a button can time either.
+ */
+export async function stopAtTheEnd(app: ElectronApplication, { hold = false, setup = false } = {}): Promise<void> {
+  await app.evaluate(({ BrowserWindow }, { holding, inSetup }) => {
+    type Librarian = { file(...args: unknown[]): Promise<unknown> };
+    type Stoppable = { librarian(harness?: string): Promise<Librarian>; cancelFiling(sender: unknown): void; setup: { cancelSetupFiling(): void } };
+    const controller = (globalThis as unknown as { __avanzel: Stoppable }).__avanzel;
+    const capsule = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/capsule/"));
+    if (!capsule && !inSetup) throw new Error("There is no capsule window.");
+    const stop = () => (inSetup ? controller.setup.cancelSetupFiling() : controller.cancelFiling(capsule?.webContents));
+    const librarian = controller.librarian.bind(controller);
+    controller.librarian = async (harness) => {
+      const made = await librarian(harness);
+      const file = made.file.bind(made);
+      made.file = async (...args) => {
+        const outcomes = await file(...args);
+        if (holding) {
+          Object.assign(globalThis, { atTheEnd: true });
+          await new Promise<void>((resolve) => Object.assign(globalThis, { letItEnd: resolve }));
+        }
+        stop();
+        return outcomes;
+      };
+      return made;
+    };
+  }, { holding: hold, inSetup: setup });
+}
+
+/** Whether a filing's result is held at its end (`stopAtTheEnd`'s `hold`, or a test's own hold), waiting for `letItEnd`. */
+export const reachedTheEnd = (app: ElectronApplication) => app.evaluate(() => (globalThis as { atTheEnd?: boolean }).atTheEnd === true);
+
+/**
  * A first run from Hello to the first-thought step, as a person goes: Set me up, then Looks good once setup has chosen
  * Claude Code (its stand-in reads as signed in), which makes the library at ~/Avanzel. Returns the setup window.
  */

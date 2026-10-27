@@ -70,6 +70,7 @@ import {
   commentNotStartedProblem,
   correctedWordsProblem,
   filingProblem,
+  linkedPageNotice,
   NO_GIT_LINE,
   ownLine,
   recordingLost,
@@ -112,7 +113,7 @@ import type {
 import { frontContext } from "./front-app.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
-import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "./library-info.ts";
+import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "./library-info.ts";
 import { buildMenuModel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
@@ -487,6 +488,7 @@ export class Controller {
       return;
     }
     this.vault = vault;
+    void this.keepAudioOutOfGit(vault.root); // not awaited: the library is open at once, and its git is told meanwhile
     try {
       void this.transcriberFor(loadSettings(vault.root).voice);
     } catch {
@@ -497,6 +499,17 @@ export class Controller {
   private requireVault(): Vault {
     if (!this.vault) throw new AvanzelError("Set up your library first: Avanzel Settings → General.");
     return this.vault;
+  }
+
+  /**
+   * Recordings that wait in the inbox of the library at `root` stay out of its git (the engine's `keepInboxAudioOut`): as the library
+   * opens, so a repository Avanzel didn't make, or one with auto_commit off, has the lines before any recording waits there, and again
+   * before Stop puts one there. Best effort: why the lines can't be written is logged, and the library opens, and the recording lands,
+   * either way.
+   */
+  private async keepAudioOutOfGit(root: string): Promise<void> {
+    const why = await git.keepInboxAudioOut(root);
+    if (why !== null) console.warn(`recordings waiting in the inbox of ${root} aren't kept out of git: ${why}`);
   }
 
   /** Always with the speech-to-text engine: the evening review may find recordings in the inbox. */
@@ -708,6 +721,11 @@ export class Controller {
     const win = this.capsule;
     win.webContents.send("capsule:state", state);
     if (state.kind === "hidden") {
+      // A hidden panel can't be hovered, and no leave reaches it: the pointer that was on it (to press Hide, say) lets go of the hold
+      // now, or the next card that hides itself would wait for a pointer that has gone (`scheduleHide`).
+      this.keepOpen = false;
+      if (this.letGoTimer) clearTimeout(this.letGoTimer);
+      this.letGoTimer = null;
       win.setFocusable(false);
       win.setIgnoreMouseEvents(true, { forward: true });
       win.hide();
@@ -1194,14 +1212,22 @@ export class Controller {
    * recording stays where it was, and the transcription goes on as if Stop had not been pressed. Only the capsule's own page is
    * heard (`sender` is the page the message came from, `event.sender`), and only while the capsule shows that transcription's
    * slow card: a press before then, a second one, one after the transcription has ended, and one on the card of a screen comment
-   * or of setup's first spoken thought (which never turn slow) do nothing.
+   * or of setup's first spoken thought (which never turn slow) do nothing. Before the recording lands, the library's git is told to
+   * keep it out (`keepAudioOutOfGit`, as the library did when it opened): that takes a moment, in which the transcription may end or
+   * a second press come, so the press is looked at again once it is done.
    */
-  stopTranscribing(sender: WebContents): void {
+  async stopTranscribing(sender: WebContents): Promise<void> {
     const transcribing = this.transcribing;
-    const state = this.capsuleState;
-    // `transcribing.stopped` is a belt, and nothing reaches it today: once Stop has kept the recording the card is `recorded`, and
-    // the check of the card turns a second Stop away. It keeps a recording from being kept twice, should the card ever allow it.
-    if (!isPageOf(sender, this.capsule) || !transcribing || transcribing.stopped || state.kind !== "transcribing" || !state.slow) return;
+    if (!isPageOf(sender, this.capsule) || !transcribing) return;
+    // `transcribing.stopped` is a belt: once Stop has kept the recording the card is `recorded`, and the check of the card turns a
+    // second Stop away. It keeps a recording from being kept twice, should the card ever allow it.
+    const stoppable = () => {
+      const state = this.capsuleState;
+      return this.transcribing === transcribing && !transcribing.stopped && state.kind === "transcribing" && !!state.slow;
+    };
+    if (!stoppable()) return;
+    await this.keepAudioOutOfGit(transcribing.vault.root);
+    if (!stoppable()) return;
     try {
       this.keepInInbox(transcribing);
     } catch (error) {
@@ -1267,6 +1293,7 @@ export class Controller {
     if (this.queued > 0) job.waiting = true;
     this.showFiling(job);
     this.queuedToFile.add(job.capturePath);
+    job.queuedAlone = true;
     void this.enqueue(() => this.runFiling(job));
   }
 
@@ -1414,6 +1441,7 @@ export class Controller {
 
   private async runFiling(job: FilingJob): Promise<void> {
     this.queuedToFile.delete(job.capturePath); // its turn: should it not file the capture, a review may
+    delete job.queuedAlone; // a Stop from here on waits for the run (`cancelFiling`)
     if (job.abort.signal.aborted) return; // Edit, Cancel in setup or Stop in the capsule stopped it before its turn came
     if (!existsSync(job.capturePath)) return this.noteGone(job); // already filed meanwhile (e.g. by another Avanzel on this library)
     const library = this.vault; // the note's own: another library may open while the agent runs
@@ -1437,8 +1465,9 @@ export class Controller {
     }
     job.outcome = outcome;
     // Edit takes back what this run did (`refile`), and so does Cancel in setup (`cancelSetupFiling`) and Stop in the capsule
-    // (`settleStop`). Except a filing that Stop caught as it filed, with no commit to take back: it stands (`afterStop`).
-    const stopped = job.cancelled && (job.setup || afterStop(outcome) === "take-back");
+    // (`settleStop`). Except a filing that Stop or Cancel caught as it filed, with no commit to take back: it stands (`afterStop`), and
+    // is shown filed, in the capsule or in setup's window.
+    const stopped = job.cancelled && afterStop(outcome) === "take-back";
     if (job.edited || stopped || this.quitting) return;
     const seconds = Math.max(0, (Date.now() - job.startedAt) / 1000);
     // No outcome at all: the capture left the inbox while the run waited for the library, and another Avanzel filed it. As when
@@ -1909,7 +1938,7 @@ export class Controller {
   /**
    * Stops the agent at once and shows the words; Submit or Cancel then takes back what it did
    * (`refile`). Not while quitting: the editor would close with the app, and its words with it. Nor once Stop has stopped the
-   * filing (`cancelFiling`).
+   * filing (`cancelFiling`): the card is on its way to Stopped, and the editor would open on a note that is being taken back.
    */
   edit(): void {
     const job = this.job;
@@ -1926,6 +1955,9 @@ export class Controller {
    * taken back and the card says it is Stopped (`settleStop`), as Cancel does in setup (`cancelSetupFiling`). The note stays in
    * the inbox. Until then the card says it is stopping and offers no Edit (`cancelling`, `canEdit`, which `filingState` reads from
    * the job, so no step or wait takes them off): that can be a while, as a filing in the wait for the library can't leave it.
+   * A filing whose run still waits for its turn in the app's queue, queued alone (`queuedAlone`), is Stopped at once instead: nothing
+   * has touched its note, so there is nothing to take back, and its turn, when it comes, does nothing (`runFiling` finds it stopped).
+   * Waiting behind every run ahead of it would leave the card stopping for as long as those take, though nothing of its own runs.
    * Only the capsule's own page is heard (`sender` is the page the message came from, `event.sender`), and only while it shows a
    * filing that neither Stop nor Edit has taken yet: a second Stop does nothing, nor does one after Edit, or once the filing is
    * filed. Not while quitting, which has stopped every run already.
@@ -1935,6 +1967,11 @@ export class Controller {
     if (!isPageOf(sender, this.capsule) || !job || job.cancelled || job.edited || this.quitting || this.capsuleState.kind !== "filing") return;
     job.cancelled = true;
     job.abort.abort();
+    if (job.queuedAlone) {
+      const review = reviewTime(this.openReview());
+      this.setCapsule({ kind: "cancelled", text: job.text, agent: job.agent, partial: false, leftovers: 0, review }, STOPPED_SHOW_MS);
+      return;
+    }
     this.refreshFiling(job);
     void this.enqueue(() => this.settleStop(job));
   }
@@ -2193,19 +2230,25 @@ export class Controller {
    * `undoneNote` words). When git refuses, or the revert fails, it says that this one can't be undone automatically (`undoRefused`).
    * It answers once for a filing (`undoing`), as setup's Undo does: a press while the first runs, or after it, does nothing. A second
    * revert of the same commit would find it taken back already, and git would refuse it, which would turn the Undone card into the
-   * refusal.
+   * refusal. It answers only while the filed card of the newest filing is up, which is the one that offers it. The revert waits its turn
+   * in the queue, and a newer card may be up by the time it lands: a recording's (which goes on recording, since its recorder is the
+   * page's), or a newer filing's editor, which a card put over it would close under the person's typing. So its card replaces only the
+   * filed card it was pressed on, and over any other card a notification says the same.
    */
   async undo(): Promise<void> {
     const job = this.job;
     const commit = job?.outcome?.commit;
-    if (!job || !commit || job.undoing) return;
+    if (!job || !commit || job.undoing || this.capsuleState.kind !== "filed") return;
     job.undoing = true;
     const undone = await this.revertFiling(commit).catch((error) => {
       console.warn("undo", error); // a revert that threw is a refusal to the card: it would otherwise wait on its Undo for ever
       return false;
     });
-    if (undone) this.setCapsule({ kind: "saved", text: job.text, note: undoneNote(this.openReview()), undone: true }, 3500);
-    else this.fail(undoRefused);
+    const showing = this.job === job && this.capsuleState.kind === "filed";
+    if (!undone) return showing ? this.fail(undoRefused) : this.notify(undoRefused.title, undoRefused.body);
+    const note = undoneNote(this.openReview());
+    if (showing) this.setCapsule({ kind: "saved", text: job.text, note, undone: true }, 3500);
+    else this.notify("Undone", note);
   }
 
   openFiled(): void {
@@ -2473,9 +2516,26 @@ export class Controller {
     return !!app.getApplicationNameForProtocol("obsidian://");
   }
 
+  /**
+   * Opens the page at `rel`, a library path: in Obsidian when the library is a vault of its own, else in the app the Mac opens it with.
+   * Every way to a page comes here: Open and a title on the filed card, the filed notification, the menu's recent pages, Ask's links and
+   * a review's notification. Only a plain file in the library, reached through no link, is opened (`pageAt`): a link opens as whatever
+   * it points at, by that file's own type, and an agent with a shell could point one at a script it wrote. A link opens nothing, and a
+   * notification says so (`linkedPageNotice`), since the press that asked for it saw nothing happen (Open puts its card away). Nothing
+   * that isn't there, or isn't a file, is opened either; that is only logged.
+   */
   openPage(rel: string): void {
     const vault = this.vault;
     if (!vault) return;
+    const at = pageAt(vault.root, rel);
+    if (at !== "page") {
+      console.warn(`open page: ${rel} ${at === "link" ? "goes through a link" : "is no file in the library"}, so nothing was opened`);
+      if (at === "link") {
+        const notice = linkedPageNotice(rel);
+        this.notify(notice.title, notice.body);
+      }
+      return;
+    }
     const url = this.obsidianInstalled() ? obsidianUrl(vault.root, rel) : null;
     if (url) void shell.openExternal(url);
     else void shell.openPath(path.join(vault.root, rel));

@@ -31,10 +31,13 @@ export function shortened(text: string, max: number | undefined): string {
 /** The quotes a path is put in: Node quotes the paths in its errors, and a shell does as well. */
 const QUOTES = new Set(["'", '"', "`"]);
 
+/** Whether `word` ends with `quote`, before any stop, comma, colon or bracket that follows it: 'x', and 'x'. both close. */
+const endsWith = (word: string, quote: string): boolean => word.replace(/[.,;:)]+$/u, "").endsWith(quote);
+
 /**
  * The index of the first word of `words` that opens a quote that none of them closes, or -1. A word opens a quote when it starts
- * with one that the rest of the word doesn't close, and a later word closes it when it has that quote in it: what is between may
- * hold spaces, as a path does ('/Users/ana/My Notes/…').
+ * with one and doesn't end with it, and a later word closes it when it ends with that quote: what is between may hold spaces, as a
+ * path does ('/Users/ana/My Notes/…'), and the quote inside a word, as an apostrophe is ('/Users/anton/Documents/Anton's Notes/…').
  */
 function openQuote(words: readonly string[]): number {
   let open = -1;
@@ -42,11 +45,11 @@ function openQuote(words: readonly string[]): number {
   words.forEach((word, i) => {
     if (open < 0) {
       const first = word.charAt(0);
-      if (QUOTES.has(first) && !word.slice(1).includes(first)) {
+      if (QUOTES.has(first) && !endsWith(word.slice(1), first)) {
         open = i;
         quote = first;
       }
-    } else if (word.includes(quote)) {
+    } else if (endsWith(word, quote)) {
       open = -1;
     }
   });

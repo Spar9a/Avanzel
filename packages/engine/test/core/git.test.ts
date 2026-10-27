@@ -382,5 +382,76 @@ describe.skipIf(!git.available())("git", () => {
       expect(gitOut(parent, "diff", "--cached", "--name-only")).toBe("");
       expect(readFileSync(excludeFile(parent), "utf8")).toBe(before);
     });
+
+    // A library that was a repository before Avanzel opened it (an Obsidian vault, say) gets the lines at Avanzel's first commit, and
+    // with auto_commit off never: a sync tool of the owner's could commit a recording meanwhile. So the app writes them as it opens one.
+    describe("keepInboxAudioOut, as a library opens", () => {
+      it("writes the lines into a repository Avanzel didn't make, and a second call adds nothing", async () => {
+        gitIdentity();
+        const root = repo();
+        gitOut(root, "init", "-q"); // the owner's own repository, which no commit of Avanzel's has touched
+        gitOut(root, "config", "core.ignorecase", "false");
+        const had = existsSync(excludeFile(root)) ? readFileSync(excludeFile(root), "utf8") : "";
+        expect(had).not.toContain("inbox/*.[wW][aA][vV]");
+        expect(await git.keepInboxAudioOut(root)).toBeNull();
+        const once = readFileSync(excludeFile(root), "utf8");
+        expect(once.startsWith(had)).toBe(true); // the owner's lines stay as they were
+        // The same lines a repository Avanzel makes gets, one for each audio type.
+        const made = join(tmp(), "made");
+        mkdirSync(made);
+        await git.initRepo(made);
+        const avanzels = readFileSync(excludeFile(made), "utf8").split("\n").filter((line) => line.startsWith("inbox/"));
+        expect(avanzels).toHaveLength(AUDIO_EXTS.size);
+        expect(avanzels).toContain("inbox/*.[wW][aA][vV]");
+        expect(once.split("\n").filter((line) => line.startsWith("inbox/"))).toEqual(avanzels);
+        expect(await git.keepInboxAudioOut(root)).toBeNull();
+        expect(readFileSync(excludeFile(root), "utf8")).toBe(once);
+        // The owner's own git, or a sync tool's, now passes a recording in the inbox over, and the note beside it is still seen.
+        write(root, "inbox/memo.wav", "sound");
+        write(root, "inbox/note.md", "words");
+        gitOut(root, "add", "-A");
+        expect(tracked(root)).toEqual(["inbox/note.md"]);
+      });
+
+      it("runs no git for a folder that isn't a repository, nor for one where only Apple's stub could run it", async () => {
+        const calls = join(tmp(), "calls.log");
+        vi.stubEnv("PATH", binScripts(tmp(), { git: `echo "$*" >> '${calls}'`, xcrun: `echo xcrun >> '${calls}'` }));
+        git.resetGitUsable();
+        const folder = repo(); // no .git in it
+        expect(await git.keepInboxAudioOut(folder)).toBeNull();
+        expect(existsSync(calls)).toBe(false);
+        // A .git, on a Mac whose git is Apple's stub, which opens the tools' install dialog when run: AVANZEL_GIT_USABLE=0 plays it.
+        mkdirSync(join(folder, ".git"));
+        vi.stubEnv("AVANZEL_TEST", "1");
+        vi.stubEnv("AVANZEL_GIT_USABLE", "0");
+        git.resetGitUsable();
+        expect(await git.keepInboxAudioOut(folder)).toBeNull();
+        expect(existsSync(calls)).toBe(false);
+      });
+
+      it("says in a few words why the lines can't be written, at each of its refusals, and writes nothing then", async () => {
+        gitIdentity();
+        // git finds no repository: the .git holds none, and no folder above is one.
+        const hollow = join(tmp(), "hollow");
+        mkdirSync(join(hollow, ".git"), { recursive: true });
+        expect(await git.keepInboxAudioOut(hollow)).toMatch(/^git can't say where the exclude file is: fatal: not a git repository/);
+        // git finds a repository, but the folder above's: the library's .git holds none.
+        const parent = join(tmp(), "parent");
+        mkdirSync(parent);
+        await git.initRepo(parent);
+        const before = readFileSync(excludeFile(parent), "utf8");
+        const library = join(parent, "library");
+        mkdirSync(join(library, ".git"), { recursive: true });
+        expect(await git.keepInboxAudioOut(library)).toBe(`git finds the repository at ${parent}, which isn't the library's own`);
+        expect(readFileSync(excludeFile(parent), "utf8")).toBe(before);
+        // The exclude file can't be written.
+        const root = repo();
+        gitOut(root, "init", "-q");
+        writeFileSync(excludeFile(root), "# mine\n");
+        chmodSync(excludeFile(root), 0o444);
+        expect(await git.keepInboxAudioOut(root)).toMatch(/^the exclude file can't be read or written: EACCES: permission denied/);
+        expect(readFileSync(excludeFile(root), "utf8")).toBe("# mine\n");
+      });
+    });
   });
 });

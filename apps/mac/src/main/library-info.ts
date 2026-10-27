@@ -1,15 +1,48 @@
 // Read-only views of the library for the UI: page titles, recent filings, wikilink lookup.
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, type Stats } from "node:fs";
 import path from "node:path";
 import type { FiledPage } from "../shared/ipc.ts";
 import { answerSources } from "./setup-model.ts";
 
 const NOT_PAGES = new Set(["inbox", "raw", "reviews", "tasks"]);
 
+/**
+ * What is at `rel` (a library path, as a filing's pages, the log and an answer's links name them) in the library at `root`, as a page
+ * Avanzel may open or read: "page" for a plain file there, reached through no link; "link" for a link, or a file in a linked folder,
+ * which would open, or be read, as whatever the link points at (an agent with a shell could point one at a script it wrote, which
+ * opening it would run); "none" when nothing is there, or no file, or the path leads out of the library. The library's real path and
+ * the page's are compared, so a library that is itself reached through a link (/tmp is /private/tmp on a Mac) keeps its pages.
+ */
+export function pageAt(root: string, rel: string): "page" | "link" | "none" {
+  const full = path.join(root, rel);
+  let stat: Stats;
+  try {
+    stat = lstatSync(full);
+  } catch {
+    return "none";
+  }
+  if (stat.isSymbolicLink()) return "link";
+  if (!stat.isFile()) return "none";
+  try {
+    const library = realpathSync(root);
+    const expected = path.join(library, rel);
+    if (!expected.startsWith(`${library}${path.sep}`)) return "none";
+    return realpathSync(full) === expected ? "page" : "link";
+  } catch {
+    return "none";
+  }
+}
+
+/**
+ * A page's title, from its frontmatter, then its first heading, then its file name, and its shelf, the first folder of `rel`. A page
+ * that is a link, or lies in a linked folder (`pageAt`), is not read: a link is no page, and what it points at may be any file at all.
+ * It keeps its file name.
+ */
 export function pageInfo(root: string, rel: string): FiledPage {
   const shelf = rel.split("/")[0] ?? "";
   let title = path.basename(rel, ".md");
   try {
+    if (pageAt(root, rel) !== "page") return { title, shelf, path: rel };
     const text = readFileSync(path.join(root, rel), "utf8");
     const fromFrontmatter = /^---\n[\s\S]*?^title:\s*(.+?)\s*$/m.exec(text.split(/\n---\n/)[0] ?? "")?.[1];
     const fromHeading = /^#\s+(.+?)\s*$/m.exec(text)?.[1];

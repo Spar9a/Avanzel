@@ -10,6 +10,7 @@ import {
   downloadFailedProblem,
   duration,
   filingProblem,
+  linkedPageNotice,
   ownLine,
   recordingLost,
   resetPhrase,
@@ -296,8 +297,8 @@ describe("filingProblem: a long line of the agent's, for the capsule's card", ()
     expect(Array.from(line).slice(0, 99).every((char) => char === "💥")).toBe(true);
   });
 
-  it("is never cut through a path, which an agent's line names too, with or without a space in a folder's name", () => {
-    for (const folder of ["Notes", "My Notes", "Mobile Documents"]) {
+  it("is never cut through a path, which an agent's line names too, with or without a space or an apostrophe in a folder's name", () => {
+    for (const folder of ["Notes", "My Notes", "Mobile Documents", "Anton's Notes"]) {
       const named = `ENOENT: no such file or directory, open '/Users/ana/Documents/${folder}/Avanzel/ideas/some-long-page-name-here.md' while it wrote the page`;
       expect(lineOf(filingProblem(failure({ line: named }), now, { lineMax: 100 }).body), folder).toBe("ENOENT: no such file or directory…");
     }
@@ -419,9 +420,9 @@ describe("correctedWordsProblem", () => {
     expect(correctedWordsProblem("EACCES: permission denied", true, 100).body).toBe(`EACCES: permission denied. ${kept}`);
   });
 
-  it("is never cut through a path whose folder has a space in its name: the cut is before it", () => {
+  it("is never cut through a path whose folder has a space, or an apostrophe too, in its name: the cut is before it", () => {
     const kept = `${SAVED}; the original note is still there.`;
-    for (const folder of ["My Notes", "Mobile Documents"]) {
+    for (const folder of ["My Notes", "Mobile Documents", "Anton's Notes"]) {
       const lines = `EACCES: permission denied, rename '/Users/ana/Documents/${folder}/Avanzel/inbox/2026-10-26-032519-misheard-words.md' -> '/Users/ana/Documents/${folder}/Avanzel/inbox/.2026-10-26-032519-misheard-words.md.editing'`;
       expect(correctedWordsProblem(lines, true, 100).body, folder).toBe(`EACCES: permission denied… ${kept}`);
     }
@@ -908,6 +909,20 @@ describe("voiceSettingsProblem", () => {
 
   it("has only what is true when the reason is empty", () => {
     expect(voiceSettingsProblem("").body).toBe("Typed thoughts are still saved to the inbox.");
+  });
+});
+
+describe("linkedPageNotice", () => {
+  it("says the page wasn't opened, names it by its library path, and says why and that nothing was opened", () => {
+    expect(linkedPageNotice("ideas/run-me.md")).toEqual({
+      title: "Avanzel didn't open that page.",
+      body: "ideas/run-me.md goes through a link, which could lead anywhere, so nothing was opened.",
+    });
+  });
+
+  it("stays calm: it names no danger and blames nobody", () => {
+    const { title, body } = linkedPageNotice("ideas/run-me.md");
+    expect(`${title} ${body}`).not.toMatch(/!|danger|unsafe|malicious|attack|security|agent/i);
   });
 });
 

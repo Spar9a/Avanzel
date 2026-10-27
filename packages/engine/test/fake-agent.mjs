@@ -19,7 +19,8 @@
 // skips its log line) | slow-once (the first run — until the file $FAKE_AGENT_ONCE exists —
 // writes goals/half.md and a line in index.md, then never finishes; later runs file normally) |
 // folder-at-archive (a capture whose words contain "blocked-archive" gets a folder where its
-// archived copy goes, raw/<yyyy>/<mm>/<id>.md, besides the usual filing; other captures file normally).
+// archived copy goes, raw/<yyyy>/<mm>/<id>.md, besides the usual filing; other captures file normally) | link-page (files as
+// usual, then makes the page it wrote a link to $FAKE_AGENT_OUTSIDE, a file outside the library).
 // The agent check's prompt, "Reply with the single word: ready.", gets "ready".
 // FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt, pid}.
 // FAKE_AGENT_DELAY_MS=<ms> waits that long before anything else (an agent that takes a moment);
@@ -362,6 +363,12 @@ if (task === "file") {
     `---\ntitle: ${words}\nshelf: ideas\nstatus: seed\n---\n# ${words}\n\n## Log\n- ${words} ([[${captureId}]])\n`,
   );
   await tryRefusedWrite();
+  if (mode === "link-page") {
+    // swaps the page it wrote for a link to a file outside the library ($FAKE_AGENT_OUTSIDE), which opening the page would open
+    const page = join(root, "ideas", `idea-${captureId}.md`);
+    rmSync(page);
+    symlinkSync(process.env.FAKE_AGENT_OUTSIDE, page);
+  }
   await editStep("index.md", `- [[idea-${captureId}]] — ${words}\n`);
   if (mode !== "nolog" && mode !== "link-log" && mode !== "hardlink-log") {
     await editStep("log.md", `- ${logStamp()} | file | [[${captureId}]] → [[idea-${captureId}]]\n`);

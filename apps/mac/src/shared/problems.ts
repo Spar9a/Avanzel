@@ -429,6 +429,15 @@ export function voiceSettingsProblem(reason: string): Problem {
 }
 
 /**
+ * A page Avanzel didn't open: `rel`, its library path, goes through a link (it is one, or a folder on its way is), and a link opens as
+ * whatever it points at, by that file's own type, so a script an agent pointed it at would run. The person only asked for a page, so it
+ * says so without alarm, and what is safe: nothing was opened. There is nothing to fix from here, so it offers nothing.
+ */
+export function linkedPageNotice(rel: string): Problem {
+  return { title: "Avanzel didn't open that page.", body: `${rel} goes through a link, which could lead anywhere, so nothing was opened.` };
+}
+
+/**
  * What a library made without git costs, said wherever the app is about to make one: setup's Found under a new library or a
  * folder with files, and Settings' question about turning a folder with files into the library. This Mac has no usable git
  * (the engine's gitUsable) until Apple's Command Line Tools are installed.

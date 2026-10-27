@@ -19,6 +19,7 @@ import {
   shown,
   snap,
   speechWav,
+  stopAtTheEnd,
   throughFound,
   typeFirstThought,
   windowFor,
@@ -341,6 +342,30 @@ test("Cancel in a library without git, before the run changed anything, keeps th
   expect((await setupSnap(app)).filing).toMatchObject({ kind: "cancelled", partial: false, leftovers: 0 });
   expect(exists(library, "goals/half.md")).toBe(false);
   expect(inbox(library)).toHaveLength(1);
+  await app.close();
+});
+
+test("Cancel just as the run files, in a library without git, leaves the filing standing, and the window shows it filed, not Cancelled", async () => {
+  // AVANZEL_GIT_USABLE=0 plays a Mac with no usable git: the library has no repository, so the run's filing has no commit, and
+  // nothing could take it back. Cancel comes once the agent has filed, before the app has looked at what it did (`stopAtTheEnd`).
+  const { env, home } = firstRun({ claude: filingClaude() });
+  const app = await launch({ ...env, AVANZEL_GIT_USABLE: "0" });
+  const setup = await throughFound(app);
+  const library = path.join(home, "Avanzel");
+  expect(exists(library, ".git")).toBe(false);
+  await stopAtTheEnd(app, { setup: true });
+  await typeFirstThought(setup, "Plant tulips in October");
+  await expect(setup.getByRole("heading", { name: /^(All filed\.|Cancelled\.)/ })).toBeVisible({ timeout: 30_000 });
+  await call(app, "idleForTests");
+  // The words are filed, so the window says so: it never says they are back in the inbox.
+  expect((await setupSnap(app)).filing).toMatchObject({ kind: "filed", words: "Plant tulips in October", canUndo: false });
+  await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible();
+  await expect(setup.getByRole("heading", { name: "Cancelled." })).toHaveCount(0);
+  await expect(setup.getByText("back in the inbox", { exact: false })).toHaveCount(0);
+  // And they are: the page is written, and the note has left the inbox for the archive.
+  expect(filesUnder(library, "ideas")).toHaveLength(1);
+  expect(inbox(library)).toEqual([]);
+  expect(filesUnder(library, "raw").filter((rel) => rel.endsWith(".md"))).toHaveLength(1);
   await app.close();
 });
 

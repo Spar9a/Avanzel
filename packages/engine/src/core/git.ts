@@ -105,18 +105,20 @@ const EXCLUDE_NOTE = "# Avanzel: recordings waiting in the inbox stay on this ma
  * memo dropped there, or a recording the capsule's Stop kept) is not under raw/, and `commitAll` stages everything. So the
  * repository's own exclude file (`.git/info/exclude`, wherever git keeps it) lists the inbox's audio (`inboxAudioPatterns`): it covers
  * a library made before this, and the owner's own git use, and it leaves the owner's .gitignore and the library's template alone.
- * The lines are added when they are missing and no other line is touched, so calling this again changes nothing. Whether the
- * file lists them now: false when git can't say where it is, when the repository git finds from `root` is not the library's own (a
- * `.git` that holds no repository, which git passes over to look in the folders above, must not have its owner's file written), and
- * when the file can't be read or written.
+ * The lines are added when they are missing and no other line is touched, so calling this again changes nothing. Null when the file
+ * lists them now; else why it doesn't, in a few words for the log: git can't say where the file is, the repository git finds from
+ * `root` is not the library's own (a `.git` that holds no repository, which git passes over to look in the folders above, must not
+ * have its owner's file written), or the file can't be read or written.
  */
-async function excludeInboxAudio(root: string): Promise<boolean> {
+async function excludeInboxAudio(root: string): Promise<string | null> {
   const asked = await git(root, ["rev-parse", "--show-toplevel", "--git-path", "info/exclude"]);
   const [top, found] = asked.stdout.split("\n");
-  if (asked.code !== 0 || !top || !found) return false;
+  if (asked.code !== 0 || !top || !found) {
+    return `git can't say where the exclude file is: ${asked.stderr.trim().split("\n")[0] || `git exited with ${asked.code}`}`;
+  }
   try {
     const [there, here] = [statSync(top), statSync(root)];
-    if (there.dev !== here.dev || there.ino !== here.ino) return false;
+    if (there.dev !== here.dev || there.ino !== here.ino) return `git finds the repository at ${top}, which isn't the library's own`;
     const file = resolve(root, found);
     const had = existsSync(file) ? readFileSync(file, "utf8") : "";
     const lines = new Set(had.split(/\r?\n/));
@@ -126,9 +128,26 @@ async function excludeInboxAudio(root: string): Promise<boolean> {
       const note = lines.has(EXCLUDE_NOTE) ? [] : [EXCLUDE_NOTE];
       appendFileSync(file, `${had === "" || had.endsWith("\n") ? "" : "\n"}${[...note, ...missing].join("\n")}\n`);
     }
-    return true;
-  } catch {
-    return false;
+    return null;
+  } catch (error) {
+    return `the exclude file can't be read or written: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+/**
+ * Recordings waiting in the inbox of the library at `root` stay out of git (`excludeInboxAudio`), from the moment the app opens it, and
+ * not only from Avanzel's first commit: a library that was a repository before Avanzel opened it (an Obsidian vault, say) would get the
+ * lines only then, and one with auto_commit off never, while a sync tool of the owner's could commit a recording meanwhile. Best effort,
+ * for the app to call as it opens a library and before Stop puts a recording in the inbox: null when the lines are there now, or when
+ * there is no repository to keep them out of, or no git to ask (Apple's stub alone, which must never be run); else why they can't be
+ * written, for the log. It never throws.
+ */
+export async function keepInboxAudioOut(root: string): Promise<string | null> {
+  if (!isRepo(root) || !available()) return null;
+  try {
+    return await excludeInboxAudio(root);
+  } catch (error) {
+    return `git couldn't be run: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
 
@@ -138,7 +157,7 @@ async function excludeInboxAudio(root: string): Promise<boolean> {
  */
 export async function commitAll(root: string, message: string): Promise<string | null> {
   if (!isRepo(root) || !available()) return null;
-  if (!(await excludeInboxAudio(root))) return null;
+  if ((await excludeInboxAudio(root)) !== null) return null;
   await git(root, ["add", "-A"]);
   if (!(await git(root, ["status", "--porcelain"])).stdout.trim()) return null;
   return commitStaged(root, message);

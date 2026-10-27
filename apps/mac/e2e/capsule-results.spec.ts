@@ -1,7 +1,7 @@
 // The capsule's result cards: a filing that ends well, one that only noted its capture, a thought saved for the evening review, a filing
 // that was undone, the two Stopped cards, the pages a card lists and opens, and Undo. Moved out of filing.spec.ts as they were.
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -28,6 +28,7 @@ import {
   launchOn,
   type Left,
   namesOf,
+  notified,
   reachedUndo,
   stampDay,
   undoCalls,
@@ -532,6 +533,38 @@ test("the capsule's page opens only the pages its filing wrote, and no other win
   await app.close();
 });
 
+test("a page the agent made a link to another file opens nothing, by its title or by Open, and a notification says why", async () => {
+  // An agent with a shell could file a page that is a link to a file of its own, a .command say: a link opens as what it points at,
+  // so one click would run it. A page is opened, and read for its title, only as a plain file in the library, through no link.
+  const outside = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-outside-")), "run-me.command");
+  writeFileSync(outside, "# Run me\n");
+  const library = await makeLibrary();
+  const { app, capsule } = await launchOn(library, { FAKE_AGENT_MODE: "link-page", FAKE_AGENT_OUTSIDE: outside });
+  await stubOpening(app);
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  const [page] = filesUnder(library, "ideas");
+  const rel = `ideas/${page}`;
+  expect(lstatSync(path.join(library, rel)).isSymbolicLink()).toBe(true);
+  const said = { title: "Avanzel didn't open that page.", body: `${rel} goes through a link, which could lead anywhere, so nothing was opened.` };
+  /** How many presses have been answered: by opening something, or by the notification. */
+  const answered = async () => (await openedWith(app)).length + (await notified(app, said.title)).length;
+  // Its title opens nothing, and the card stays ...
+  await capsule.getByRole("article").getByRole("listitem").first().getByRole("button").click();
+  await expect.poll(answered).toBe(1);
+  expect(await openedWith(app)).toEqual([]);
+  expect(await capsuleKind(app)).toBe("filed");
+  // ... and Open opens nothing either, and puts the card away, as it always does. Each press is told once.
+  await capsule.getByRole("status").getByRole("button", { name: "Open", exact: true }).click();
+  await expect.poll(answered).toBe(2);
+  expect(await openedWith(app)).toEqual([]);
+  expect(await notified(app, said.title)).toEqual([said, said]);
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  // Nor was the page read through its link for the card: it is titled by its file name, not by the file the link points at.
+  expect(await call(app, "pageTitleForTests", rel)).toBe(path.basename(rel, ".md"));
+  await app.close();
+});
+
 /** A stand-in Claude Code that files a second thought as the real one does: one new page, and goals/run.md, which the first filing changed too. */
 function secondFiler(): string {
   const filer = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-filer-")), "filer.mjs");
@@ -688,6 +721,60 @@ test("an Undo whose take-back throws says it can't be undone, and the card doesn
   // The filing stands: its page is where the agent wrote it, and the note is archived, not back in the inbox.
   expect(filesUnder(library, "ideas")).toHaveLength(1);
   expect(archived(library)).toHaveLength(1);
+  expect(inbox(library)).toEqual([]);
+  await app.close();
+});
+
+// The take-back waits its turn in the queue, and a newer card may be up by the time it lands: a recording's, which goes on recording
+// (its recorder is the page's, not the card's), or a newer filing's editor. Its word then comes as a notification, and the card stays.
+for (const { refused, said } of [
+  { refused: false, said: { title: "Undone", body: "Your words are back in the inbox for the evening review at 21:00." } },
+  {
+    refused: true,
+    said: { title: "This one can't be undone automatically.", body: "Usually a later change touched the same lines. The library's history keeps both versions." },
+  },
+]) {
+  test(`an Undo ${refused ? "refused" : "done"} while a new recording listens leaves the listening card up, and says so in one notification`, async () => {
+    const library = await makeLibrary({ git: true });
+    const { app, capsule } = await launchOn(library);
+    await watchUndos(app, { hold: true, fail: refused });
+    await dictate(app);
+    await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+    await capsule.getByRole("status").getByRole("button", { name: "Undo", exact: true }).click();
+    await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
+    await call(app, "toggleDictate"); // a new thought, begun while the take-back waits at the library's door
+    await expect.poll(() => capsuleKind(app), { timeout: 10_000 }).toBe("listening");
+    await app.evaluate(() => (globalThis as Left).letUndoIn?.());
+    // The take-back lands: as a notification, or as a card over the listening one.
+    await expect
+      .poll(async () => (await capsuleKind(app)) !== "listening" || (await notified(app, said.title)).length > 0, { timeout: 30_000 })
+      .toBe(true);
+    await call(app, "idleForTests");
+    expect(await capsuleKind(app)).toBe("listening");
+    expect(await call(app, "notificationsForTests")).toEqual([said]);
+    expect(undone(library)).toHaveLength(refused ? 0 : 1);
+    await call(app, "cancelRecording");
+    await app.close();
+  });
+}
+
+test("Undo takes nothing back unless the filed card is up: a press once the card is hidden does nothing", async () => {
+  const library = await makeLibrary({ git: true });
+  const { app, capsule } = await launchOn(library);
+  await watchUndos(app);
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await call(app, "dismiss");
+  expect(await capsuleKind(app)).toBe("hidden");
+  // A stray message from the capsule's page: no card offers Undo now.
+  await capsule.evaluate(async () => {
+    window.avanzel.capsule.undo();
+    await window.avanzel.settings.get(); // the press has been heard by now
+  });
+  await call(app, "idleForTests");
+  expect(await undoCalls(app)).toBe(0);
+  expect(undone(library)).toEqual([]);
+  expect(await capsuleKind(app)).toBe("hidden");
   expect(inbox(library)).toEqual([]);
   await app.close();
 });

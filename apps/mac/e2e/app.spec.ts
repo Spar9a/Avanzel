@@ -1473,6 +1473,23 @@ test("a pointer crossing the gap between a card and its bar keeps the card up, t
   await app.close();
 });
 
+test("Hide, clicked with the pointer, lets go of the hold: the next card that hides itself goes at its time, though the pointer never moved", async () => {
+  // To click Hide the pointer enters the card, which holds it up. The panel then hides, and a hidden panel hears no leave: the hold
+  // ends as it hides, or the next card that hides itself would wait for a pointer that is gone.
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "setCapsule", { kind: "saved", text: "Plant tulips in October", note: "Saved to the inbox." }, 60_000);
+  await capsule.getByRole("status").getByRole("button", { name: "Hide", exact: true }).click();
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  const TIME_MS = 2_000;
+  await call(app, "setCapsule", { kind: "saved", text: "Call the vet on Monday", note: "Saved to the inbox." }, TIME_MS);
+  const shownAt = Date.now();
+  await expect.poll(() => capsuleKind(app), { timeout: 10_000, intervals: [100] }).toBe("hidden");
+  // It went at its own time: a held card looks again only every 1.5 s after it, and would have gone at a later look, if ever.
+  expect(Date.now() - shownAt).toBeLessThan(TIME_MS + 1_200);
+  await app.close();
+});
+
 test("a screen comment listens over a card of its screenshot, labelled with the app, and has no file mode to switch", async () => {
   const library = await makeLibrary();
   const { app, capsule } = await launchHearing(library, newUserData(), screenOf());

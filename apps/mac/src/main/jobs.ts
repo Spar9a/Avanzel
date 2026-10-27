@@ -95,6 +95,12 @@ export interface FilingJob {
   setup?: boolean;
   /** Cancel, in setup, or Stop, in the capsule, stopped the run (`cancelSetupFiling`, `cancelFiling`, which tell the rest). */
   cancelled?: boolean;
+  /**
+   * Its run waits for its turn in the app's queue, queued alone (`beginFiling`), so nothing touches its note until the turn comes
+   * (`runFiling`, which clears this). A Stop meanwhile settles at once (`cancelFiling`): there is nothing to take back, and nothing to
+   * wait for. A refiled job is never queued alone: the take-back of the run it replaces, and its corrected words, come first (`refile`).
+   */
+  queuedAlone?: true;
   /** Undo, in the capsule, has been asked to take the filing back, and answers once (`undo`): a press after the first does nothing. */
   undoing?: true;
 }

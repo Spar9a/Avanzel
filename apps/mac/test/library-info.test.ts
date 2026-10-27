@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageInfo, recentFromLog } from "../src/main/library-info.ts";
+import { answeredFrom, captureMeta, filedPages, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "../src/main/library-info.ts";
 
 function library() {
   const root = mkdtempSync(path.join(tmpdir(), "avz-lib-"));
@@ -105,5 +105,60 @@ describe("library info", () => {
     expect(meta.created?.toISOString()).toBe(new Date("2026-10-20T04:08:29+04:00").toISOString());
     writeFileSync(file, "just text\n");
     expect(captureMeta(file)).toEqual({ source: "text" });
+  });
+});
+
+// An agent with a shell could make a page a link to a file of its own, a script say: a link opens as what it points at, by that
+// file's own type, so one click would run it. A page Avanzel opens or reads is a plain file in the library, reached through no link.
+describe("a page Avanzel opens or reads", () => {
+  /** A file outside every library, holding `text`. */
+  function outside(name: string, text: string): string {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "avz-outside-")), name);
+    writeFileSync(file, text);
+    return file;
+  }
+
+  it("is a page when it is a plain file in the library", () => {
+    const root = library();
+    expect(pageAt(root, "goals/launch-podcast.md")).toBe("page");
+    expect(pageAt(root, "ideas/balcony-garden.md")).toBe("page");
+  });
+
+  it("is a link when the page is one, wherever it points: out of the library, or at another page in it", () => {
+    const root = library();
+    symlinkSync(outside("run-me.command", "#!/bin/sh\n"), path.join(root, "ideas", "linked.md"));
+    symlinkSync("balcony-garden.md", path.join(root, "ideas", "same.md"));
+    expect(pageAt(root, "ideas/linked.md")).toBe("link");
+    expect(pageAt(root, "ideas/same.md")).toBe("link");
+  });
+
+  it("is a link when a folder on its way is one", () => {
+    const root = library();
+    const elsewhere = path.dirname(outside("page.md", "# Elsewhere\n"));
+    symlinkSync(elsewhere, path.join(root, "topics"));
+    expect(pageAt(root, "topics/page.md")).toBe("link");
+  });
+
+  it("is none when nothing is there, when a folder is, or when the path leads out of the library", () => {
+    const root = library();
+    expect(pageAt(root, "ideas/gone.md")).toBe("none");
+    mkdirSync(path.join(root, "ideas", "folder.md"));
+    expect(pageAt(root, "ideas/folder.md")).toBe("none");
+    const away = outside("away.md", "# Away\n");
+    expect(pageAt(root, path.relative(root, away))).toBe("none");
+  });
+
+  it("finds the library's own pages through a link to the library itself, as /tmp is /private/tmp on a Mac", () => {
+    const root = library();
+    const via = path.join(mkdtempSync(path.join(tmpdir(), "avz-via-")), "library");
+    symlinkSync(root, via);
+    expect(pageAt(via, "goals/launch-podcast.md")).toBe("page");
+  });
+
+  it("titles a page that is a link by its file name, and never reads what the link points at", () => {
+    const root = library();
+    symlinkSync(outside("private.md", "---\ntitle: Something private\n---\n# Something private\n"), path.join(root, "ideas", "linked.md"));
+    expect(pageInfo(root, "ideas/linked.md")).toEqual({ title: "linked", shelf: "ideas", path: "ideas/linked.md" });
+    expect(filedPages(root, { created: ["ideas/linked.md"], modified: [] })).toEqual([{ title: "linked", shelf: "ideas", path: "ideas/linked.md", created: true }]);
   });
 });

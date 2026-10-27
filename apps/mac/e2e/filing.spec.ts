@@ -21,10 +21,12 @@ import {
   onceMarker,
   onlyAgentsIn,
   read,
+  reachedTheEnd,
   recentlyFiled,
   shown,
   snap,
   speechWav,
+  stopAtTheEnd,
   stubPicker,
   windowFor,
 } from "./helpers.ts";
@@ -1107,36 +1109,6 @@ const statesSent = (app: ElectronApplication) => app.evaluate(() => (globalThis 
 /** The kinds of the states `watchStates` noted, oldest first. */
 const kindsSent = async (app: ElectronApplication) => (await statesSent(app)).map((state) => state.kind);
 
-const reachedTheEnd = (app: ElectronApplication) => app.evaluate(() => (globalThis as Left).atTheEnd === true);
-
-/**
- * From now on, Stop is pressed the moment the engine hands a filing's result back: the agent has finished, and the app has not yet
- * looked at what it did. With `hold`, the result waits first (`atTheEnd` says that it does, `letItEnd` lets it go), so that the
- * test can change the library in between.
- */
-async function stopAtTheEnd(app: ElectronApplication, { hold = false } = {}): Promise<void> {
-  await app.evaluate(({ BrowserWindow }, holding) => {
-    const capsule = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/capsule/"));
-    if (!capsule) throw new Error("There is no capsule window.");
-    const controller = (globalThis as unknown as { __avanzel: Wrappable }).__avanzel;
-    const librarian = controller.librarian.bind(controller);
-    controller.librarian = async (harness) => {
-      const made = await librarian(harness);
-      const file = made.file.bind(made);
-      made.file = async (...args) => {
-        const outcomes = await file(...args);
-        if (holding) {
-          Object.assign(globalThis, { atTheEnd: true });
-          await new Promise<void>((resolve) => Object.assign(globalThis, { letItEnd: resolve }));
-        }
-        controller.cancelFiling(capsule.webContents);
-        return outcomes;
-      };
-      return made;
-    };
-  }, hold);
-}
-
 /** From now on, keeps the function the controller hands the engine to tell a filing's steps (`stepsOf`), for a test to tell one itself. */
 async function keepSteps(app: ElectronApplication): Promise<void> {
   await app.evaluate(() => {
@@ -1380,7 +1352,7 @@ test("a Stop that is still stopping when another thought takes the card leaves t
   await app.close();
 });
 
-test("Stop before the filing's turn: the agent never starts, and the note stays in the inbox", async () => {
+test("Stop before the filing's turn says Stopped at once: the agent never starts, and the note stays in the inbox as it was", async () => {
   const runs = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-runs-")), "runs.jsonl");
   const library = await makeLibrary();
   const { app, capsule } = await launchOn(library, { FAKE_AGENT_DELAY_MS: "4000", FAKE_AGENT_DELAY_TASK: "file", FAKE_AGENT_RECORD: runs });
@@ -1388,9 +1360,14 @@ test("Stop before the filing's turn: the agent never starts, and the note stays 
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
   // The app runs one agent at a time: a second thought, typed, waits for the first to be filed, and Stop comes while it waits.
   await call(app, "submitQuick", "Call the plumber on Monday");
+  await expect.poll(() => factsOf(app), { timeout: 10_000 }).toMatchObject({ kind: "filing", text: "Call the plumber on Monday", waiting: true });
+  const [second] = inbox(library).filter((name) => read(library, `inbox/${name}`).includes("Call the plumber on Monday"));
+  const before = read(library, `inbox/${second}`);
   await stop(capsule);
-  await expect.poll(() => factsOf(app), { timeout: 10_000 }).toMatchObject({ kind: "filing", text: "Call the plumber on Monday", cancelling: true });
-  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("cancelled");
+  // No run has touched its note, so there is nothing to take back, and nothing to wait for: the card says Stopped while the first
+  // note's run still goes on (it takes 4 s, and nothing of it is filed yet), not once that run is over.
+  await expect.poll(() => capsuleKind(app), { timeout: 2_000 }).toBe("cancelled");
+  expect(archived(library)).toEqual([]);
   expect(await call(app, "capsuleStateForTests")).toEqual({
     kind: "cancelled",
     text: "Call the plumber on Monday",
@@ -1399,10 +1376,14 @@ test("Stop before the filing's turn: the agent never starts, and the note stays 
     leftovers: 0,
     review: "at 21:00",
   });
-  // The agent ran for the first note alone; the first is filed, and the second waits in the inbox.
+  // Its turn comes once the first note is filed, and does nothing: the agent ran for the first note alone, and the second waits in the
+  // inbox as it was written.
+  await expect.poll(() => archived(library).length, { timeout: 60_000 }).toBe(1);
+  await call(app, "idleForTests");
   expect(readFileSync(runs, "utf8").trim().split("\n")).toHaveLength(1);
-  expect(archived(library)).toHaveLength(1);
   expect(inboxWords(library)).toEqual([expect.stringContaining("Call the plumber on Monday")]);
+  expect(read(library, `inbox/${second}`)).toBe(before);
+  expect(await capsuleKind(app)).not.toBe("filing"); // the turn that did nothing shows nothing
   await app.close();
 });
 

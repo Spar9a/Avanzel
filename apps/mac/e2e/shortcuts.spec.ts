@@ -52,7 +52,7 @@ test("the picked shortcut's bar is a piece of the stack: as wide as the others, 
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const capsule = await windowFor(app, "capsule");
   const bar = capsule.getByRole("status");
-  const PICKED_MS = 1_500; // the bar goes by itself after 3 s: a shorter time for the test
+  const PICKED_MS = 3_000; // the bar's own time: the pointer must be on it before its first look, which leaves room under load
   // The longest name an action has, with the longest shortcut: nothing of the line is cut off.
   await call(app, "setCapsule", { kind: "shortcut-picked", key: "capture", accelerator: "Control+Alt+Shift+Command+Space" }, PICKED_MS);
   const line = bar.getByText("Capture screen with a comment now uses ⌃⌥⇧⌘Space", { exact: true });

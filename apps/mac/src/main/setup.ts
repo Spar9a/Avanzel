@@ -48,6 +48,7 @@ import { permissionStatus, requestMicrophone } from "./permissions.ts";
 import { runningAppNames } from "./running-apps.ts";
 import type { RunState } from "./schedule.ts";
 import {
+  afterStop,
   bestAgent,
   defaultLibraryPath,
   flightTarget,
@@ -971,7 +972,8 @@ export class Setup {
    * Cancel, while the first thought is filed: its run stops at once, and once that run is over (queue order), what it did
    * is taken back. Then the filing is cancelled, its words back in the inbox; `partial` says that what the run did stays
    * as its own commit, because taking it back failed, and `leftovers` how many files it changed that no commit holds (a
-   * library without git, or with automatic commits off), which stay as they are.
+   * library without git, or with automatic commits off), which stay as they are. Except a run that had filed when Cancel came,
+   * with no commit to take back (`afterStop`): it stands, and the window already shows it filed (`filed`), which stays.
    */
   cancelSetupFiling(): void {
     const session = this.session;
@@ -982,6 +984,7 @@ export class Setup {
     session.filing = { ...session.filing, cancelling: true };
     this.host.broadcast();
     void this.host.enqueue(async () => {
+      if (afterStop(job.outcome) === "filed") return; // filed and standing: nothing to take back, and the window says so already
       const problem = await this.host.takeBack(job);
       if (this.session !== session || session.job !== job) return; // the window has closed: there is nothing to tell
       session.filing = { kind: "cancelled", words: job.text, agent: job.agent, partial: problem !== null, leftovers: unrecordedEdits(job.outcome) };

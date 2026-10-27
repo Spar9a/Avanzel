@@ -140,7 +140,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Stop, pressed on `page` as the transcribing card's Stop will press it. A page's messages reach main in the order they were sent, so
- * the settings round trip after the press is answered once main has heard it: this returns when the press has taken effect.
+ * the settings round trip after the press is answered once main has heard it: this returns when the press has taken effect, in a
+ * library without git. In one with git, Stop first has git keep the recording out (`keepAudioOutOfGit`), which takes a moment more,
+ * so a test there waits for the effect.
  */
 const stopTranscribing = (page: Page) =>
   page.evaluate(async () => {
@@ -709,7 +711,7 @@ test("a recording waiting in the inbox is never committed, though the filing aft
   await dictate(app);
   await untilSlow(app);
   await stopTranscribing(capsule);
-  expect(await capsuleKind(app)).toBe("recorded");
+  await expect.poll(() => capsuleKind(app)).toBe("recorded"); // git is asked first, in a library with git
   const [recording] = filesUnder(library, "inbox");
   // A thought typed after it is filed now: the owner's changes are committed before the filing, and the filing after them.
   await call(app, "submitQuick", "Plant tulips in October");

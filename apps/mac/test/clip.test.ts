@@ -7,13 +7,20 @@ const INBOX_WAV = "inbox/2026-10-27-101500.wav";
 /** What Node says when a file can't be moved into a folder it may not write to, for a library at `root`. */
 const renameRefused = (root: string) => `EACCES: permission denied, rename '${root}/${WAV}' -> '${root}/${INBOX_WAV}'`;
 
-/** A library in a deep folder with no space in its path, one whose folder has a space, and one in iCloud Drive, which has one too. */
+/**
+ * A library in a deep folder with no space in its path, one whose folder has a space, one in iCloud Drive, which has one too, and
+ * one whose folder has an apostrophe in its name as well, which is no quote.
+ */
 const DEEP = renameRefused("/Users/ana/Documents/Notes/Avanzel");
 const MY_NOTES = renameRefused("/Users/ana/Documents/My Notes/Avanzel");
 const MOBILE = renameRefused("/Users/ana/Library/Mobile Documents/com~apple~CloudDocs/Avanzel");
+const ANTONS = renameRefused("/Users/anton/Documents/Anton's Notes/Avanzel");
 
 /** The words of `text`, as a person reads them: what is between white space. */
 const wordsOf = (text: string) => text.split(/\s+/).filter(Boolean);
+
+/** How many quotes `text` has: an apostrophe between two letters, as in "Anton's", is none. */
+const quotesIn = (text: string) => (text.replace(/(?<=\p{L})'(?=\p{L})/gu, "").match(/'/g) ?? []).length;
 
 describe("ownLine", () => {
   it("is an agent's line as a sentence", () => {
@@ -104,15 +111,15 @@ describe("shortenedKeepingPaths", () => {
     expect(shortenedKeepingPaths(text, 30)).toBe(shortened(text, 30));
   });
 
-  it("never cuts through a path, with or without a space in it, whatever the room", () => {
-    for (const text of [DEEP, MY_NOTES, MOBILE]) {
+  it("never cuts through a path, with or without a space or an apostrophe in it, whatever the room", () => {
+    for (const text of [DEEP, MY_NOTES, MOBILE, ANTONS]) {
       const whole = wordsOf(text);
       for (let room = 12; room <= 260; room++) {
         const line = shortenedKeepingPaths(text, room);
         expect(Array.from(line).length, `room ${room}`).toBeLessThanOrEqual(room);
         const kept = line.replace(/…$/, "");
         // Each quote that is opened is closed, so no path is half there ...
-        expect((kept.match(/'/g) ?? []).length % 2, `room ${room}: ${line}`).toBe(0);
+        expect(quotesIn(kept) % 2, `room ${room}: ${line}`).toBe(0);
         // ... and a word with a slash in it is a whole word of the message.
         for (const word of wordsOf(kept)) if (word.includes("/") && !word.startsWith("'")) expect(whole, `room ${room}: ${line}`).toContain(word);
       }
@@ -158,14 +165,25 @@ describe("shortReason", () => {
     expect(shortReason(near, 100)).toBe(`EACCES: permission denied, rename '/tmp/lib/${WAV}'…`);
   });
 
-  it("never cuts through a path, with or without a space in it, whatever the room", () => {
-    for (const text of [DEEP, MY_NOTES, MOBILE]) {
+  it("never cuts through a path, with or without a space or an apostrophe in it, whatever the room", () => {
+    for (const text of [DEEP, MY_NOTES, MOBILE, ANTONS]) {
       for (let room = 12; room <= 260; room++) {
         const line = shortReason(text, room);
         expect(Array.from(line).length, `room ${room}`).toBeLessThanOrEqual(room);
-        expect(((line.replace(/…$/, "").match(/'/g) ?? []).length) % 2, `room ${room}: ${line}`).toBe(0);
+        expect(quotesIn(line.replace(/…$/, "")) % 2, `room ${room}: ${line}`).toBe(0);
       }
     }
+  });
+
+  it("takes an apostrophe in a quoted path for part of the path, not for the quote that closes it", () => {
+    const refused = "EACCES: permission denied, open '/Users/anton/Documents/Anton's Notes/inbox/x.md'";
+    expect(shortReason(refused, 80)).toBe("EACCES: permission denied…");
+    expect(shortReason(refused, 100)).toBe(`${refused}.`); // whole when it fits
+    // A quoted word that closes its own quote opens none, before a comma or a stop as well, and a word with an apostrophe inside opens
+    // none either: the cut falls before the path, and the word that led up to it goes too.
+    expect(shortReason("Can't open 'x', 'y'. The folder '/Users/anton/Documents/Anton's Notes/inbox' is read-only", 60)).toBe(
+      "Can't open 'x', 'y'. The…",
+    );
   });
 
   it("cuts a first word that is longer than the room at the character, and never splits a character in two", () => {
