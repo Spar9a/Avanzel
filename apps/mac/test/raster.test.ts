@@ -150,6 +150,17 @@ describe("rasterizeSvg paint", () => {
     expect(area(rasterizeSvg(svg(10, '<rect x="1" y="1" width="2" height="2" fill="none"/>'), 1))).toBe(0);
   });
 
+  it("draws round caps and joins, whether the art says round or says nothing", () => {
+    const draw = (attributes: string) =>
+      Array.from(rasterizeSvg(svg(10, `<path d="M2 5H8V9" ${STROKE} stroke-width="2" ${attributes}/>`), 1).rgba);
+    const unstated = draw("");
+    expect(unstated.some((v) => v > 0)).toBe(true);
+    expect(draw('stroke-linecap="round" stroke-linejoin="round"')).toEqual(unstated);
+    expect(draw('stroke-linecap="Round"')).toEqual(unstated); // a CSS keyword, so case doesn't matter
+    const grouped = rasterizeSvg(svg(10, `<g stroke-linecap="round" stroke-linejoin="round"><path d="M2 5H8V9" ${STROKE} stroke-width="2"/></g>`), 1);
+    expect(Array.from(grouped.rgba)).toEqual(unstated);
+  });
+
   it.each(["black", "red", "#ff0000", "currentColor"])("paints any fill other than none, in black: %s", (fill) => {
     const bitmap = rasterizeSvg(svg(10, `<rect x="1" y="1" width="2" height="2" fill="${fill}"/>`), 1);
     expect(alphaAt(bitmap, 1, 1, 1)).toBe(255);
@@ -235,6 +246,9 @@ describe("rasterizeSvg outside the subset", () => {
     ["an attribute: style", '<path d="M1 1H9V9z" style="fill:red"/>', /style/],
     ["an attribute on a g: clip-path", '<g clip-path="url(#c)"><path d="M1 1H9V9z"/></g>', /clip-path/],
     ["an attribute: ry", '<rect x="1" y="1" width="4" height="4" rx="1" ry="2"/>', /ry="2"/],
+    ["a cap that isn't round: stroke-linecap", '<path d="M1 5H9" fill="none" stroke="black" stroke-linecap="butt"/>', /stroke-linecap="butt"/],
+    ["a join that isn't round: stroke-linejoin", '<path d="M1 1H9V9" fill="none" stroke="black" stroke-linejoin="miter"/>', /stroke-linejoin="miter"/],
+    ["a cap on a g that isn't round", '<g stroke-linecap="square"><path d="M1 5H9" fill="none" stroke="black"/></g>', /stroke-linecap="square"/],
     ["an attribute of another element: r on a rect", '<rect x="1" y="1" width="4" height="4" r="2"/>', /\br\b/],
     ["a path command: A", '<path d="M1 5A4 4 0 0 1 9 5"/>', /"A"/],
     ["a path command: T", '<path d="M1 5Q5 0 9 5T17 5"/>', /"T"/],

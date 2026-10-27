@@ -1,6 +1,8 @@
 // The six shelves as the menu shows them: their names, their colours and their glyphs. The design system draws the glyphs in React
 // (packages/ui/src/components/Shelf.tsx), and its package root pulls in CSS and fonts that main's build can't load, so main keeps
-// copies here. test/shelf-glyphs.test.ts keeps every copy equal to the design system's.
+// copies here. test/shelf-glyphs.test.ts renders the design system's own ShelfGlyph for each shelf and checks that its elements and
+// attributes (currentColor read as black) are SHELF_GLYPH_SVG's, and that the shelves, names and colours equal the design system's
+// exports and its tokens.css, in light and in dark.
 import { tinted, type Bitmap } from "./png.ts";
 import { rasterizeSvg } from "./raster.ts";
 
@@ -28,7 +30,7 @@ export const SHELF_COLORS: { light: Record<Shelf, string>; dark: Record<Shelf, s
 const OUTLINE = 'fill="none" stroke="black" stroke-linecap="round" stroke-linejoin="round"';
 const glyph = (shapes: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" width="12" height="12">${shapes}</svg>`;
 
-/** A flag, a spark, a knot, an hourglass, a figure and a tag, on a 12 point grid: the paths, circles and stroke widths of Shelf.tsx's GLYPHS. */
+/** A flag, a spark, a knot, an hourglass, a figure and a tag, on a 12 point grid: what ShelfGlyph renders, with black for currentColor. */
 export const SHELF_GLYPH_SVG: Record<Shelf, string> = {
   goals: glyph(`<path d="M3 11V1.5M3 1.5h6.2L7.8 4l1.4 2.5H3" ${OUTLINE} stroke-width="1.4"/>`),
   ideas: glyph('<path d="M6 .8 7.2 4.8 11.2 6 7.2 7.2 6 11.2 4.8 7.2.8 6 4.8 4.8Z" fill="black"/>'),

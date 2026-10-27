@@ -1,14 +1,46 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { SHELF_NAMES as UI_SHELF_NAMES, SHELVES as UI_SHELVES } from "@avanzel/ui";
+import { SHELF_NAMES as UI_SHELF_NAMES, SHELVES as UI_SHELVES, ShelfGlyph } from "@avanzel/ui";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Bitmap } from "../src/main/png.ts";
 import { SHELF_COLORS, SHELF_GLYPH_SVG, SHELF_NAMES, SHELVES, shelfGlyphIcon } from "../src/main/shelf-glyphs.ts";
 
 // Main can't import the design system's shelves, names, colours or glyphs (the package root pulls in CSS and fonts, and the
-// glyphs are private JSX), so shelf-glyphs.ts keeps copies. These tests keep every copy equal to the design system.
+// glyphs are private JSX), so shelf-glyphs.ts keeps copies. A test may import the root, so these hold each copy to the real thing: the
+// glyphs to what the design system's ShelfGlyph renders, the shelves and names to its exports, and the colours to its tokens.css.
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
+
+/** The root's attributes that are about the page and not the art: its CSS class, aria-hidden, xmlns and display size. */
+const NOT_THE_ART = ["class", "aria-hidden", "xmlns", "width", "height"];
+
+/**
+ * The drawing in `markup` as one line per element: its depth, its name and its attributes in name order, with currentColor read as
+ * black (the copy is drawn in black and tinted afterwards). The root leaves out NOT_THE_ART; every other attribute counts, so one the
+ * design system adds, on the root or anywhere else, shows. Markup that is more than tags throws.
+ */
+function outline(markup: string): string[] {
+  const tag = /<(\/?)([a-zA-Z][\w-]*)((?:\s+[\w:-]+="[^"]*")*)\s*(\/?)>/g;
+  if (markup.replace(tag, "").trim() !== "") throw new Error(`more than tags in ${markup}`);
+  const lines: string[] = [];
+  let depth = 0;
+  for (const [, closing, name = "", attributes = "", selfClosing] of markup.matchAll(tag)) {
+    if (closing) {
+      depth--;
+      continue;
+    }
+    const pairs = [...attributes.matchAll(/([\w:-]+)="([^"]*)"/g)]
+      .map(([, key = "", value = ""]) => ({ key, value: value === "currentColor" ? "black" : value }))
+      .filter(({ key }) => depth > 0 || !NOT_THE_ART.includes(key))
+      .map(({ key, value }) => `${key}=${value}`)
+      .sort();
+    lines.push(`${"  ".repeat(depth)}${name} ${pairs.join(" ")}`);
+    if (!selfClosing) depth++;
+  }
+  return lines;
+}
 
 function glyph(shelf: string, dark: boolean, scale: 1 | 2): Bitmap {
   const bitmap = shelfGlyphIcon(shelf, dark, scale);
@@ -26,23 +58,16 @@ function paintedColours({ rgba }: Bitmap): string[] {
 }
 
 describe("shelf glyphs", () => {
-  it("the glyphs match Shelf.tsx", () => {
-    // Every d, cx, cy, r and strokeWidth in a shelf's JSX appears, in order, in the same shelf's SVG, and the SVG adds none.
-    const source = read("../../../packages/ui/src/components/Shelf.tsx");
-    const start = source.indexOf("const GLYPHS");
-    expect(start).toBeGreaterThan(-1);
-    const block = source.slice(start, source.indexOf("\n};", start));
-    const at = SHELVES.map((shelf) => block.indexOf(`\n  ${shelf}: `));
-    expect(at.every((index) => index > -1)).toBe(true);
-    SHELVES.forEach((shelf, n) => {
-      const jsx = block.slice(at[n], at[n + 1] ?? block.length);
-      const expected = [...jsx.matchAll(/(?<![\w-])(d|cx|cy|r)="([^"]*)"|strokeWidth=\{([\d.]+)\}/g)].map((m) =>
-        m[1] ? `${m[1]}=${m[2]}` : `stroke-width=${m[3]}`,
-      );
-      const actual = [...SHELF_GLYPH_SVG[shelf].matchAll(/(?<![\w-])(d|cx|cy|r|stroke-width)="([^"]*)"/g)].map((m) => `${m[1]}=${m[2]}`);
-      expect(expected.length, `${shelf} in Shelf.tsx`).toBeGreaterThan(0);
-      expect(actual, shelf).toEqual(expected);
-    });
+  it("the glyphs match what the design system's ShelfGlyph draws", () => {
+    // The real component renders each shelf, and the copy must be the same elements, nested the same way, with the same attributes
+    // (so a swapped fill and stroke, an added opacity, transform, rect or line, a butt cap or another viewBox all show) and nothing
+    // here depends on the order the design system lists its shelves in.
+    for (const shelf of UI_SHELVES) {
+      expect(SHELF_GLYPH_SVG[shelf], `${shelf} has a copy`).toBeTypeOf("string");
+      const drawn = outline(renderToStaticMarkup(createElement(ShelfGlyph, { shelf })));
+      expect(drawn.length, `${shelf} as the design system draws it`).toBeGreaterThan(1);
+      expect(outline(SHELF_GLYPH_SVG[shelf]), shelf).toEqual(drawn);
+    }
   });
 
   it("the shelves, names and colours match the design system", () => {

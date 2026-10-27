@@ -6,10 +6,11 @@
 //   <g>                       passes fill, stroke, stroke-width, stroke-linecap, stroke-linejoin and opacity to its children
 //   <circle cx cy r>   <rect x y width height rx>   <path d>
 //
-// Paths take M m L l H h V v Q q C c S s Z z, with SVG's implicit repeats and compact numbers. Defaults are SVG's: fill black,
-// stroke none, stroke-width 1. Any fill or stroke other than "none" paints, in black. Fills are nonzero. Strokes always have round
-// caps and joins, whatever the attributes say, because the art uses only round ones. A circle and a rect are measured exactly, never
-// flattened; a curve is flattened into 8 segments (16 at 2x).
+// Paths take M m L l H h V v Q q C c S s Z z, with SVG's implicit repeats and compact numbers. Fill, stroke and stroke-width default
+// as in SVG: fill black, stroke none, stroke-width 1. Any fill or stroke other than "none" paints, in black. Fills are nonzero.
+// Strokes are always round-capped and round-joined, because the art uses only round ones. So leaving stroke-linecap and
+// stroke-linejoin out draws round (SVG's own defaults are butt and miter), "round" is the only value they may state, and any other
+// value throws. A circle and a rect are measured exactly, never flattened; a curve is flattened into 8 segments (16 at 2x).
 //
 // Each pixel is 4 × 4 subsamples. A subsample takes the most opaque of the elements over it, so overlapping elements never add up,
 // which is what a one-colour template image wants. A group's opacity multiplies into its children's.
@@ -22,6 +23,8 @@ const CURVE_STEPS = 8; // line segments per curve at 1x
 
 const NUMBER = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
 const PAINT = ["fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "opacity"];
+/** The two paint attributes that can only say "round", the one cap and join this draws. */
+const ROUND_ONLY = ["stroke-linecap", "stroke-linejoin"];
 const SHAPES: Record<string, string[]> = {
   g: [],
   circle: ["cx", "cy", "r"],
@@ -66,7 +69,7 @@ interface Subpath {
 
 /**
  * Paints `svg` into a bitmap of its viewBox's size times `scale`: black, with the coverage as alpha. Throws, naming it, on any
- * element, attribute or path command outside the subset above.
+ * element, attribute, attribute value (a cap or join that isn't round) or path command outside the subset above.
  */
 export function rasterizeSvg(svg: string, scale: 1 | 2): Bitmap {
   const root = parseMarkup(svg);
@@ -155,6 +158,9 @@ function collect(parent: Tag, inherited: Style, steps: number, layers: Layer[]):
     if (!allowed) throw new Error(`rasterizeSvg: <${tag.name}> isn't supported`);
     for (const [name, value] of tag.attrs) {
       if (!PAINT.includes(name) && !allowed.includes(name)) throw new Error(`rasterizeSvg: ${name}="${value}" on <${tag.name}> isn't supported`);
+      if (ROUND_ONLY.includes(name) && value.trim().toLowerCase() !== "round") {
+        throw new Error(`rasterizeSvg: ${name}="${value}" on <${tag.name}> isn't supported: strokes are always round`);
+      }
     }
     const style = styleOf(tag, inherited);
     if (tag.name === "g") {
@@ -347,6 +353,8 @@ function run(pen: Pen, command: string, args: number[], steps: number): void {
       cubicTo(pen, steps, 2 * pen.x - sx, 2 * pen.y - sy, ox + n0, oy + n1, ox + n2, oy + n3);
       break;
     }
+    default: // a letter added to ARITY without a case above would otherwise draw nothing, silently
+      throw new Error(`rasterizeSvg: path command "${command}" isn't drawn`);
   }
 }
 

@@ -3,7 +3,9 @@ import type { MenuBarState } from "@avanzel/ui/menu-bar";
 import { describe, expect, it } from "vitest";
 import { encodePng, faceIcon, tinted, trayIcon, type Bitmap } from "../src/main/png.ts";
 
-const STATES = ["idle", "listening", "filing", "filed", "needs-you", "asleep"] as const satisfies readonly MenuBarState[];
+// Keyed by every MenuBarState, so a state the design system adds fails the typecheck here until its face is tested too.
+const FACE_STATES: Record<MenuBarState, true> = { idle: true, listening: true, filing: true, filed: true, "needs-you": true, asleep: true };
+const STATES = Object.keys(FACE_STATES) as MenuBarState[];
 
 const alphas = (bitmap: Bitmap): number[] => Array.from(bitmap.rgba).filter((_, i) => i % 4 === 3);
 /** The alpha of the pixel at column `x`, row `y`. */
