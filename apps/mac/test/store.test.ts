@@ -38,6 +38,27 @@ describe("settings store", () => {
     expect(settings).not.toHaveProperty("surprise");
   });
 
+  it("starts with sounds off, and only true turns them on", () => {
+    expect(DEFAULT_SETTINGS.sounds).toBe(false);
+    expect(new SettingsStore(path.join(tmp(), "settings.json")).get().sounds).toBe(false);
+    expect(normalizeSettings({}).sounds).toBe(false);
+    expect(normalizeSettings({ sounds: true }).sounds).toBe(true);
+    // Anything else, however it came to be in the file, is off: a setting that plays sounds is one the person turned on.
+    for (const wrong of [false, "true", "yes", 1, null, undefined, {}, []]) expect(normalizeSettings({ sounds: wrong }).sounds, String(wrong)).toBe(false);
+  });
+
+  it("keeps the sounds setting from one run to the next", () => {
+    const file = path.join(tmp(), "settings.json");
+    const store = new SettingsStore(file);
+    store.update({ sounds: true });
+    expect(JSON.parse(readFileSync(file, "utf8")).sounds).toBe(true);
+    expect(new SettingsStore(file).get().sounds).toBe(true);
+    store.update({ fileMode: "evening" }); // another change leaves it be
+    expect(new SettingsStore(file).get().sounds).toBe(true);
+    store.update({ sounds: false });
+    expect(new SettingsStore(file).get().sounds).toBe(false);
+  });
+
   it("survives a corrupt file and persists updates", () => {
     const file = path.join(tmp(), "settings.json");
     writeFileSync(file, "{not json");

@@ -211,6 +211,13 @@ export interface Shortcuts {
 
 export type FileMode = "now" | "evening";
 
+/**
+ * The app's five quiet sounds (spec §4.6), each the twin of something the person sees: the Tick as listening starts, the Tock as it
+ * stops, the Stamp as a filed card is stamped, the Drawer as a filed or saved card is put away, and the Letter as the evening review
+ * is done. The capsule's page plays them (`renderer/common/sounds.ts`) when main sends the name (`capsule:sound`).
+ */
+export type SoundName = "tick" | "tock" | "stamp" | "drawer" | "letter";
+
 export interface AppSettings {
   version: 1;
   libraryPath: string | null;
@@ -218,6 +225,8 @@ export interface AppSettings {
   fileMode: FileMode;
   microphoneId: string | null;
   launchAtLogin: boolean;
+  /** Play the five sounds (`SoundName`). Off until the person turns it on: while it is off, main sends the capsule's page no sound at all. */
+  sounds: boolean;
 }
 
 export type PermissionStatus = "granted" | "denied" | "not-determined" | "restricted" | "unknown";
@@ -659,6 +668,11 @@ export interface AvanzelBridge {
     /** Listening now: send the current state again (one sent while the page loaded is lost). */
     ready(): void;
     onCommand(callback: (command: "start" | "stop" | "cancel") => void): () => void;
+    /**
+     * A sound to play (`SoundName`), sent only while the person has sounds on. The Tick comes before `start`, and the Tock before the
+     * `stop` or `cancel` that ends the recording: the page plays that one once the command has let go of the microphone, not before.
+     */
+    onSound(callback: (name: SoundName) => void): () => void;
     sendAudio(samples: Float32Array): Promise<void>;
     reportMicError(message: string): void;
     setInteractive(interactive: boolean): void;

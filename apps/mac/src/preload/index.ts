@@ -1,6 +1,6 @@
 // The only door between the renderers and the main process: a typed, minimal `window.avanzel`.
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { AvanzelBridge, CapsuleState, SettingsPane, SettingsSnapshot, SetupSnapshot } from "../shared/ipc.ts";
+import type { AvanzelBridge, CapsuleState, SettingsPane, SettingsSnapshot, SetupSnapshot, SoundName } from "../shared/ipc.ts";
 
 function listen<T>(channel: string, callback: (value: T) => void): () => void {
   const handler = (_event: IpcRendererEvent, value: T) => callback(value);
@@ -13,6 +13,7 @@ const bridge: AvanzelBridge = {
     onState: (callback) => listen<CapsuleState>("capsule:state", callback),
     ready: () => ipcRenderer.send("capsule:ready"),
     onCommand: (callback) => listen<"start" | "stop" | "cancel">("capsule:command", callback),
+    onSound: (callback) => listen<SoundName>("capsule:sound", callback),
     sendAudio: (samples) => ipcRenderer.invoke("capsule:audio", samples),
     reportMicError: (message) => ipcRenderer.send("capsule:mic-error", message),
     setInteractive: (interactive) => ipcRenderer.send("capsule:interactive", interactive),

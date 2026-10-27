@@ -110,6 +110,7 @@ import type {
   SetupSnapshot,
   SetupStep,
   Shortcuts,
+  SoundName,
   TaskInfo,
 } from "../shared/ipc.ts";
 import { frontContext } from "./front-app.ts";
@@ -415,8 +416,8 @@ export class Controller {
   /** Whether the capsule page listens yet; commands for its recorder wait until it does. */
   private capsuleListening = false;
   private heldCommands: ("start" | "stop" | "cancel")[] = [];
-  /** Notifications posted, kept for the e2e tests only. */
-  private readonly notified: { title: string; body: string }[] = [];
+  /** Notifications posted, kept for the e2e tests only. `silent`: posted without macOS's sound, and only then present. */
+  private readonly notified: { title: string; body: string; silent?: true }[] = [];
   /**
    * What Open Terminal and Open System Settings would have opened, and text Copy would have copied: with AVANZEL_TEST=1,
    * for the e2e tests only.
@@ -920,7 +921,8 @@ export class Controller {
   /** `capture`: the note an error card is about (`cardCapture`), which stays only as long as that card is what the capsule shows. */
   private setCapsule(state: CapsuleState, autoHideMs?: number, capture?: string): void {
     if (state.kind !== "editing") this.keepEdit(); // whatever replaces the editor (a recording, a typed thought, an error) keeps its edit
-    const wasEditing = this.capsuleState.kind === "editing";
+    const was = this.capsuleState;
+    const wasEditing = was.kind === "editing";
     this.capsuleState = state;
     this.cardCapture = capture ?? null;
     this.cardUnkept = null; // a card that has words without its promise sets them after (`fail`)
@@ -928,6 +930,7 @@ export class Controller {
     this.hideTimer = null;
     const win = this.capsule;
     win.webContents.send("capsule:state", state);
+    this.cardSound(was, state); // after the state: the page times the Stamp by the card it has been sent
     if (state.kind === "hidden") {
       // A hidden panel can't be hovered, and no leave reaches it: the pointer that was on it (to press Hide, say) lets go of the hold
       // now, or the next card that hides itself would wait for a pointer that has gone (`scheduleHide`).
@@ -970,6 +973,33 @@ export class Controller {
   private capsuleCommand(command: "start" | "stop" | "cancel"): void {
     if (this.capsuleListening) this.capsule.webContents.send("capsule:command", command);
     else this.heldCommands.push(command);
+  }
+
+  /**
+   * Tells the capsule's page to play `name` (SoundName), and says whether it did. The page plays what it is told, so the rules are here:
+   * - While the setting is off nothing is sent.
+   * - While a recording runs only its own Tick and Tock are sent. The recorder keeps no echo cancellation (recorder.ts), so any other sound
+   *   would be heard in the words. A recording runs from `startRecording` until its audio arrives or it is given up.
+   * - A sound isn't held for a page that can't hear it yet, as a command is (`capsuleCommand`): it would come late, and a late sound is no
+   *   twin of what happened. Nor is one sent to a page that has gone.
+   * The evening review asks whether its Letter was sent, since the review's notification is silent only then (`executeTask`).
+   */
+  private sound(name: SoundName): boolean {
+    if (!this.store.get().sounds || !this.capsuleListening) return false;
+    if (this.recording && name !== "tick" && name !== "tock") return false;
+    if (this.capsule.isDestroyed() || this.capsule.webContents.isDestroyed()) return false;
+    this.capsule.webContents.send("capsule:sound", name);
+    return true;
+  }
+
+  /**
+   * The sound a card makes as the capsule's state changes to `now`: the Stamp as a filed card is put up, and the Drawer as a filed card,
+   * or a saved one, is put away. The Undone card is a saved one (`undone`) that took a filing back: nothing was filed or saved, so it
+   * is not put in the drawer. A card that another card replaces is not put away either, and nor is a recording given up.
+   */
+  private cardSound(was: CapsuleState, now: CapsuleState): void {
+    if (now.kind === "filed") this.sound("stamp");
+    else if (now.kind === "hidden" && (was.kind === "filed" || (was.kind === "saved" && !was.undone))) this.sound("drawer");
   }
 
   private scheduleHide(ms: number): void {
@@ -1156,6 +1186,9 @@ export class Controller {
       hint: this.hintFor(mode),
       ...(shot ? { thumbnail: shot.thumbnail, context: shot.context } : {}),
     });
+    // The Tick goes out before the recorder is told to start, and nothing waits for it: opening the microphone takes longer than the
+    // Tick lasts (getUserMedia, then the audio worklet, recorder.ts), so the Tick is over before anything is recorded.
+    this.sound("tick");
     this.capsuleCommand("start");
     try {
       globalShortcut.register("Escape", () => this.cancelRecording());
@@ -1206,6 +1239,9 @@ export class Controller {
     // A screen comment keeps its screenshot's card while its words are made, as it had it while it listened.
     this.setCapsule({ kind: "transcribing", mode: recording.mode, onThisMac, ...(recording.shot ? { thumbnail: recording.shot.thumbnail, context: recording.shot.context } : {}) });
     this.setup.moveThought(recording, { kind: "transcribing", startedAt: Date.now(), onThisMac });
+    // Listening stops, as the card says it has. The Tock goes out ahead of the stop, and the page plays it once the stop has let go of the
+    // microphone, before the audio is sent: it is not heard in the recording, and it is no later than the card (the audio can be 38 MB).
+    this.sound("tock");
     this.capsuleCommand("stop");
     this.clearAudioTimeout();
     this.audioTimeout = setTimeout(() => {
@@ -1224,6 +1260,9 @@ export class Controller {
   cancelRecording(): void {
     const recording = this.recording;
     if (!recording) return;
+    // Listening stops here too, so it ends with a Tock, ahead of the cancel that lets go of the microphone. Not for a recording already
+    // stopped: its Tock was played with its stop.
+    if (!recording.stopping) this.sound("tock");
     this.abandonRecording(recording);
     this.setCapsule({ kind: "hidden" });
     this.setup.moveThought(recording, { kind: "waiting" });
@@ -2839,11 +2878,15 @@ export class Controller {
     else void shell.openPath(vault.root);
   }
 
-  private notify(title: string, body: string, onClick?: () => void): void {
+  /**
+   * A notification, with macOS's sound. `silent`: without it, because something else has made the sound (the evening review's Letter, which
+   * is its sound). `notified` keeps `silent` only on a silent one, so the tests' `{ title, body }` assertions stand for the others.
+   */
+  private notify(title: string, body: string, onClick?: () => void, silent = false): void {
     if (this.quitting) return;
-    if (process.env.AVANZEL_TEST === "1") this.notified.push({ title, body });
+    if (process.env.AVANZEL_TEST === "1") this.notified.push({ title, body, ...(silent ? { silent: true as const } : {}) });
     if (!Notification.isSupported()) return;
-    const note = new Notification({ title, body, silent: false });
+    const note = new Notification({ title, body, silent });
     if (onClick) note.on("click", onClick);
     note.show();
   }
@@ -3644,8 +3687,11 @@ export class Controller {
           return librarian.eveningReview({ instructions: task.instructions, signal, leave: this.countReview(task.id, left) });
         });
         this.fallAsleep(); // it ran to its end, whatever it found to file
+        // The Letter plays as the review ends, whatever it found to file, and with it the review's notification makes no sound of its own:
+        // the Letter is its sound (spec §8, "Passive (silent)"). With sounds off, or over a recording, none is sent and macOS's sound stays.
+        const silent = this.sound("letter");
         if (!result.outcomes.length) {
-          this.notify(task.name, nothingFiled(left.size));
+          this.notify(task.name, nothingFiled(left.size), undefined, silent);
           return;
         }
         const filedIds = new Set(result.outcomes.filter((o) => o.ok).map((o) => o.captureId));
@@ -3658,6 +3704,7 @@ export class Controller {
           `${task.name}: ${filed} ${filed === 1 ? "thing" : "things"} filed`,
           failed.length ? notFiled(failed, filed) : `${agent} sorted today's inbox. Click to read the summary.`,
           digest ? () => this.openPage(path.relative(this.requireVault().root, digest)) : undefined,
+          silent,
         );
       } else if (task.kind === "review") {
         const outcome = await this.withRun(async (signal) => (await this.librarian(task.agent)).review({ signal }));
@@ -3703,7 +3750,7 @@ export class Controller {
     return nativeImage;
   }
 
-  notificationsForTests(): { title: string; body: string }[] {
+  notificationsForTests(): { title: string; body: string; silent?: true }[] {
     return this.notified;
   }
 

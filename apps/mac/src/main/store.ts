@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
   fileMode: "now",
   microphoneId: null,
   launchAtLogin: false,
+  sounds: false,
 }) as AppSettings;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -48,6 +49,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
     fileMode: r.fileMode === "evening" ? "evening" : "now",
     microphoneId: typeof r.microphoneId === "string" && r.microphoneId ? r.microphoneId : null,
     launchAtLogin: r.launchAtLogin === true,
+    sounds: r.sounds === true, // a setting that plays sounds is one the person turned on: anything but true is off
   };
 }
 
