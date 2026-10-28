@@ -282,6 +282,77 @@ test("a filing that only noted its capture says so: the card is stamped Noted, a
   await app.close();
 });
 
+test("a filed card whose words the engine put back says so in its head: “Your exact words are kept.”", async () => {
+  const { app, capsule } = await launchOn(await makeLibrary());
+  const card = capsule.getByRole("article");
+  const head = card.locator("header");
+  const label = head.getByText("Thought", { exact: true });
+  const line = head.getByText("Your exact words are kept.", { exact: true });
+  await call(app, "setCapsule", filedCard({ restored: true }));
+  await snap(capsule, "3-filed-card-kept");
+  // It stands in the card's head, to the right of the label it shares the head with, and the head ends before the stamp, so it fits on one
+  // line. That is asked of its words, not of its box: a flex item is one box however its words wrap, and a Range has a rect for each line.
+  await expect(label).toBeVisible();
+  await expect(line).toBeVisible();
+  expect(await leftOf(label)).toBeLessThan(await leftOf(line));
+  expect(
+    await line.evaluate((el) => {
+      const words = document.createRange();
+      words.selectNodeContents(el);
+      return words.getClientRects().length;
+    }),
+  ).toBe(1);
+  // The rest of the card is as it was: the words, the three page rows and the Filed stamp.
+  await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
+  await expect(card.getByRole("listitem")).toHaveCount(3);
+  await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toBeVisible();
+  // A filing that only noted its capture says it too, in the head and over the footer's sentence, which stays.
+  await call(app, "setCapsule", filedCard({ noted: true, pages: [], restored: true }));
+  const noted = card.getByText("Claude Code noted it in the log.", { exact: true });
+  await expect(line).toBeVisible();
+  await expect(noted).toBeVisible();
+  expect((await line.boundingBox())!.y).toBeLessThan((await noted.boundingBox())!.y);
+  // And a filing that kept nothing back has none: the head holds its label alone.
+  await call(app, "setCapsule", filedCard());
+  await expect(card.getByRole("listitem")).toHaveCount(3);
+  await expect(label).toBeVisible();
+  await expect(line).toHaveCount(0);
+  await app.close();
+});
+
+test("a filing whose agent rewrote the capture keeps the person's words, and its card says so", async () => {
+  const { library, app, capsule } = await launchOn(await makeLibrary(), { FAKE_AGENT_MODE: "tamper" }); // files, then rewrites the capture
+  const line = capsule.getByRole("article").locator("header").getByText("Your exact words are kept.", { exact: true });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", restored: true });
+  await expect(line).toBeVisible();
+  // The engine put the words back: the archived capture holds them, and nothing of what the agent wrote over them.
+  const [capture, ...others] = archived(library);
+  expect(others).toEqual([]);
+  const words = readFileSync(capture!, "utf8");
+  expect(words).toContain("Plant tulips in October");
+  expect(words).not.toContain("rewritten by a careless agent");
+  // The next filing is by an agent that behaves (the mode is read at each run). Its state has no `restored` at all, and its card no line.
+  // The first card's state has it, so a filed state without it can only be the next filing's.
+  await app.evaluate((_electron, mode) => void (process.env.FAKE_AGENT_MODE = mode), "ok");
+  await dictate(app);
+  await expect
+    .poll(
+      async () => {
+        const state = (await call(app, "capsuleStateForTests")) as { kind: string; restored?: boolean };
+        return state.kind === "filed" && state.restored !== true;
+      },
+      { timeout: 60_000 },
+    )
+    .toBe(true);
+  expect(await call(app, "capsuleStateForTests")).not.toHaveProperty("restored");
+  await expect(capsule.getByRole("status").getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
+  await expect(line).toHaveCount(0);
+  expect(archived(library)).toHaveLength(2);
+  await app.close();
+});
+
 test("a thought saved for the evening review is stamped Saved, and the card says where it is", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
   const bar = capsule.getByRole("status");

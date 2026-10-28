@@ -21,6 +21,9 @@ const hasReceipt = (state: StateOf<"filed">) => !state.noted && state.pages.leng
  *
  * A filing that wrote no page (`noted`: the agent logged the capture and found nothing to add) says there is nothing new, stamped
  * Noted, and offers no Open: Hide, and Undo while there is a commit.
+ *
+ * Either card, when the agent had changed the capture and the engine put the person's words back (`restored`), says so in its head, in
+ * the caption slot beside the label: "Your exact words are kept." The stamp, the footer and the words' lines stay as they are.
  */
 export function filedScene(state: StateOf<"filed">): Scene {
   return {
@@ -39,6 +42,7 @@ function FiledCard({ state }: { state: StateOf<"filed"> }) {
   return (
     <Card
       label="Thought"
+      meta={state.restored ? "Your exact words are kept." : undefined}
       stamp={state.noted ? { word: "noted", date: day } : { word: "filed", date: day, animate: true }}
       footer={state.noted ? <Text variant="footnote">{notedLine(state.agent)}</Text> : receipt ? <Pages pages={state.pages} /> : undefined}
     >

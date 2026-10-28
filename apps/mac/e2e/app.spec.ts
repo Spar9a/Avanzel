@@ -1312,6 +1312,11 @@ const BAR_STATES: [string, Record<string, unknown>, string][] = [
     "Filing with Claude Code…",
   ],
   ["filed", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: true, noted: false }, "Filed by Claude Code in 6 s"],
+  [
+    "a filed card whose words were kept",
+    { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: true, noted: false, restored: true },
+    "Filed by Claude Code in 6 s",
+  ],
   ["nothing new", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: false, noted: true }, "Nothing new to file"],
   ["saved", { kind: "saved", text: "Plant tulips in October", note: "Saved to the inbox." }, "Saved"],
   ["undone", { kind: "saved", text: "Plant tulips in October", note: "Your words are back in the inbox.", undone: true }, "Undone"],

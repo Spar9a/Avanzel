@@ -257,6 +257,12 @@ function capsuleStates(): [string, CapsuleState, string][] {
     ["editing", { kind: "editing", text: said }, "Edit before filing"],
     // The results: the words on paper, stamped, over a bar of one steady line.
     ["filed", { kind: "filed", text: said, agent: "Claude Code", seconds: 23, pages, canUndo: true, noted: false }, "Filed by Claude Code in 23 s"],
+    // The engine put the words back after the agent changed them: the card's head says so, in its caption on the right.
+    [
+      "filed, your exact words kept",
+      { kind: "filed", text: said, agent: "Claude Code", seconds: 23, pages, canUndo: true, noted: false, restored: true },
+      "Your exact words are kept.",
+    ],
     [
       "filed, four pages",
       { kind: "filed", text: said, agent: "Claude Code", seconds: 8, pages: [...pages, fourth], canUndo: false, noted: false },

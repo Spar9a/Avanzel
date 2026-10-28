@@ -1888,6 +1888,8 @@ export class Controller {
           canUndo: !!outcome.commit,
           // It ended well and wrote no page: the agent only logged the capture, as it does one that needs none.
           noted: job.pages.length === 0,
+          // The agent changed the capture and the engine put the person's words back: the card says they are kept. Absent when it didn't.
+          ...(outcome.restored ? { restored: true as const } : {}),
         },
         8000,
       );

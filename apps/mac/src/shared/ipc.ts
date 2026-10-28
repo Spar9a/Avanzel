@@ -133,6 +133,8 @@ export type CapsuleState =
       canUndo: boolean;
       /** The agent filed nothing: it ended well and wrote no page, only a line in the log. */
       noted: boolean;
+      /** The engine put the person's words back after the agent changed them (`FileOutcome.restored`): the card says so in its head. Absent otherwise. */
+      restored?: true;
     }
   /** Stop ended a filing, and its note is in the inbox. The controller's `cancelFiling` tells the rest. */
   | {
