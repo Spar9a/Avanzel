@@ -1340,16 +1340,19 @@ test("Undo from the menu follows the last filing: a note filed in the background
 
 test("Undo from the menu is not offered after a filing that failed, and is back after one that ends well", async () => {
   const library = await makeLibrary({ git: true });
-  const { app } = await hearing({}, library);
+  const { app, userData } = await hearing({}, library);
   await watchUndos(app);
   await filedFromTheCapsule(app);
   expect(await undoItem(app)).toBeDefined();
+  const first = savedUndo(userData, library)?.filing;
+  expect(first, "kept for the next launch").toMatch(COMMIT);
   await agentMode(app, "fail");
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
   // The second filing's run began, so the first filing is no longer the last one; and this one failed, which is no filing to undo.
   expect(await undoItem(app)).toBeUndefined();
   expect(await trayOffersUndo(app)).toBe(false);
+  expect(savedUndo(userData, library), "nor is it saved for a launch to offer").toBeUndefined();
   await pressUndo(app);
   expect(await undoCalls(app)).toBe(0);
   expect(filesUnder(library, "ideas")).toHaveLength(1); // the first filing stands
@@ -1358,6 +1361,8 @@ test("Undo from the menu is not offered after a filing that failed, and is back 
   await filedFromTheCapsule(app);
   expect(filesUnder(library, "ideas")).toHaveLength(2);
   expect(await undoItem(app)).toBeDefined();
+  expect(savedUndo(userData, library)?.filing).toMatch(COMMIT);
+  expect(savedUndo(userData, library)?.filing).not.toBe(first);
   await pressUndo(app);
   expect(filesUnder(library, "ideas")).toHaveLength(1);
   expect(inbox(library)).toHaveLength(2); // the note that failed, and the one just taken back
@@ -1529,6 +1534,9 @@ async function pressUndoReview(app: ElectronApplication): Promise<void> {
 /** How much work the app's queue holds now: what runs, and what waits behind it. */
 const queuedWork = (app: ElectronApplication) => app.evaluate(() => (globalThis as unknown as { __avanzel: { queued: number } }).__avanzel.queued);
 
+/** Whether the open library's saved Undo has been checked against its git (`Controller.undoChecked`), whether or not it then offers anything. */
+const undoChecked = (app: ElectronApplication) => call(app, "undoChecked") as Promise<boolean>;
+
 test("both Undo items survive a quit and relaunch, and each takes its own back", async () => {
   const first = await withBothUndos();
   const { library } = first;
@@ -1595,6 +1603,37 @@ test("a saved Undo whose commit has left the library's history isn't offered aft
   await app.close();
 });
 
+test("a launch while git can't run offers neither Undo and keeps the saved records, and a launch with git offers both again", async () => {
+  const first = await withBothUndos();
+  const { library } = first;
+  const saved = savedUndo(first.userData, library);
+  expect(saved?.filing).toMatch(COMMIT);
+  expect(saved?.evening.length).toBeGreaterThan(0);
+  await first.app.close();
+  // Git can't run for a while (the developer tools are gone after an update, say): nothing can be undone, so nothing is offered. The
+  // library is checked all the same, and what it saved waits in the file for a launch that has git.
+  const blind = await hearing({ AVANZEL_USER_DATA: first.userData, AVANZEL_GIT_USABLE: "0" }, library);
+  await expect.poll(() => undoChecked(blind.app), { timeout: 20_000 }).toBe(true);
+  expect(await undoItem(blind.app)).toBeUndefined();
+  expect(await reviewItem(blind.app)).toBeUndefined();
+  expect(await trayOffersUndo(blind.app)).toBe(false);
+  expect(savedUndo(first.userData, library), "kept as it was").toEqual(saved);
+  await blind.app.close();
+  // The next launch finds git again: the same records are checked, found in the library's history, offered, and work.
+  const { app } = await hearing({ AVANZEL_USER_DATA: first.userData }, library);
+  await watchUndos(app);
+  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
+  await expect.poll(() => reviewItem(app), { timeout: 20_000 }).toBeDefined();
+  expect(savedUndo(first.userData, library)).toEqual(saved);
+  await pressUndo(app);
+  expect(filesUnder(library, "ideas")).toHaveLength(1);
+  await pressUndoReview(app);
+  await expect.poll(async () => (await notified(app, "Evening review undone")).length).toBe(1);
+  expect(filesUnder(library, "ideas")).toEqual([]);
+  expect(await undoCalls(app)).toBe(2);
+  await app.close();
+});
+
 test("each library keeps its own Undo items through a switch: only the open library's show, and they come back with it", async () => {
   const config = mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")); // the libraries that open are remembered here, not in ~/.config
   const { app, library } = await withBothUndos({ XDG_CONFIG_HOME: config });
@@ -1640,6 +1679,8 @@ test("an evening review that ends after a library switch keeps its Undo with its
   const library = await makeLibrary({ git: true });
   new Vault(library).newCapture("An earlier thought", { source: "text" });
   const { app, userData } = await hearing({ XDG_CONFIG_HOME: config }, library);
+  await filedFromTheCapsule(app); // the library has a filing to undo too, which the review that comes after it ends the offer of
+  expect(savedUndo(userData, library)?.filing).toMatch(COMMIT);
   await app.evaluate(() => void (process.env.FAKE_AGENT_DELAY_MS = "3000")); // the agent takes a moment to file the note
   await call(app, "runTask", "evening-review");
   await expect.poll(() => detailOf(app), { timeout: 30_000 }).toBe("Filing 1 of 1");
@@ -1648,19 +1689,51 @@ test("an evening review that ends after a library switch keeps its Undo with its
   expect((await settingsSnap(app)).library?.path).toBe(other);
   expect(await reviewSaid(app), "how the review ended").toMatchObject({ title: "Evening review: 1 thought filed" });
   await call(app, "idleForTests");
-  // The review filed in its own library, which is not the open one: nothing of it to undo here, and its commits kept where they belong.
+  // The review filed in its own library, which is not the open one: nothing of it to undo here, its commits kept where they belong, and
+  // the filing it came after gone from that library's file, though that library isn't open to show it.
   expect(await reviewItem(app)).toBeUndefined();
   const saved = savedUndo(userData, library);
+  expect(saved?.filing, "the review's end took the filing out of its own library's file").toBeNull();
   expect(saved?.evening.length).toBeGreaterThan(0);
   expect(saved?.evening.every((sha) => COMMIT.test(sha))).toBe(true);
   expect(savedUndo(userData, other)).toBeUndefined();
   await call(app, "useLibrary", library);
   await expect.poll(() => reviewItem(app), { timeout: 20_000 }).toBeDefined();
+  expect(await undoItem(app)).toBeUndefined();
+  await pressUndoReview(app);
+  await expect.poll(async () => (await notified(app, "Evening review undone")).length).toBe(1);
+  expect(await notified(app, "Evening review undone")).toEqual([{ title: "Evening review undone", body: "Everything it filed is back in the inbox." }]);
+  expect(filesUnder(library, "ideas")).toHaveLength(1); // the capsule's filing stands
+  expect(inbox(library)).toHaveLength(1);
+  expect(savedUndo(userData, library)).toBeUndefined();
+  await app.close();
+});
+
+test("an evening review that ends after its library was opened again offers its Undo there, and it works", async () => {
+  const config = mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")); // the libraries that open are remembered here, not in ~/.config
+  const library = await makeLibrary({ git: true });
+  new Vault(library).newCapture("An earlier thought", { source: "text" });
+  const { app, userData } = await hearing({ XDG_CONFIG_HOME: config }, library);
+  await app.evaluate(() => void (process.env.FAKE_AGENT_DELAY_MS = "3000")); // the agent takes a moment to file the note
+  await call(app, "runTask", "evening-review");
+  await expect.poll(() => detailOf(app), { timeout: 30_000 }).toBe("Filing 1 of 1");
+  // The person goes to another library and back while the review is with its agent. Opening the folder again makes a new library
+  // object, and it is the same library: the review's end is for the library that is open.
+  const other = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-")), "Avanzel");
+  await call(app, "createLibrary", other);
+  await call(app, "useLibrary", library);
+  expect((await settingsSnap(app)).library?.path).toBe(library);
+  expect(await reviewSaid(app), "how the review ended").toMatchObject({ title: "Evening review: 1 thought filed" });
+  await call(app, "idleForTests");
+  // Offered at once, with no further open, in the model and in the menu the tray holds.
+  await expect.poll(() => reviewItem(app), { timeout: 10_000 }).toEqual({ type: "item", label: "Undo the last evening review", action: "undo-review" });
+  await expect.poll(async () => (await heldMenu(app)).map((item) => item.label), { timeout: 10_000 }).toContain("Undo the last evening review");
   await pressUndoReview(app);
   await expect.poll(async () => (await notified(app, "Evening review undone")).length).toBe(1);
   expect(await notified(app, "Evening review undone")).toEqual([{ title: "Evening review undone", body: "Everything it filed is back in the inbox." }]);
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(inbox(library)).toHaveLength(1);
+  expect(await reviewItem(app)).toBeUndefined();
   expect(savedUndo(userData, library)).toBeUndefined();
   await app.close();
 });
@@ -1691,42 +1764,71 @@ test("a filing that ends after a library switch keeps its Undo with its own libr
   await app.close();
 });
 
-test("an Undo that waits in the queue through a library switch takes nothing back in the library that opens, and says it can't be undone", async () => {
-  const config = mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")); // the libraries that open are remembered here, not in ~/.config
-  const { app, library, userData } = await withBothUndos({ XDG_CONFIG_HOME: config });
-  await call(app, "dismiss");
-  // The second library has a filing of its own, and its take-back is the one that holds the queue.
-  const other = await makeLibrary({ git: true });
-  await call(app, "createLibrary", other);
-  await filedFromTheCapsule(app);
-  await call(app, "dismiss");
-  await watchUndos(app, { hold: true });
-  const held = pressUndo(app);
-  await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
-  // The first library opens again, with both its items, and both are chosen: they wait behind the take-back that holds the queue.
-  await call(app, "useLibrary", library);
-  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
-  await expect.poll(() => reviewItem(app), { timeout: 20_000 }).toBeDefined();
-  const filing = pressUndo(app);
-  const review = call(app, "menuAction", "undo-review");
-  await expect.poll(() => queuedWork(app)).toBe(3); // the held take-back, and the two that wait behind it
-  // The second library opens again before the queue gets to them.
-  await call(app, "useLibrary", other);
-  expect((await settingsSnap(app)).library?.path).toBe(other);
-  await app.evaluate(() => (globalThis as Left).letUndoIn?.());
-  await Promise.all([held, filing, review]);
-  await call(app, "idleForTests");
-  await expect.poll(async () => (await notified(app, UNDO_REFUSED.title)).length).toBe(2);
-  // Only the second library's own take-back reached the library: the two that waited took nothing back in the library that opened.
-  expect(await undoCalls(app)).toBe(1);
-  expect(undone(other)).toHaveLength(1);
-  expect(filesUnder(library, "ideas")).toHaveLength(2);
-  expect(undone(library)).toEqual([]);
-  // Each says so, once, in a notification: the first library's card was dismissed, and a record loaded for a run has no card.
-  expect(await notified(app, UNDO_REFUSED.title)).toEqual([UNDO_REFUSED, UNDO_REFUSED]);
+// An Undo takes back in the library it was asked in, whichever library is open when the queue gets to it. The other library is a copy of
+// the first one's history, so it holds the very commits being taken back: an Undo that landed in it would revert them there.
+for (const comeBack of [false, true]) {
+  test(`an Undo asked in a library is taken back there, and told once, though ${comeBack ? "another library was opened and then this one again" : "another library is open"} when the queue gets to it`, async () => {
+    const config = mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")); // the libraries that open are remembered here, not in ~/.config
+    const { app, library, userData } = await withBothUndos({ XDG_CONFIG_HOME: config });
+    await call(app, "dismiss"); // the card is hidden: the menu is all that offers Undo now, and what it did is told in notifications
+    const other = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-")), "Avanzel");
+    gitOut(library, "clone", "-q", library, other);
+    const copied = filesUnder(other, "ideas");
+    expect(copied).toHaveLength(2); // the review's page and the capsule's
+    await watchUndos(app);
+    await holdTheQueue(app);
+    // Both are asked in the first library, the filing first (it is the newer), and wait behind the held work.
+    const filing = pressUndo(app);
+    await expect.poll(() => queuedWork(app)).toBe(2);
+    const review = call(app, "menuAction", "undo-review");
+    await expect.poll(() => queuedWork(app)).toBe(3);
+    expect(savedUndo(userData, library), "their one try: asked for, so gone from the file").toBeUndefined();
+    // Before the queue gets to them, the copy opens, and the first library after it in one of the runs.
+    await call(app, "createLibrary", other);
+    if (comeBack) await call(app, "useLibrary", library);
+    expect((await settingsSnap(app)).library?.path).toBe(comeBack ? library : other);
+    await letTheQueueGo(app);
+    await Promise.all([filing, review]);
+    await call(app, "idleForTests");
+    await expect.poll(async () => (await notified(app, "Evening review undone")).length).toBe(1);
+    // Each was taken back in the first library, by the librarian made for it...
+    expect(await undoCalls(app)).toBe(2);
+    expect(filesUnder(library, "ideas")).toEqual([]);
+    expect(inbox(library)).toHaveLength(2); // the capsule's note and the review's
+    expect(undone(library).length).toBeGreaterThan(0);
+    // ...and the copy, which holds the same commits, is as it was.
+    expect(undone(other)).toEqual([]);
+    expect(filesUnder(other, "ideas")).toEqual(copied);
+    // The result is told once for each, and as it is told for any Undo: nothing says it can't be undone.
+    expect(await notified(app, "Undone")).toEqual([{ title: "Undone", body: UNDONE_NOTE }]);
+    expect(await notified(app, "Evening review undone")).toEqual([{ title: "Evening review undone", body: "Everything it filed is back in the inbox." }]);
+    expect(await notified(app, UNDO_REFUSED.title)).toEqual([]);
+    expect(savedUndo(userData, library)).toBeUndefined();
+    await app.close();
+  });
+}
+
+test("an evening review whose take-back fails says it can't be undone, once, and leaves nothing unhandled", async () => {
+  const { app, library, userData } = await withBothUndos();
+  // The menu starts the take-back and doesn't wait for it: a rejection nobody handles would end up here.
+  await app.evaluate(() => {
+    const unhandled: string[] = [];
+    Object.assign(globalThis, { unhandled });
+    process.on("unhandledRejection", (reason) => void unhandled.push(String(reason)));
+  });
+  await watchUndos(app, { fail: true }); // git can't run: the queued take-back throws
+  await pressUndoReview(app);
+  await expect.poll(async () => (await notified(app, UNDO_REFUSED.title)).length).toBe(1);
+  expect(await notified(app, UNDO_REFUSED.title)).toEqual([UNDO_REFUSED]);
   expect(await notified(app, "Evening review undone")).toEqual([]);
-  // That was their one try: the first library keeps neither record.
-  expect(savedUndo(userData, library)).toBeUndefined();
+  expect(await undoCalls(app)).toBe(1);
+  expect(await app.evaluate(() => (globalThis as { unhandled?: string[] }).unhandled)).toEqual([]);
+  // That was its one try: the review's item is gone and its record with it, and the filing's is as it was.
+  expect(await reviewItem(app)).toBeUndefined();
+  expect(savedUndo(userData, library)?.evening).toEqual([]);
+  expect(savedUndo(userData, library)?.filing).toMatch(COMMIT);
+  expect(await undoItem(app)).toBeDefined();
+  expect(filesUnder(library, "ideas")).toHaveLength(2);
   await app.close();
 });
 

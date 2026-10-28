@@ -204,9 +204,16 @@ export async function watchFilingStates(app: ElectronApplication): Promise<void>
 
 export const filingSends = (app: ElectronApplication) => app.evaluate(() => (globalThis as { filingSends?: FilingSend[] }).filingSends ?? []);
 
-/** The controller as the e2e tests reach it in the main process, with the parts these tests wrap: the librarian made for each run. */
+/** The librarian the controller makes for a run, as far as these tests wrap it. */
+type MadeLibrarian = { file(...args: unknown[]): Promise<unknown>; undo(...args: unknown[]): Promise<unknown> };
+
+/**
+ * The controller as the e2e tests reach it in the main process, with the parts these tests wrap: the librarian made for each run.
+ * `librarian()` makes the open library's through `librarianFor`, which an Undo calls for the library it was asked in.
+ */
 export type Wrappable = {
-  librarian(harness?: string): Promise<{ file(...args: unknown[]): Promise<unknown>; undo(...args: unknown[]): Promise<unknown> }>;
+  librarian(harness?: string): Promise<MadeLibrarian>;
+  librarianFor(vault: unknown, harness?: string): Promise<MadeLibrarian>;
   cancelFiling(sender: unknown): void;
 };
 
@@ -225,16 +232,17 @@ export const reachedUndo = (app: ElectronApplication) => app.evaluate(() => (glo
 export const undoCalls = (app: ElectronApplication) => app.evaluate(() => (globalThis as Left).undoCalls ?? 0);
 
 /**
- * From now on, counts the take-backs the app asks the library for (`undoCalls`). With `hold`, each waits at its door (`atUndo`)
- * until the test lets it in (`letUndoIn`). With `fail`, each throws instead of taking anything back, as git does when it can't run.
+ * From now on, counts the take-backs the app asks the library for (`undoCalls`), whichever library it makes the librarian for. With
+ * `hold`, each waits at its door (`atUndo`) until the test lets it in (`letUndoIn`). With `fail`, each throws instead of taking
+ * anything back, as git does when it can't run.
  */
 export async function watchUndos(app: ElectronApplication, { hold = false, fail = false } = {}): Promise<void> {
   await app.evaluate((_electron, { holding, failing }) => {
     const controller = (globalThis as unknown as { __avanzel: Wrappable }).__avanzel;
-    const librarian = controller.librarian.bind(controller);
+    const librarianFor = controller.librarianFor.bind(controller);
     Object.assign(globalThis, { undoCalls: 0 });
-    controller.librarian = async (harness) => {
-      const made = await librarian(harness);
+    controller.librarianFor = async (vault, harness) => {
+      const made = await librarianFor(vault, harness);
       const undo = made.undo.bind(made);
       made.undo = async (...args) => {
         const kept = globalThis as { undoCalls?: number };
