@@ -51,6 +51,18 @@ export interface MenuInput {
    * no run has begun since, and no filing or review waits or runs. The menu then ends its recent pages with "Undo the last filing".
    */
   undoableFiling: boolean;
+  /**
+   * "Show the last receipt" can be chosen now (`Controller.receiptShowable`): the open library has a receipt, and nothing is recording,
+   * filing or reviewing, Avanzel isn't quitting, and the library's saved Undo is checked. The menu then ends its recent pages with the item,
+   * right above "Undo the last filing".
+   */
+  showableReceipt: boolean;
+  /**
+   * The open library has a receipt, whether or not it can be shown now. The invitation to a first thought reads this and not
+   * `showableReceipt`, which is false during every recording, filing and review: read by the invitation, it would bring "Nothing filed yet"
+   * back for the length of each run, in a library whose only filing was noted on an earlier day.
+   */
+  hasReceipt: boolean;
 }
 
 // Anything the owner has to read is an enabled item: macOS draws disabled items too dim to read.
@@ -167,16 +179,18 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     const shelf = shelfLine(page.shelf);
     filed.push({ type: "item", label: page.title, action: `open:${page.path}`, shelf: page.shelf, ...(shelf ? { sublabel: shelf } : {}) });
   }
-  if (!input.recent.length && input.filedToday === 0 && !input.undoableFiling) {
+  if (!input.recent.length && input.filedToday === 0 && !input.undoableFiling && !input.hasReceipt) {
     // Nothing filed yet invites a first thought. What the owner has to read is an enabled item (see MenuItemModel), so this is
     // one, and it does what Record a thought does. It names the shortcut that action really has: none when it didn't register
     // or isn't set. Only while nothing has been filed: a filing that wrote no page (the agent only logged the note) leaves no page
-    // to list, and the invitation would contradict the head's count, and the Undo of that filing.
+    // to list, and the invitation would contradict the head's count, and the Undo and the receipt of that filing.
     const dictate = input.unregisteredShortcuts.includes("dictate") ? "" : input.shortcuts.dictate;
     const press = dictate ? `Press ${prettyAccelerator(dictate)}` : "Record a thought";
     filed.push({ type: "item", label: `Nothing filed yet. ${press} and say hello.`, action: "dictate" });
   }
-  // The newest filing can be taken back from here: the item closes the section that lists the pages filed.
+  // The newest filing's card can be printed again from here, right above the item that takes the filing back; the last of these closes the
+  // section that lists the pages filed.
+  if (input.showableReceipt) filed.push({ type: "item", label: "Show the last receipt", action: "show-receipt" });
   if (input.undoableFiling) filed.push({ type: "item", label: "Undo the last filing", action: "undo-filing" });
   // A section with nothing to show (filings today, but none that wrote a page or can be undone) has no header either.
   if (filed.length) items.push({ type: "header", label: "Recently filed" }, ...filed, SEP);

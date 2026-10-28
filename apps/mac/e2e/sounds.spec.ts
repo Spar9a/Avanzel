@@ -155,6 +155,35 @@ test("with sounds on, each moment sends its sound, in order", async () => {
   await app.close();
 });
 
+// "Show the last receipt" prints a filing's card again: nothing is filed, so the Stamp doesn't thud as it shows, and nothing is put in the
+// drawer as it goes (`cardSound`). The card is told as a state and nothing else.
+test("a reprinted receipt sends no Stamp as it shows and no Drawer as it goes", async () => {
+  const { app, capsule } = await launchOn(await makeLibrary());
+  await soundsOn(app);
+  // A thought filed as above, and its card put away: the library has a receipt to show.
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await expect.poll(() => played(capsule)).toContain("stamp");
+  await call(app, "dismiss");
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  await expect.poll(() => played(capsule)).toEqual(["tick", "tock", "stamp", "drawer"]);
+  await watchSends(app);
+  await call(app, "menuAction", "show-receipt");
+  await expect.poll(() => capsuleKind(app)).toBe("filed");
+  // This library has no git, so the filing left no commit: the receipt prints all the same, with no Undo.
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", canUndo: false, reprint: { filedAt: expect.any(Number) } });
+  await call(app, "dismiss");
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  expect(await story(app, ["filed", "hidden"])).toEqual(["state filed", "state hidden"]);
+  expect(await soundsSent(app)).toEqual([]);
+  // The page played nothing of its own either, in the time a late Stamp would have taken (it lands 228 ms after the card is drawn).
+  await sleep(600);
+  expect(await played(capsule)).toEqual(["tick", "tock", "stamp", "drawer"]);
+  await app.close();
+});
+
 test("Esc while listening sends a Tock before the cancel, and so does the cross", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
   await soundsOn(app);

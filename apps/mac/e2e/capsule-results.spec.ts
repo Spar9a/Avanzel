@@ -309,14 +309,47 @@ test("a filed card whose words the engine put back says so in its head: “Your 
   // A filing that only noted its capture says it too, in the head and over the footer's sentence, which stays.
   await call(app, "setCapsule", filedCard({ noted: true, pages: [], restored: true }));
   const noted = card.getByText("Claude Code noted it in the log.", { exact: true });
+  await expect(noted).toBeVisible(); // the new card has been drawn: the line below is its own, not the previous card's
   await expect(line).toBeVisible();
-  await expect(noted).toBeVisible();
   expect((await line.boundingBox())!.y).toBeLessThan((await noted.boundingBox())!.y);
   // And a filing that kept nothing back has none: the head holds its label alone.
   await call(app, "setCapsule", filedCard());
   await expect(card.getByRole("listitem")).toHaveCount(3);
   await expect(label).toBeVisible();
   await expect(line).toHaveCount(0);
+  await app.close();
+});
+
+// "Show the last receipt" puts the last filing's card up again (`Controller.showLastReceipt`): the same card, as a reprint. Its state has a
+// `reprint` with the time the thought was filed, and its stamp prints that day, still, where a filing's own lands and prints today.
+test("a reprinted filed card is the same card, its stamp still and dated the day it was filed", async () => {
+  const { app, capsule } = await launchOn(await makeLibrary());
+  const day = new Date();
+  day.setDate(day.getDate() - 3);
+  day.setHours(12, 0, 0, 0);
+  expect(stampDay(day)).not.toBe(stampDay());
+  const card = capsule.getByRole("article");
+  const bar = capsule.getByRole("status");
+  await call(app, "setCapsule", filedCard({ reprint: { filedAt: day.getTime() }, restored: true }));
+  await snap(capsule, "3-filed-card-reprint");
+  // The stamp is Filed, with the day the thought was filed and not today's, and it does not land: it is printed, not coming down.
+  const stamp = card.getByRole("img", { name: `Filed, ${stampDay(day)}`, exact: true });
+  await expect(stamp).toBeVisible();
+  await expect(stamp).not.toHaveAttribute("data-animate");
+  await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toHaveCount(0);
+  // The rest is the card a filing puts up: the bar and its three buttons, the three rows, the words and the line that they are kept.
+  await expect(bar.getByText("Filed by Claude Code in 23 s", { exact: true })).toBeVisible();
+  expect(await namesOf(bar.getByRole("button"))).toEqual(["Hide", "Undo", "Open"]);
+  await expect(card.getByRole("listitem")).toHaveCount(3);
+  await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
+  await expect(card.locator("header").getByText("Your exact words are kept.", { exact: true })).toBeVisible();
+  // A reprint of a filing that only noted its capture is stamped Noted, with its day.
+  await call(app, "setCapsule", filedCard({ noted: true, pages: [], reprint: { filedAt: day.getTime() } }));
+  await expect(card.getByRole("img", { name: `Noted, ${stampDay(day)}`, exact: true })).toBeVisible();
+  await expect(bar.getByText("Nothing new to file", { exact: true })).toBeVisible();
+  // The card a filing puts up has no reprint: stamped today, and it lands.
+  await call(app, "setCapsule", filedCard());
+  await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toHaveAttribute("data-animate", "");
   await app.close();
 });
 

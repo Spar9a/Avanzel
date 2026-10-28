@@ -11,9 +11,8 @@ import { zel } from "./setup-helpers.ts";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** Today as a stamp prints it, "27 Oct 2026" (the page words it with stampDate): the stamp's name carries it. */
-export function stampDay(): string {
-  const day = new Date();
+/** `day` (today unless given) as a stamp prints it, "27 Oct 2026" (the page words it with stampDate): the stamp's name carries it. */
+export function stampDay(day = new Date()): string {
   return `${day.getDate()} ${MONTHS[day.getMonth()]} ${day.getFullYear()}`;
 }
 

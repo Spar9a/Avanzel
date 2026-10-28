@@ -237,6 +237,8 @@ describe("MenuBar's menu", () => {
     unregisteredShortcuts: [],
     undoableReview: false,
     undoableFiling: false,
+    showableReceipt: false,
+    hasReceipt: false,
   });
   type Item = { label?: string; sublabel?: string; icon?: { template: boolean; representations: { scaleFactor: number; buffer: Buffer }[] } };
   /** The items of the menu built last. */
@@ -323,6 +325,19 @@ describe("MenuBar's menu", () => {
     expect(asked).toEqual(["undo-filing"]);
     bar.update(menuInput([page("goals")]));
     expect(itemsOf().some((item) => item.label === "Undo the last filing")).toBe(false);
+  });
+
+  it("offers Show the last receipt as a plain, enabled item whose click asks for its action, and only while the model offers it", () => {
+    const asked: string[] = [];
+    const bar = new MenuBar((action) => asked.push(action));
+    bar.update({ ...menuInput([page("goals")]), showableReceipt: true, hasReceipt: true });
+    const receipt = itemsOf().find((item) => item.label === "Show the last receipt") as (Item & { enabled?: boolean; click?: () => void }) | undefined;
+    expect(receipt).toMatchObject({ label: "Show the last receipt", enabled: true });
+    expect(receipt?.icon).toBeUndefined();
+    receipt?.click?.();
+    expect(asked).toEqual(["show-receipt"]);
+    bar.update({ ...menuInput([page("goals")]), hasReceipt: true }); // a receipt that can't be shown now (a run hides it) is no item
+    expect(itemsOf().some((item) => item.label === "Show the last receipt")).toBe(false);
   });
 
   it("passes each item's sublabel on, and sets the menu on the tray once for each update", () => {

@@ -263,6 +263,13 @@ function capsuleStates(): [string, CapsuleState, string][] {
       { kind: "filed", text: said, agent: "Claude Code", seconds: 23, pages, canUndo: true, noted: false, restored: true },
       "Your exact words are kept.",
     ],
+    // "Show the last receipt": the same card, its stamp still and dated the day the thought was filed. The date is what it shows that no
+    // other row does, so it is what the row waits for.
+    [
+      "filed, a reprint",
+      { kind: "filed", text: said, agent: "Claude Code", seconds: 23, pages, canUndo: true, noted: false, reprint: { filedAt: new Date(2026, 9, 25, 12).getTime() } },
+      "25 Oct 2026",
+    ],
     [
       "filed, four pages",
       { kind: "filed", text: said, agent: "Claude Code", seconds: 8, pages: [...pages, fourth], canUndo: false, noted: false },

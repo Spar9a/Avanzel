@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Vault } from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
-import { answeredFrom, captureMeta, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "../src/main/library-info.ts";
+import { answeredFrom, captureMeta, captureWords, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "../src/main/library-info.ts";
 
 function library() {
   const root = mkdtempSync(path.join(tmpdir(), "avz-lib-"));
@@ -168,6 +169,44 @@ describe("library info", () => {
     expect(meta.created?.toISOString()).toBe(new Date("2026-10-20T04:08:29+04:00").toISOString());
     writeFileSync(file, "just text\n");
     expect(captureMeta(file)).toEqual({ source: "text" });
+  });
+
+  // A receipt reprinted for a filing in the background has no words of its own (`FilingJob.text` is ""): they are read from the capture
+  // the engine archived, which is the capture as `Vault.newCapture` wrote it. Its embeds (`![[x.wav]]`) come after the words, for each
+  // attachment and for the recording, and are not the person's.
+  it("captureWords: a capture's words after its frontmatter, without the embeds after them, and nothing from a file that isn't there", () => {
+    const root = library();
+    const file = path.join(root, "capture.md");
+    writeFileSync(file, "---\nid: x\ntype: capture\nsource: text\n---\n\nPlant tulips in October\n");
+    expect(captureWords(file)).toBe("Plant tulips in October");
+    // A voice capture as newCapture writes it: the recording is in its frontmatter, and embedded after its words (B2).
+    const voice = new Vault(root).newCapture("Plant tulips in October", {
+      source: "voice",
+      audio: path.join(root, "raw", "audio", "2026", "10", "x.wav"),
+      transcriber: "onnx-asr:nemo-parakeet-tdt-0.6b-v3",
+    });
+    const written = readFileSync(voice.path, "utf8");
+    expect(written).toContain("audio: raw/audio/2026/10/x.wav");
+    expect(written).toContain("![[x.wav]]");
+    expect(captureWords(voice.path)).toBe("Plant tulips in October");
+    // Line breaks in the words stay, as Words keeps them; the blank line before the embed and the one after it go with the trim.
+    const long = new Vault(root).newCapture("First thought\n\nSecond thought,\nin two lines", {
+      source: "voice",
+      audio: path.join(root, "raw", "audio", "2026", "10", "y.wav"),
+      attachments: [path.join(root, "raw", "attachments", "2026", "10", "shot.png")],
+    });
+    expect(captureWords(long.path)).toBe("First thought\n\nSecond thought,\nin two lines");
+    // The cost of reading the words from the file: a line of the person's own that is exactly an embed is dropped, and a line that
+    // only has one in it stays.
+    writeFileSync(file, "---\nid: x\n---\n\nSee ![[x.wav]] for it\n![[mine.png]]\n  ![[also mine.png]]  \nAfter\n");
+    expect(captureWords(file)).toBe("See ![[x.wav]] for it\nAfter");
+    // A capture with no frontmatter is all words, and one with nothing is none; a file that isn't there has no words.
+    writeFileSync(file, "just text\n");
+    expect(captureWords(file)).toBe("just text");
+    writeFileSync(file, "---\nid: x\n---\n\n![[x.wav]]\n");
+    expect(captureWords(file)).toBe("");
+    expect(captureWords(path.join(root, "not-there.md"))).toBe("");
+    expect(captureWords("")).toBe("");
   });
 });
 

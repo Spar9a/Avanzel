@@ -2,6 +2,7 @@
 // took, with Hide, Undo and Open. Nothing here ticks: the bar is a live region, and its one line stays the same.
 import { Button, Card, Text } from "@avanzel/ui";
 import { useState } from "react";
+import { stampDate } from "../common/stamp.ts";
 import { useStampDate } from "../common/use-stamp-date.ts";
 import { api, type StateOf } from "./api.ts";
 import { filedLine, notedLine } from "./copy.ts";
@@ -24,6 +25,9 @@ const hasReceipt = (state: StateOf<"filed">) => !state.noted && state.pages.leng
  *
  * Either card, when the agent had changed the capture and the engine put the person's words back (`restored`), says so in its head, in
  * the caption slot beside the label: "Your exact words are kept." The stamp, the footer and the words' lines stay as they are.
+ *
+ * "Show the last receipt" puts the same card up again (`reprint`): a filing that ended some time ago is not being stamped now, so the stamp
+ * is still, and prints the day the thought was filed and not today's. Everything else on the card and the bar is as it was.
  */
 export function filedScene(state: StateOf<"filed">): Scene {
   return {
@@ -37,13 +41,14 @@ export function filedScene(state: StateOf<"filed">): Scene {
 }
 
 function FiledCard({ state }: { state: StateOf<"filed"> }) {
-  const day = useStampDate(); // the day the card came, not the day it is redrawn
+  const cameOn = useStampDate(); // the day the card came, not the day it is redrawn
+  const day = state.reprint ? stampDate(new Date(state.reprint.filedAt)) : cameOn; // a reprint prints the day the thought was filed
   const receipt = hasReceipt(state);
   return (
     <Card
       label="Thought"
       meta={state.restored ? "Your exact words are kept." : undefined}
-      stamp={state.noted ? { word: "noted", date: day } : { word: "filed", date: day, animate: true }}
+      stamp={state.noted ? { word: "noted", date: day } : { word: "filed", date: day, animate: !state.reprint }}
       footer={state.noted ? <Text variant="footnote">{notedLine(state.agent)}</Text> : receipt ? <Pages pages={state.pages} /> : undefined}
     >
       <Words lines={receipt ? 3 : 4}>{state.text}</Words>

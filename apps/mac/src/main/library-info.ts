@@ -184,3 +184,27 @@ export function captureMeta(file: string): CaptureMeta {
   if (created && !Number.isNaN(Date.parse(created))) meta.created = new Date(created);
   return meta;
 }
+
+/** A line that is only an embed of the kind `Vault.newCapture` writes after the words: `![[x.wav]]`. */
+const EMBED_LINE = /^!\[\[[^\]]+\]\]$/;
+
+/**
+ * The words of a capture: its body after the frontmatter (as `captureMeta` finds the frontmatter), trimmed, and without the embed lines
+ * `newCapture` appends after them for each attachment and for the recording (`![[x.wav]]`), which every dictation has and which are not
+ * the person's words. For a filing in the background, whose job has none of its own, to print again (`FilingReceipt.text`). The cost: a
+ * line of the person's own that is exactly an embed is dropped as well. "" when the file can't be read.
+ */
+export function captureWords(file: string): string {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+  const body = text.replace(/^---\n[\s\S]*?\n---\n/, "");
+  return body
+    .split("\n")
+    .filter((line) => !EMBED_LINE.test(line.trim()))
+    .join("\n")
+    .trim();
+}

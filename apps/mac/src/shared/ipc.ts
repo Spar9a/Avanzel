@@ -135,6 +135,11 @@ export type CapsuleState =
       noted: boolean;
       /** The engine put the person's words back after the agent changed them (`FileOutcome.restored`): the card says so in its head. Absent otherwise. */
       restored?: true;
+      /**
+       * "Show the last receipt" put this card up again (`Controller.showLastReceipt`): its stamp is still and dated `filedAt`, and it makes
+       * no sound. Absent on the card a filing puts up.
+       */
+      reprint?: { filedAt: number };
     }
   /** Stop ended a filing, and its note is in the inbox. The controller's `cancelFiling` tells the rest. */
   | {

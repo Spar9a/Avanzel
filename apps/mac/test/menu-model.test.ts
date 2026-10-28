@@ -24,6 +24,8 @@ function input(overrides: Partial<MenuInput> = {}): MenuInput {
     unregisteredShortcuts: [],
     undoableReview: false,
     undoableFiling: false,
+    showableReceipt: false,
+    hasReceipt: false,
     ...overrides,
   };
 }
@@ -470,6 +472,63 @@ describe("tray menu", () => {
       expect(items.filter((item) => item.type === "item" && item.action === "undo-review")).toEqual([
         { type: "item", label: "Undo the last evening review", action: "undo-review" },
       ]);
+    });
+  });
+
+  describe("Show the last receipt", () => {
+    const receipt = { type: "item", label: "Show the last receipt", action: "show-receipt" };
+    const withReceipt = (overrides: Partial<MenuInput> = {}) => buildMenuModel(input({ showableReceipt: true, hasReceipt: true, ...overrides }), now);
+
+    it("sits right above Undo the last filing, after the recent pages", () => {
+      const items = withReceipt({ undoableFiling: true });
+      expect(labels(items).slice(7, 13)).toEqual([
+        "Recently filed", "Launch the indie game dev podcast", "Маленький сад на балконе", "Show the last receipt", "Undo the last filing", "--",
+      ]);
+      expect(items.filter((item) => item.type === "item" && item.action === "show-receipt")).toEqual([receipt]);
+      // With nothing to undo, it closes the section: the receipt can be shown after the filing was taken back by a review, say.
+      expect(labels(withReceipt()).slice(7, 12)).toEqual(["Recently filed", "Launch the indie game dev podcast", "Маленький сад на балконе", "Show the last receipt", "--"]);
+    });
+
+    it("is all the section holds where the invitation would be", () => {
+      const items = withReceipt({ recent: [], filedToday: 0 });
+      expect(labels(items).slice(7, 10)).toEqual(["Recently filed", "Show the last receipt", "--"]);
+      expect(JSON.stringify(items)).not.toContain("Nothing filed yet");
+    });
+
+    // The invitation looks at whether the library has a receipt, not at whether it can be shown now: `showableReceipt` is false during
+    // every recording, filing and review, and the invitation would come back for the length of each run in a library whose only
+    // filing was noted on an earlier day (N6).
+    it("keeps the invitation away while a run hides it", () => {
+      const items = buildMenuModel(input({ recent: [], filedToday: 0, hasReceipt: true, showableReceipt: false }), now);
+      expect(labels(items)).not.toContain("Recently filed");
+      expect(JSON.stringify(items)).not.toContain("Nothing filed yet");
+      expect(labels(items).slice(5, 9)).toEqual(["Ask your library…", "--", "Scheduled reviews", "Evening review"]);
+      // And with no receipt at all the invitation is there, as it was.
+      expect(labels(buildMenuModel(input({ recent: [], filedToday: 0 }), now)).slice(7, 10)).toEqual(["Recently filed", "Nothing filed yet. Press ⌥Space and say hello.", "--"]);
+    });
+
+    it("is only there while a receipt can be shown", () => {
+      for (const items of [buildMenuModel(input(), now), buildMenuModel(input({ showableReceipt: false }), now), buildMenuModel(input({ hasReceipt: true }), now)]) {
+        expect(labels(items)).not.toContain("Show the last receipt");
+        expect(JSON.stringify(items)).not.toContain("show-receipt");
+      }
+    });
+
+    it("leaves the rest of the menu as it is", () => {
+      const without = buildMenuModel(input(), now);
+      expect(withReceipt().filter((item) => item.type !== "item" || item.action !== "show-receipt")).toEqual(without);
+      const undoable = buildMenuModel(input({ undoableFiling: true }), now);
+      expect(withReceipt({ undoableFiling: true }).filter((item) => item.type !== "item" || item.action !== "show-receipt")).toEqual(undoable);
+    });
+
+    it("is an item that can be read, with no shortcut, shelf or sublabel", () => {
+      const item = withReceipt().find((one) => one.type === "item" && one.action === "show-receipt");
+      expect(item).toEqual(receipt);
+      expect(item).not.toHaveProperty("enabled", false);
+    });
+
+    it("is not offered where there is no library: setup or Settings come first", () => {
+      expect(labels(buildMenuModel(input({ libraryReady: false, showableReceipt: true, hasReceipt: true }), now))).toEqual(["Set up Avanzel…", "--", "Quit Avanzel"]);
     });
   });
 

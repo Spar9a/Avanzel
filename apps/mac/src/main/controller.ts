@@ -115,7 +115,7 @@ import type {
 import { frontContext } from "./front-app.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
-import { answeredFrom, captureMeta, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "./library-info.ts";
+import { answeredFrom, captureMeta, captureWords, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "./library-info.ts";
 import { buildMenuModel, reviewProgress, speechProblemOf, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
@@ -149,7 +149,7 @@ import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./st
 import { openTerminal } from "./terminal.ts";
 import { MenuBar } from "./tray.ts";
 import { nextTrayWake, reviewEndedAt, sleepsAfterReview, trayView, wholePercent, type TrayInput, type TrayView } from "./tray-state.ts";
-import { UndoRecordStore } from "./undo-records.ts";
+import { UndoRecordStore, type FilingReceipt } from "./undo-records.ts";
 import {
   createAskWindow,
   createCapsuleWindow,
@@ -172,6 +172,14 @@ const FAKE_TRANSCRIPT_DELAY_MS = (process.env.AVANZEL_TEST === "1" && Number(pro
 const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PREPARING_SHOW_MS)) || 8_000;
 // How long the capsule says that a shortcut picked on its notice works.
 const PICKED_SHOW_MS = 3_000;
+// How long the capsule shows a filed card by itself, a reprint of it (`showLastReceipt`) too; hovering over it keeps it longer.
+const FILED_SHOW_MS = 8_000;
+/**
+ * The capsule shows nothing, or a card that is finished: a result or a notice that has nothing more to say, and no one's work in it. Only
+ * these are replaced by a reprint of the last receipt (`showLastReceipt`): over a problem with its fix, the editor or a capture, a reprint
+ * would take the person's work or a problem's one fix away.
+ */
+const FINISHED_CARDS: ReadonlySet<CapsuleState["kind"]> = new Set<CapsuleState["kind"]>(["hidden", "filed", "saved", "cancelled", "recorded", "shortcut-picked"]);
 // How long the capsule says that a filing or a transcription is stopped (hovering over it keeps it longer, as it does any card that
 // hides itself).
 const STOPPED_SHOW_MS = 6_000;
@@ -423,6 +431,26 @@ export class Controller {
   private lastEveningCommits: string[] = [];
   /** The open library, once `checkUndo` has checked the records it loaded against its git: the menu offers neither Undo before (`undoChecked`). */
   private undoCheckedFor: Vault | null = null;
+  /**
+   * The open library's last receipt: what its last filing that ended well told the person, which "Show the last receipt" prints again
+   * (`showLastReceipt`). Loaded with the other records as the library opens, checked against its git (`checkUndo`), written where a
+   * filing ends (`runFiling`) and cleared with its filing's take-back (`forgetFiling`). A filing that fails, is stopped or is gone leaves
+   * it as it was, and so does a review: the next filing's result replaces it. Setup's first thought has none.
+   */
+  private lastReceipt: FilingReceipt | null = null;
+  /**
+   * The receipt the capsule shows as a reprint, while it does (`showLastReceipt`): its pages are the ones Open and the rows open, and its
+   * commit the one its Undo answers for. `setCapsule` clears it for every card, so it holds only while the reprint is what the capsule shows.
+   */
+  private reprint: FilingReceipt | null = null;
+  /**
+   * The filing whose run has begun, from the moment it clears the last filing (`runFiling`) to the moment its run ends. Set that early so
+   * that the menu that clearing builds already hides the receipt: with the last filing held it is built with `queuedToFile` empty, and
+   * nothing builds it again until the run ends.
+   */
+  private filingRun: FilingJob | null = null;
+  /** The commits being taken back (`revertFiling`): a reprint's Undo of one of them does nothing, and the take-back in flight tells the card, once. */
+  private readonly reverting = new Set<string>();
   private audioTimeout: NodeJS.Timeout | null = null;
   /** Whether the capsule page listens yet; commands for its recorder wait until it does. */
   private capsuleListening = false;
@@ -512,6 +540,8 @@ export class Controller {
    * there is no problem of opening it: its place is kept in `libraryMissing`, which they name too.
    */
   private openLibrary(libraryPath: string | null): void {
+    // A reprint that shows is the closing library's: its Open opens that library's pages and its Undo takes back that library's filing.
+    if (this.reprint) this.setCapsule({ kind: "hidden" });
     this.dropLibraryTimers(); // a wait or a watch is for the library that closes; the next one's waits are armed again by whoever opens it
     this.vault = null;
     this.recent = [];
@@ -519,6 +549,7 @@ export class Controller {
     // The Undo of the library that closes is dropped from the menu, not from the disk: `undoRecords` keeps it for the library's return.
     this.lastFiled = null; // a filing of the library that closes, whose menu is built again by whoever opens one
     this.lastEveningCommits = [];
+    this.lastReceipt = null;
     this.undoCheckedFor = null;
     this.dropTranscriber();
     this.libraryProblem = null;
@@ -545,6 +576,7 @@ export class Controller {
     const saved = this.undoRecords.get(vault.root);
     this.lastFiled = saved.filing === null ? null : { commit: saved.filing, library: vault.root };
     this.lastEveningCommits = saved.evening;
+    this.lastReceipt = saved.receipt;
     void this.checkUndo(vault); // not awaited: the library is open at once, and neither Undo shows until its commits are found in its history
     void this.keepAudioOutOfGit(vault.root); // not awaited: the library is open at once, and its git is told meanwhile
     try {
@@ -737,6 +769,7 @@ export class Controller {
       this.rereadVoiceSettings();
       return this.showSettings("voice");
     }
+    if (action === "show-receipt") return this.showLastReceipt();
     if (action === "undo-filing") return this.undoLastFiling();
     if (action === "undo-review") return void this.undoEveningReview();
     if (action === "quit") return app.quit();
@@ -776,6 +809,8 @@ export class Controller {
       unregisteredShortcuts: Object.keys(this.shortcutProblems) as (keyof Shortcuts)[],
       undoableReview: this.lastEveningCommits.length > 0 && this.undoChecked(),
       undoableFiling: this.undoableFiling(),
+      showableReceipt: this.receiptShowable(),
+      hasReceipt: this.lastReceipt !== null && this.undoChecked(),
     };
   }
 
@@ -799,6 +834,26 @@ export class Controller {
   }
 
   /**
+   * A filing waits for its turn (`queuedToFile`), a filing's run has begun (`filingRun`: it has cleared the last filing, so nothing else
+   * says so for the length of the run) or a review waits or runs (`running`). The menu offers nothing that shows a card or takes a filing
+   * back meanwhile.
+   */
+  private filingOrReviewGoing(): boolean {
+    return this.queuedToFile.size > 0 || this.filingRun !== null || this.running.size > 0;
+  }
+
+  /**
+   * Whether "Show the last receipt" can be chosen now: the open library has a receipt and its saved Undo is checked (`undoChecked`, which
+   * also dropped a receipt whose commit has left the history), Avanzel isn't quitting, and no thought is in flight (`capturing`: a
+   * recording, a transcription, a filing's card or its hidden run, the editor, a refile that waits for its turn) and no filing or review
+   * goes on (`filingOrReviewGoing`). A refile is in neither `queuedToFile` nor `runs` until its turn, and the editor keeps the menu's
+   * rebuilds going (`tick`, `leftWithoutRun`), so `capturing` is what holds the item back there.
+   */
+  private receiptShowable(): boolean {
+    return this.lastReceipt !== null && this.undoChecked() && !this.quitting && !this.capturing() && !this.filingOrReviewGoing();
+  }
+
+  /**
    * The Undo records `vault` loaded as it opened are kept only for what is still in its history: a commit a reset, a rebase, a pull that
    * rewrote history or a library restored from a backup left behind is dropped, quietly, from the menu and from `undoRecords`. A commit
    * that is still in the history is offered after any number of relaunches (a revert made by hand leaves it there: the Undo is offered,
@@ -812,14 +867,23 @@ export class Controller {
   private async checkUndo(vault: Vault): Promise<void> {
     const filing = this.lastFiled;
     const evening = this.lastEveningCommits;
+    const receipt = this.lastReceipt;
     const gitRuns = git.available(); // before the awaits, as `inHistory` finds it: without git every commit reads as gone
     const filingOk = filing === null || (await git.inHistory(vault.root, filing.commit));
+    // The receipt is checked by its commit, if it has one (a filing without git or with auto_commit off left none, and there is nothing to
+    // check): the filing's own answer when it is the filing's commit, as it is straight after a launch.
+    let receiptOk = true;
+    if (receipt?.commit) receiptOk = receipt.commit === filing?.commit ? filingOk : await git.inHistory(vault.root, receipt.commit);
     let eveningOk = true;
     for (const sha of evening) if (!(eveningOk = await git.inHistory(vault.root, sha))) break; // one at a time: a review may have made dozens
     if (this.vault !== vault) return; // another library opened meanwhile, and checks its own
     if (!filingOk && this.lastFiled === filing) {
       this.lastFiled = null;
       if (gitRuns) this.undoRecords.patch(vault.root, { filing: null });
+    }
+    if (!receiptOk && this.lastReceipt === receipt) {
+      this.lastReceipt = null; // it prints a filing that is no longer in the library's history
+      if (gitRuns) this.undoRecords.patch(vault.root, { receipt: null });
     }
     if (!eveningOk && this.lastEveningCommits === evening) {
       this.lastEveningCommits = [];
@@ -838,24 +902,30 @@ export class Controller {
    */
   private clearLastFiled(root: string | undefined = this.vault?.root): void {
     if (root === undefined) return;
-    if (root !== this.vault?.root) return this.undoRecords.patch(root, { filing: null });
-    if (this.lastFiled === null) return;
-    this.lastFiled = null;
+    // The record goes whether or not the filing is held in memory: while git can't run, `checkUndo` dropped it from memory only and kept it
+    // on disk, and a filing that begins now makes it stale (a patch that changes nothing writes nothing). The receipt is no part of this: it
+    // stays until the next filing that ends well replaces it, or the take-back of its filing clears it (`forgetFiling`).
     this.undoRecords.patch(root, { filing: null });
+    if (root !== this.vault?.root || this.lastFiled === null) return;
+    this.lastFiled = null;
     this.refreshMenu();
   }
 
   /**
    * The commit of the filing the menu would take back is being taken back already (`takeBack`, `revertFiling`, `undoLastFiling`):
    * `commit` is that commit, and any other filing's take-back leaves it be. It is dropped from the menu and from `undoRecords` before
-   * the take-back's first await, so that it is asked for once, here and after a relaunch. The menu is built again, once, but only if it
-   * was holding that filing.
+   * the take-back's first await, so that it is asked for once, here and after a relaunch, and so is the last receipt when it is that
+   * filing's: what it prints is no longer so. Both go in one patch and the menu is built again once, but only if it was holding either.
    */
   private forgetFiling(commit: string): void {
     const last = this.lastFiled;
-    if (last === null || last.commit !== commit) return;
-    this.lastFiled = null;
-    this.undoRecords.patch(last.library, { filing: null });
+    const forgetsFiling = last !== null && last.commit === commit;
+    const forgetsReceipt = this.lastReceipt !== null && this.lastReceipt.commit === commit;
+    if (!forgetsFiling && !forgetsReceipt) return;
+    if (forgetsFiling) this.lastFiled = null;
+    if (forgetsReceipt) this.lastReceipt = null;
+    const root = last?.library ?? this.vault?.root; // the open library's, which both are
+    if (root !== undefined) this.undoRecords.patch(root, { ...(forgetsFiling ? { filing: null } : {}), ...(forgetsReceipt ? { receipt: null } : {}) });
     this.refreshMenu();
   }
 
@@ -1012,6 +1082,7 @@ export class Controller {
     const wasEditing = was.kind === "editing";
     this.capsuleState = state;
     this.cardCapture = capture ?? null;
+    this.reprint = null; // a reprint is the card of whoever puts one up (`showLastReceipt`), which sets it after this
     this.cardUnkept = null; // a card that has words without its promise sets them after (`fail`)
     if (this.hideTimer) clearTimeout(this.hideTimer);
     this.hideTimer = null;
@@ -1111,11 +1182,14 @@ export class Controller {
   /**
    * The sound a card makes as the capsule's state changes to `now`: the Stamp as a filed card is put up, and the Drawer as a filed card,
    * or a saved one, is put away. The Undone card is a saved one (`undone`) that took a filing back: nothing was filed or saved, so it
-   * is not put in the drawer. A card that another card replaces is not put away either, and nor is a recording given up.
+   * is not put in the drawer. A card that another card replaces is not put away either, and nor is a recording given up. A reprint
+   * (`reprint`) is a filed card printed again: nothing is filed as it shows, so no Stamp, and it was put in the drawer when it was
+   * filed, so no Drawer as it goes.
    */
   private cardSound(was: CapsuleState, now: CapsuleState): void {
-    if (now.kind === "filed") this.sound("stamp");
-    else if (now.kind === "hidden" && (was.kind === "filed" || (was.kind === "saved" && !was.undone))) this.sound("drawer");
+    if (now.kind === "filed") {
+      if (!now.reprint) this.sound("stamp");
+    } else if (now.kind === "hidden" && ((was.kind === "filed" && !was.reprint) || (was.kind === "saved" && !was.undone))) this.sound("drawer");
   }
 
   private scheduleHide(ms: number): void {
@@ -1825,7 +1899,10 @@ export class Controller {
       return this.leftWithoutRun();
     }
     const library = this.vault; // the note's own: another library may open while the agent runs
-    // Its run begins: the filing before it is not the last any more, whatever becomes of this one (it may fail, or be taken back).
+    // Its run begins: the filing before it is not the last any more, whatever becomes of this one (it may fail, or be taken back). It is set
+    // before the clearing, whose rebuild of the menu is the one that the run's start makes (the steps build none): it must already hide the
+    // receipt, or the item would stand for the whole run (`filingRun`).
+    this.filingRun = job;
     this.clearLastFiled();
     this.startRun(job); // its turn: the seconds count from here, not from when the queue took it in
     let outcome: FileOutcome | undefined;
@@ -1840,9 +1917,11 @@ export class Controller {
         job.abort,
       );
     } catch (error) {
+      this.filingRun = null; // before anything is shown: the card or notification that tells the failure builds the menu
       if (job.edited || job.cancelled || this.quitting) return;
       return this.filingFailed(job, error, undefined, library);
     } finally {
+      this.filingRun = null; // the run is over, whichever way: the card, window or notification that tells it comes after
       tell.cancel(); // the run is over: the state that ends it is shown at once, and no step is left to tell
     }
     job.outcome = outcome;
@@ -1861,15 +1940,31 @@ export class Controller {
     // takes them only while that library is the open one: not once it has closed, or another has opened.
     const pages = filedPages(library.root, outcome.changes);
     job.pages = pages;
+    // What the person is told of this filing, kept to be told again (`showLastReceipt`). A job in the background has no words of its own
+    // (`fileInBackground`): they are those of the capture the engine archived. Setup's first thought has none, as it has an Undo of its own.
+    const receipt: FilingReceipt | null = job.setup
+      ? null
+      : {
+          commit: outcome.commit,
+          text: job.text || captureWords(outcome.archivedTo ?? ""),
+          agent: job.agent,
+          seconds,
+          pages,
+          noted: pages.length === 0,
+          restored: outcome.restored,
+          filedAt: Date.now(),
+        };
     if (this.vault?.root === library.root) {
       this.recent = [...pages, ...this.recent.filter((p) => !pages.some((q) => q.path === p.path))].slice(0, 3);
       this.countFiled(library.root); // the run wrote its line in the log; the menu is built once below, as before
       // The menu's Undo takes this filing back, if the run left a commit to take back. Setup's first thought has an Undo of its own, in its window.
       if (outcome.commit && !job.setup) this.lastFiled = { commit: outcome.commit, library: library.root, job };
+      if (receipt) this.lastReceipt = receipt;
     }
     // Kept with the note's own library, open or not: it is offered again whenever that library opens (`openLibrary`). A filing that ends
-    // while Avanzel quits returned above, before this, and its start has cleared the record before it: a quit loses that Undo.
-    if (outcome.commit && !job.setup) this.undoRecords.patch(library.root, { filing: outcome.commit });
+    // while Avanzel quits returned above, before this, and its start has cleared the record before it: a quit loses that Undo. A filing that
+    // failed, was stopped or was gone returned above too, and leaves the receipt as it was.
+    if (receipt) this.undoRecords.patch(library.root, outcome.commit ? { filing: outcome.commit, receipt } : { receipt });
     this.keepDuration(job, library, seconds);
     this.noteFiled((capture) => capture === job.capturePath);
     // Setup's thought is filed, which counts whether its window is still there to show it or has closed (§5.4).
@@ -1891,7 +1986,7 @@ export class Controller {
           // The agent changed the capture and the engine put the person's words back: the card says they are kept. Absent when it didn't.
           ...(outcome.restored ? { restored: true as const } : {}),
         },
-        8000,
+        FILED_SHOW_MS,
       );
     } else {
       const first = job.pages[0];
@@ -2213,11 +2308,12 @@ export class Controller {
 
   /**
    * A filing that waited in the queue (`queuedToFile`) is out of it with no run: it was stopped before its turn, or its note was filed
-   * meanwhile, or is in the editor. While it waited the menu held Undo back (`undoableFiling`); the last filing, which this one never
-   * touched, can be undone again, and the menu is built again to offer it, if there is one. The face is shown again by the caller.
+   * meanwhile, or is in the editor. While it waited the menu held Undo back (`undoableFiling`) and the last receipt (`receiptShowable`);
+   * the last filing, which this one never touched, can be undone again and its receipt shown, and the menu is built again to offer them,
+   * if there is any. The face is shown again by the caller.
    */
   private leftWithoutRun(): void {
-    if (this.lastFiled !== null) this.refreshMenu();
+    if (this.lastFiled !== null || this.lastReceipt !== null) this.refreshMenu();
   }
 
   /**
@@ -2632,9 +2728,11 @@ export class Controller {
   private async revertFiling(commit: string): Promise<boolean> {
     const library = this.requireVault(); // before the queue: the library the Undo is asked in
     this.forgetFiling(commit); // before the first await: the menu doesn't offer a commit that is being taken back
+    this.reverting.add(commit); // from before it waits in the queue until it lands: a reprint's Undo of this commit does nothing meanwhile
     try {
       return (await this.enqueue(async () => (await this.librarianFor(library)).undo([commit]))) === 1;
     } finally {
+      this.reverting.delete(commit);
       this.readLog();
     }
   }
@@ -2651,6 +2749,7 @@ export class Controller {
    * filed card it was pressed on, and over any other card a notification says the same.
    */
   async undo(): Promise<void> {
+    if (this.reprint) return this.undoReprint(this.reprint);
     const job = this.job;
     const commit = job?.outcome?.commit;
     if (!job || !commit || job.undoing || this.capsuleState.kind !== "filed") return;
@@ -2659,7 +2758,24 @@ export class Controller {
       console.warn("undo", error); // a revert that threw is a refusal to the card: it would otherwise wait on its Undo for ever
       return false;
     });
-    this.tellUndone(job, undone);
+    this.tellUndone(job, undone, commit);
+  }
+
+  /**
+   * Undo, on a reprint of the last receipt (`showLastReceipt`). The reprint has no job to guard it with (`undoing`), and after a relaunch
+   * there is none at all, so it asks what the take-back of its commit is doing:
+   * - It is being taken back already (`reverting`: the menu's Undo of the same filing waits for the queue or the library): nothing is
+   *   asked for, and that take-back tells this card when it lands (`tellUndone`), once. Told here too, the refusal would come first and
+   *   the take-back would then land as a notification: told twice.
+   * - The menu still offers it: this is the menu's Undo (`undoLastFiling`), and tells this card when it lands.
+   * - Otherwise a review that wrote, or a take-back that is over, has ended the offer since the card was drawn: the card says it can't be
+   *   undone, so that its busy Undo doesn't wait for ever.
+   */
+  private async undoReprint(reprint: FilingReceipt): Promise<void> {
+    const { commit } = reprint;
+    if (commit !== null && this.reverting.has(commit)) return;
+    if (commit !== null && this.lastFiled?.commit === commit && this.undoableFiling()) return this.undoLastFiling();
+    this.fail(undoRefused);
   }
 
   /**
@@ -2678,30 +2794,39 @@ export class Controller {
       console.warn("undo", error); // a revert that threw is a refusal, as it is on the card
       return false;
     });
-    this.tellUndone(last.job, undone);
+    this.tellUndone(last.job, undone, last.commit);
   }
 
   /**
-   * How an Undo of `job`'s filing ended, told once, whoever asked for it (the filed card, or the menu): it worked (`undone`), or git
-   * refused it, or the revert threw. The filed card of that filing, if the capsule still shows it, turns to Undone or to the refusal; a
-   * newer card the person is using (a recording's, or an editor) is left as it is, and a notification says the same over it, and when
-   * the card has gone. The menu is built again for what the revert left; a card does that by itself (`setCapsule`), a notification not.
+   * How an Undo of the filing of `commit` ended, told once, whoever asked for it (the filed card, a reprint of it, or the menu): it worked
+   * (`undone`), or git refused it, or the revert threw. `job` is the filing's own, which only a filing of this app run has. The filed card
+   * of that filing, if the capsule still shows it, turns to Undone or to the refusal: the reprint when the capsule shows one and it is of
+   * this commit, else the card of `job`. A newer card the person is using (a recording's, or an editor) is left as it is, and a
+   * notification says the same over it, and when the card has gone. The menu is built again for what the revert left; a card does that by
+   * itself (`setCapsule`), a notification not.
    */
-  private tellUndone(job: FilingJob | undefined, undone: boolean): void {
-    const showing = job !== undefined && this.job === job && this.capsuleState.kind === "filed";
+  private tellUndone(job: FilingJob | undefined, undone: boolean, commit: string): void {
+    const reprint = this.reprint;
+    const showing =
+      this.capsuleState.kind === "filed" && (reprint !== null ? reprint.commit === commit : job !== undefined && this.job === job);
     if (!undone) {
       if (showing) this.fail(undoRefused);
       else this.notify(undoRefused.title, undoRefused.body);
     } else {
       const note = undoneNote(this.openReview());
-      if (showing) this.setCapsule({ kind: "saved", text: job.text, note, undone: true }, 3500);
+      if (showing) this.setCapsule({ kind: "saved", text: reprint !== null ? reprint.text : (job?.text ?? ""), note, undone: true }, 3500);
       else this.notify("Undone", note);
     }
     if (!showing) this.refreshMenu();
   }
 
+  /** The pages the capsule's filed card lists: the reprint's while one shows, else the newest filing's. */
+  private shownPages(): FiledPage[] | undefined {
+    return this.reprint ? this.reprint.pages : this.job?.pages;
+  }
+
   openFiled(): void {
-    const page = this.job?.pages?.[0];
+    const page = this.shownPages()?.[0];
     if (page) this.openPage(page.path);
     this.setCapsule({ kind: "hidden" });
   }
@@ -2711,12 +2836,42 @@ export class Controller {
    * Only the capsule's own page is heard (`sender` is the page the message came from, `event.sender`), and only a path (`rel`, relative
    * to the library) that is one of the pages the newest filing wrote (`job.pages`): any other path, a page of the library or a path
    * out of it, is no card's to open, and nor is a page only an older filing wrote, which a card that has been replaced may still
-   * show. Every window has the same bridge, so this is not Ask's `ask:open-page`, which opens a page by name for the Ask window and
-   * for setup, and stays as it is.
+   * show. While a reprint shows (`showLastReceipt`) the pages are its own. Every window has the same bridge, so this is not Ask's
+   * `ask:open-page`, which opens a page by name for the Ask window and for setup, and stays as it is.
    */
   openFiledPage(sender: WebContents, rel: unknown): void {
     if (!isPageOf(sender, this.capsule) || typeof rel !== "string") return;
-    if (this.job?.pages?.some((page) => page.path === rel)) this.openPage(rel);
+    if (this.shownPages()?.some((page) => page.path === rel)) this.openPage(rel);
+  }
+
+  /**
+   * "Show the last receipt", from the menu: the open library's last filing, filed or noted, is put up again as a reprint, in the card's
+   * own time (`FILED_SHOW_MS`; the pointer holds it as it holds any card). It is the same card with the pages it wrote, Open, the line that
+   * the person's words were kept, and Undo while the menu would still take that filing back; but nothing is filed as it shows: its stamp
+   * is still and dated the day the thought was filed, no sound is sent (`cardSound`), the face doesn't wear its stamp (`markFiled` is
+   * not called) and no notification is posted. It does nothing unless the item is offered (`receiptShowable`), and it replaces only a
+   * finished card or none (`FINISHED_CARDS`): over a problem with its fix, the editor or a capture, a reprint would lose a problem's one
+   * fix, or the words of the editor, which `setCapsule` would keep as a new capture that isn't filed.
+   */
+  showLastReceipt(): void {
+    const receipt = this.lastReceipt;
+    if (receipt === null || !this.receiptShowable() || !FINISHED_CARDS.has(this.capsuleState.kind)) return;
+    const canUndo = receipt.commit !== null && this.lastFiled?.commit === receipt.commit && this.undoableFiling();
+    this.setCapsule(
+      {
+        kind: "filed",
+        text: receipt.text,
+        agent: receipt.agent,
+        seconds: receipt.seconds,
+        pages: receipt.pages,
+        canUndo,
+        noted: receipt.noted,
+        ...(receipt.restored ? { restored: true as const } : {}),
+        reprint: { filedAt: receipt.filedAt },
+      },
+      FILED_SHOW_MS,
+    );
+    this.reprint = receipt; // after `setCapsule`, which clears it for every card
   }
 
   dismiss(): void {
