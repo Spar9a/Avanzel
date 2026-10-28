@@ -234,6 +234,20 @@ export async function subject(root: string, sha: string): Promise<string | null>
   return result.code === 0 ? result.stdout.trim() : null;
 }
 
+/**
+ * Whether commit `sha` is HEAD or something HEAD descends from (`merge-base --is-ancestor` exits 0). False for a commit a reset or a
+ * rebase left behind (exit 1), one that isn't there (exit 128), a name that is no commit's (`HEAD`, a branch), a folder that is no
+ * repository, and a git that can't start: unlike `subject`, it never rejects, since the app asks it where nothing waits for an answer.
+ */
+export async function inHistory(root: string, sha: string): Promise<boolean> {
+  if (!isRepo(root) || !available() || !SHA.test(sha)) return false;
+  try {
+    return (await git(root, ["merge-base", "--is-ancestor", sha, "HEAD"])).code === 0;
+  } catch {
+    return false;
+  }
+}
+
 async function commitStaged(root: string, message: string): Promise<string | null> {
   const commit = [...SAFE, "commit", "-q", "--no-verify", "-m", message];
   if ((await git(root, commit)).code !== 0 && (await git(root, [...FALLBACK_IDENTITY, ...commit])).code !== 0) {

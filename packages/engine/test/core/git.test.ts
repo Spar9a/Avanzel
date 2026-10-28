@@ -258,6 +258,27 @@ describe.skipIf(!git.available())("git", () => {
     expect(gitOut(root, "status", "--porcelain")).toBe("");
   });
 
+  it("inHistory: HEAD and what it descends from, not a commit a reset left behind, an unknown one or one outside a repository", async () => {
+    gitIdentity();
+    const root = repo();
+    await git.initRepo(root);
+    write(root, "log.md", "a\n");
+    const base = (await git.commitAll(root, "base")) ?? "";
+    write(root, "log.md", "a\nb\n");
+    const later = (await git.commitAll(root, "later")) ?? "";
+    expect(base).toMatch(/^[0-9a-f]{40}$/);
+    expect(later).toMatch(/^[0-9a-f]{40}$/);
+    expect(await git.inHistory(root, later)).toBe(true); // HEAD itself: `merge-base --is-ancestor` exits 0
+    expect(await git.inHistory(root, base)).toBe(true); // what HEAD descends from
+    gitOut(root, "reset", "-q", "--hard", base);
+    expect(gitOut(root, "cat-file", "-t", later).trim()).toBe("commit"); // the commit is still in the object store...
+    expect(await git.inHistory(root, later)).toBe(false); // ...but HEAD no longer descends from it: exit 1
+    expect(await git.inHistory(root, base)).toBe(true);
+    expect(await git.inHistory(root, "0".repeat(40))).toBe(false); // no such commit: exit 128
+    expect(await git.inHistory(root, "HEAD")).toBe(false); // a name, not a commit's
+    expect(await git.inHistory(tmp(), base)).toBe(false); // no repository here
+  });
+
   // Recordings stay on this machine. The library's .gitignore keeps raw/audio/ out of git, but audio that waits in the inbox (a
   // voice memo dropped there, or a recording the capsule's Stop kept) is not under raw/, and `commitAll` stages everything. So the
   // repository's own exclude file lists the inbox's audio, which covers a library made before this, and the owner's own git use.

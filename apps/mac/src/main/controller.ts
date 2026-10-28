@@ -149,6 +149,7 @@ import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./st
 import { openTerminal } from "./terminal.ts";
 import { MenuBar } from "./tray.ts";
 import { nextTrayWake, reviewEndedAt, sleepsAfterReview, trayView, wholePercent, type TrayInput, type TrayView } from "./tray-state.ts";
+import { UndoRecordStore } from "./undo-records.ts";
 import {
   createAskWindow,
   createCapsuleWindow,
@@ -358,6 +359,12 @@ export class Controller {
    */
   private libraryMissing: string | null = null;
   private readonly runState: RunStateStore;
+  /**
+   * What the menu's two Undo items take back, kept for each library on this Mac (`lastFiled` and `lastEveningCommits` are the open
+   * library's, loaded as it opens and checked against its git, `checkUndo`). Whoever changes one of them for a library writes the
+   * change here for that library, which may no longer be the open one.
+   */
+  private readonly undoRecords: UndoRecordStore;
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
   /** The notice of each shortcut another app holds, with its free alternatives, in the order they register. */
   private takenShortcuts: TakenShortcut[] = [];
@@ -400,17 +407,22 @@ export class Controller {
   private filed = { day: "", count: 0 };
   /**
    * The filing the menu's Undo takes back (`undoLastFiling`): the last capsule or background filing that ended well with a commit, and
-   * the root of the library it filed in. Each filing's run clears it as it starts (`runFiling`), and so does a review that writes to the
-   * library (`executeTask`), since a revert of the filing would meet the review's later commits: the weekly review as it starts, and the
-   * evening review as it ends, if it filed anything or threw (one with nothing to file writes nothing, and leaves it). So does the
-   * take-back of its commit (`takeBack`, `revertFiling`) and a library that opens (`openLibrary`). A Stop on a filing that still waits in
+   * the root of the library it filed in, which is the open one. Each filing's run clears it as it starts (`runFiling`), and so does a
+   * review that writes to the library (`executeTask`), since a revert of the filing would meet the review's later commits: the weekly
+   * review as it starts, and the evening review as it ends, if it filed anything or threw (one with nothing to file writes nothing, and
+   * leaves it). So does the take-back of its commit (`takeBack`, `revertFiling`: `forgetFiling`). A Stop on a filing that still waits in
    * the queue clears nothing: no run has begun. Setup's first thought never sets it, and nor does the evening review: each has its own Undo.
+   * Each library keeps its own in `undoRecords`: a library that opens loads its own (`openLibrary`), and the menu offers it once
+   * `checkUndo` has found its commit in the library's history. `job` is the filing's own, which only a filing of this app run has.
    */
-  private lastFiled: { commit: string; library: string; pages: FiledPage[]; job?: FilingJob } | null = null;
+  private lastFiled: { commit: string; library: string; job?: FilingJob } | null = null;
   private running = new Set<string>();
   /** How far each running review is ("2 of 5", by task id) once it has begun a capture (`countReview`): the menu shows it in place of "Running…". */
   private reviewing = new Map<string, string>();
+  /** The open library's last evening review's commits, oldest first: the menu's Undo the last evening review (`undoEveningReview`). Kept per library in `undoRecords`, as `lastFiled` is. */
   private lastEveningCommits: string[] = [];
+  /** The open library, once `checkUndo` has checked the records it loaded against its git: the menu offers neither Undo before (`undoChecked`). */
+  private undoCheckedFor: Vault | null = null;
   private audioTimeout: NodeJS.Timeout | null = null;
   /** Whether the capsule page listens yet; commands for its recorder wait until it does. */
   private capsuleListening = false;
@@ -434,6 +446,7 @@ export class Controller {
     this.store = new SettingsStore(path.join(userData, "settings.json"));
     this.modelsDir = path.join(userData, "models");
     this.runState = new RunStateStore(path.join(userData, "run-state.json"));
+    this.undoRecords = new UndoRecordStore(path.join(userData, "undo-records.json"));
     this.noticed = new NoticedShortcuts(path.join(userData, "noticed-shortcuts.json"));
     this.firstRun = new FirstRunLog(path.join(userData, "first-run.json"));
     this.captureCount = new CaptureCount(path.join(userData, "captures.json"));
@@ -503,7 +516,10 @@ export class Controller {
     this.vault = null;
     this.recent = [];
     this.filed = { day: "", count: 0 };
+    // The Undo of the library that closes is dropped from the menu, not from the disk: `undoRecords` keeps it for the library's return.
     this.lastFiled = null; // a filing of the library that closes, whose menu is built again by whoever opens one
+    this.lastEveningCommits = [];
+    this.undoCheckedFor = null;
     this.dropTranscriber();
     this.libraryProblem = null;
     this.libraryMissing = null;
@@ -526,6 +542,10 @@ export class Controller {
       return;
     }
     this.vault = vault;
+    const saved = this.undoRecords.get(vault.root);
+    this.lastFiled = saved.filing === null ? null : { commit: saved.filing, library: vault.root };
+    this.lastEveningCommits = saved.evening;
+    void this.checkUndo(vault); // not awaited: the library is open at once, and neither Undo shows until its commits are found in its history
     void this.keepAudioOutOfGit(vault.root); // not awaited: the library is open at once, and its git is told meanwhile
     try {
       void this.transcriberFor(loadSettings(vault.root).voice);
@@ -746,30 +766,84 @@ export class Controller {
       recording: !!this.recording,
       shortcuts: this.store.get().shortcuts,
       unregisteredShortcuts: Object.keys(this.shortcutProblems) as (keyof Shortcuts)[],
-      undoableReview: this.lastEveningCommits.length > 0,
+      undoableReview: this.lastEveningCommits.length > 0 && this.undoChecked(),
       undoableFiling: this.undoableFiling(),
     };
   }
 
   /**
-   * Whether the menu offers Undo the last filing: there is one (`lastFiled`), the library it filed in is the open one, Avanzel isn't
-   * quitting, and no filing or review waits or runs. A filing whose run has begun has cleared `lastFiled` already, so the filing
-   * that waits for its turn (`queuedToFile`) and the review that waits or runs (`running`) are what the item hides for.
+   * Whether the open library's saved Undo (`lastFiled`, `lastEveningCommits`) has been checked against its git (`checkUndo`). Until it
+   * has, neither menu item is offered: a commit that a reset left behind would be offered for the moment the check takes.
    */
-  private undoableFiling(): boolean {
-    const last = this.lastFiled;
-    return last !== null && this.vault?.root === last.library && !this.quitting && this.queuedToFile.size === 0 && this.running.size === 0;
+  private undoChecked(): boolean {
+    return this.vault !== null && this.undoCheckedFor === this.vault;
   }
 
   /**
-   * The menu's Undo has nothing to take back: a filing's run begins (`runFiling`), a review writes to the library (`executeTask`: the
-   * weekly one as it starts, an evening review that filed something as it ends), or the commit of the filing it would take back is being
-   * taken back already (`takeBack`, `revertFiling`: `commit` is that commit, and any other filing's take-back leaves it be). The menu is
-   * built again, but only if it was holding a filing.
+   * Whether the menu offers Undo the last filing: there is one (`lastFiled`), the library it filed in is the open one and its saved
+   * Undo is checked (`undoChecked`), Avanzel isn't quitting, and no filing or review waits or runs. A filing whose run has begun has
+   * cleared `lastFiled` already, so the filing that waits for its turn (`queuedToFile`) and the review that waits or runs (`running`)
+   * are what the item hides for.
    */
-  private clearLastFiled(commit?: string): void {
-    if (this.lastFiled === null || (commit !== undefined && this.lastFiled.commit !== commit)) return;
+  private undoableFiling(): boolean {
+    const last = this.lastFiled;
+    return last !== null && this.vault?.root === last.library && this.undoChecked() && !this.quitting && this.queuedToFile.size === 0 && this.running.size === 0;
+  }
+
+  /**
+   * The Undo records `vault` loaded as it opened are kept only for what is still in its history: a commit a reset, a rebase, a pull that
+   * rewrote history or a library restored from a backup left behind is dropped, quietly, from the menu and from `undoRecords`. A commit
+   * that is still in the history is offered after any number of relaunches (a revert made by hand leaves it there: the Undo is offered,
+   * and git's refusal of it is told as `undoRefused`). It runs as the library opens and not in the way: until it ends neither item is
+   * offered (`undoChecked`). A library that opens meanwhile checks its own. Only what is still as it was loaded is dropped: a filing, a
+   * review or an Undo since then is newer, and stands.
+   */
+  private async checkUndo(vault: Vault): Promise<void> {
+    const filing = this.lastFiled;
+    const evening = this.lastEveningCommits;
+    const filingOk = filing === null || (await git.inHistory(vault.root, filing.commit));
+    let eveningOk = true;
+    for (const sha of evening) if (!(eveningOk = await git.inHistory(vault.root, sha))) break; // one at a time: a review may have made dozens
+    if (this.vault !== vault) return; // another library opened meanwhile, and checks its own
+    if (!filingOk && this.lastFiled === filing) {
+      this.lastFiled = null;
+      this.undoRecords.patch(vault.root, { filing: null });
+    }
+    if (!eveningOk && this.lastEveningCommits === evening) {
+      this.lastEveningCommits = [];
+      this.undoRecords.patch(vault.root, { evening: [] });
+    }
+    this.undoCheckedFor = vault;
+    this.refreshMenu();
+  }
+
+  /**
+   * The menu's Undo has nothing to take back in the library at `root` (the open library's unless said): a filing's run begins
+   * (`runFiling`), or a review writes to it (`executeTask`: the weekly one as it starts, an evening review that filed something as it
+   * ends, with the review's own library: another may have opened since). The open library's filing is dropped from the menu and from
+   * `undoRecords`, and the menu is built again, but only if it was holding a filing. For another library only its record goes: the menu
+   * shows the open library's.
+   */
+  private clearLastFiled(root: string | undefined = this.vault?.root): void {
+    if (root === undefined) return;
+    if (root !== this.vault?.root) return this.undoRecords.patch(root, { filing: null });
+    if (this.lastFiled === null) return;
     this.lastFiled = null;
+    this.undoRecords.patch(root, { filing: null });
+    this.refreshMenu();
+  }
+
+  /**
+   * The commit of the filing the menu would take back is being taken back already (`takeBack`, `revertFiling`, `undoLastFiling`):
+   * `commit` is that commit, and any other filing's take-back leaves it be. It is dropped from the menu and from `undoRecords` before
+   * the take-back's first await, so that it is asked for once, here and after a relaunch. The menu is built again, once, but only if it
+   * was holding that filing.
+   */
+  private forgetFiling(commit: string): void {
+    const last = this.lastFiled;
+    if (last === null || last.commit !== commit) return;
+    this.lastFiled = null;
+    this.undoRecords.patch(last.library, { filing: null });
     this.refreshMenu();
   }
 
@@ -1779,8 +1853,11 @@ export class Controller {
       this.recent = [...pages, ...this.recent.filter((p) => !pages.some((q) => q.path === p.path))].slice(0, 3);
       this.countFiled(library.root); // the run wrote its line in the log; the menu is built once below, as before
       // The menu's Undo takes this filing back, if the run left a commit to take back. Setup's first thought has an Undo of its own, in its window.
-      if (outcome.commit && !job.setup) this.lastFiled = { commit: outcome.commit, library: library.root, pages, job };
+      if (outcome.commit && !job.setup) this.lastFiled = { commit: outcome.commit, library: library.root, job };
     }
+    // Kept with the note's own library, open or not: it is offered again whenever that library opens (`openLibrary`). A filing that ends
+    // while Avanzel quits returned above, before this, and its start has cleared the record before it: a quit loses that Undo.
+    if (outcome.commit && !job.setup) this.undoRecords.patch(library.root, { filing: outcome.commit });
     this.keepDuration(job, library, seconds);
     this.noteFiled((capture) => capture === job.capturePath);
     // Setup's thought is filed, which counts whether its window is still there to show it or has closed (§5.4).
@@ -2480,7 +2557,7 @@ export class Controller {
   private async takeBack(job: FilingJob): Promise<string | null> {
     const commit = job.outcome?.commit;
     if (!commit) return null;
-    this.clearLastFiled(commit); // before the first await: the menu doesn't offer a commit that is being taken back
+    this.forgetFiling(commit); // before the first await: the menu doesn't offer a commit that is being taken back
     let why: string | null;
     try {
       why = (await (await this.librarian()).undo([commit])) === 1 ? null : "Git refused to undo it; see the library's history.";
@@ -2534,12 +2611,15 @@ export class Controller {
   /**
    * Undo, on the capsule's filed card, in the menu or in setup: once the queue gets to it, git takes back `commit`, a filing's, which
    * puts its capture back in the inbox. Whether it did; either way the menu's recent pages are read again. The menu stops offering
-   * `commit` as the last filing as soon as it is asked for, whoever asks: it is taken back once.
+   * `commit` as the last filing as soon as it is asked for, whoever asks: it is taken back once. It takes back only in the library it was
+   * asked in: `librarian()` reads the library that is open when the queue gets here, so if another has opened by then, nothing is taken
+   * back, and the caller tells a refusal (`undoRefused`). That was its one try, as it is for a refusal of git's.
    */
   private async revertFiling(commit: string): Promise<boolean> {
-    this.clearLastFiled(commit); // before the first await: the menu doesn't offer a commit that is being taken back
+    const library = this.vault; // before the queue
+    this.forgetFiling(commit); // before the first await: the menu doesn't offer a commit that is being taken back
     try {
-      return (await this.enqueue(async () => (await this.librarian()).undo([commit]))) === 1;
+      return (await this.enqueue(async () => (this.vault === library ? (await this.librarian()).undo([commit]) : 0))) === 1;
     } finally {
       this.readLog();
     }
@@ -2579,7 +2659,7 @@ export class Controller {
     const last = this.lastFiled;
     if (!last || !this.undoableFiling() || last.job?.undoing) return;
     if (last.job) last.job.undoing = true;
-    this.clearLastFiled();
+    this.forgetFiling(last.commit);
     const undone = await this.revertFiling(last.commit).catch((error) => {
       console.warn("undo", error); // a revert that threw is a refusal, as it is on the card
       return false;
@@ -3718,6 +3798,9 @@ export class Controller {
         // back: the menu offers it again once the review is over, until the next filing (spec §6.3). One that filed something has
         // committed after that filing, and one that threw may have filed some of the inbox first: either ends the offer. While the
         // review waits and runs, the item is hidden all the same (`running`, `undoableFiling`).
+        // The library the review runs in, which `librarian()` reads as the run begins: another may open while it runs, and what the review
+        // leaves to undo is kept with this one (`undoRecords`). A missing library throws to the `catch` below, as `librarian()` would.
+        const library = this.requireVault();
         let filedNothing = false;
         try {
           const result = await this.withRun(async (signal) => {
@@ -3737,7 +3820,8 @@ export class Controller {
           }
           const filedIds = new Set(result.outcomes.filter((o) => o.ok).map((o) => o.captureId));
           this.noteFiled((capture) => filedIds.has(path.basename(capture, path.extname(capture)))); // as a filing does (`runFiling`)
-          this.lastEveningCommits = result.commits;
+          this.undoRecords.patch(library.root, { evening: result.commits });
+          if (this.vault === library) this.lastEveningCommits = result.commits;
           const failed = result.outcomes.filter((o) => !o.ok);
           const filed = result.outcomes.length - failed.length;
           const digest = result.digestPath;
@@ -3748,7 +3832,7 @@ export class Controller {
             silent,
           );
         } finally {
-          if (!filedNothing) this.clearLastFiled();
+          if (!filedNothing) this.clearLastFiled(library.root);
         }
       } else if (task.kind === "review") {
         const outcome = await this.withRun(async (signal) => (await this.librarian(task.agent)).review({ signal }));
@@ -3766,13 +3850,23 @@ export class Controller {
     }
   }
 
+  /**
+   * Undo the last evening review, from the menu: the commits it made (`lastEveningCommits`) are taken back once the queue gets to them.
+   * It answers only once the saved Undo is checked (`undoChecked`) and not while Avanzel quits, as the filing's does (`undoableFiling`):
+   * a quit leaves the record where it is. The commits are taken before the first await, here and in `undoRecords`, so it is asked for
+   * once, and that is its only try. It takes back only in the library it was asked in: `librarian()` reads the one that is open when the
+   * queue gets here, so if another has opened by then nothing is taken back, and the refusal (`undoRefused`) is told in place.
+   */
   async undoEveningReview(): Promise<void> {
+    const library = this.vault;
     const commits = this.lastEveningCommits;
-    if (!commits.length) return;
+    if (library === null || !commits.length || !this.undoChecked() || this.quitting) return;
     this.lastEveningCommits = [];
-    const undone = await this.enqueue(async () => (await this.librarian()).undo(commits));
+    this.undoRecords.patch(library.root, { evening: [] });
+    const undone = await this.enqueue(async () => (this.vault === library ? (await this.librarian()).undo(commits) : null));
     this.readLog();
-    this.notify("Evening review undone", undone === commits.length ? "Everything it filed is back in the inbox." : `${undone} of ${commits.length} changes were undone; see the library's history.`);
+    if (undone === null) this.notify(undoRefused.title, undoRefused.body);
+    else this.notify("Evening review undone", undone === commits.length ? "Everything it filed is back in the inbox." : `${undone} of ${commits.length} changes were undone; see the library's history.`);
     this.refreshMenu();
   }
 
