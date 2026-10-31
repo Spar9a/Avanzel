@@ -64,6 +64,7 @@ export function registerIpc(controller: Controller): void {
   on("ask:open-page", (_e, name: string) => controller.openPageByName(name));
   on("ask:close", () => controller.closeAsk());
   handle("ask:library-pages", () => controller.libraryPages());
+  handle("ask:suggestions", () => controller.askSuggestions());
 
   // setup
   handle("setup:get", () => controller.setup.snapshot());

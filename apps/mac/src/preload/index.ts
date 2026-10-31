@@ -67,6 +67,7 @@ const bridge: AvanzelBridge = {
     openPage: (name) => ipcRenderer.send("ask:open-page", name),
     close: () => ipcRenderer.send("ask:close"),
     libraryPages: () => ipcRenderer.invoke("ask:library-pages"),
+    suggestions: () => ipcRenderer.invoke("ask:suggestions"),
   },
   setup: {
     get: () => ipcRenderer.invoke("setup:get"),

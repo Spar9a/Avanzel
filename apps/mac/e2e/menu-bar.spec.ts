@@ -3,7 +3,7 @@
 // words of the face (`tooltip`), and the tests of a count read the times of the changes too (`watchTray`), so no poll has to catch a
 // face in the moment it shows.
 import { expect, test, type ElectronApplication } from "@playwright/test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, localDate, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
@@ -12,11 +12,13 @@ import type { FilingReceipt } from "../src/main/undo-records.ts";
 import {
   dictate,
   filedFromTheCapsule,
+  filedInto,
   holdTheQueue,
   inbox,
   launchOn,
   letTheQueueGo,
   notified,
+  onDay,
   reachedUndo,
   sleep,
   stampDay,
@@ -854,21 +856,6 @@ const heldMenu = (app: ElectronApplication): Promise<Held[]> =>
       return { label: item.label, sublabel: item.sublabel ?? "", icon };
     });
   });
-
-/** A date `days` from now, at noon: a day other than today, whatever the hour is. */
-const onDay = (days: number) => {
-  const at = new Date();
-  at.setDate(at.getDate() + days);
-  at.setHours(12, 0, 0, 0);
-  return at;
-};
-
-/** A page `title` in the folder `folder` of `library`, and a line in its log that says a thought was filed into it at `when`. */
-function filedInto(library: string, folder: string, name: string, title: string, when: Date): void {
-  mkdirSync(path.join(library, folder), { recursive: true });
-  writeFileSync(path.join(library, folder, `${name}.md`), `# ${title}\n`);
-  new Vault(library).appendLog("file", `[[capture-${name}]] → [[${name}]]`, when);
-}
 
 /** A library whose log says three thoughts were filed today, each into a page on its own shelf, the last off the shelves, and one yesterday. */
 async function shelved(): Promise<string> {

@@ -12,6 +12,7 @@ import {
   libraryFolder,
   looksLikeATest,
   suggestQuestion,
+  suggestQuestions,
   tildePath,
   tooBroad,
   unrecordedEdits,
@@ -207,6 +208,21 @@ describe("the question setup suggests (Review Focus 5)", () => {
   it("suggestQuestion falls back to the first page", () => {
     expect(suggestQuestion([page("projects", "Launch plan")])).toBe("What did I say about “Launch plan”?"); // off the shelves too
     expect(suggestQuestion([])).toBeNull();
+  });
+
+  it("suggestQuestions asks one question about each page, in their order", () => {
+    expect(suggestQuestions([page("ideas", "Plant tulips in October"), page("people", "Maya"), page("projects", "Launch plan")])).toEqual([
+      "What did I say about “Plant tulips in October”?",
+      "What am I doing with Maya?",
+      "What did I say about “Launch plan”?",
+    ]);
+  });
+
+  it("suggestQuestions asks each question once, and none without pages", () => {
+    // Two pages of one title (the second named maya-2 by the filing) ask one question.
+    const maya = (file: string): FiledPage => ({ title: "Maya", shelf: "people", path: `people/${file}.md` });
+    expect(suggestQuestions([maya("maya"), maya("maya-2")])).toEqual(["What am I doing with Maya?"]);
+    expect(suggestQuestions([])).toEqual([]);
   });
 });
 

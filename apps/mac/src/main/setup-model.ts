@@ -174,15 +174,26 @@ export function looksLikeATest(words: string): boolean {
   return list.length >= 1 && list.length <= 8 && list.every((word) => MIC_CHECK.has(word));
 }
 
+/** The question to ask about `page`: what they are doing with a person, else what they said about the page, its title in quotation marks. */
+function questionAbout(page: FiledPage): string {
+  return page.shelf === "people" ? `What am I doing with ${page.title}?` : `What did I say about “${page.title}”?`;
+}
+
 /**
  * The question the Ask step suggests about the pages the first filing wrote: about the first person among them, else
  * about the first page, wherever it is, its title in quotation marks; none without a page.
  */
 export function suggestQuestion(pages: readonly FiledPage[]): string | null {
-  const person = pages.find((page) => page.shelf === "people");
-  if (person) return `What am I doing with ${person.title}?`;
-  const first = pages[0];
-  return first ? `What did I say about “${first.title}”?` : null;
+  const about = pages.find((page) => page.shelf === "people") ?? pages[0];
+  return about ? questionAbout(about) : null;
+}
+
+/**
+ * The questions the Ask window suggests about the pages filed last: one about each page, in their order, and each question
+ * once, for two pages of one title ask the same. None without pages.
+ */
+export function suggestQuestions(pages: readonly FiledPage[]): string[] {
+  return [...new Set(pages.map(questionAbout))];
 }
 
 /**

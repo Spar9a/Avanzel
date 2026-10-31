@@ -143,7 +143,7 @@ import {
 } from "./schedule.ts";
 import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
-import { afterStop, defaultLibraryPath, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
+import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
@@ -3140,6 +3140,16 @@ export class Controller {
     if (!vault?.exists()) return 0;
     const shelves = vault.shelfCounts();
     return SHELVES.reduce((sum, shelf) => sum + (shelves[shelf] ?? 0), 0);
+  }
+
+  /**
+   * The questions Ask suggests before the first one: one about each of the pages filed last, newest first (`recent`, at most three,
+   * from filings only, so a page saved from Ask is never one). None while the six shelves hold no pages, as Ask then invites a first
+   * thought: `recent` takes a page from any folder but the library's own (inbox, raw, reviews, tasks), which `libraryPages` does not
+   * count, so a filing outside the shelves would otherwise sit under "Your shelves are empty…".
+   */
+  askSuggestions(): string[] {
+    return this.libraryPages() === 0 ? [] : suggestQuestions(this.recent);
   }
 
   async ask(question: string): Promise<AskResult> {

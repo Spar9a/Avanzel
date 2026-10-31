@@ -792,6 +792,11 @@ export interface AvanzelBridge {
      * 0 tells the window to invite a first thought rather than a question.
      */
     libraryPages(): Promise<number>;
+    /**
+     * The questions to suggest before the first one, as sentences: one about each of the pages filed last, newest first, at
+     * most three (none while `libraryPages` is 0). Read with `libraryPages`, when the window opens and has the focus.
+     */
+    suggestions(): Promise<string[]>;
   };
   setup: {
     get(): Promise<SetupSnapshot>;

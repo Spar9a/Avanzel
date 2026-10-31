@@ -3,6 +3,7 @@
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { Vault } from "../../../packages/engine/src/index.ts";
 import type { CapsuleState } from "../src/shared/ipc.ts";
 import { call, filesUnder, filingClaude, firstRun, launch, makeLibrary, screenshotFixture, windowFor } from "./helpers.ts";
 
@@ -397,6 +398,7 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   const library = await makeLibrary();
   writeFileSync(path.join(library, "tasks", "broken.md"), "---\nschedule: sometimes\n---\nDo things.\n"); // Reviews lists it, with why
   writeFileSync(path.join(library, "goals", "run-a-marathon.md"), "# Run a marathon\n"); // the page Ask's answer links
+  new Vault(library).appendLog("file", "[[capture-run]] → [[run-a-marathon]]"); // filed last, so Ask suggests a question about it
   const app = await launch({ AVANZEL_LIBRARY: library });
   const found: string[] = [];
 
@@ -433,6 +435,8 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
   await expect(ask.getByText(/^Answers come from your library only/)).toBeVisible();
+  // The usual line shows before the suggestions are read: read the window once its suggestion, with Ask this, is there.
+  await expect(ask.getByRole("button", { name: "Ask this", exact: true })).toBeVisible();
   found.push(...(await readable(app, ask, "Ask, empty", desktops)));
   // The fake agent repeats the question, so the answer links to a page: its shelf and its button are read too.
   await ask.getByRole("textbox", { name: "Ask your library" }).fill("What are my goals besides [[run-a-marathon]]?");

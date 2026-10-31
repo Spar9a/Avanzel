@@ -3,10 +3,10 @@
 // a library that Claude Code's stand-in files, dictating to it, the wrappers that watch what the app sends and takes back, and the queue
 // held for a test.
 import { expect, type ElectronApplication, type Locator, type Page } from "@playwright/test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
+import { loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
 import { agentStubs, call, capsuleKind, filesUnder, gitOut, launch, makeLibrary, onlyAgentsIn, speechWav, windowFor } from "./helpers.ts";
 import { zel } from "./setup-helpers.ts";
 
@@ -296,3 +296,20 @@ export async function launchOn(library: string, env: Record<string, string> = {}
 
 /** The commits that took a filing or its leftovers back, newest first. */
 export const undone = (library: string) => gitOut(library, "log", "--format=%s").split("\n").filter((subject) => subject.startsWith("avanzel: undo"));
+
+// ---- Shared by menu-bar.spec.ts and ask-extras.spec.ts ----
+
+/** A date `days` from now, at noon: a day other than today, whatever the hour is. */
+export const onDay = (days: number) => {
+  const at = new Date();
+  at.setDate(at.getDate() + days);
+  at.setHours(12, 0, 0, 0);
+  return at;
+};
+
+/** A page `title` in the folder `folder` of `library`, and a line in its log that says a thought was filed into it at `when`. */
+export function filedInto(library: string, folder: string, name: string, title: string, when: Date): void {
+  mkdirSync(path.join(library, folder), { recursive: true });
+  writeFileSync(path.join(library, folder, `${name}.md`), `# ${title}\n`);
+  new Vault(library).appendLog("file", `[[capture-${name}]] → [[${name}]]`, when);
+}
