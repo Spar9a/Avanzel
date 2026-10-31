@@ -41,3 +41,9 @@
   flex: 1;
   min-width: 0;
 }
+/* The save's row (spinner, line, Stop). Its status region stays in the page from the offer on, so that its first line is read out,
+   but until it says something, and while no Stop is beside it, the row is empty and takes no slot of its own: the offer sits as close
+   under the answer as the turn's other pieces do. A row with a line, or with a Stop (its counting line is outside the region), is in flow. */
+.ask-save-line:not(:has(button)):has([role="status"]:empty) {
+  position: absolute;
+}

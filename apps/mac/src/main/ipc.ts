@@ -61,6 +61,7 @@ export function registerIpc(controller: Controller): void {
   on("quick:close", () => controller.closeQuick());
   handle("ask:ask", (_e, question: string) => controller.ask(question));
   handle("ask:save", (e, question: string, answer: string, library: string | null) => controller.saveAnswer(e.sender, question, answer, library)); // only the Ask window's own page saves
+  handle("ask:undo-save", (e, commit: string) => controller.undoSave(e.sender, commit)); // only the Ask window's own page takes back a save it was handed
   on("ask:cancel", (e) => controller.cancelAsk(e.sender)); // only the Ask window's own page gives up its question or save
   on("ask:open-page", (_e, name: string) => controller.openPageByName(name));
   on("ask:close", () => controller.closeAsk());

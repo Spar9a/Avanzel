@@ -7,20 +7,21 @@
 // question a line says where answers come from, or, while the six shelves hold no pages, to say something first; under it, up to
 // three questions about the pages filed last, each in words beside Ask this, which asks it. The newest answer that can be kept
 // offers Save as a page: the agent writes the answer the person was shown as a page, while a line says what it is doing, beside a
-// Stop. It ends with where the page is, beside Open; or with Stopped, and the offer again; or with a Notice that says what the
-// save left and offers Save again. One question is answered, or answer saved, at a time, and Esc closes the window, which gives up
-// whichever is going on.
+// Stop. It ends with where the page is, beside Undo, which takes the save back, and Open; or with Stopped, and the offer again; or
+// with a Notice that says what the save left and offers Save again. An Undo ends with Undone and the offer again, or, when git refuses
+// it, with a Notice under the saved line, which keeps Open. One question is answered, or answer saved, at a time, and Esc closes the
+// window, which gives up whichever is going on.
 import "@avanzel/ui/base.css";
 import { Actions, Button, Notice, Row, ShelfTag, Spinner, Stack, Text, TextField } from "@avanzel/ui";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { AskResult, AvanzelBridge, SaveResult } from "../../shared/ipc.ts";
-import { avanzelFailure, saveProblem, type AskProblem } from "../../shared/problems.ts";
+import { avanzelFailure, saveProblem, undoRefused, type AskProblem } from "../../shared/problems.ts";
 import { pageName } from "../../shared/wikilinks.ts";
 import { problemBody } from "../common/problem.tsx";
 import { remoteMessage } from "../settings/copy.ts";
 import { isShelf, sourceTitle } from "../setup/copy.ts";
-import { answeredLine, ASKING_LINES, emptyLine, failedAnswer, savedLine, SAVING_LINES, stoppedSaveLine, waitingLine, type WaitLines } from "./copy.ts";
+import { answeredLine, ASKING_LINES, emptyLine, failedAnswer, savedLine, SAVING_LINES, stoppedSaveLine, undoneLine, waitingLine, type WaitLines } from "./copy.ts";
 import "./styles.css";
 
 declare global {
@@ -40,10 +41,13 @@ type Outcome = AskResult | "stopped" | null;
 /**
  * A turn's answer being saved as a page, or saved: `result` is null while the save runs, and then what main sent back. `stopping`:
  * Stop gave the save up, and main hasn't said how it ended, which may be as late as the end of a filing the save waits behind.
+ * `undo`: the saved page's Undo, none until it is pressed. It is asked while main takes the save back, then undone, or refused when
+ * git said no. A save pressed again replaces the whole of it.
  */
 interface Saving {
   result: SaveResult | null;
   stopping?: true;
+  undo?: "asked" | "undone" | "refused";
 }
 
 interface Turn {
@@ -148,6 +152,27 @@ function Ask() {
   };
 
   /**
+   * Undo, on the turn whose answer was saved with a commit (`SaveResult.commit`): git takes the save back, once, in the library it was
+   * saved in, and the turn tells how it went (`Saving.undo`): Undone, with the offer back on the newest turn, or a Notice that git
+   * refused it. It is not an agent's run, so it stops nothing and waits for nothing: a question or a save can go on beside it. A reply
+   * main can't give is read as a refusal, so the button never waits for ever. The field gets the focus, which the button that was pressed
+   * leaves.
+   */
+  const undo = (turn: Turn) => {
+    const { id, saving } = turn;
+    const saved = saving?.result;
+    if (saved?.kind !== "saved" || saved.commit === null || saving?.undo !== undefined) return;
+    const setUndo = (next: NonNullable<Saving["undo"]>) =>
+      setTurns((prev) => prev.map((t) => (t.id === id && t.saving ? { ...t, saving: { ...t.saving, undo: next } } : t)));
+    setUndo("asked");
+    void api
+      .undoSave(saved.commit)
+      .catch(() => false)
+      .then((undone) => setUndo(undone ? "undone" : "refused"));
+    field.current?.focus();
+  };
+
+  /**
    * Stop: what runs is given up, and the field, which gets the focus, is free for the next. A question says "Stopped." at once. A
    * save says it is stopping until main answers (`Saving.stopping`): its result is what the turn tells, and it is the save's own
    * if Stop came as it ended.
@@ -231,7 +256,7 @@ function Ask() {
                   ) : (
                     <Reply outcome={turn.outcome} progress={progress} onStop={stop} />
                   )}
-                  <SaveAsPage turn={turn} newest={place === 0} progress={progress} onSave={() => save(turn)} onStop={stop} />
+                  <SaveAsPage turn={turn} newest={place === 0} progress={progress} onSave={() => save(turn)} onUndo={() => undo(turn)} onStop={stop} />
                 </Stack>
               </article>
             ))}
@@ -307,36 +332,68 @@ function Reply({ outcome, progress, onStop }: { outcome: Outcome; progress: Prog
 
 /**
  * What a turn does with its answer, under its reply. The newest answered turn offers Save as a page, unless its answer has been
- * saved, is being saved, or failed to be: a save that stopped is offered again. The save has its own status region (`StatusRow`),
- * mounted empty with the offer and kept while the turn has the offer or a save, so that its first line is a change VoiceOver reads.
- * While it saves: the waiting line and Stop. Saved: where the page is, and Open. Stopped: what the save left, and the offer. A save that
- * saved nothing is a Notice, outside the region, with the fix Save again on the newest turn (`Failed`), and none on an older one.
+ * saved, is being saved, or failed to be: a save that stopped, or was undone, is offered again. The save has its own status region
+ * (`StatusRow`), mounted empty with the offer and kept, in the same place in the tree, while the turn has the offer or a save, so that its
+ * first line is a change VoiceOver reads. While it is empty it takes no slot of its own (`.ask-save-line`).
+ * - While it saves: the waiting line and Stop.
+ * - Saved: where the page is, with Undo, which takes the save back (none without git, where the save has no commit), and Open. The saved
+ *   line names that group, so each Open says which page it opens. They stay on their turn under newer questions.
+ * - Undone: that the page is gone from the library, and the offer again on the newest turn.
+ * - An Undo git refused: a Notice under the saved line, which keeps Open and offers no second try.
+ * - Stopped: what the save left, and the offer.
+ * A save that saved nothing is a Notice, outside the region, with the fix Save again on the newest turn (`Failed`), and none on an older one.
  */
-function SaveAsPage({ turn, newest, progress, onSave, onStop }: { turn: Turn; newest: boolean; progress: Progress; onSave(): void; onStop(): void }) {
+function SaveAsPage({
+  turn,
+  newest,
+  progress,
+  onSave,
+  onUndo,
+  onStop,
+}: {
+  turn: Turn;
+  newest: boolean;
+  progress: Progress;
+  onSave(): void;
+  onUndo(): void;
+  onStop(): void;
+}) {
+  const lineId = useId();
   const { outcome, saving } = turn;
   const result = saving?.result ?? null;
+  const undo = saving?.undo;
+  // The save whose page stands (its line, Undo and Open), or the one that was taken back (its line says so).
+  const saved = result?.kind === "saved" && undo !== "undone" ? result : null;
+  const undone = result?.kind === "saved" && undo === "undone" ? result : null;
   const answered = outcome !== null && outcome !== "stopped" && outcome.ok && outcome.paragraphs.length > 0;
-  const offered = newest && answered && (saving === undefined || result?.kind === "stopped");
+  const offered = newest && answered && (saving === undefined || result?.kind === "stopped" || undone !== null);
   if (!offered && saving === undefined) return null;
   return (
-    <Stack gap={8}>
-      <StatusRow running={result === null && saving !== undefined} progress={progress} lines={SAVING_LINES} stopping={saving?.stopping === true} onStop={onStop}>
-        {result?.kind === "saved" && <Text variant="footnote" tone="secondary">{savedLine(result.page)}</Text>}
-        {result?.kind === "stopped" && <Text variant="footnote" tone="secondary">{stoppedSaveLine(result.agent, result.partial)}</Text>}
-      </StatusRow>
-      {result?.kind === "unsaved" && (
-        <Failed
-          problem={saveProblem(result.failure, result.agent, result.partial, new Date())}
-          again={newest ? { label: "Save again", onPress: onSave } : undefined}
-        />
-      )}
-      {(offered || result?.kind === "saved") && (
-        <Actions align="start">
-          {offered && <Button size="small" onClick={onSave}>Save as a page</Button>}
-          {result?.kind === "saved" && <Button size="small" onClick={() => api.openPage(pageName(result.page.path))}>Open</Button>}
-        </Actions>
-      )}
-    </Stack>
+    <div role={saved ? "group" : undefined} aria-labelledby={saved ? lineId : undefined}>
+      <Stack gap={8}>
+        <div className="ask-save-line">
+          <StatusRow running={result === null && saving !== undefined} progress={progress} lines={SAVING_LINES} stopping={saving?.stopping === true} onStop={onStop}>
+            {saved && <Text variant="footnote" tone="secondary" id={lineId}>{savedLine(saved.page)}</Text>}
+            {undone && <Text variant="footnote" tone="secondary">{undoneLine(undone.page)}</Text>}
+            {result?.kind === "stopped" && <Text variant="footnote" tone="secondary">{stoppedSaveLine(result.agent, result.partial)}</Text>}
+          </StatusRow>
+        </div>
+        {result?.kind === "unsaved" && (
+          <Failed
+            problem={saveProblem(result.failure, result.agent, result.partial, new Date())}
+            again={newest ? { label: "Save again", onPress: onSave, withSettings: true } : undefined}
+          />
+        )}
+        {undo === "refused" && <Notice tone="error" title={undoRefused.title}>{undoRefused.body}</Notice>}
+        {(offered || saved) && (
+          <Actions align="start">
+            {offered && <Button size="small" onClick={onSave}>Save as a page</Button>}
+            {saved && saved.commit !== null && undo !== "refused" && <Button size="small" busy={undo === "asked"} onClick={onUndo}>Undo</Button>}
+            {saved && <Button size="small" onClick={() => api.openPage(pageName(saved.page.path))}>Open</Button>}
+          </Actions>
+        )}
+      </Stack>
+    </div>
   );
 }
 
@@ -344,6 +401,12 @@ function SaveAsPage({ turn, newest, progress, onSave, onStop }: { turn: Turn; ne
 interface Again {
   label: "Ask again" | "Save again";
   onPress(): void;
+  /**
+   * Stays beside Open Settings, secondary. A question leaves its Ask again out there, since trying again would only fail again until
+   * the settings are mended. A save keeps Save again: the answer it was pressed on can be saved nowhere but its turn, so once the
+   * settings are mended this is the only way.
+   */
+  withSettings?: true;
 }
 
 /**
@@ -351,8 +414,8 @@ interface Again {
  * the run changed or left) and what to do, with the command to run set as code (`failedAnswer`, `saveProblem`). Given `again`, it
  * offers the one fix, the moment's only primary: Ask again, or Save again; for an agent that isn't signed in, Open Terminal (through
  * setup's channel, which opens it), with that beside it, secondary; for an agent that isn't there, Open Settings on Agents (through the
- * capsule's, which opens Settings), since trying again would only fail again. The primary comes last. A Notice is an alert itself, so
- * it sits outside the turn's status regions.
+ * capsule's, which opens Settings), since trying again would only fail again: a save keeps Save again beside it, secondary
+ * (`Again.withSettings`). The primary comes last. A Notice is an alert itself, so it sits outside the turn's status regions.
  */
 function Failed({ problem, again }: { problem: AskProblem; again?: Again | undefined }) {
   return (
@@ -362,8 +425,8 @@ function Failed({ problem, again }: { problem: AskProblem; again?: Again | undef
       actions={
         again && (
           <Actions align="start">
-            {!problem.settings && (
-              <Button size="small" variant={problem.terminal ? "secondary" : "primary"} onClick={again.onPress}>{again.label}</Button>
+            {(!problem.settings || again.withSettings) && (
+              <Button size="small" variant={problem.terminal || problem.settings ? "secondary" : "primary"} onClick={again.onPress}>{again.label}</Button>
             )}
             {problem.terminal && <Button size="small" variant="primary" onClick={() => window.avanzel.setup.openTerminal()}>Open Terminal</Button>}
             {problem.settings && (

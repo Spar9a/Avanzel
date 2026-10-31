@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answeredLine, emptyLine, failedAnswer, LOOKING, savedLine, SAVING_LINES, stoppedSaveLine, waitingLine } from "../src/renderer/ask/copy.ts";
+import { answeredLine, emptyLine, failedAnswer, LOOKING, savedLine, SAVING_LINES, stoppedSaveLine, undoneLine, waitingLine } from "../src/renderer/ask/copy.ts";
 import type { AskResult } from "../src/shared/ipc.ts";
 import type { AgentFailure } from "../src/shared/problems.ts";
 
@@ -136,12 +136,18 @@ describe("ask copy", () => {
     expect(stoppedSaveLine("Claude Code", "uncommitted")).toBe("Stopped. Claude Code's partial edits stay as they are, because nothing recorded them.");
   });
 
+  it("undoneLine says the page is no longer in the library", () => {
+    expect(undoneLine({ title: "Answer", shelf: "topics", path: "topics/answer.md" })).toBe("Undone. “Answer” is no longer in your library.");
+    expect(undoneLine({ title: "Trip", shelf: "projects", path: "projects/trip.md" })).toBe("Undone. “Trip” is no longer in your library.");
+  });
+
   it("the save's words are written as the design rules ask", () => {
     const lines = [
       SAVING_LINES.first,
       SAVING_LINES.counting(12),
       savedLine({ title: "Answer", shelf: "topics", path: "topics/answer.md" }),
       savedLine({ title: "Trip", shelf: "projects", path: "projects/trip.md" }),
+      undoneLine({ title: "Answer", shelf: "topics", path: "topics/answer.md" }),
       stoppedSaveLine("Claude Code", null),
       stoppedSaveLine("Claude Code", "commit"),
       stoppedSaveLine("Claude Code", "uncommitted"),

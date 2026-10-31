@@ -312,6 +312,34 @@ export const receiptItem = async (app: ElectronApplication) => (await menuOf(app
 /** From now on the engine's fake agent behaves as `mode` says (FAKE_AGENT_MODE) for the runs that follow: each run is handed the app's environment. */
 export const agentMode = (app: ElectronApplication, mode: string) => app.evaluate((_electron, wanted) => void (process.env.FAKE_AGENT_MODE = wanted), mode);
 
+/**
+ * What the tray holds for one menu item: its words, and its icon, or null without one. An icon is a template image or not (macOS tints a
+ * template image for the menu: its ink, and white on the highlight), and the colour its pixels are drawn in (the most opaque one, "#rrggbb").
+ */
+export type Held = { label: string; sublabel: string; icon: { template: boolean; ink: string } | null };
+
+/** The menu the tray holds now, as macOS was given it. */
+export const heldMenu = (app: ElectronApplication): Promise<Held[]> =>
+  app.evaluate(() => {
+    type Icon = { isTemplateImage(): boolean; toBitmap(options: { scaleFactor: number }): Buffer };
+    type Item = { label: string; sublabel?: string; icon?: Icon | string };
+    const bar = (globalThis as unknown as { __avanzel: { menuBar: { menu: { items: Item[] } | null } } }).__avanzel.menuBar;
+    return (bar.menu?.items ?? []).map((item) => {
+      let icon: { template: boolean; ink: string } | null = null;
+      if (item.icon && typeof item.icon !== "string") {
+        const pixels = item.icon.toBitmap({ scaleFactor: 2 }); // BGRA
+        let best = 0;
+        for (let at = 0; at < pixels.length; at += 4) if ((pixels[at + 3] ?? 0) > (pixels[best + 3] ?? 0)) best = at;
+        const ink = `#${[pixels[best + 2], pixels[best + 1], pixels[best]].map((channel) => (channel ?? 0).toString(16).padStart(2, "0")).join("")}`;
+        icon = { template: item.icon.isTemplateImage(), ink };
+      }
+      return { label: item.label, sublabel: item.sublabel ?? "", icon };
+    });
+  });
+
+/** Whether the menu the tray holds (as macOS was given it) offers Undo the last filing: it is built again where the model changes. */
+export const trayOffersUndo = async (app: ElectronApplication) => (await heldMenu(app)).some((item) => item.label === "Undo the last filing");
+
 /** A date `days` from now, at noon: a day other than today, whatever the hour is. */
 export const onDay = (days: number) => {
   const at = new Date();

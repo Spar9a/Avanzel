@@ -13,6 +13,7 @@ import {
   dictate,
   filedFromTheCapsule,
   filedInto,
+  heldMenu,
   holdTheQueue,
   inbox,
   launchOn,
@@ -24,6 +25,7 @@ import {
   receiptItem,
   sleep,
   stampDay,
+  trayOffersUndo,
   undoCalls,
   undoItem,
   undone,
@@ -832,31 +834,6 @@ const recentOf = async (app: ElectronApplication) => {
   return items.slice(at + 1, items.findIndex((item, i) => i > at && item.type === "separator"));
 };
 
-/**
- * What the tray holds for one menu item: its words, and its icon, or null without one. An icon is a template image or not (macOS tints a
- * template image for the menu: its ink, and white on the highlight), and the colour its pixels are drawn in (the most opaque one, "#rrggbb").
- */
-type Held = { label: string; sublabel: string; icon: { template: boolean; ink: string } | null };
-
-/** The menu the tray holds now, as macOS was given it. */
-const heldMenu = (app: ElectronApplication): Promise<Held[]> =>
-  app.evaluate(() => {
-    type Icon = { isTemplateImage(): boolean; toBitmap(options: { scaleFactor: number }): Buffer };
-    type Item = { label: string; sublabel?: string; icon?: Icon | string };
-    const bar = (globalThis as unknown as { __avanzel: { menuBar: { menu: { items: Item[] } | null } } }).__avanzel.menuBar;
-    return (bar.menu?.items ?? []).map((item) => {
-      let icon: { template: boolean; ink: string } | null = null;
-      if (item.icon && typeof item.icon !== "string") {
-        const pixels = item.icon.toBitmap({ scaleFactor: 2 }); // BGRA
-        let best = 0;
-        for (let at = 0; at < pixels.length; at += 4) if ((pixels[at + 3] ?? 0) > (pixels[best + 3] ?? 0)) best = at;
-        const ink = `#${[pixels[best + 2], pixels[best + 1], pixels[best]].map((channel) => (channel ?? 0).toString(16).padStart(2, "0")).join("")}`;
-        icon = { template: item.icon.isTemplateImage(), ink };
-      }
-      return { label: item.label, sublabel: item.sublabel ?? "", icon };
-    });
-  });
-
 /** A library whose log says three thoughts were filed today, each into a page on its own shelf, the last off the shelves, and one yesterday. */
 async function shelved(): Promise<string> {
   const library = await makeLibrary();
@@ -1138,9 +1115,6 @@ type SavedUndo = {
 
 /** A commit as git prints it. */
 const COMMIT = /^[0-9a-f]{40}$/;
-
-/** Whether the menu the tray holds (as macOS was given it) offers Undo the last filing: it is built again where the model changes. */
-const trayOffersUndo = async (app: ElectronApplication) => (await heldMenu(app)).some((item) => item.label === "Undo the last filing");
 
 /** Whether the menu the tray holds offers Show the last receipt. */
 const trayOffersReceipt = async (app: ElectronApplication) => (await heldMenu(app)).some((item) => item.label === "Show the last receipt");

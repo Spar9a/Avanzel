@@ -1,5 +1,5 @@
 // The Ask window's words that are made from values: who answered and in how long, a failed answer as its Notice shows it, the line
-// while the agent looks or saves, and what became of a save.
+// while the agent looks or saves, and what became of a save, or of its Undo.
 import { SHELF_NAMES } from "@avanzel/ui";
 import type { AskResult, FiledPage } from "../../shared/ipc.ts";
 import { askProblem, avanzelFailure, unsavedLine, type AskProblem, type PartialEdits } from "../../shared/problems.ts";
@@ -75,4 +75,9 @@ export function savedLine(page: FiledPage): string {
 /** What a Stop says of a save: that it stopped, and what the save left in the library (`unsavedLine`). */
 export function stoppedSaveLine(agent: string, partial: PartialEdits): string {
   return `Stopped. ${unsavedLine(agent, partial)}`;
+}
+
+/** What the saved line says once the save is taken back: the page it wrote is gone from the library. */
+export function undoneLine(page: FiledPage): string {
+  return `Undone. “${page.title}” is no longer in your library.`;
 }

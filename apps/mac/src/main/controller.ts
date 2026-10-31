@@ -325,10 +325,18 @@ export class Controller {
   /** Gives up the Ask window's question being answered or answer being saved, as closing that window does: Stop calls it (cancelAsk). */
   private giveUpAsk: (() => void) | null = null;
   /**
-   * An answer is being saved as a page (`saveAnswer`), from Save's press until it answers, whether the save waits for the library or
-   * runs. The save commits after any filing that ended while it waited, so none of those is offered for Undo meanwhile (`undoableFiling`).
+   * How many answers are being saved as pages (`saveAnswer`), each from Save's press until it answers, whether the save waits for the
+   * library or runs. A save commits after any filing that ended while it waited, so none of those is offered for Undo meanwhile
+   * (`undoableFiling`). It is a count and not a flag: a save given up by closing Ask goes on polling the library's lock (`Vault.withLock`
+   * takes no signal), so one begun after it can overlap it, and the first to end must not clear the mark of the other.
    */
-  private saving = false;
+  private savesGoing = 0;
+  /**
+   * The answers saved as pages that the Ask window can take back (`undoSave`): each save's commit, with the library it was saved in. A
+   * commit is added when the save hands it to the window, while that window is open; it goes as the Undo asks for it (one try), and all
+   * of them go when the window closes (`openAsk`). The library's history keeps the commits either way.
+   */
+  private readonly savedAnswers = new Map<string, Vault>();
   /** First-run setup: its window and session, and Zel's bubble once it has ended (setup.ts). */
   readonly setup: Setup;
   private menuBar!: MenuBar;
@@ -844,12 +852,12 @@ export class Controller {
    * Undo is checked (`undoChecked`), Avanzel isn't quitting, and no filing, review or save of an answer waits or runs. A filing whose run
    * has begun has cleared `lastFiled` already, so the filing that waits for its turn (`queuedToFile`) and the review that waits or runs
    * (`running`) are what the item hides for. A save clears it as it begins (`saveAnswer`) but it waits for the library as a question
-   * does, and a filing that ends meanwhile would be offered with the save about to commit after it: the save (`saving`) hides it too.
+   * does, and a filing that ends meanwhile would be offered with the save about to commit after it: the saves going (`savesGoing`) hide it too.
    */
   private undoableFiling(): boolean {
     const last = this.lastFiled;
     return (
-      last !== null && this.vault?.root === last.library && this.undoChecked() && !this.quitting && this.queuedToFile.size === 0 && this.running.size === 0 && !this.saving
+      last !== null && this.vault?.root === last.library && this.undoChecked() && !this.quitting && this.queuedToFile.size === 0 && this.running.size === 0 && this.savesGoing === 0
     );
   }
 
@@ -2891,7 +2899,7 @@ export class Controller {
    * - Setup's window is open: the first thought it shows has an Undo of its own on screen, and a bar over that window would contradict it.
    * - A take-back is in flight (`reverting`): it has taken the filing already, so a second press would find none to undo and put the bar
    *   over the very card the first take-back is about to turn to Undone. The first tells the person, once.
-   * - An answer is being saved (`saving`): a filing that ended while the save waited is not offered (`undoableFiling`), and a bar that
+   * - An answer is being saved (`savesGoing`): a filing that ended while the save waited is not offered (`undoableFiling`), and a bar that
    *   says there is none to undo would be wrong about it. As during a review, nothing happens.
    * With a filing to undo (`undoableFiling`) it is the menu's Undo (`undoLastFiling`): one try, told once on the filed card of that filing
    * or else by a notification, even while a recording runs (`notify` makes it silent then). With none, a bar says so for
@@ -2902,7 +2910,7 @@ export class Controller {
    * recording. The bar replaces a finished card.
    */
   private pressUndoShortcut(): void {
-    if (this.setup.isOpen() || this.reverting.size > 0 || this.saving) return;
+    if (this.setup.isOpen() || this.reverting.size > 0 || this.savesGoing > 0) return;
     if (this.undoableFiling()) return void this.undoLastFiling();
     if (this.vault !== null && !this.undoChecked()) return;
     if (!this.capsuleFreeForReply()) return;
@@ -3139,6 +3147,9 @@ export class Controller {
     if (!this.askWindow || this.askWindow.isDestroyed()) {
       this.askWindow = createAskWindow();
       this.askWindow.once("ready-to-show", () => showWhenReady(this.askWindow));
+      // The saves its turns can take back (`savedAnswers`) are theirs while it is open. Closing it ends that: a window that opens
+      // after it is handed none of them, and the library's history keeps the commits.
+      this.askWindow.once("closed", () => this.savedAnswers.clear());
     }
     bringForward(this.askWindow);
   }
@@ -3216,7 +3227,7 @@ export class Controller {
         answer: ran && !ok ? `${agent} couldn't answer.\n${text}` : text,
         agent,
         seconds,
-        ...(ok ? answeredFrom(this.vault?.root ?? null, text) : { paragraphs: [], sources: [] }),
+        ...(ok ? answeredFrom(library, text) : { paragraphs: [], sources: [] }),
         changedFiles,
         failure,
         library,
@@ -3241,20 +3252,21 @@ export class Controller {
    * It runs where a question does (`inAskSlot`) and waits for the library as a question does. Stop gives it up; so does closing the
    * window, or quitting, and nobody is told then. What a run left is kept as its own commit by the engine (`partial`).
    *
-   * The menu's Undo the last filing goes as the save begins (`clearLastFiled`) and stays away while the save waits or runs (`saving`): the
-   * save commits after a filing that ends meanwhile, which can then no longer be taken back. A save that commits nothing offers that
+   * The menu's Undo the last filing goes as the save begins (`clearLastFiled`) and stays away while the save waits or runs (`savesGoing`):
+   * the save commits after a filing that ends meanwhile, which can then no longer be taken back. A save that commits nothing offers that
    * filing again when it ends; one that commits drops its record (`clearLastFiled`).
    *
-   * It ends `saved` when the run wrote a page, even if Stop landed as it ended, with the save's own commit, which takes it back; else
-   * `stopped` when Stop, or the window's closing, gave it up; else `unsaved`: the run ended well and wrote no page (no `failure`), it
-   * failed, or it couldn't start (`partial` is then null).
+   * It ends `saved` when the run wrote a page, even if Stop landed as it ended, with the save's own commit, which takes it back
+   * (`undoSave`) while the window that saved is open (`savedAnswers`); else `stopped` when Stop, or the window's closing, gave it up; else
+   * `unsaved`: the run ended well and wrote no page (no `failure`), it failed, or it couldn't start (`partial` is then null).
    */
   async saveAnswer(sender: WebContents, question: string, answer: string, library: string | null): Promise<SaveResult> {
     if (!isPageOf(sender, this.askWindow)) throw new Error("Only the Ask window saves an answer.");
+    const win = this.askWindow; // the window that saved, even once another one opens
     const agent = this.agentName();
     const harness = this.selectedHarness(); // the agent the save goes to, named before it runs
     if (library !== (this.vault?.root ?? null)) return { kind: "unsaved", agent, failure: avanzelFailure(ANOTHER_LIBRARY), partial: null };
-    this.saving = true;
+    this.savesGoing++;
     try {
       this.clearLastFiled();
       return await this.inAskSlot(async (abort, progress): Promise<SaveResult> => {
@@ -3264,7 +3276,10 @@ export class Controller {
           const { result, changes } = outcome;
           if (outcome.commit) this.clearLastFiled(vault.root); // it comes after any filing that ended while the save waited
           const page = result.ok ? filedPages(vault.root, changes)[0] : undefined;
-          if (page) return { kind: "saved", page, commit: outcome.commit };
+          if (page) {
+            if (outcome.commit && win !== null && !win.isDestroyed()) this.savedAnswers.set(outcome.commit, vault); // its window can take it back, while it is open
+            return { kind: "saved", page, commit: outcome.commit };
+          }
           const partial = leftBehind(outcome);
           if (abort.signal.aborted) return { kind: "stopped", agent, partial };
           if (result.ok) return { kind: "unsaved", agent, failure: null, partial };
@@ -3275,9 +3290,27 @@ export class Controller {
         }
       });
     } finally {
-      this.saving = false;
+      this.savesGoing--;
       this.refreshMenu();
     }
+  }
+
+  /**
+   * Undo, on a turn of the Ask window whose answer was saved as a page: git takes the save's commit back (`revertFiling`), once the queue
+   * gets to it, in the library the save was made in (`savedAnswers`), whichever library is open by then. Whether it did. Only that
+   * window's own page can, and only for a commit this window was handed (`saveAnswer`): the page can't name one of its own. The commit
+   * goes from `savedAnswers` as it is asked for, before the first await, so it has one try: git may refuse it (usually a later change touched
+   * the same lines), and a second Undo of it, here or from the page of a window that opens later, finds none. It posts no notification and
+   * puts up no card on the capsule: the turn that asked tells the person. A revert that threw is a refusal, as it is on the filed card (`undo`).
+   */
+  async undoSave(sender: WebContents, commit: string): Promise<boolean> {
+    const library = this.savedAnswers.get(commit);
+    if (!isPageOf(sender, this.askWindow) || library === undefined) return false;
+    this.savedAnswers.delete(commit);
+    return this.revertFiling(commit, library).catch((error) => {
+      console.warn("undo save", error); // a revert that threw is a refusal to the turn: it would otherwise wait on its Undo for ever
+      return false;
+    });
   }
 
   /**
