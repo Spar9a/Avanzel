@@ -803,9 +803,10 @@ export interface AvanzelBridge {
     /**
      * Undo, on the turn whose answer `save` saved as a page: git takes the save's commit (`SaveResult.commit`) back, in the library it was
      * saved in, whichever is open by then. Whether it did. False when git refuses (usually a later change touched the same lines) or the
-     * revert fails, and for a commit this window wasn't handed or has tried already: each has one try, and the window's closing ends them
-     * (the library's history keeps the saves). It tells no one: the turn that asked does. Only the Ask window's own page may; sent from
-     * any other window, it resolves false and takes nothing back.
+     * revert fails, and for a commit this window wasn't handed or has tried already: each has one try, and the window's closing ends the
+     * right to ask for one (the library's history keeps the saves), not an Undo already asked for, which main goes on with. It tells no
+     * one: the turn that asked does. Only the Ask window's own page may; sent from any other window, it resolves false and takes nothing
+     * back.
      */
     undoSave(commit: string): Promise<boolean>;
     /** What the question or save in progress is doing now, e.g. waiting for a filing to finish, then looking through the library. */

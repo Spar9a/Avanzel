@@ -136,9 +136,17 @@ describe("ask copy", () => {
     expect(stoppedSaveLine("Claude Code", "uncommitted")).toBe("Stopped. Claude Code's partial edits stay as they are, because nothing recorded them.");
   });
 
-  it("undoneLine says the page is no longer in the library", () => {
+  it("undoneLine says the page is no longer in the library when the save made it", () => {
+    expect(undoneLine({ title: "Answer", shelf: "topics", path: "topics/answer.md", created: true })).toBe("Undone. “Answer” is no longer in your library.");
+    expect(undoneLine({ title: "Trip", shelf: "projects", path: "projects/trip.md", created: true })).toBe("Undone. “Trip” is no longer in your library.");
+    // A page that says nothing of how it came (`FiledPage.created` is only set by a filing's own pages) is read as made.
     expect(undoneLine({ title: "Answer", shelf: "topics", path: "topics/answer.md" })).toBe("Undone. “Answer” is no longer in your library.");
-    expect(undoneLine({ title: "Trip", shelf: "projects", path: "projects/trip.md" })).toBe("Undone. “Trip” is no longer in your library.");
+  });
+
+  it("undoneLine says the page is back as it was when the save only changed it", () => {
+    // Undo puts a changed page back as it was; the page is still in the library, so it is not said to be gone.
+    expect(undoneLine({ title: "Answer", shelf: "topics", path: "topics/answer.md", created: false })).toBe("Undone. “Answer” is back as it was.");
+    expect(undoneLine({ title: "Trip", shelf: "projects", path: "projects/trip.md", created: false })).toBe("Undone. “Trip” is back as it was.");
   });
 
   it("the save's words are written as the design rules ask", () => {
@@ -147,7 +155,8 @@ describe("ask copy", () => {
       SAVING_LINES.counting(12),
       savedLine({ title: "Answer", shelf: "topics", path: "topics/answer.md" }),
       savedLine({ title: "Trip", shelf: "projects", path: "projects/trip.md" }),
-      undoneLine({ title: "Answer", shelf: "topics", path: "topics/answer.md" }),
+      undoneLine({ title: "Answer", shelf: "topics", path: "topics/answer.md", created: true }),
+      undoneLine({ title: "Answer", shelf: "topics", path: "topics/answer.md", created: false }),
       stoppedSaveLine("Claude Code", null),
       stoppedSaveLine("Claude Code", "commit"),
       stoppedSaveLine("Claude Code", "uncommitted"),

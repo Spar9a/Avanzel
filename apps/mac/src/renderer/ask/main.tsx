@@ -8,9 +8,10 @@
 // three questions about the pages filed last, each in words beside Ask this, which asks it. The newest answer that can be kept
 // offers Save as a page: the agent writes the answer the person was shown as a page, while a line says what it is doing, beside a
 // Stop. It ends with where the page is, beside Undo, which takes the save back, and Open; or with Stopped, and the offer again; or
-// with a Notice that says what the save left and offers Save again. An Undo ends with Undone and the offer again, or, when git refuses
-// it, with a Notice under the saved line, which keeps Open. One question is answered, or answer saved, at a time, and Esc closes the
-// window, which gives up whichever is going on.
+// with a Notice that says what the save left and offers Save again. An Undo ends with Undone (the page gone, or back as it was when
+// the save only changed it) and the offer again, or, when git refuses it, with a Notice under the saved line, which keeps Open. One
+// question is answered, or answer saved, at a time; no save begins while an Undo waits, since a save that commits first can make git
+// refuse that Undo; and Esc closes the window, which gives up whichever is going on.
 import "@avanzel/ui/base.css";
 import { Actions, Button, Notice, Row, ShelfTag, Spinner, Stack, Text, TextField } from "@avanzel/ui";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
@@ -42,7 +43,7 @@ type Outcome = AskResult | "stopped" | null;
  * A turn's answer being saved as a page, or saved: `result` is null while the save runs, and then what main sent back. `stopping`:
  * Stop gave the save up, and main hasn't said how it ended, which may be as late as the end of a filing the save waits behind.
  * `undo`: the saved page's Undo, none until it is pressed. It is asked while main takes the save back, then undone, or refused when
- * git said no. A save pressed again replaces the whole of it.
+ * git said no. A save pressed again replaces the whole of it; none begins while an Undo is asked.
  */
 interface Saving {
   result: SaveResult | null;
@@ -88,6 +89,9 @@ function Ask() {
   const counter = useRef(0);
   const field = useRef<HTMLInputElement>(null);
   const busy = turns.some((turn) => turn.outcome === null || turn.saving?.result === null);
+  // An Undo waits in main's queue, behind a filing or a review, and has one try. A save that commits before it can make git refuse it
+  // (its log and index lines touch the same lines), so no save begins while one waits. A question touches no commit: it isn't held back.
+  const undoing = turns.some((turn) => turn.saving?.undo === "asked");
 
   // Whatever main says next starts the count again: the seconds are those of what the question is doing now.
   useEffect(() => api.onProgress((message) => setProgress({ message, since: Date.now() })), []);
@@ -134,13 +138,14 @@ function Ask() {
 
   /**
    * Saves the answer `turn` shows as a page, as its newest answered turn offers; whether it did. One run at a time: while a question
-   * is answered or an answer saved, saving does nothing. The save is the library's it came from (`AskResult.library`): main refuses
-   * it in another. A save that main can't take is read as one that failed, so a turn never stays busy. The field gets the focus, which
-   * the button that was pressed leaves.
+   * is answered or an answer saved, saving does nothing, and nor does it while an Undo waits (`undoing`): the buttons that save say they
+   * wait (`busy`), and drop the press. The save is the library's it came from (`AskResult.library`): main refuses it in another. A
+   * save that main can't take is read as one that failed, so a turn never stays busy. The field gets the focus, which the button that
+   * was pressed leaves.
    */
   const save = (turn: Turn) => {
     const { id, question: asked, outcome } = turn;
-    if (busy || outcome === null || outcome === "stopped" || !outcome.ok) return;
+    if (busy || undoing || outcome === null || outcome === "stopped" || !outcome.ok) return;
     const setSaving = (next: Saving) => setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, saving: next } : t)));
     setProgress({ message: null, since: Date.now() });
     setSaving({ result: null });
@@ -154,9 +159,9 @@ function Ask() {
   /**
    * Undo, on the turn whose answer was saved with a commit (`SaveResult.commit`): git takes the save back, once, in the library it was
    * saved in, and the turn tells how it went (`Saving.undo`): Undone, with the offer back on the newest turn, or a Notice that git
-   * refused it. It is not an agent's run, so it stops nothing and waits for nothing: a question or a save can go on beside it. A reply
-   * main can't give is read as a refusal, so the button never waits for ever. The field gets the focus, which the button that was pressed
-   * leaves.
+   * refused it. It is not an agent's run, so it stops nothing: a question can go on beside it. A save can't (`undoing`): it waits until
+   * the Undo is answered. A reply main can't give is read as a refusal, so the button never waits for ever. The field gets the focus,
+   * which the button that was pressed leaves.
    */
   const undo = (turn: Turn) => {
     const { id, saving } = turn;
@@ -256,7 +261,15 @@ function Ask() {
                   ) : (
                     <Reply outcome={turn.outcome} progress={progress} onStop={stop} />
                   )}
-                  <SaveAsPage turn={turn} newest={place === 0} progress={progress} onSave={() => save(turn)} onUndo={() => undo(turn)} onStop={stop} />
+                  <SaveAsPage
+                    turn={turn}
+                    newest={place === 0}
+                    progress={progress}
+                    undoing={undoing}
+                    onSave={() => save(turn)}
+                    onUndo={() => undo(turn)}
+                    onStop={stop}
+                  />
                 </Stack>
               </article>
             ))}
@@ -334,19 +347,25 @@ function Reply({ outcome, progress, onStop }: { outcome: Outcome; progress: Prog
  * What a turn does with its answer, under its reply. The newest answered turn offers Save as a page, unless its answer has been
  * saved, is being saved, or failed to be: a save that stopped, or was undone, is offered again. The save has its own status region
  * (`StatusRow`), mounted empty with the offer and kept, in the same place in the tree, while the turn has the offer or a save, so that its
- * first line is a change VoiceOver reads. While it is empty it takes no slot of its own (`.ask-save-line`).
+ * first line is a change VoiceOver reads. While it is empty it takes no slot of its own (`.ask-save-line`). The region sits in a group
+ * that is one from the offer to the end, never gaining or losing the role as the line comes: a role that changes in the commit that
+ * brings the region its text could make VoiceOver rebuild the subtree, count the region as new, and drop the line. Only its name changes,
+ * from the saved line, while a saved page stands.
  * - While it saves: the waiting line and Stop.
  * - Saved: where the page is, with Undo, which takes the save back (none without git, where the save has no commit), and Open. The saved
- *   line names that group, so each Open says which page it opens. They stay on their turn under newer questions.
- * - Undone: that the page is gone from the library, and the offer again on the newest turn.
+ *   line names the group, so each Open says which page it opens. They stay on their turn under newer questions.
+ * - Undone: that the page is gone from the library, or back as it was when the save only changed it (`undoneLine`), and the offer again
+ *   on the newest turn.
  * - An Undo git refused: a Notice under the saved line, which keeps Open and offers no second try.
  * - Stopped: what the save left, and the offer.
  * A save that saved nothing is a Notice, outside the region, with the fix Save again on the newest turn (`Failed`), and none on an older one.
+ * While an Undo waits (`undoing`) the buttons that save, the offer and Save again, wait too (`busy`).
  */
 function SaveAsPage({
   turn,
   newest,
   progress,
+  undoing,
   onSave,
   onUndo,
   onStop,
@@ -354,6 +373,8 @@ function SaveAsPage({
   turn: Turn;
   newest: boolean;
   progress: Progress;
+  /** Whether an Undo, on this turn or another, waits for main's answer. */
+  undoing: boolean;
   onSave(): void;
   onUndo(): void;
   onStop(): void;
@@ -364,30 +385,30 @@ function SaveAsPage({
   const undo = saving?.undo;
   // The save whose page stands (its line, Undo and Open), or the one that was taken back (its line says so).
   const saved = result?.kind === "saved" && undo !== "undone" ? result : null;
-  const undone = result?.kind === "saved" && undo === "undone" ? result : null;
+  const takenBack = result?.kind === "saved" && undo === "undone" ? result : null;
   const answered = outcome !== null && outcome !== "stopped" && outcome.ok && outcome.paragraphs.length > 0;
-  const offered = newest && answered && (saving === undefined || result?.kind === "stopped" || undone !== null);
+  const offered = newest && answered && (saving === undefined || result?.kind === "stopped" || takenBack !== null);
   if (!offered && saving === undefined) return null;
   return (
-    <div role={saved ? "group" : undefined} aria-labelledby={saved ? lineId : undefined}>
+    <div role="group" aria-labelledby={saved ? lineId : undefined}>
       <Stack gap={8}>
         <div className="ask-save-line">
           <StatusRow running={result === null && saving !== undefined} progress={progress} lines={SAVING_LINES} stopping={saving?.stopping === true} onStop={onStop}>
             {saved && <Text variant="footnote" tone="secondary" id={lineId}>{savedLine(saved.page)}</Text>}
-            {undone && <Text variant="footnote" tone="secondary">{undoneLine(undone.page)}</Text>}
+            {takenBack && <Text variant="footnote" tone="secondary">{undoneLine(takenBack.page)}</Text>}
             {result?.kind === "stopped" && <Text variant="footnote" tone="secondary">{stoppedSaveLine(result.agent, result.partial)}</Text>}
           </StatusRow>
         </div>
         {result?.kind === "unsaved" && (
           <Failed
             problem={saveProblem(result.failure, result.agent, result.partial, new Date())}
-            again={newest ? { label: "Save again", onPress: onSave, withSettings: true } : undefined}
+            again={newest ? { label: "Save again", onPress: onSave, withSettings: true, busy: undoing } : undefined}
           />
         )}
         {undo === "refused" && <Notice tone="error" title={undoRefused.title}>{undoRefused.body}</Notice>}
         {(offered || saved) && (
           <Actions align="start">
-            {offered && <Button size="small" onClick={onSave}>Save as a page</Button>}
+            {offered && <Button size="small" busy={undoing} onClick={onSave}>Save as a page</Button>}
             {saved && saved.commit !== null && undo !== "refused" && <Button size="small" busy={undo === "asked"} onClick={onUndo}>Undo</Button>}
             {saved && <Button size="small" onClick={() => api.openPage(pageName(saved.page.path))}>Open</Button>}
           </Actions>
@@ -407,6 +428,8 @@ interface Again {
    * settings are mended this is the only way.
    */
   withSettings?: true;
+  /** Shows the button waiting, and drops the press: a save waits for an Undo that waits (`Ask`'s `undoing`). */
+  busy?: boolean;
 }
 
 /**
@@ -426,7 +449,7 @@ function Failed({ problem, again }: { problem: AskProblem; again?: Again | undef
         again && (
           <Actions align="start">
             {(!problem.settings || again.withSettings) && (
-              <Button size="small" variant={problem.terminal || problem.settings ? "secondary" : "primary"} onClick={again.onPress}>{again.label}</Button>
+              <Button size="small" variant={problem.terminal || problem.settings ? "secondary" : "primary"} busy={again.busy} onClick={again.onPress}>{again.label}</Button>
             )}
             {problem.terminal && <Button size="small" variant="primary" onClick={() => window.avanzel.setup.openTerminal()}>Open Terminal</Button>}
             {problem.settings && (

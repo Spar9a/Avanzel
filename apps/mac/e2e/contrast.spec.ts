@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
 import type { CapsuleState } from "../src/shared/ipc.ts";
+import { filedFromTheCapsule, launchOn } from "./capsule-helpers.ts";
 import { call, filesUnder, filingClaude, firstRun, launch, makeLibrary, screenshotFixture, windowFor } from "./helpers.ts";
 
 type Appearance = "light" | "dark";
@@ -460,6 +461,47 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
     for (const { piece, pointerEvents } of pieces) expect(pointerEvents, `capsule ${name}: ${piece}`).toBe("auto");
     found.push(...(await readable(app, capsule, `capsule ${name}`, desktops)));
   }
+  await app.close();
+  expect(found).toEqual([]);
+});
+
+// Ask's save and its Undo, which the test above can't reach: its library has no git, so a save there has no commit to take back, and its
+// app hears no spoken thought to file. Here the library is a git one, and the app files a thought when asked to.
+test("Ask's saved, undone and refused turns are readable in light and dark", async () => {
+  test.setTimeout(120_000);
+  const { app } = await launchOn(await makeLibrary({ git: true }));
+  const found: string[] = [];
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  const field = ask.getByRole("textbox", { name: "Ask your library" });
+  await field.fill("Summarize my ideas");
+  await field.press("Enter");
+  await expect(ask.getByText("Q: Summarize my ideas")).toBeVisible({ timeout: 60_000 });
+  const turn = ask.locator("article").first();
+  const offer = turn.getByRole("button", { name: "Save as a page", exact: true });
+  const undo = turn.getByRole("button", { name: "Undo", exact: true });
+  const saved = turn.getByText("Saved as “Answer” in Topics.", { exact: true });
+  // The answer saved as a page: the saved line, with Undo and Open.
+  await offer.click();
+  await expect(saved).toBeVisible({ timeout: 60_000 });
+  await expect(undo).toBeVisible();
+  await expect(turn.getByRole("button", { name: "Open", exact: true })).toBeVisible();
+  found.push(...(await readable(app, ask, "Ask, saved", desktops)));
+  // Taken back: the line that says so, and the offer again.
+  await undo.click();
+  await expect(turn.getByText("Undone. “Answer” is no longer in your library.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(offer).toBeVisible();
+  found.push(...(await readable(app, ask, "Ask, undone", desktops)));
+  // Saved again, then a filing comes after the save, into the same lines of the log: git can't take the save back, and the turn's Notice
+  // says so, beside the saved line and Open.
+  await offer.click();
+  await expect(saved).toBeVisible({ timeout: 60_000 });
+  await filedFromTheCapsule(app);
+  await undo.click();
+  const alert = ask.getByRole("alert");
+  await expect(alert.getByText("This one can't be undone automatically.", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(alert.getByText("Usually a later change touched the same lines. The library's history keeps both versions.", { exact: true })).toBeVisible();
+  found.push(...(await readable(app, ask, "Ask, undo refused", desktops)));
   await app.close();
   expect(found).toEqual([]);
 });

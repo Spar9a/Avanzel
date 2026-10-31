@@ -334,7 +334,9 @@ export class Controller {
   /**
    * The answers saved as pages that the Ask window can take back (`undoSave`): each save's commit, with the library it was saved in. A
    * commit is added when the save hands it to the window, while that window is open; it goes as the Undo asks for it (one try), and all
-   * of them go when the window closes (`openAsk`). The library's history keeps the commits either way.
+   * of them go when the window closes (`openAsk`). The library's history keeps the commits either way. Closing the window ends the right
+   * to ask for an Undo, not an Undo already asked for: that one has left the map and waits in the queue, and takes the save back when its
+   * turn comes, whether the window is open or not (`undoSave`).
    */
   private readonly savedAnswers = new Map<string, Vault>();
   /** First-run setup: its window and session, and Zel's bubble once it has ended (setup.ts). */
@@ -3302,6 +3304,9 @@ export class Controller {
    * goes from `savedAnswers` as it is asked for, before the first await, so it has one try: git may refuse it (usually a later change touched
    * the same lines), and a second Undo of it, here or from the page of a window that opens later, finds none. It posts no notification and
    * puts up no card on the capsule: the turn that asked tells the person. A revert that threw is a refusal, as it is on the filed card (`undo`).
+   * Closing the window does not cancel an Undo that is already asked for: it has no abort, so one queued behind a long filing still takes
+   * the save back after its window closed, and the turn that would tell it is gone, so nobody is told. The person asked for it, and the
+   * library's history keeps the revert.
    */
   async undoSave(sender: WebContents, commit: string): Promise<boolean> {
     const library = this.savedAnswers.get(commit);

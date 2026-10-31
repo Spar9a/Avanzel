@@ -15,12 +15,14 @@ import {
   launchOn,
   notified,
   onDay,
+  reachedUndo,
   receiptItem,
   trayOffersUndo,
   undoCalls,
   undoItem,
   undone,
   watchUndos,
+  type Left,
 } from "./capsule-helpers.ts";
 import { alive, call, capsuleKind, exists, gitOut, launch, makeLibrary, onlyAgentsIn, openedWith, read, recentlyFiled, snap, stubOpening, windowFor } from "./helpers.ts";
 
@@ -71,7 +73,9 @@ test("Ask suggests a question about each page filed last, newest first, and Ask 
   await ask.getByRole("group", { name: "What am I doing with Maya?", exact: true }).getByRole("button", { name: "Ask this", exact: true }).click();
   await expect(ask.getByRole("heading", { name: "What am I doing with Maya?", exact: true })).toBeVisible();
   await expect(ask.getByText("Q: What am I doing with Maya?")).toBeVisible({ timeout: 60_000 });
-  await expect(ask.getByRole("group")).toHaveCount(0);
+  // No suggestion is left, and no group is named by one: the only group is the answer's Save as a page, which nothing names yet.
+  await expect(ask.getByRole("button", { name: "Ask this", exact: true })).toHaveCount(0);
+  expect(await groupNames(ask)).toEqual([""]);
   await expect(field).toHaveValue("draft");
   await expect(field).toBeFocused();
   await app.close();
@@ -188,8 +192,19 @@ const saveOffer = (ask: Page) => ask.locator("article").first().getByRole("butto
 /** What the turn says once the fake agent has saved: it writes topics/answer.md, which has the title "Answer". */
 const SAVED = "Saved as “Answer” in Topics.";
 
-/** What the turn says once that save is taken back. */
+/** Asks `question`, saves its answer as a page, and waits until the newest turn says it is saved: the Ask window. */
+async function savedIn(app: ElectronApplication, question = "Summarize my ideas"): Promise<Page> {
+  const ask = await answeredIn(app, question);
+  await saveOffer(ask).click();
+  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
+  return ask;
+}
+
+/** What the turn says once that save is taken back, when the save made its page. */
 const UNDONE = "Undone. “Answer” is no longer in your library.";
+
+/** What it says when the save only changed a page the library had: Undo put the page back, and it is still there. */
+const UNDONE_CHANGED = "Undone. “Answer” is back as it was.";
 
 /** The turn `place` from the top: 0 is the newest. */
 const turnAt = (ask: Page, place = 0) => ask.locator("article").nth(place);
@@ -216,10 +231,21 @@ test("Save as a page saves the answer the person saw, says where, and opens it",
   await expect(offer).toHaveAttribute("data-variant", "secondary");
   await expect(offer).toHaveAttribute("data-size", "small");
   // It sits 8 pt under the answer's last line, as the turn's other pieces do: the save's status region, empty until the save says
-  // something, takes no slot of its own. No group is named before there is a saved line to name it.
+  // something, takes no slot of its own.
   const [answered, offered] = [await turnAt(ask).getByText(/^fake answered in \d+ s$/).boundingBox(), await offer.boundingBox()];
   expect(offered!.y - (answered!.y + answered!.height)).toBeCloseTo(8, 0);
-  await expect(ask.getByRole("group")).toHaveCount(0);
+  // The offer is in a group from the start, which nothing names until there is a saved line to name it. The group keeps its role through
+  // the whole save: a role that came in the commit that brings the region its first line could make VoiceOver count the region as new
+  // and drop the line. So the group is held, and its role watched, from here on.
+  const wrapper = ask.getByRole("group");
+  await expect(wrapper).toHaveCount(1);
+  await expect(wrapper).not.toHaveAttribute("aria-labelledby");
+  const group = (await wrapper.elementHandle())!;
+  await group.evaluate((el) => {
+    const watched = window as unknown as { roleChanges: number };
+    watched.roleChanges = 0;
+    new MutationObserver((records) => (watched.roleChanges += records.length)).observe(el, { attributes: true, attributeFilter: ["role"] });
+  });
   await snap(ask, "9-ask-save-offered");
   // The fake's save takes well under a second: the save's run waits 1.5 s, so its line is there to read. The variable is set as
   // agentMode sets its own, and only the run that follows is held up.
@@ -247,6 +273,9 @@ test("Save as a page saves the answer the person saw, says where, and opens it",
   await expect(offer).toHaveCount(0);
   await expect(ask.getByRole("group")).toHaveCount(1);
   await expect(turnAt(ask).getByRole("group", { name: SAVED, exact: true }).getByRole("button")).toHaveText(["Undo", "Open"]);
+  // It is the group the offer was in, still there, and its role never changed on the way.
+  expect(await group.evaluate((el) => el.isConnected && el.getAttribute("role") === "group")).toBe(true);
+  expect(await ask.evaluate(() => (window as unknown as { roleChanges: number }).roleChanges)).toBe(0);
   await snap(ask, "9-ask-saved");
   await ask.locator("article").first().getByRole("button", { name: "Open", exact: true }).click();
   await expect.poll(() => openedWith(app)).toHaveLength(1);
@@ -515,16 +544,16 @@ test("only the Ask window's page can save", async () => {
 test("Undo takes the saved page back, once, and the turn says so", async () => {
   const { app, library } = await launchOn(await makeLibrary({ git: true })); // up before the wrappers go on
   await watchUndos(app);
-  const ask = await answeredIn(app, "Summarize my ideas");
+  const ask = await savedIn(app);
   const turn = turnAt(ask);
-  await saveOffer(ask).click();
-  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
   const commit = gitOut(library, "rev-parse", "HEAD").trim();
   // The saved line names its buttons' group: Undo before Open, both small and secondary.
   await expect(turn.getByRole("group", { name: SAVED, exact: true }).getByRole("button")).toHaveText(["Undo", "Open"]);
   await expect(undoOf(turn)).toHaveAttribute("data-variant", "secondary");
   await expect(undoOf(turn)).toHaveAttribute("data-size", "small");
   await undoOf(turn).click();
+  // The field gets the focus, which the pressed button leaves, as it does after Save and Stop: what is typed next is a question.
+  await expect(ask.getByRole("textbox", { name: "Ask your library" })).toBeFocused();
   await expect(saveRegion(ask)).toHaveText(UNDONE, { timeout: 30_000 });
   // The save's commit is taken back, once: the page and its log line are gone, and the history keeps the revert.
   expect(undone(library)).toEqual(["avanzel: undo save answer to “Summarize my ideas”"]);
@@ -535,7 +564,9 @@ test("Undo takes the saved page back, once, and the turn says so", async () => {
   await expect(undoOf(turn)).toHaveCount(0);
   await expect(turn.getByRole("button", { name: "Open", exact: true })).toHaveCount(0);
   await expect(saveOffer(ask)).toBeVisible();
-  await expect(ask.getByRole("group")).toHaveCount(0);
+  // The offer's group stays, and no saved line names it any more.
+  await expect(ask.getByRole("group")).toHaveCount(1);
+  await expect(ask.getByRole("group")).not.toHaveAttribute("aria-labelledby");
   await expect(ask.getByRole("alert")).toHaveCount(0);
   expect(await notified(app, "Undone")).toEqual([]);
   expect(await capsuleKind(app)).toBe("hidden");
@@ -547,16 +578,38 @@ test("Undo takes the saved page back, once, and the turn says so", async () => {
   await app.close();
 });
 
+test("Undo of a save that only changed its page says the page is back as it was, and the page stays", async () => {
+  const { app, library } = await launchOn(await makeLibrary({ git: true }));
+  await watchUndos(app);
+  // The first save makes topics/answer.md. The fake agent writes it again for every save, so the second one changes the page the library
+  // has (a page's `created` is false), as a real agent does when it updates a page instead of making a near-duplicate.
+  await savedIn(app);
+  const ask = await answeredIn(app, "What are my goals?");
+  await saveOffer(ask).click();
+  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
+  expect(read(library, "log.md").match(/\| ask \|/g)).toHaveLength(2);
+  // Undoing the second save puts the page back as it was: it is still in the library, and the turn does not say it is gone.
+  await undoOf(turnAt(ask)).click();
+  await expect(saveRegion(ask)).toHaveText(UNDONE_CHANGED, { timeout: 30_000 });
+  expect(undone(library)).toEqual(["avanzel: undo save answer to “What are my goals?”"]);
+  expect(exists(library, "topics/answer.md")).toBe(true);
+  expect(read(library, "log.md").match(/\| ask \|/g)).toHaveLength(1); // the first save's line stays
+  expect(await undoCalls(app)).toBe(1);
+  // The first save was not touched: its turn still offers its Undo and Open.
+  await expect(turnAt(ask, 1).getByRole("button")).toHaveText(["Undo", "Open"]);
+  await snap(ask, "9-ask-save-undone-changed");
+  await app.close();
+});
+
 test("a filing after the save makes git refuse its Undo, and the turn says so once", async () => {
   const { app, library } = await launchOn(await makeLibrary({ git: true }));
   await watchUndos(app);
-  const ask = await answeredIn(app, "Summarize my ideas");
+  const ask = await savedIn(app);
   const turn = turnAt(ask);
-  await saveOffer(ask).click();
-  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
   // A filing comes after the save, into the same lines of the log: git can't take the save back without it.
   await filedFromTheCapsule(app);
   await undoOf(turn).click();
+  await expect(ask.getByRole("textbox", { name: "Ask your library" })).toBeFocused(); // a refused Undo leaves it there too
   const alert = ask.getByRole("alert");
   await expect(alert.getByText("This one can't be undone automatically.", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(alert.getByText("Usually a later change touched the same lines. The library's history keeps both versions.", { exact: true })).toBeVisible();
@@ -577,9 +630,7 @@ test("the Undo takes back in the library the save was made in, whichever is open
   const library = await makeLibrary({ git: true });
   // The libraries that open are remembered in the config folder, which is this test's own.
   const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
-  const ask = await answeredIn(app, "Summarize my ideas");
-  await saveOffer(ask).click();
-  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
+  const ask = await savedIn(app);
   // Another library opens; the window stays, with its saved turn.
   const other = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-")), "Avanzel");
   await call(app, "createLibrary", other);
@@ -594,9 +645,7 @@ test("the Undo takes back in the library the save was made in, whichever is open
 test("in a library without git, the saved line offers Open and no Undo", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
-  const ask = await answeredIn(app, "Summarize my ideas");
-  await saveOffer(ask).click();
-  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
+  const ask = await savedIn(app);
   await expect(turnAt(ask).getByRole("group", { name: SAVED, exact: true }).getByRole("button")).toHaveText(["Open"]);
   await expect(undoOf(turnAt(ask))).toHaveCount(0);
   await app.close();
@@ -605,9 +654,7 @@ test("in a library without git, the saved line offers Open and no Undo", async (
 test("only the Ask window's page can undo a save", async () => {
   const { app, library } = await launchOn(await makeLibrary({ git: true }));
   await watchUndos(app);
-  const ask = await answeredIn(app, "Summarize my ideas");
-  await saveOffer(ask).click();
-  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
+  const ask = await savedIn(app);
   const commit = gitOut(library, "rev-parse", "HEAD").trim();
   // Every window has the same bridge, so Settings' page can send ask:undo-save: main knows the commit, and refuses it all the same.
   await call(app, "showSettings");
@@ -626,9 +673,7 @@ test("only the Ask window's page can undo a save", async () => {
 test("a saved turn keeps its Undo under newer questions, and an older turn that is undone says so with no offer", async () => {
   const library = await makeLibrary({ git: true });
   const app = await launch({ AVANZEL_LIBRARY: library });
-  const ask = await answeredIn(app, "Summarize my ideas");
-  await saveOffer(ask).click();
-  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
+  const ask = await savedIn(app);
   // A newer question comes after the save: the saved turn is the second now, and keeps its line, Undo and Open.
   await answeredIn(app, "What are my goals?");
   const [newest, older] = [turnAt(ask, 0), turnAt(ask, 1)];
@@ -647,10 +692,8 @@ test("a saved turn keeps its Undo under newer questions, and an older turn that 
 test("an undone save can be saved again, and the second save has its own Undo", async () => {
   const library = await makeLibrary({ git: true });
   const app = await launch({ AVANZEL_LIBRARY: library });
-  const ask = await answeredIn(app, "Summarize my ideas");
+  const ask = await savedIn(app);
   const turn = turnAt(ask);
-  await saveOffer(ask).click();
-  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
   await undoOf(turn).click();
   await expect(saveRegion(ask)).toHaveText(UNDONE, { timeout: 30_000 });
   // The offer is back, and pressing it saves the same answer again: a new commit, with its own Undo.
@@ -668,9 +711,7 @@ test("an undone save can be saved again, and the second save has its own Undo", 
 test("closing the Ask window ends its Undo, and the library's history keeps the save", async () => {
   const { app, library } = await launchOn(await makeLibrary({ git: true }));
   await watchUndos(app);
-  const ask = await answeredIn(app, "Summarize my ideas");
-  await saveOffer(ask).click();
-  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
+  const ask = await savedIn(app);
   const commit = gitOut(library, "rev-parse", "HEAD").trim();
   await call(app, "closeAsk");
   await expect.poll(() => ask.isClosed()).toBe(true);
@@ -681,6 +722,68 @@ test("closing the Ask window ends its Undo, and the library's history keeps the 
   expect(undone(library)).toEqual([]);
   expect(await undoCalls(app)).toBe(0);
   expect(exists(library, "topics/answer.md")).toBe(true);
+  await app.close();
+});
+
+test("Save as a page waits for an Undo that waits, and a question doesn't", async () => {
+  // A save that commits before an Undo that waits can make git refuse that Undo, which has one try. So while an Undo waits (here it is
+  // held at the library's door), the newest turn's offer is busy, and a press on it saves nothing. A question touches no commit: it goes on.
+  const record = newRecord();
+  const { app, library } = await launchOn(await makeLibrary({ git: true }), { FAKE_AGENT_RECORD: record });
+  await watchUndos(app, { hold: true });
+  await savedIn(app);
+  const ask = await answeredIn(app, "What are my goals?");
+  await expect(saveOffer(ask)).not.toHaveAttribute("aria-busy", "true");
+  await undoOf(turnAt(ask, 1)).click();
+  await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
+  // The offer says it waits, and a press on it begins no save: the turn shows no Stop and no line, and the agent is not run.
+  await expect(saveOffer(ask)).toHaveAttribute("aria-busy", "true");
+  await snap(ask, "9-ask-save-offer-waiting");
+  await saveOffer(ask).click();
+  await expect(turnAt(ask).getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  await expect(saveRegion(ask)).toHaveText("");
+  // A question is answered beside the Undo, and the offer on its turn waits as well.
+  await answeredIn(app, "What about my people?");
+  await expect(saveOffer(ask)).toHaveAttribute("aria-busy", "true");
+  // The Undo lands: the first turn says so, and the offer is free to save.
+  await app.evaluate(() => (globalThis as Left).letUndoIn?.());
+  await expect(turnAt(ask, 2).getByRole("status").nth(1)).toHaveText(UNDONE, { timeout: 30_000 });
+  await expect(saveOffer(ask)).not.toHaveAttribute("aria-busy", "true");
+  await saveOffer(ask).click();
+  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
+  // Two saves ran, the first and the last: the press on the waiting offer began none.
+  expect(runsIn(record).filter((run) => run.prompt.includes("<shown-answer>"))).toHaveLength(2);
+  expect(undone(library)).toEqual(["avanzel: undo save answer to “Summarize my ideas”"]);
+  await app.close();
+});
+
+test("Save again waits for an Undo that waits, as the offer does", async () => {
+  const { app } = await launchOn(await makeLibrary({ git: true }));
+  await watchUndos(app, { hold: true });
+  await savedIn(app);
+  // The next answer's save saves no page: its Notice offers Save again, on the newest turn.
+  const ask = await answeredIn(app, "What are my goals?");
+  await agentMode(app, "noop");
+  await saveOffer(ask).click();
+  const alert = ask.getByRole("alert");
+  await expect(alert.getByText("fake didn't save a page.", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await agentMode(app, "ok");
+  const again = alert.getByRole("button", { name: "Save again", exact: true });
+  await expect(again).not.toHaveAttribute("aria-busy", "true");
+  await undoOf(turnAt(ask, 1)).click();
+  await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
+  // It waits, and a press on it begins no save: the Notice stays, and no Stop shows.
+  await expect(again).toHaveAttribute("aria-busy", "true");
+  await again.click();
+  await expect(turnAt(ask).getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  await expect(alert).toHaveCount(1);
+  // The Undo lands, and Save again saves.
+  await app.evaluate(() => (globalThis as Left).letUndoIn?.());
+  await expect(turnAt(ask, 1).getByRole("status").nth(1)).toHaveText(UNDONE, { timeout: 30_000 });
+  await expect(again).not.toHaveAttribute("aria-busy", "true");
+  await again.click();
+  await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
+  await expect(alert).toHaveCount(0);
   await app.close();
 });
 
@@ -771,6 +874,7 @@ test("a save whose agent is gone or missing can be tried again, beside Open Sett
   await app.close();
 });
 
+// It takes 10 s or more of real time: the save's line counts from SLOW_SECONDS, a constant of setup/copy.ts, so the test waits for it.
 test("a save that takes 10 s counts its seconds beside Stop, in the flow of its turn", async () => {
   const library = await makeLibrary({ git: true });
   const app = await launch({ AVANZEL_LIBRARY: library });

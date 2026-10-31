@@ -77,7 +77,11 @@ export function stoppedSaveLine(agent: string, partial: PartialEdits): string {
   return `Stopped. ${unsavedLine(agent, partial)}`;
 }
 
-/** What the saved line says once the save is taken back: the page it wrote is gone from the library. */
+/**
+ * What the saved line says once the save is taken back. A page the save made is gone from the library. A page it only changed
+ * (`created` is false: the library's own instructions have an agent update a page rather than make a near-duplicate) is still there,
+ * back as it was. A page that says nothing of how it came (`FiledPage.created` is set by a filing's own pages only) is read as made.
+ */
 export function undoneLine(page: FiledPage): string {
-  return `Undone. “${page.title}” is no longer in your library.`;
+  return page.created === false ? `Undone. “${page.title}” is back as it was.` : `Undone. “${page.title}” is no longer in your library.`;
 }
