@@ -234,6 +234,13 @@ describe("ask", () => {
     const outcome = await librarian.ask("Summarize my ideas", { save: true });
     expect(outcome.changes.created).toEqual(["topics/answer.md"]);
     expect(read(vault.logPath)).toContain("- 2026-10-20 14:03 | ask | Summarize my ideas → [[answer]]\n");
+    expect(outcome.commit).toBeNull(); // this library has no git
+  });
+
+  it("a save hands the agent the answer the owner was shown", async () => {
+    const runs = recordRuns();
+    await librarian.ask("Summarize my ideas", { save: true, answer: "You want a greenhouse." });
+    expect(runs()[0]?.prompt).toContain("You want a greenhouse.");
   });
 
   it("needs a question", async () => {

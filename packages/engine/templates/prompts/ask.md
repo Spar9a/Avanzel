@@ -5,7 +5,7 @@ AGENTS.md. Today is ${today}.
 
 The owner asks:
 ${question}
-
+${shown}
 Answer from the library only:
 1. Read index.md, then open the pages that look relevant and search the shelves for key words.
    Open captures in raw/ only when the owner's exact words matter.

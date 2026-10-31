@@ -207,6 +207,39 @@ describe.skipIf(!git.available())("with git", () => {
     expect(subjects()).toEqual(["avanzel: new library"]);
   });
 
+  it("a saved answer is one commit, which the outcome hands out, and Undo takes it back", async () => {
+    const outcome = await librarian.ask("Summarize my ideas", { save: true, answer: "You want a greenhouse." });
+    expect(outcome.commit).toBe(head());
+    expect(subjects()).toEqual(["avanzel: save answer to “Summarize my ideas”", "avanzel: new library"]);
+    expect(await librarian.undo([outcome.commit ?? ""])).toBe(1);
+    expect(existsSync(join(versioned.root, "topics", "answer.md"))).toBe(false);
+    expect(read(versioned.logPath)).not.toContain("| ask |");
+  });
+
+  it("a save stopped part way hands out what it left as its own commit", async () => {
+    mode("slow-messy");
+    const controller = new AbortController();
+    const saving = librarian.ask("Summarize my ideas", { save: true, answer: "You want a greenhouse.", signal: controller.signal });
+    const half = join(versioned.root, "goals", "half.md");
+    await vi.waitFor(() => expect(existsSync(half)).toBe(true), { timeout: 10_000 }); // it has left something behind
+    controller.abort();
+    const outcome = await saving;
+    expect(outcome.result.ok).toBe(false);
+    expect(outcome.commit).toBe(head());
+    expect(subjects()[0]).toBe("avanzel: leftovers of an answer that was not saved");
+  });
+
+  it("a read-only ask, and a save that changed nothing, hand out no commit", async () => {
+    expect((await librarian.ask("What are my goals?")).commit).toBeNull();
+    mode("fail");
+    expect((await librarian.ask("Summarize my ideas", { save: true, answer: "You want a greenhouse." })).commit).toBeNull();
+    expect(subjects()).toEqual(["avanzel: new library"]);
+  });
+
+  it("a review hands out its commit", async () => {
+    expect((await librarian.review()).commit).toBe(head());
+  });
+
   it("returns every commit of an evening review, the digest last", async () => {
     const one = librarian.captureText("one");
     const two = librarian.captureText("two");

@@ -88,6 +88,11 @@ export interface AgentOutcome {
   changes: Changes;
   report: string | null;
   guarded: string[];
+  /**
+   * The run's commit: a saved answer's or a review's, or the leftovers of a save or a review that didn't end well.
+   * Null for a read-only ask, without git, with auto_commit off, or when the run changed nothing.
+   */
+  commit: string | null;
 }
 
 export interface EveningReviewResult {
@@ -431,11 +436,17 @@ export class Librarian {
    * Answer from the library. It runs under the library lock even when read-only: the guard of an ask
    * that ran alongside a filing could put back a change the filing's guard had just undone. When it
    * has to wait for the lock, `progress` hears `WAITING` once, then `LOOKING` once the lock is held,
-   * before the agent starts; when the library is free, it hears nothing.
+   * before the agent starts; when the library is free, it hears nothing. A save given `answer`, the one
+   * the owner was shown, keeps its words as the page.
    */
   async ask(
     question: string,
-    { save = false, signal, progress = quiet }: { save?: boolean; signal?: AbortSignal; progress?: (message: string) => void } = {},
+    {
+      save = false,
+      answer: shownAnswer,
+      signal,
+      progress = quiet,
+    }: { save?: boolean; answer?: string; signal?: AbortSignal; progress?: (message: string) => void } = {},
   ): Promise<AgentOutcome> {
     if (!question.trim()) throw new AvanzelError('Ask a question, e.g. "what are my goals this year?"');
     const now = this.clock();
@@ -444,18 +455,20 @@ export class Librarian {
       if (waited) progress(LOOKING);
       if (save) await this.#commitOwnerChanges("saving an answer");
       const before = snapshot(this.vault.root);
-      const { result, guarded } = await this.#run(askPrompt(question, { save, now }), { write: save, signal });
+      const prompt = askPrompt(question, { save, now, answer: shownAnswer });
+      const { result, guarded } = await this.#run(prompt, { write: save, signal });
       const changes = diff(before, snapshot(this.vault.root)).without(guarded);
+      let commit: string | null = null;
       if (save && result.ok && changes.pages.length) {
         if (!changes.modified.includes("log.md")) {
           const pages = changes.pages.map(wikilink).join(", ");
           this.vault.appendLog("ask", `${codePoints(collapse(question), 80)} → ${pages}`, now);
         }
-        await this.#commit(`avanzel: save answer to “${codePoints(collapse(question), 60)}”`);
+        commit = await this.#commit(`avanzel: save answer to “${codePoints(collapse(question), 60)}”`);
       } else if (save) {
-        await this.#commit("avanzel: leftovers of an answer that was not saved"); // not the owner's
+        commit = await this.#commit("avanzel: leftovers of an answer that was not saved"); // not the owner's
       }
-      return { result, changes, report: null, guarded };
+      return { result, changes, report: null, guarded, commit };
     };
     return this.vault.withLock(answer, () => {
       waited = true;
@@ -478,13 +491,14 @@ export class Librarian {
         createInside(root, reportRel, `# Review ${localDate(now)}\n\n${result.output}\n`);
       }
       const changes = diff(before, snapshot(root)).without(guarded);
+      let commit: string | null;
       if (result.ok) {
         if (!this.vault.logMentions(stem(report))) this.vault.appendLog("review", `[[${stem(report)}]]`, now);
-        await this.#commit(`avanzel: review ${stem(report)}`);
+        commit = await this.#commit(`avanzel: review ${stem(report)}`);
       } else {
-        await this.#commit(`avanzel: leftovers of failed review ${stem(report)}`); // not the owner's
+        commit = await this.#commit(`avanzel: leftovers of failed review ${stem(report)}`); // not the owner's
       }
-      return { result, changes, report: isRegularFile(report) ? report : null, guarded };
+      return { result, changes, report: isRegularFile(report) ? report : null, guarded, commit };
     });
   }
 
