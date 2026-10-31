@@ -240,6 +240,19 @@ describe.skipIf(!git.available())("with git", () => {
     expect((await librarian.review()).commit).toBe(head());
   });
 
+  it("a review stopped part way hands out what it left as its own commit", async () => {
+    mode("slow-messy");
+    const controller = new AbortController();
+    const reviewing = librarian.review({ signal: controller.signal });
+    const half = join(versioned.root, "goals", "half.md");
+    await vi.waitFor(() => expect(existsSync(half)).toBe(true), { timeout: 10_000 }); // it has left something behind
+    controller.abort();
+    const outcome = await reviewing;
+    expect(outcome.result.ok).toBe(false);
+    expect(outcome.commit).toBe(head());
+    expect(subjects()[0]).toBe("avanzel: leftovers of failed review 2026-10-20");
+  });
+
   it("returns every commit of an evening review, the digest last", async () => {
     const one = librarian.captureText("one");
     const two = librarian.captureText("two");

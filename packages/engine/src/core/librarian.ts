@@ -443,7 +443,7 @@ export class Librarian {
     question: string,
     {
       save = false,
-      answer: shownAnswer,
+      answer,
       signal,
       progress = quiet,
     }: { save?: boolean; answer?: string; signal?: AbortSignal; progress?: (message: string) => void } = {},
@@ -451,11 +451,11 @@ export class Librarian {
     if (!question.trim()) throw new AvanzelError('Ask a question, e.g. "what are my goals this year?"');
     const now = this.clock();
     let waited = false;
-    const answer = async (): Promise<AgentOutcome> => {
+    const run = async (): Promise<AgentOutcome> => {
       if (waited) progress(LOOKING);
       if (save) await this.#commitOwnerChanges("saving an answer");
       const before = snapshot(this.vault.root);
-      const prompt = askPrompt(question, { save, now, answer: shownAnswer });
+      const prompt = askPrompt(question, { save, now, answer });
       const { result, guarded } = await this.#run(prompt, { write: save, signal });
       const changes = diff(before, snapshot(this.vault.root)).without(guarded);
       let commit: string | null = null;
@@ -470,7 +470,7 @@ export class Librarian {
       }
       return { result, changes, report: null, guarded, commit };
     };
-    return this.vault.withLock(answer, () => {
+    return this.vault.withLock(run, () => {
       waited = true;
       progress(WAITING);
     });

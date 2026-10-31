@@ -62,13 +62,22 @@ export function askPrompt(
   if (chars.length > 80) oneLine = `${chars.slice(0, 79).join("").trimEnd()}…`;
   const shownAnswer = save ? (answer?.trim() ?? "") : "";
   const mode = save ? substitute(shownAnswer ? SAVE_SHOWN : SAVE, { question_line: oneLine, ...times(now) }) : READONLY;
-  const shown = shownAnswer ? substitute(SHOWN, { answer: shownAnswer }) : "";
+  const shown = shownAnswer ? substitute(SHOWN, { answer: keepInsideFence(shownAnswer) }) : "";
   return render("prompts/ask.md", { question: question.trim(), mode, shown, ...times(now) });
 }
 
 export function reviewPrompt(reportRel: string, now: Date): string {
   const reportId = (reportRel.split("/").at(-1) ?? reportRel).replace(/\.[^.]*$/, "");
   return render("prompts/review.md", { report_path: reportRel, report_id: reportId, ...times(now) });
+}
+
+/**
+ * The answer, kept inside its fence. A closing `</shown-answer>` in it, or a lookalike (any case, spaces inside the tag),
+ * would end the fence early and leave the rest of the answer outside it, so it gets a backslash: `<\/shown-answer>`,
+ * which reads the same in Markdown. The prompt is left with one closing tag, its own.
+ */
+function keepInsideFence(answer: string): string {
+  return answer.replace(/<\s*\/\s*shown-answer/gi, "<\\/shown-answer");
 }
 
 function times(now: Date): { now: string; today: string } {
