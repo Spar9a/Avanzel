@@ -8,12 +8,16 @@ export interface ShortcutApi {
   unregisterAll(): void;
 }
 
-/** Each action by its role name: its item in the menu bar menu, which adds "…" to some. */
+/**
+ * Each action by its role name: its item in the menu bar menu, which adds "…" to some. Undo the last filing's item is there only after a
+ * filing. The actions register in this order (`registerShortcuts`), and Settings → Voice draws a row for each, in it.
+ */
 export const ACTION_NAMES: Readonly<Record<keyof Shortcuts, string>> = {
   dictate: "Record a thought",
   capture: "Capture screen with a comment",
   type: "Type a thought",
   ask: "Ask your library",
+  undo: "Undo the last filing",
 };
 
 const ORDER = ["Control", "Alt", "Shift", "Command"] as const;
@@ -78,6 +82,7 @@ export const ALTERNATIVES: Readonly<Record<keyof Shortcuts, readonly string[]>> 
   capture: ["Control+Alt+S", "Control+Alt+C"],
   type: ["Control+Alt+T", "Control+Alt+N"],
   ask: ["Control+Alt+A", "Control+Alt+Q"],
+  undo: ["Control+Alt+Z", "Control+Alt+U"],
 };
 
 /** The apps whose default shortcut is ⌥Space, each with the name `ps` gives its process. */
@@ -129,7 +134,7 @@ export function registerShortcuts(
   const problems: Partial<Record<keyof Shortcuts, string>> = {};
   const taken: (keyof Shortcuts)[] = [];
   const owners = new Map<string, keyof Shortcuts>(); // each shortcut macOS understands, by the action that has it
-  for (const key of ["dictate", "capture", "type", "ask"] as const) {
+  for (const key of Object.keys(ACTION_NAMES) as (keyof Shortcuts)[]) {
     const accelerator = shortcuts[key];
     if (!accelerator) continue;
     if (leftToApps(accelerator)) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filedLine, moreLine, notedLine, pageCaption, recordedLine, SHOWN_PAGES, shortTitle, stoppedLine, TITLE_CELLS, titleCells } from "../src/renderer/capsule/copy.ts";
+import { filedLine, moreLine, notedLine, pageCaption, recordedLine, SHOWN_PAGES, shortTitle, stillInMenuLine, stoppedLine, TITLE_CELLS, titleCells } from "../src/renderer/capsule/copy.ts";
 import { cancelledLine } from "../src/renderer/setup/copy.ts";
 
 // The capsule's result cards' words that are made from values: what a filing says of itself, of its pages, and the two Stopped
@@ -148,12 +148,25 @@ describe("recordedLine: the Stopped transcription's footer", () => {
   });
 });
 
+describe("stillInMenuLine: the taken notice's second sentence", () => {
+  it("names where each item is", () => {
+    expect(stillInMenuLine("dictate")).toBe("Pick another shortcut. “Record a thought” is still in the menu bar.");
+    expect(stillInMenuLine("capture")).toBe("Pick another shortcut. “Capture screen with a comment” is still in the menu bar.");
+    expect(stillInMenuLine("type")).toBe("Pick another shortcut. “Type a thought” is still in the menu bar.");
+    expect(stillInMenuLine("ask")).toBe("Pick another shortcut. “Ask your library” is still in the menu bar.");
+    // Undo the last filing is in the menu only after a filing, so it is not "still" there.
+    expect(stillInMenuLine("undo")).toBe("Pick another shortcut. “Undo the last filing” is in the menu bar after each filing.");
+  });
+});
+
 describe("the result cards' words are written as the design rules ask", () => {
   /** The lines that are sentences. */
   const sentences = [
     filedLine("Claude Code", 6),
     notedLine("Claude Code"),
     ...REVIEWS.flatMap((review) => [stoppedLine("Claude Code", false, 0, review), stoppedLine("Claude Code", true, 0, review), recordedLine(review)]),
+    stillInMenuLine("ask"),
+    stillInMenuLine("undo"),
   ];
   /** A row's small words, under the title or beside it. */
   const captions = [pageCaption({ created: true }), pageCaption({}), moreLine(2)];

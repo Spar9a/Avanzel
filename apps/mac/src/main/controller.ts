@@ -172,15 +172,18 @@ const FAKE_TRANSCRIPT_DELAY_MS = (process.env.AVANZEL_TEST === "1" && Number(pro
 const PREPARING_SHOW_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_PREPARING_SHOW_MS)) || 8_000;
 // How long the capsule says that a shortcut picked on its notice works.
 const PICKED_SHOW_MS = 3_000;
+// How long the capsule says that the Undo shortcut found no filing to take back.
+const NOTHING_TO_UNDO_MS = 3_000;
 // How long the capsule shows a filed card by itself, a reprint of it (`showLastReceipt`) too; hovering over it keeps it longer.
 const FILED_SHOW_MS = 8_000;
 /**
  * The capsule shows nothing, or a card that is finished: a result or a notice that has nothing more to say, and no one's work in it. "Show
- * the last receipt" is offered over these alone, and replaces them (`showLastReceipt`): over a problem with its fix, the editor or a
- * capture, a reprint would take the person's work or a problem's one fix away. Ask `showsFinishedCard`, not the set: a Stopped card is in it
- * by its kind, but is not finished when it says that the stopped run's edits stay.
+ * the last receipt" is offered over these alone, and replaces them (`showLastReceipt`), as does the bar that says there is no filing to
+ * undo (`pressUndoShortcut`): over a problem with its fix, the editor or a capture, either would take the person's work or a problem's one
+ * fix away. Ask `showsFinishedCard`, not the set: a Stopped card and a Saved card are in it by their kind, but are not finished when the
+ * Stopped card says that the stopped run's edits stay, or the Saved card has a line about what became of its recording.
  */
-const FINISHED_CARDS: ReadonlySet<CapsuleState["kind"]> = new Set<CapsuleState["kind"]>(["hidden", "filed", "saved", "cancelled", "recorded", "shortcut-picked"]);
+const FINISHED_CARDS: ReadonlySet<CapsuleState["kind"]> = new Set<CapsuleState["kind"]>(["hidden", "filed", "saved", "cancelled", "recorded", "shortcut-picked", "nothing-to-undo"]);
 // How long the capsule says that a filing or a transcription is stopped (hovering over it keeps it longer, as it does any card that
 // hides itself).
 const STOPPED_SHOW_MS = 6_000;
@@ -689,6 +692,7 @@ export class Controller {
       capture: () => void this.toggleCapture(),
       type: () => this.openQuick(),
       ask: () => this.openAsk(),
+      undo: () => this.pressUndoShortcut(),
     };
     let shortcuts = this.store.get().shortcuts;
     let registration = registerShortcuts(shortcuts, handlers, api);
@@ -845,14 +849,18 @@ export class Controller {
 
   /**
    * The capsule shows nothing or a finished card (`FINISHED_CARDS`): what a reprint of the last receipt may replace, and the only cards the
-   * menu offers it over. Not a Stopped card that tells the person the stopped run's edits stay (`partial`, `leftovers`): `settleStop` posts no
-   * notification while that card is up, so it is the one place they are told, and the notice that would say it later is a problem
-   * (`stoppedNotice`). Whatever else may replace a finished card asks this and not the set, so that the set and its exception are read together.
+   * menu offers it over, and what the bar that says there is no filing to undo may replace. Two cards in the set are not finished, because
+   * each is the one place the person is told something that a replacement would take away:
+   * - A Stopped card that tells the person the stopped run's edits stay (`partial`, `leftovers`): `settleStop` posts no notification while
+   *   that card is up, and the notice that would say it later is a problem (`stoppedNotice`).
+   * - A Saved card with a line about what became of its recording (`detail`, such as "Only your words were kept: …").
+   * Whatever else may replace a finished card asks this and not the set, so that the set and its exceptions are read together.
    */
   private showsFinishedCard(): boolean {
     const card = this.capsuleState;
     const keepsEdits = card.kind === "cancelled" && (card.partial || card.leftovers > 0);
-    return FINISHED_CARDS.has(card.kind) && !keepsEdits;
+    const hasRecordingLine = card.kind === "saved" && !!card.detail;
+    return FINISHED_CARDS.has(card.kind) && !keepsEdits && !hasRecordingLine;
   }
 
   /**
@@ -2824,12 +2832,31 @@ export class Controller {
   }
 
   /**
+   * The Undo shortcut is pressed, in any app. It does nothing in two cases:
+   * - Setup's window is open: the first thought it shows has an Undo of its own on screen, and a bar over that window would contradict it.
+   * - A take-back is in flight (`reverting`): it has taken the filing already, so a second press would find none to undo and put the bar
+   *   over the very card the first take-back is about to turn to Undone. The first tells the person, once.
+   * With a filing to undo (`undoableFiling`) it is the menu's Undo (`undoLastFiling`): one try, told once on the filed card of that filing
+   * or else by a notification, even while a recording runs (that notification is silent then, `tellUndone`). With none, a bar says so for
+   * `NOTHING_TO_UNDO_MS`, except once Avanzel is quitting, while a filing or a review goes on (`filingOrReviewGoing`) or a thought is in
+   * flight (`capturing`, which includes a refile whose card is hidden), and over any card that is not finished (`showsFinishedCard`): a
+   * recording, an editor, a problem with its fix, a Stopped card that says edits stay, a Saved card with a line about its recording. The
+   * bar replaces a finished card.
+   */
+  private pressUndoShortcut(): void {
+    if (this.setup.isOpen() || this.reverting.size > 0) return;
+    if (this.undoableFiling()) return void this.undoLastFiling();
+    if (this.quitting || this.filingOrReviewGoing() || this.capturing() || !this.showsFinishedCard()) return;
+    this.setCapsule({ kind: "nothing-to-undo" }, NOTHING_TO_UNDO_MS);
+  }
+
+  /**
    * How an Undo of the filing of `commit` ended, told once, whoever asked for it (the filed card, a reprint of it, or the menu): it worked
    * (`undone`), or git refused it, or the revert threw. `job` is the filing's own, which only a filing of this app run has. The filed card
    * of that filing, if the capsule still shows it, turns to Undone or to the refusal: the reprint when the capsule shows one and it is of
    * this commit, else the card of `job`. A newer card the person is using (a recording's, or an editor) is left as it is, and a
-   * notification says the same over it, and when the card has gone. The menu is built again for what the revert left; a card does that by
-   * itself (`setCapsule`), a notification not.
+   * notification says the same over it, and when the card has gone: silent while a recording runs (`notify`), as the shortcut's Undo may
+   * be pressed mid-dictation. The menu is built again for what the revert left; a card does that by itself (`setCapsule`), a notification not.
    */
   private tellUndone(job: FilingJob | undefined, undone: boolean, commit: string): void {
     const reprint = this.reprint;
@@ -2841,7 +2868,7 @@ export class Controller {
     } else {
       const note = undoneNote(this.openReview());
       if (showing) this.setCapsule({ kind: "saved", text: reprint !== null ? reprint.text : (job?.text ?? ""), note, undone: true }, 3500);
-      else this.notify("Undone", note);
+      else this.notify("Undone", note, undefined, !!this.recording);
     }
     if (!showing) this.refreshMenu();
   }
@@ -3192,7 +3219,9 @@ export class Controller {
 
   /**
    * A notification, with macOS's sound. `silent`: without it, because something else has made the sound (the evening review's Letter, which
-   * is its sound). `notified` keeps `silent` only on a silent one, so the tests' `{ title, body }` assertions stand for the others.
+   * is its sound), or because a recording runs and its recorder keeps no echo cancellation, so the sound would be heard in the words (an
+   * Undo pressed from the shortcut mid-dictation, `tellUndone`). `notified` keeps `silent` only on a silent one, so the tests' `{ title, body }`
+   * assertions stand for the others.
    */
   private notify(title: string, body: string, onClick?: () => void, silent = false): void {
     if (this.quitting) return;

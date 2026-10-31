@@ -207,13 +207,17 @@ export type CapsuleState =
       alternatives: string[];
     }
   /** A free shortcut picked on that notice works: `key` now uses `accelerator`. It hides by itself. */
-  | { kind: "shortcut-picked"; key: keyof Shortcuts; accelerator: string };
+  | { kind: "shortcut-picked"; key: keyof Shortcuts; accelerator: string }
+  /** The Undo shortcut was pressed with no filing to take back: a bar says so. It hides by itself. */
+  | { kind: "nothing-to-undo" };
 
 export interface Shortcuts {
   dictate: string;
   capture: string;
   type: string;
   ask: string;
+  /** Takes the last filing back from any app (the menu's Undo the last filing). */
+  undo: string;
 }
 
 export type FileMode = "now" | "evening";

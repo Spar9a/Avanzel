@@ -38,6 +38,11 @@ describe("settings store", () => {
     expect(settings).not.toHaveProperty("surprise");
   });
 
+  it("an older settings file, with four shortcuts, gets ⌥⇧Z for Undo the last filing", () => {
+    const four = { dictate: "Alt+D", capture: "Alt+Shift+S", type: "Alt+Shift+Space", ask: "Alt+Shift+A" };
+    expect(normalizeSettings({ shortcuts: four }).shortcuts).toEqual({ ...four, undo: "Alt+Shift+Z" });
+  });
+
   it("starts with sounds off, and only true turns them on", () => {
     expect(DEFAULT_SETTINGS.sounds).toBe(false);
     expect(new SettingsStore(path.join(tmp(), "settings.json")).get().sounds).toBe(false);

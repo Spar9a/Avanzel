@@ -1129,6 +1129,9 @@ const receiptItem = async (app: ElectronApplication) => (await menuOf(app)).find
 /** The item as the menu models it: a plain item, with no shortcut, shelf or sublabel. */
 const RECEIPT_ITEM = { type: "item", label: "Show the last receipt", action: "show-receipt" };
 
+/** Undo the last filing as the menu models it: a plain item with its shortcut, ⌥⇧Z, and no shelf or sublabel. */
+const UNDO_ITEM = { type: "item", label: "Undo the last filing", action: "undo-filing", accelerator: "Alt+Shift+Z" };
+
 /**
  * What the app has kept of `library`'s two Undo items in its profile (`undo-records.json` in `userData`, under the library's resolved
  * path): undefined while there is no file, or nothing in it for the library, which is the record of a library with nothing to undo.
@@ -1200,7 +1203,7 @@ test("Undo from the menu takes the last filing back and says so once", async () 
   expect(filesUnder(library, "ideas")).toHaveLength(1);
   expect(inbox(library)).toEqual([]);
   // The menu offers it, in the model and in the menu the tray holds, with the filing counted.
-  expect(await undoItem(app)).toEqual({ type: "item", label: "Undo the last filing", action: "undo-filing" });
+  expect(await undoItem(app)).toEqual(UNDO_ITEM);
   expect(await trayOffersUndo(app)).toBe(true);
   expect(await headOf(app)).toBe(`1 thought filed today. Evening review ${eveningWhen()}.`);
   await call(app, "dismiss"); // the card is hidden: the menu is all that offers Undo now
@@ -1321,7 +1324,8 @@ test("an Undo from the card that lands under a newer card is told by notificatio
   await expect.poll(() => capsuleKind(app), { timeout: 10_000 }).toBe("listening");
   await app.evaluate(() => (globalThis as Left).letUndoIn?.());
   await pressed;
-  expect(await said(app)).toEqual([{ title: "Undone", body: UNDONE_NOTE }]);
+  // Silent: the recording is on, and macOS's sound for the notification would be heard in the words.
+  expect(await said(app)).toEqual([{ title: "Undone", body: UNDONE_NOTE, silent: true }]);
   expect(await capsuleKind(app)).toBe("listening");
   // A notification was all that answered, and the menu the tray holds counts what is left all the same.
   expect((await heldMenu(app))[0]).toMatchObject({ label: `Nothing filed today. Evening review ${eveningWhen()}.` });
@@ -1348,7 +1352,7 @@ test("Undo from the menu follows the last filing: a note filed in the background
   await call(app, "idleForTests");
   expect(filesUnder(library, "ideas")).toHaveLength(2);
   expect(inbox(library)).toEqual([]);
-  expect(await undoItem(app)).toEqual({ type: "item", label: "Undo the last filing", action: "undo-filing" });
+  expect(await undoItem(app)).toEqual(UNDO_ITEM);
   expect(await trayOffersUndo(app)).toBe(true);
   // It ended with a notification and no card, and its receipt is the last one: the words are read from the capture the engine archived
   // (a background job has none of its own), without the embed of the recording that a dictated thought ends with (B2).
@@ -1539,7 +1543,7 @@ test("an evening review with nothing to file leaves Undo the last filing in plac
   expect(gitOut(library, "rev-list", "--count", "HEAD"), "the review wrote nothing").toBe(commits);
   // Offered again, in the model and in the menu the tray holds.
   await expect.poll(() => trayOffersUndo(app), { timeout: 10_000 }).toBe(true);
-  expect(await undoItem(app)).toEqual({ type: "item", label: "Undo the last filing", action: "undo-filing" });
+  expect(await undoItem(app)).toEqual(UNDO_ITEM);
   // And it still works: the page goes, and the note is back in the inbox.
   await call(app, "dismiss"); // the card is hidden: the menu is all that offers Undo now
   await pressUndo(app);
@@ -1593,7 +1597,7 @@ test("both Undo items survive a quit and relaunch, and each takes its own back",
   // Avanzel opens again with the same app data and the same library.
   const { app } = await hearing({ AVANZEL_USER_DATA: first.userData }, library);
   await watchUndos(app);
-  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toEqual({ type: "item", label: "Undo the last filing", action: "undo-filing" });
+  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toEqual(UNDO_ITEM);
   await expect.poll(() => reviewItem(app), { timeout: 20_000 }).toEqual({ type: "item", label: "Undo the last evening review", action: "undo-review" });
   expect(await trayOffersUndo(app)).toBe(true);
   expect((await heldMenu(app)).map((item) => item.label)).toContain("Undo the last evening review");
@@ -2339,6 +2343,36 @@ test("Show the last receipt is not offered over a Stopped card that says edits s
   expect(await trayOffersReceipt(app)).toBe(true);
   await showReceipt(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", text: "Plant tulips in October", reprint: { filedAt: expect.any(Number) } });
+  await app.close();
+});
+
+// A Saved card with a line about its recording ("Only your words were kept: …", `detail`) is the one place the person is told what became
+// of it, so it is not a finished card either (`showsFinishedCard`): no reprint replaces it, and nor does ⌥⇧Z's bar, which says there is
+// no filing to undo (the library has no git, so a filing leaves a receipt and nothing to undo). Over a Saved card without the line, both act.
+test("Show the last receipt and ⌥⇧Z's bar are not offered over a Saved card with a line about its recording, and are over one without", async () => {
+  const library = await makeLibrary();
+  const { app } = await hearing({}, library);
+  await filedFromTheCapsule(app);
+  await call(app, "dismiss");
+  const saved = (detail?: string) => ({ kind: "saved", text: "Call the plumber on Monday", note: "Saved to the inbox.", ...(detail ? { detail } : {}) });
+  const withLine = saved("Only your words were kept: the recording couldn't be saved.");
+  await call(app, "setCapsule", withLine);
+  expect(await receiptItem(app)).toBeUndefined();
+  expect(await trayOffersReceipt(app), "in the menu the tray holds").toBe(false);
+  await showReceipt(app);
+  expect(await call(app, "capsuleStateForTests"), "after a press of the receipt").toEqual(withLine);
+  expect(await call(app, "pressShortcutForTests", "undo")).toBe(true);
+  expect(await call(app, "capsuleStateForTests"), "after ⌥⇧Z").toEqual(withLine);
+  await call(app, "dismiss");
+  // Without the line, the card has nothing more to say: the bar replaces it, and the receipt is offered over the bar too.
+  await call(app, "setCapsule", saved());
+  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+  await expect.poll(() => trayOffersReceipt(app), { message: "in the menu the tray holds" }).toBe(true);
+  expect(await call(app, "pressShortcutForTests", "undo")).toBe(true);
+  expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "nothing-to-undo" });
+  expect(await receiptItem(app), "while the bar shows").toEqual(RECEIPT_ITEM);
+  await showReceipt(app);
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", reprint: { filedAt: expect.any(Number) } });
   await app.close();
 });
 

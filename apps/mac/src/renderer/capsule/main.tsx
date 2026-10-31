@@ -8,6 +8,7 @@ import { downloadFailedProblem } from "../../shared/problems.ts";
 import { playSound, prepareSounds, releaseSounds, wakeSounds } from "../common/sounds.ts";
 import { STAMP_LANDS_MS } from "../common/stamp.ts";
 import { api, type StateOf } from "./api.ts";
+import { stillInMenuLine } from "./copy.ts";
 import { editorScene } from "./editor.tsx";
 import { filedScene } from "./filed.tsx";
 import { filingScene } from "./filing.tsx";
@@ -58,6 +59,14 @@ function pickedScene(state: StateOf<"shortcut-picked">): Scene {
 }
 
 /**
+ * The Undo shortcut was pressed with no filing to take back. A bar and nothing else, drawn as the picked shortcut's is (`pickedScene`). It
+ * has no button: nothing is asked of the person, and it goes by itself.
+ */
+function nothingToUndoScene(): Scene {
+  return { bar: { mood: "filed", line: "There's no filing to undo." } };
+}
+
+/**
  * What each stacked state draws, from the top of its stack: its card, the hint, and its bar. Every kind of state is here: a kind added
  * without a scene is a type error, not a blank panel, as `cancelled` and `recorded` were for two tasks.
  */
@@ -81,6 +90,8 @@ function sceneOf(state: Stacked, levels: readonly number[]): Scene {
       return recordedScene(state);
     case "shortcut-picked":
       return pickedScene(state);
+    case "nothing-to-undo":
+      return nothingToUndoScene();
     default: {
       const unhandled: never = state;
       return unhandled;
@@ -159,7 +170,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: readonly numb
               </Actions>
             }
           >
-            Pick another shortcut. “{ACTION_NAMES[state.key]}” is still in the menu bar.
+            {stillInMenuLine(state.key)}
           </CapsuleNotice>
         </div>
       );

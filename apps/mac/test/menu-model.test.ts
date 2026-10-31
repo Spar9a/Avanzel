@@ -417,7 +417,7 @@ describe("tray menu", () => {
   });
 
   describe("Undo the last filing", () => {
-    const undo = { type: "item", label: "Undo the last filing", action: "undo-filing" };
+    const undo = { type: "item", label: "Undo the last filing", action: "undo-filing", accelerator: "Alt+Shift+Z" };
     const withUndo = (overrides: Partial<MenuInput> = {}) => buildMenuModel(input({ undoableFiling: true, ...overrides }), now);
 
     it("follows the recently filed pages, and is the last item of that section", () => {
@@ -455,10 +455,14 @@ describe("tray menu", () => {
       expect(empty.slice(7, 10)).toEqual(["Recently filed", "Undo the last filing", "--"]);
     });
 
-    it("is an item that can be read, not dimmed, with no shortcut, shelf or sublabel of its own", () => {
+    it("is an item that can be read, not dimmed, with its shortcut and no shelf or sublabel", () => {
       const item = withUndo().find((one) => one.type === "item" && one.action === "undo-filing");
       expect(item).toEqual(undo);
       expect(item).not.toHaveProperty("enabled", false);
+      // The shortcut is shown while it works: one that didn't register is not, as it is for the other four.
+      const unregistered = withUndo({ unregisteredShortcuts: ["undo"] }).find((one) => one.type === "item" && one.action === "undo-filing");
+      expect(unregistered).toEqual({ type: "item", label: "Undo the last filing", action: "undo-filing" });
+      expect(unregistered).not.toHaveProperty("accelerator");
     });
 
     it("is not offered where there is no library: setup or Settings come first", () => {

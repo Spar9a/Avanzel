@@ -388,6 +388,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
       "⌥Space is used by another app.",
     ],
     ["shortcut-picked", { kind: "shortcut-picked", key: "dictate", accelerator: "Control+Shift+Space" }, "Record a thought now uses ⌃⇧Space"],
+    ["nothing-to-undo", { kind: "nothing-to-undo" }, "There's no filing to undo."],
   ];
 }
 

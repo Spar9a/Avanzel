@@ -1,12 +1,16 @@
 // A shortcut another app holds (AVANZEL_FAKE_TAKEN_SHORTCUTS stands in for those apps): the capsule names it at launch
-// with two free ones to pick, the menu stops showing it, and Settings → Voice offers the same free ones.
+// with two free ones to pick, the menu stops showing it, and Settings → Voice offers the same free ones. And ⌥⇧Z, the shortcut
+// that takes the last filing back from any app, or says there is none to take back.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { CapsuleState, SettingsSnapshot } from "../src/shared/ipc.ts";
-import { call, capsuleKind, emptyHfCache, launch, makeLibrary, openSettings, snap, windowFor } from "./helpers.ts";
+import { dictate, inbox, launchOn, notified, reachedUndo, undoCalls, undone, watchUndos, type Left } from "./capsule-helpers.ts";
+import { call, capsuleKind, emptyHfCache, firstRun, launch, makeLibrary, openSettings, snap, windowFor } from "./helpers.ts";
+import { zel } from "./setup-helpers.ts";
 
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
 const capsuleState = async (app: ElectronApplication) => (await call(app, "capsuleStateForTests")) as CapsuleState;
@@ -383,5 +387,189 @@ test("without a library a taken shortcut shows no notice, and Settings → Voice
   // The menu has no Record a thought yet, so the Notice doesn't say it is still there.
   await expect(settings.getByText(/⌥Space is used by another app/)).toBeVisible();
   await expect(settings.getByText(/is still in the menu bar/)).toHaveCount(0);
+  await app.close();
+});
+
+// ---- ⌥⇧Z: Undo the last filing, from any app ----
+
+/** The Undone card's note, under the default evening review at 21:00: what a take-back tells. */
+const UNDONE_NOTE = "Your words are back in the inbox for the evening review at 21:00.";
+
+/** ⌥⇧Z, pressed as the person would: the callback the shortcut stand-in holds for it runs. False when it holds none. */
+const pressUndo = (app: ElectronApplication) => call(app, "pressShortcutForTests", "undo") as Promise<boolean>;
+
+/** A thought spoken and filed from the capsule: its card says Filed. */
+async function filed(app: ElectronApplication): Promise<void> {
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+}
+
+/** A thought filed and its card put away: only the menu and ⌥⇧Z offer to take it back now. */
+async function filedAndPutAway(app: ElectronApplication): Promise<void> {
+  await filed(app);
+  await call(app, "dismiss");
+}
+
+test("⌥⇧Z takes the last filing back, as the menu's Undo does, and says so once", async () => {
+  const library = await makeLibrary({ git: true });
+  const { app } = await launchOn(library);
+  await watchUndos(app);
+  await filedAndPutAway(app);
+  expect(await pressUndo(app)).toBe(true);
+  await expect.poll(() => undoCalls(app), { timeout: 10_000 }).toBe(1);
+  await expect.poll(() => notified(app, "Undone"), { timeout: 10_000 }).toEqual([{ title: "Undone", body: UNDONE_NOTE }]);
+  // The page is gone, and the note is back in the inbox.
+  expect(undone(library)).toHaveLength(1);
+  expect(inbox(library)).toHaveLength(1);
+  // Nothing is left to take back: a second press says so, and asks the library for nothing.
+  expect(await pressUndo(app)).toBe(true);
+  expect(await capsuleState(app)).toEqual({ kind: "nothing-to-undo" });
+  expect(await undoCalls(app)).toBe(1);
+  expect(await notified(app, "Undone")).toHaveLength(1);
+  await app.close();
+});
+
+for (const relaunched of [false, true]) {
+  test(`⌥⇧Z pressed twice while its take-back waits answers once${relaunched ? ", after a relaunch" : ""}: no bar, one take-back, told once`, async () => {
+    const library = await makeLibrary({ git: true });
+    const first = await launchOn(library);
+    await filed(first.app);
+    let app = first.app;
+    if (relaunched) {
+      // The filing was kept in the app's profile: the new run offers it, with nothing up.
+      await first.app.close();
+      ({ app } = await launchOn(library, { AVANZEL_USER_DATA: first.userData }));
+      await expect.poll(() => menuItem(app, "undo-filing"), { timeout: 20_000 }).toBeDefined();
+      expect(await capsuleKind(app)).toBe("hidden");
+    }
+    await watchUndos(app, { hold: true });
+    expect(await pressUndo(app)).toBe(true);
+    await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
+    // The take-back waits at the library's door, and the card it will tell is still up. A second press would put the bar over that
+    // card, and the take-back would then tell by notification.
+    expect(await pressUndo(app)).toBe(true);
+    expect(await capsuleKind(app)).toBe(relaunched ? "hidden" : "filed");
+    expect(await undoCalls(app)).toBe(1);
+    await app.evaluate(() => (globalThis as Left).letUndoIn?.());
+    if (relaunched) {
+      await expect.poll(() => notified(app, "Undone"), { timeout: 10_000 }).toEqual([{ title: "Undone", body: UNDONE_NOTE }]);
+      expect(await capsuleKind(app)).toBe("hidden");
+    } else {
+      await expect.poll(() => capsuleState(app), { timeout: 10_000 }).toMatchObject({ kind: "saved", undone: true });
+      expect(await notified(app, "Undone")).toEqual([]);
+    }
+    expect(await undoCalls(app)).toBe(1);
+    await app.close();
+  });
+}
+
+test("with a filing to undo, ⌥⇧Z during a recording takes it back, leaves the recording's card, and its notification is silent", async () => {
+  const library = await makeLibrary({ git: true });
+  const { app } = await launchOn(library);
+  await watchUndos(app);
+  await filedAndPutAway(app);
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 10_000 }).toBe("listening");
+  expect(await pressUndo(app)).toBe(true);
+  await expect.poll(() => undoCalls(app), { timeout: 10_000 }).toBe(1);
+  // macOS's sound for the notification would be heard in the words: the recorder keeps no echo cancellation.
+  await expect.poll(() => notified(app, "Undone"), { timeout: 10_000 }).toEqual([{ title: "Undone", body: UNDONE_NOTE, silent: true }]);
+  expect(await capsuleKind(app)).toBe("listening");
+  await call(app, "cancelRecording");
+  await app.close();
+});
+
+test("while setup's window is open, ⌥⇧Z does nothing", async () => {
+  const app = await launch(firstRun().env);
+  await windowFor(app, "setup");
+  expect(await call(app, "setupStepForTests")).toBe("hello"); // setup's first thought has its own Undo on screen
+  expect(await pressUndo(app)).toBe(true);
+  expect(await capsuleKind(app)).toBe("hidden");
+  expect(await call(app, "notificationsForTests")).toEqual([]);
+  await app.close();
+});
+
+test("with nothing to undo, ⌥⇧Z says so in a calm bar that goes by itself", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const capsule = await windowFor(app, "capsule");
+  expect(await pressUndo(app)).toBe(true);
+  expect(await capsuleState(app)).toEqual({ kind: "nothing-to-undo" });
+  await expect(capsule.getByRole("status").getByText("There's no filing to undo.", { exact: true })).toBeVisible();
+  await expect(zel(capsule)).toHaveAttribute("data-mood", "filed");
+  await expect(capsule.getByRole("button")).toHaveCount(0);
+  expect(await call(app, "notificationsForTests")).toEqual([]);
+  await snap(capsule, "capsule-nothing-to-undo");
+  await expect.poll(() => capsuleKind(app), { timeout: 8_000 }).toBe("hidden");
+  await app.close();
+});
+
+// A Stopped card that says the stopped run's edits stay is the one place the person is told, so it is not a finished card
+// (`showsFinishedCard`): the bar does not replace it. A Stopped card with nothing more to say is replaced.
+test("with nothing to undo, ⌥⇧Z leaves a Stopped card that says edits stay, and replaces one with nothing more to say", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const stopped = (partial: boolean, leftovers: number) => ({ kind: "cancelled", text: "Call the plumber on Monday", agent: "Claude Code", partial, leftovers, review: "at 21:00" });
+  for (const [name, card] of [
+    ["a commit of the stopped run that stays", stopped(true, 0)],
+    ["two edits that no commit holds", stopped(false, 2)],
+  ] as const) {
+    await call(app, "setCapsule", card);
+    expect(await pressUndo(app), name).toBe(true);
+    expect(await capsuleState(app), name).toEqual(card);
+  }
+  await call(app, "setCapsule", stopped(false, 0));
+  expect(await pressUndo(app)).toBe(true);
+  expect(await capsuleState(app)).toEqual({ kind: "nothing-to-undo" });
+  await app.close();
+});
+
+test("while a filing or a review runs, or over a recording, ⌥⇧Z does nothing", async () => {
+  // A recording, then its filing, which the fake agent holds for 3 s.
+  const { app } = await launchOn(await makeLibrary({ git: true }), { FAKE_AGENT_DELAY_MS: "3000" });
+  await watchUndos(app);
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 10_000 }).toBe("listening");
+  expect(await pressUndo(app)).toBe(true);
+  expect(await capsuleKind(app)).toBe("listening");
+  await call(app, "toggleDictate");
+  await expect.poll(() => capsuleKind(app), { timeout: 10_000 }).toBe("filing");
+  expect(await pressUndo(app)).toBe(true);
+  expect(await capsuleKind(app)).toBe("filing");
+  expect(await undoCalls(app)).toBe(0);
+  await app.close();
+
+  // The evening review, with a note in the inbox to file, shows no card: the press does nothing while it works all the same.
+  const library = await makeLibrary({ git: true });
+  new Vault(library).newCapture("An earlier thought", { source: "text" });
+  const review = await launchOn(library, { FAKE_AGENT_DELAY_MS: "3000" });
+  await call(review.app, "runTask", "evening-review");
+  expect(await pressUndo(review.app)).toBe(true);
+  expect(await capsuleKind(review.app)).toBe("hidden");
+  await review.app.close();
+});
+
+test("Undo the last filing has its row in Settings → Voice, recorded and saved like the others", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app, "Voice");
+  const row = settings.getByRole("group", { name: "Undo the last filing", exact: true });
+  await expect(row.getByText("⌥⇧Z", { exact: true })).toBeVisible();
+  await row.getByRole("button", { name: "Change", exact: true }).click();
+  await settings.keyboard.press("Control+Alt+U");
+  await expect.poll(async () => (await snapshot(app)).app.shortcuts.undo).toBe("Control+Alt+U");
+  await expect(row.getByText("⌃⌥U", { exact: true })).toBeVisible();
+  // The new shortcut is registered: a press of it is heard.
+  await expect.poll(() => pressUndo(app)).toBe(true);
+  await app.close();
+});
+
+test("a taken ⌥⇧Z gets the launch notice, with ⌃⌥Z and ⌃⌥U, and says where its item is", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Shift+Z" });
+  const capsule = await windowFor(app, "capsule");
+  await expect(capsule.getByText(/⌥⇧Z is used by another app/)).toBeVisible();
+  await expect(capsule.getByText("Pick another shortcut. “Undo the last filing” is in the menu bar after each filing.", { exact: true })).toBeVisible();
+  // Hide first; the best one last, as the primary.
+  await expect(capsule.getByRole("button")).toHaveText(["Hide", "Use ⌃⌥U", "Use ⌃⌥Z"]);
+  await capsule.getByRole("button", { name: "Use ⌃⌥Z" }).click();
+  await expect(capsule.getByRole("status").getByText("Undo the last filing now uses ⌃⌥Z", { exact: true })).toBeVisible();
+  expect((await snapshot(app)).app.shortcuts.undo).toBe("Control+Alt+Z");
   await app.close();
 });

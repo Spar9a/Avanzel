@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
     capture: "Alt+Shift+S",
     type: "Alt+Shift+Space",
     ask: "Alt+Shift+A",
+    undo: "Alt+Shift+Z",
   }),
   fileMode: "now",
   microphoneId: null,

@@ -1312,11 +1312,6 @@ const BAR_STATES: [string, Record<string, unknown>, string][] = [
     "Filing with Claude Code…",
   ],
   ["filed", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: true, noted: false }, "Filed by Claude Code in 6 s"],
-  [
-    "a filed card whose words were kept",
-    { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: true, noted: false, restored: true },
-    "Filed by Claude Code in 6 s",
-  ],
   ["nothing new", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: false, noted: true }, "Nothing new to file"],
   // After "nothing new" and not beside the other filed rows: it says the same line as they do, and the test waits for the line and then
   // checks the region, so it would pass on the card before it and check that card.
@@ -1336,9 +1331,16 @@ const BAR_STATES: [string, Record<string, unknown>, string][] = [
   ],
   ["saved", { kind: "saved", text: "Plant tulips in October", note: "Saved to the inbox." }, "Saved"],
   ["undone", { kind: "saved", text: "Plant tulips in October", note: "Your words are back in the inbox.", undone: true }, "Undone"],
+  // After "undone", not beside "filed", whose line it says: the wait for the line would pass on the card before it.
+  [
+    "a filed card whose words were kept",
+    { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: true, noted: false, restored: true },
+    "Filed by Claude Code in 6 s",
+  ],
   ["a stopped filing", { kind: "cancelled", text: "Plant tulips in October", agent: "Claude Code", partial: false, leftovers: 0, review: "at 21:00" }, "Stopped"],
   ["a stopped transcription", { kind: "recorded", review: "at 21:00" }, "Stopped"],
   ["a picked shortcut", { kind: "shortcut-picked", key: "dictate", accelerator: "Control+Shift+Space" }, "Record a thought now uses ⌃⇧Space"],
+  ["nothing to undo", { kind: "nothing-to-undo" }, "There's no filing to undo."],
 ];
 
 test("every state that has a bar draws it in the one live region, and the editor and a problem draw none", async () => {

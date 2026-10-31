@@ -192,7 +192,7 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
   // The newest filing's card can be printed again from here, right above the item that takes the filing back; the last of these closes the
   // section that lists the pages filed.
   if (input.showableReceipt) filed.push({ type: "item", label: "Show the last receipt", action: "show-receipt" });
-  if (input.undoableFiling) filed.push({ type: "item", label: "Undo the last filing", action: "undo-filing" });
+  if (input.undoableFiling) filed.push({ type: "item", label: "Undo the last filing", action: "undo-filing", ...shortcut("undo") });
   // A section with nothing to show (filings today, but none that wrote a page or can be undone) has no header either.
   if (filed.length) items.push({ type: "header", label: "Recently filed" }, ...filed, SEP);
 
