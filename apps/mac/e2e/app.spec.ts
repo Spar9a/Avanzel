@@ -1317,6 +1317,9 @@ const BAR_STATES: [string, Record<string, unknown>, string][] = [
     { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: true, noted: false, restored: true },
     "Filed by Claude Code in 6 s",
   ],
+  ["nothing new", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: false, noted: true }, "Nothing new to file"],
+  // After "nothing new" and not beside the other filed rows: it says the same line as they do, and the test waits for the line and then
+  // checks the region, so it would pass on the card before it and check that card.
   [
     "a reprint",
     {
@@ -1331,7 +1334,6 @@ const BAR_STATES: [string, Record<string, unknown>, string][] = [
     },
     "Filed by Claude Code in 6 s",
   ],
-  ["nothing new", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: false, noted: true }, "Nothing new to file"],
   ["saved", { kind: "saved", text: "Plant tulips in October", note: "Saved to the inbox." }, "Saved"],
   ["undone", { kind: "saved", text: "Plant tulips in October", note: "Your words are back in the inbox.", undone: true }, "Undone"],
   ["a stopped filing", { kind: "cancelled", text: "Plant tulips in October", agent: "Claude Code", partial: false, leftovers: 0, review: "at 21:00" }, "Stopped"],

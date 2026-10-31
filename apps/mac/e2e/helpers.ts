@@ -15,7 +15,7 @@ import type { SetupSnapshot } from "../src/shared/ipc.ts";
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const appDir = path.resolve(here, "..");
 const repo = path.resolve(appDir, "..", "..");
-const fakeAgent = path.join(repo, "packages", "engine", "test", "fake-agent.mjs");
+export const fakeAgent = path.join(repo, "packages", "engine", "test", "fake-agent.mjs");
 export const shots = path.join(appDir, "test-results", "shots");
 
 /** A library made by the engine itself, with the fake agent as its harness. */

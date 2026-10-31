@@ -3,11 +3,12 @@
 // words of the face (`tooltip`), and the tests of a count read the times of the changes too (`watchTray`), so no poll has to catch a
 // face in the moment it shows.
 import { expect, test, type ElectronApplication } from "@playwright/test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, localDate, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
+import type { FilingReceipt } from "../src/main/undo-records.ts";
 import { dictate, inbox, launchOn, notified, reachedUndo, sleep, stampDay, undoCalls, undone, watchUndos, type Left } from "./capsule-helpers.ts";
 import {
   agentCalls,
@@ -20,6 +21,7 @@ import {
   dialogsAsked,
   emptyHfCache,
   exists,
+  fakeAgent,
   fakeModelHub,
   filesUnder,
   filingClaude,
@@ -1146,7 +1148,7 @@ function savedUndo(userData: string, library: string): SavedUndo | undefined {
 type SavedUndo = {
   filing: string | null;
   evening: string[];
-  receipt: { commit: string | null; text: string; agent: string; seconds: number; pages: { title: string; shelf: string; path: string }[]; noted: boolean; restored: boolean; filedAt: number } | null;
+  receipt: FilingReceipt | null;
 };
 
 /** A commit as git prints it. */
@@ -1950,6 +1952,30 @@ test("a Stop on a filing that still waits in the queue leaves the last filing to
   await app.close();
 });
 
+// Without git no filing is held for the menu's Undo (`lastFiled`), so the last receipt alone asks for the menu to be built again when a
+// filing that waited leaves without a run (`leftWithoutRun`).
+test("a Stop on a filing that still waits in the queue leaves the last receipt to show, in a library without git", async () => {
+  const library = await makeLibrary();
+  const { app, capsule } = await hearing({}, library);
+  await filedFromTheCapsule(app);
+  await call(app, "dismiss");
+  expect(await trayOffersReceipt(app)).toBe(true);
+  await holdTheQueue(app); // something else has the queue, so the next filing waits for its turn
+  await dictate(app);
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
+  expect(await trayOffersReceipt(app), "a filing waits").toBe(false);
+  await capsule.evaluate(() => window.avanzel.capsule.cancelFiling()); // Stop: nothing has touched the note, so the card says Stopped at once
+  await expect.poll(() => capsuleKind(app)).toBe("cancelled");
+  await call(app, "dismiss");
+  expect(await trayOffersReceipt(app), "the stopped filing still waits for its turn").toBe(false);
+  await letTheQueueGo(app); // its turn comes: it finds itself stopped, and does nothing
+  // Nothing was filed and no run began, so the last receipt is still the last: the menu the tray holds offers it again.
+  await expect.poll(() => trayOffersReceipt(app), { timeout: 5_000 }).toBe(true);
+  await showReceipt(app);
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", text: "Plant tulips in October", canUndo: false, reprint: { filedAt: expect.any(Number) } });
+  await app.close();
+});
+
 test("a take-back of the last filing's commit, which is what Stop and Edit make, takes the menu's Undo away", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
@@ -2035,8 +2061,9 @@ test("Undo from the menu is offered for a thought that was edited and filed agai
 //
 // "Show the last receipt" puts the last filing's card up again, filed or noted, as a reprint: its stamp is still and dated the day it was
 // filed, it makes no sound, and it counts as no filing (no face, no notification). The receipt lives with the Undo records
-// (`undo-records.json`), so it outlasts a quit. It is offered while nothing is recording, filing or reviewing, and replaces only a
-// finished card (or none): over a problem, the editor or a capture, a press does nothing. Its Undo is the menu's.
+// (`undo-records.json`), so it outlasts a quit. It is offered while nothing is recording, filing or reviewing, and only over a finished card
+// (or none): over a problem, the editor or a capture the item is not in the menu, and a press that reaches the controller anyway does
+// nothing. It replaces a finished card. Its Undo is the menu's.
 
 test("Show the last receipt reopens the last filing's card as a reprint, with its pages, Open and Undo", async () => {
   const library = await makeLibrary({ git: true });
@@ -2141,6 +2168,59 @@ test("Show the last receipt survives a relaunch, and its Undo still takes the fi
   await app.close();
 });
 
+/**
+ * A library whose agent files as the engine's fake one does and also writes `topics/side-note.md`, so that one filing writes two pages:
+ * `ideas/idea-….md`, titled with the words, and the side note. It has no git, so the receipt has no Undo to get in the way.
+ */
+async function libraryWhoseFilingsWriteTwoPages(): Promise<string> {
+  const library = await makeLibrary();
+  const files = `'${process.execPath}' '${fakeAgent}' "$0"; code=$?; mkdir -p topics; printf '# Side note\\n' > topics/side-note.md; exit $code`;
+  // `sh -c` gets the prompt as `$0`.
+  saveSettings(library, { ...loadSettings(library), harnesses: { fake: { name: "fake", headless: ["/bin/sh", "-c", files, "{prompt}"], interactive: [] } } });
+  return library;
+}
+
+// A receipt lasts for days and across restarts, and the person may have renamed, moved or deleted a page it lists since: its title and Open
+// would open nothing, and Open puts the card away all the same. The reprint lists the pages that are there when it is chosen.
+test("a reprint lists only the pages that are still there, and has no Open once every one is gone", async () => {
+  const library = await libraryWhoseFilingsWriteTwoPages();
+  const { app, capsule } = await hearing({}, library);
+  await stubOpening(app);
+  await filedFromTheCapsule(app);
+  await call(app, "dismiss");
+  const [idea] = filesUnder(library, "ideas");
+  expect(idea).toBeDefined();
+  const listed = async () => ((await call(app, "capsuleStateForTests")) as { pages: { path: string }[] }).pages.map((page) => page.path);
+  const card = capsule.getByRole("article");
+  const bar = capsule.getByRole("status");
+  const title = (name: string) => card.getByRole("button", { name, exact: true });
+  const open = bar.getByRole("button", { name: "Open", exact: true });
+  // Both pages are there: the card lists both.
+  await showReceipt(app);
+  expect(await listed()).toEqual([`ideas/${idea}`, "topics/side-note.md"]);
+  await expect(title("Plant tulips in October")).toBeVisible();
+  await expect(title("Side note")).toBeVisible();
+  await call(app, "dismiss");
+  // The first is deleted: the card lists the other, and Open opens that one and puts the card away.
+  rmSync(path.join(library, "ideas", idea ?? ""));
+  await showReceipt(app);
+  expect(await listed()).toEqual(["topics/side-note.md"]);
+  await expect(title("Side note")).toBeVisible();
+  await expect(title("Plant tulips in October")).toHaveCount(0);
+  await open.click();
+  await expect.poll(() => openedWith(app)).toHaveLength(1);
+  expect(realpathSync((await openedWith(app))[0] ?? "")).toBe(realpathSync(path.join(library, "topics", "side-note.md")));
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  // The other is renamed: no page is left, and the card has no Open, as a filed card with no page has none. Hide is all its bar holds.
+  renameSync(path.join(library, "topics", "side-note.md"), path.join(library, "topics", "renamed.md"));
+  await showReceipt(app);
+  expect(await listed()).toEqual([]);
+  await expect(bar.getByRole("button", { name: "Hide", exact: true })).toBeVisible();
+  await expect(title("Side note")).toHaveCount(0);
+  await expect(open).toHaveCount(0);
+  await app.close();
+});
+
 test("Show the last receipt hides while a recording, a filing or the editor is going, and with no receipt; it replaces a finished card, and over a problem or the editor it does nothing", async () => {
   // In a library with git: without it `lastFiled` is never held, and the first rebuild of a filing's start (B1) never happens.
   const library = await makeLibrary({ git: true });
@@ -2207,6 +2287,61 @@ test("Show the last receipt hides while a recording, a filing or the editor is g
   await app.close();
 });
 
+// A problem's notice stays until the person acts on it, and a reprint would take its one fix away: so the item is not in the menu for as long
+// as one is up, as Undo is not there when it can't act. `setCapsule` builds the menu for every card, so each kind takes the item away and
+// gives it back; a press that reaches the controller anyway leaves the notice (`showLastReceipt`).
+test("Show the last receipt is not offered over a problem notice, whichever it is, and is back once the notice goes", async () => {
+  const library = await makeLibrary();
+  const { app } = await hearing({}, library);
+  await filedFromTheCapsule(app);
+  await call(app, "dismiss");
+  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+  for (const [name, notice] of [
+    ["an error", { kind: "error", message: "Avanzel couldn't capture the screen.", detail: "Nothing was saved." }],
+    ["the speech model's failed download", { kind: "model-failed", reason: "The speech model couldn't be downloaded.", resumable: true }],
+    ["a shortcut another app holds", { kind: "shortcut-taken", key: "dictate", accelerator: "Alt+Space", holder: null, alternatives: [] }],
+    ["the speech model's download", { kind: "preparing", receivedBytes: 1_000_000, totalBytes: 600_000_000 }],
+  ] as const) {
+    await call(app, "setCapsule", notice);
+    expect(await receiptItem(app), name).toBeUndefined();
+    expect(await trayOffersReceipt(app), `${name}, in the menu the tray holds`).toBe(false);
+    await showReceipt(app);
+    expect(await call(app, "capsuleStateForTests"), `${name}, after a press`).toEqual(notice);
+    await call(app, "dismiss");
+    await expect.poll(() => trayOffersReceipt(app), { message: `${name}, once it is put away` }).toBe(true);
+    expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+  }
+  await app.close();
+});
+
+// A Stopped card is a finished card, except when it tells the person that the stopped run's edits stay (`partial`, `leftovers`): `settleStop`
+// posts no notification while it is up, so it is the only place they are told, and a reprint would replace that.
+test("Show the last receipt is not offered over a Stopped card that says edits stay, and is over one with nothing more to say", async () => {
+  const library = await makeLibrary();
+  const { app } = await hearing({}, library);
+  await filedFromTheCapsule(app);
+  await call(app, "dismiss");
+  const stopped = (partial: boolean, leftovers: number) => ({ kind: "cancelled", text: "Call the plumber on Monday", agent: "Claude Code", partial, leftovers, review: "at 21:00" });
+  for (const [name, card] of [
+    ["a commit of the stopped run that stays", stopped(true, 0)],
+    ["two edits that no commit holds", stopped(false, 2)],
+  ] as const) {
+    await call(app, "setCapsule", card);
+    expect(await receiptItem(app), name).toBeUndefined();
+    expect(await trayOffersReceipt(app), `${name}, in the menu the tray holds`).toBe(false);
+    await showReceipt(app);
+    expect(await call(app, "capsuleStateForTests"), `${name}, after a press`).toEqual(card);
+    await call(app, "dismiss");
+  }
+  // Nothing of the run stays: the card has nothing more to say, and the reprint replaces it.
+  await call(app, "setCapsule", stopped(false, 0));
+  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+  expect(await trayOffersReceipt(app)).toBe(true);
+  await showReceipt(app);
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", text: "Plant tulips in October", reprint: { filedAt: expect.any(Number) } });
+  await app.close();
+});
+
 test("a reprint keeps the line that the person's exact words were kept, after a relaunch too", async () => {
   const library = await makeLibrary({ git: true });
   const first = await hearing({ FAKE_AGENT_MODE: "tamper" }, library); // files, then rewrites the capture: the engine puts the words back
@@ -2231,11 +2366,13 @@ test("a filing that fails leaves the last receipt as it was, without its Undo, a
   await agentMode(app, "fail");
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
-  // The problem card is up: a press leaves it, and the receipt is the first filing's all the same.
-  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+  // The problem card is up: the menu doesn't offer the item, and a press that reaches the controller anyway leaves the card. The receipt is
+  // the first filing's all the same, and the item is back with the notice gone.
+  expect(await receiptItem(app)).toBeUndefined();
   await showReceipt(app);
   expect(await capsuleKind(app)).toBe("error");
   await call(app, "dismiss");
+  await expect.poll(() => receiptItem(app)).toEqual(RECEIPT_ITEM);
   await showReceipt(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({
     kind: "filed",
@@ -2395,6 +2532,32 @@ test("Show the last receipt stays out of the menu for the whole run of a filing 
   const second = filesUnder(library, "ideas").find((name) => name !== first);
   expect(second).toBeDefined();
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", canUndo: true, pages: [{ path: `ideas/${second}` }] });
+  await app.close();
+});
+
+// A note filed in the background joins the queue with no card of its own, so nothing else builds the menu as it does; and with no filing held
+// (`lastFiled`: the thought before it failed) its run's start builds none either (`clearLastFiled`). The menu the tray holds then offers the
+// item for the whole run (`fileInBackground`).
+test("Show the last receipt leaves the menu as a note filed in the background after a limit's reset joins the queue, and is back after it", async () => {
+  const bin = agentStubs({ claude: filingClaude() });
+  const { app } = await withClaude(bin, { AVANZEL_RESET_MARGIN_MS: "0" }); // a wait files its note at the reset itself
+  await filedFromTheCapsule(app);
+  // The next one meets Claude Code's usage limit, which lifts 5 seconds on. Its run began, so the first filing is no longer the last: there
+  // is no filing to undo, and the receipt is still the first one's.
+  answerAs(bin, "claude", limitedClaudeFor(bin, 5));
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+  await call(app, "dismiss"); // the notice takes the item away while it is up
+  expect(await undoItem(app)).toBeUndefined();
+  expect(await trayOffersReceipt(app)).toBe(true);
+  await app.evaluate(() => void (process.env.FAKE_AGENT_DELAY_MS = "3000")); // the filing at the reset takes long enough to look at
+  // At the reset the note joins the queue, and the menu the tray holds stops offering the item with it.
+  await expect.poll(() => faceOf(app), { timeout: 30_000, intervals: [50] }).toBe("filing");
+  expect(await trayOffersReceipt(app), "in the menu the tray holds").toBe(false);
+  expect(await receiptItem(app)).toBeUndefined();
+  await expect.poll(() => notified(app, "Filed by Claude Code"), { timeout: 30_000 }).toHaveLength(1);
+  await call(app, "idleForTests");
+  await expect.poll(() => trayOffersReceipt(app), { timeout: 10_000 }).toBe(true);
   await app.close();
 });
 

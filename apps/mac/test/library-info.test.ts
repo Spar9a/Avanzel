@@ -208,6 +208,23 @@ describe("library info", () => {
     expect(captureWords(path.join(root, "not-there.md"))).toBe("");
     expect(captureWords("")).toBe("");
   });
+
+  // A screen capture with no comment has attachments and no words, and `newCapture` writes `(no comment)` where the words would be
+  // (vault.ts). That is its placeholder and not the person's words: the reprint of its filing prints none, as the Saved card shows its
+  // own placeholder.
+  it("captureWords: a screen capture with no comment has no words, though newCapture writes (no comment) in their place", () => {
+    const root = library();
+    const shot = path.join(root, "raw", "attachments", "2026", "10", "shot.png");
+    const bare = new Vault(root).newCapture("", { source: "screen", attachments: [shot] });
+    expect(readFileSync(bare.path, "utf8")).toContain("\n(no comment)\n");
+    expect(captureWords(bare.path)).toBe("");
+    // A comment of the person's own is kept, and so are words that only mention the filler.
+    const commented = new Vault(root).newCapture("The tulip bed, from the street", { source: "screen", attachments: [shot] });
+    expect(captureWords(commented.path)).toBe("The tulip bed, from the street");
+    const file = path.join(root, "capture.md");
+    writeFileSync(file, "---\nid: x\n---\n\nI have (no comment) on that\n");
+    expect(captureWords(file)).toBe("I have (no comment) on that");
+  });
 });
 
 // An agent with a shell could make a page a link to a file of its own, a script say: a link opens as what it points at, by that

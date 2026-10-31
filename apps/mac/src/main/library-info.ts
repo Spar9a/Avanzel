@@ -189,10 +189,18 @@ export function captureMeta(file: string): CaptureMeta {
 const EMBED_LINE = /^!\[\[[^\]]+\]\]$/;
 
 /**
+ * What `Vault.newCapture` writes where the words would be when a capture has attachments and no words, a screen capture with no comment
+ * (vault.ts: `words || "(no comment)"`). The engine exports no constant for it, so it is named here, once, beside the embed rule.
+ */
+const NO_COMMENT = "(no comment)";
+
+/**
  * The words of a capture: its body after the frontmatter (as `captureMeta` finds the frontmatter), trimmed, and without the embed lines
  * `newCapture` appends after them for each attachment and for the recording (`![[x.wav]]`), which every dictation has and which are not
- * the person's words. For a filing in the background, whose job has none of its own, to print again (`FilingReceipt.text`). The cost: a
- * line of the person's own that is exactly an embed is dropped as well. "" when the file can't be read.
+ * the person's words. A capture with no comment has none: the `(no comment)` that `newCapture` puts in their place is its placeholder, as
+ * the Saved card has its own. For a filing in the background, whose job has none of its own, to print again (`FilingReceipt.text`). The
+ * cost: a line of the person's own that is exactly an embed is dropped as well, and words that are exactly `(no comment)` read as none.
+ * "" when the file can't be read.
  */
 export function captureWords(file: string): string {
   let text: string;
@@ -202,9 +210,10 @@ export function captureWords(file: string): string {
     return "";
   }
   const body = text.replace(/^---\n[\s\S]*?\n---\n/, "");
-  return body
+  const words = body
     .split("\n")
     .filter((line) => !EMBED_LINE.test(line.trim()))
     .join("\n")
     .trim();
+  return words === NO_COMMENT ? "" : words;
 }

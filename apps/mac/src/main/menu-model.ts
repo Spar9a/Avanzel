@@ -53,14 +53,15 @@ export interface MenuInput {
   undoableFiling: boolean;
   /**
    * "Show the last receipt" can be chosen now (`Controller.receiptShowable`): the open library has a receipt, and nothing is recording,
-   * filing or reviewing, Avanzel isn't quitting, and the library's saved Undo is checked. The menu then ends its recent pages with the item,
+   * filing or reviewing, Avanzel isn't quitting, the library's saved Undo is checked, and the capsule shows nothing or a finished card (not
+   * a problem's notice, the editor or a capture, which the item would do nothing over). The menu then ends its recent pages with the item,
    * right above "Undo the last filing".
    */
   showableReceipt: boolean;
   /**
    * The open library has a receipt, whether or not it can be shown now. The invitation to a first thought reads this and not
-   * `showableReceipt`, which is false during every recording, filing and review: read by the invitation, it would bring "Nothing filed yet"
-   * back for the length of each run, in a library whose only filing was noted on an earlier day.
+   * `showableReceipt`, which is false during every recording, filing and review, and over a problem's notice: read by the invitation, it
+   * would bring "Nothing filed yet" back for the length of each, in a library whose only filing was noted on an earlier day.
    */
   hasReceipt: boolean;
 }

@@ -175,9 +175,10 @@ const PICKED_SHOW_MS = 3_000;
 // How long the capsule shows a filed card by itself, a reprint of it (`showLastReceipt`) too; hovering over it keeps it longer.
 const FILED_SHOW_MS = 8_000;
 /**
- * The capsule shows nothing, or a card that is finished: a result or a notice that has nothing more to say, and no one's work in it. Only
- * these are replaced by a reprint of the last receipt (`showLastReceipt`): over a problem with its fix, the editor or a capture, a reprint
- * would take the person's work or a problem's one fix away.
+ * The capsule shows nothing, or a card that is finished: a result or a notice that has nothing more to say, and no one's work in it. "Show
+ * the last receipt" is offered over these alone, and replaces them (`showLastReceipt`): over a problem with its fix, the editor or a
+ * capture, a reprint would take the person's work or a problem's one fix away. Ask `showsFinishedCard`, not the set: a Stopped card is in it
+ * by its kind, but is not finished when it says that the stopped run's edits stay.
  */
 const FINISHED_CARDS: ReadonlySet<CapsuleState["kind"]> = new Set<CapsuleState["kind"]>(["hidden", "filed", "saved", "cancelled", "recorded", "shortcut-picked"]);
 // How long the capsule says that a filing or a transcription is stopped (hovering over it keeps it longer, as it does any card that
@@ -843,14 +844,37 @@ export class Controller {
   }
 
   /**
+   * The capsule shows nothing or a finished card (`FINISHED_CARDS`): what a reprint of the last receipt may replace, and the only cards the
+   * menu offers it over. Not a Stopped card that tells the person the stopped run's edits stay (`partial`, `leftovers`): `settleStop` posts no
+   * notification while that card is up, so it is the one place they are told, and the notice that would say it later is a problem
+   * (`stoppedNotice`). Whatever else may replace a finished card asks this and not the set, so that the set and its exception are read together.
+   */
+  private showsFinishedCard(): boolean {
+    const card = this.capsuleState;
+    const keepsEdits = card.kind === "cancelled" && (card.partial || card.leftovers > 0);
+    return FINISHED_CARDS.has(card.kind) && !keepsEdits;
+  }
+
+  /**
    * Whether "Show the last receipt" can be chosen now: the open library has a receipt and its saved Undo is checked (`undoChecked`, which
-   * also dropped a receipt whose commit has left the history), Avanzel isn't quitting, and no thought is in flight (`capturing`: a
-   * recording, a transcription, a filing's card or its hidden run, the editor, a refile that waits for its turn) and no filing or review
-   * goes on (`filingOrReviewGoing`). A refile is in neither `queuedToFile` nor `runs` until its turn, and the editor keeps the menu's
-   * rebuilds going (`tick`, `leftWithoutRun`), so `capturing` is what holds the item back there.
+   * also dropped a receipt whose commit has left the history), Avanzel isn't quitting, no thought is in flight (`capturing`: a recording,
+   * a transcription, a filing's card or its hidden run, the editor, a refile that waits for its turn) and no filing or review goes on
+   * (`filingOrReviewGoing`), and the capsule shows nothing or a finished card (`showsFinishedCard`). Over a problem's notice, the editor or
+   * a capture the item is not there, as Undo's is not where it can't act: a press would do nothing, and a notice stays until the person acts.
+   * `setCapsule` builds the menu for every card, so the item follows them. A refile is in neither `queuedToFile` nor `runs` until its turn,
+   * and the editor keeps the menu's rebuilds going (`tick`, `leftWithoutRun`), so `capturing` is what holds the item back there.
    */
   private receiptShowable(): boolean {
-    return this.lastReceipt !== null && this.undoChecked() && !this.quitting && !this.capturing() && !this.filingOrReviewGoing();
+    return this.lastReceipt !== null && this.undoChecked() && !this.quitting && !this.capturing() && !this.filingOrReviewGoing() && this.showsFinishedCard();
+  }
+
+  /**
+   * Whether the menu's Undo takes back the filing of `commit` now (`lastFiled`, `undoableFiling`). A receipt's Undo is the menu's: the
+   * reprint offers it when it is drawn, and answers its press, only while this holds. A receipt with no commit (a library without git) has
+   * none to take back.
+   */
+  private offersUndoOf(commit: string | null): boolean {
+    return commit !== null && this.lastFiled?.commit === commit && this.undoableFiling();
   }
 
   /**
@@ -2275,7 +2299,9 @@ export class Controller {
       background,
     };
     this.queuedToFile.add(capturePath);
-    this.refreshTray(); // the face thinks while a filing waits, card or no card
+    // The menu is built as the note joins the queue: it holds back what a waiting filing hides (`undoableFiling`, `receiptShowable`), and no
+    // card is set here to build it (`setCapsule`). Its run's start builds none when no filing is held (`clearLastFiled`). It sets the face too.
+    this.refreshMenu();
     void this.enqueue(async () => {
       const waiting = this.vault?.pending().includes(capturePath);
       if (waiting && !this.editing.has(capturePath)) return this.runFiling(job);
@@ -2774,7 +2800,7 @@ export class Controller {
   private async undoReprint(reprint: FilingReceipt): Promise<void> {
     const { commit } = reprint;
     if (commit !== null && this.reverting.has(commit)) return;
-    if (commit !== null && this.lastFiled?.commit === commit && this.undoableFiling()) return this.undoLastFiling();
+    if (this.offersUndoOf(commit)) return this.undoLastFiling();
     this.fail(undoRefused);
   }
 
@@ -2846,32 +2872,38 @@ export class Controller {
 
   /**
    * "Show the last receipt", from the menu: the open library's last filing, filed or noted, is put up again as a reprint, in the card's
-   * own time (`FILED_SHOW_MS`; the pointer holds it as it holds any card). It is the same card with the pages it wrote, Open, the line that
-   * the person's words were kept, and Undo while the menu would still take that filing back; but nothing is filed as it shows: its stamp
-   * is still and dated the day the thought was filed, no sound is sent (`cardSound`), the face doesn't wear its stamp (`markFiled` is
-   * not called) and no notification is posted. It does nothing unless the item is offered (`receiptShowable`), and it replaces only a
-   * finished card or none (`FINISHED_CARDS`): over a problem with its fix, the editor or a capture, a reprint would lose a problem's one
-   * fix, or the words of the editor, which `setCapsule` would keep as a new capture that isn't filed.
+   * own time (`FILED_SHOW_MS`; the pointer holds it as it holds any card). It is the same card with the pages it wrote that are still
+   * there, Open, the line that the person's words were kept, and Undo while the menu would still take that filing back; but nothing is
+   * filed as it shows: its stamp is still and dated the day the thought was filed, no sound is sent (`cardSound`), the face doesn't wear
+   * its stamp (`markFiled` is not called) and no notification is posted. A receipt lasts for days and across restarts, and the person may
+   * have renamed, moved or deleted a page since: its title and Open would open nothing (`openPage`), and Open puts the card away all the
+   * same. So the pages are those that are plain files in the library when the item is chosen (`pageAt`), and a card left with none has no
+   * Open, as a filed card with none has none.
+   *
+   * It does nothing unless the item is offered (`receiptShowable`), which includes a finished card or none (`showsFinishedCard`), whoever
+   * calls it, even if a menu that was open when the card changed still shows the item: over a problem with its fix, the editor or a capture,
+   * a reprint would lose a problem's one fix, or the words of the editor, which `setCapsule` would keep as a new capture that isn't filed.
    */
   showLastReceipt(): void {
     const receipt = this.lastReceipt;
-    if (receipt === null || !this.receiptShowable() || !FINISHED_CARDS.has(this.capsuleState.kind)) return;
-    const canUndo = receipt.commit !== null && this.lastFiled?.commit === receipt.commit && this.undoableFiling();
+    const vault = this.vault;
+    if (receipt === null || vault === null || !this.receiptShowable()) return;
+    const pages = receipt.pages.filter((page) => pageAt(vault.root, page.path) === "page");
     this.setCapsule(
       {
         kind: "filed",
         text: receipt.text,
         agent: receipt.agent,
         seconds: receipt.seconds,
-        pages: receipt.pages,
-        canUndo,
+        pages,
+        canUndo: this.offersUndoOf(receipt.commit),
         noted: receipt.noted,
         ...(receipt.restored ? { restored: true as const } : {}),
         reprint: { filedAt: receipt.filedAt },
       },
       FILED_SHOW_MS,
     );
-    this.reprint = receipt; // after `setCapsule`, which clears it for every card
+    this.reprint = { ...receipt, pages }; // after `setCapsule`, which clears it for every card; Open and the titles read these pages (`shownPages`)
   }
 
   dismiss(): void {
