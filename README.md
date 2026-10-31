@@ -43,6 +43,7 @@ and wakes up on a shortcut.
 | ⌥⇧S | Capture the screen and say why it matters. The screenshot, the app, the page and your comment wait in the inbox for the evening review. |
 | ⌥⇧Space | Type a thought. |
 | ⌥⇧A | Ask your library; the answer links to the pages it used. |
+| ⌥⇧Z | Undo the last filing, from any app. |
 
 The **evening review** (a scheduled review, 21:00 by default) files the day's inbox, writes a
 summary to `reviews/`, and can be taken back with **Undo the last evening review** in the menu bar
@@ -74,7 +75,16 @@ Good to know:
   Undo does, after its card has gone too: what the filing changed is undone, and your words are back
   in the inbox. It stays until the next filing, or until a review writes to the library (the weekly
   review, or an evening review that files something), and it is hidden while a filing or a review
-  waits or runs.
+  waits or runs. Both Undo items, this one and **Undo the last evening review**, survive quitting
+  and reopening Avanzel, and each library keeps its own; one whose commit has left the library's
+  history (after a reset, say) is dropped quietly. **⌥⇧Z** does the same from any app, and says so
+  once; with nothing to undo, the capsule says "There's no filing to undo." It is a shortcut like
+  the other four: Settings → Voice records it. **Show the last receipt**, right above Undo, reopens
+  the last filing's card (filed, or noted) with the pages that are still there, Open, and Undo while
+  that filing can still be taken back, also after a restart. Its stamp is still and dated the day
+  the thought was filed, and it makes no sound. It is offered only when the capsule shows nothing or
+  a finished card, never over a recording, a filing, a review or a problem. When the engine had to
+  put your words back after the agent changed them, the card says "Your exact words are kept."
 - **Play sounds** in Settings → General (off by default; setup's last step offers it too) adds a
   tick and a tock as you start and stop recording, a stamp and a whoosh as the capsule files a card
   and puts it away, and two soft bell tones when the evening review is done. **Preview sounds**
