@@ -338,7 +338,7 @@ test("a review's Letter comes with a silent notification", async () => {
   await app.close();
 });
 
-test("no app sound plays over a recording: a review that ends while a thought is said sends no Letter, and its notification keeps macOS's sound", async () => {
+test("no app sound plays over a recording: a review that ends while a thought is said sends no Letter, and its notification is silent too", async () => {
   const { app, capsule } = await withNote({ FAKE_AGENT_DELAY_MS: "1500" });
   await soundsOn(app);
   await watchSends(app);
@@ -349,7 +349,9 @@ test("no app sound plays over a recording: a review that ends while a thought is
   expect(await capsuleKind(app)).toBe("listening");
   const review = (await reviewNotes(app))[0]!;
   expect(review.title).toBe("Evening review: 1 thought filed");
-  expect(review).not.toHaveProperty("silent"); // nothing played in its place
+  // No Letter plays in its place, and macOS's sound is kept out too: a recording runs, and its recorder keeps no echo cancellation, so
+  // either would be heard in the words (every notification is silent while one runs: `notify`).
+  expect(review).toMatchObject({ silent: true });
   expect(await soundsSent(app)).toEqual(["tick"]); // the recording's own Tick, and no Letter
   // Once the recording is over the sounds are back: its Tock, and the Stamp of its filing.
   await call(app, "toggleDictate");
@@ -378,7 +380,7 @@ test("an evening review that quitting stops plays no Letter on the way out", asy
   await app.close();
 });
 
-test("a filing that ends in a notification plays nothing of its own, and none plays over the next thought", async () => {
+test("a filing that ends in a notification plays nothing of its own, and none plays over the next thought, macOS's sound for the notification included", async () => {
   const { app, capsule } = await launchOn(await makeLibrary(), { FAKE_AGENT_DELAY_MS: "1500", FAKE_AGENT_DELAY_TASK: "file" });
   await soundsOn(app);
   await watchSends(app);
@@ -388,7 +390,8 @@ test("a filing that ends in a notification plays nothing of its own, and none pl
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await expect.poll(async () => (await notes(app)).filter((note) => note.title.startsWith("Filed by")).length, { timeout: 60_000 }).toBe(1);
   const filed = (await notes(app)).find((note) => note.title.startsWith("Filed by"))!;
-  expect(filed).not.toHaveProperty("silent"); // macOS's sound stands
+  // Silent: the next thought is being said, and macOS's sound for the notification would be heard in its words (`notify`).
+  expect(filed).toMatchObject({ silent: true });
   expect(await capsuleKind(app)).toBe("listening");
   expect(await soundsSent(app)).toEqual(["tick", "tock", "tick"]); // no Stamp, no Drawer: the notification is the filing's whole voice
   await call(app, "cancelRecording");

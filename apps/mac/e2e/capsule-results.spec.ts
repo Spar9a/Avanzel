@@ -353,6 +353,59 @@ test("a reprinted filed card is the same card, its stamp still and dated the day
   await app.close();
 });
 
+// A reprint of a capture with no words (a note dropped into the inbox by hand with none, or an archive that can't be read) has none to print.
+// The card names its emptiness as the Saved card does ("No comment"), and does not draw a blank ruled sheet under the stamp, which in a product
+// that says "Your exact words are kept." would read as words that were lost. A card a filing puts up always has words.
+test("a reprint of a capture with no words says No comment, and draws no words", async () => {
+  const { app, capsule } = await launchOn(await makeLibrary());
+  const card = capsule.getByRole("article");
+  const day = new Date();
+  day.setDate(day.getDate() - 3);
+  day.setHours(12, 0, 0, 0);
+  await call(app, "setCapsule", filedCard({ text: "", reprint: { filedAt: day.getTime() } }));
+  await expect(card.getByText("No comment", { exact: true })).toBeVisible();
+  await expect(card.locator(".words")).toHaveCount(0);
+  // The rest is the reprint's: the stamp with the day the thought was filed, the three rows, and the bar with its three buttons.
+  await expect(card.getByRole("img", { name: `Filed, ${stampDay(day)}`, exact: true })).toBeVisible();
+  await expect(card.getByRole("listitem")).toHaveCount(3);
+  expect(await namesOf(capsule.getByRole("status").getByRole("button"))).toEqual(["Hide", "Undo", "Open"]);
+  await expectInPanel(capsule);
+  // A reprint of a filing that only noted its capture says it in the same way.
+  await call(app, "setCapsule", filedCard({ text: "", noted: true, pages: [], reprint: { filedAt: day.getTime() } }));
+  await expect(card.getByText("Claude Code noted it in the log.", { exact: true })).toBeVisible();
+  await expect(card.getByText("No comment", { exact: true })).toBeVisible();
+  await expect(card.locator(".words")).toHaveCount(0);
+  // A card with words has them, and no placeholder.
+  await call(app, "setCapsule", filedCard({ reprint: { filedAt: day.getTime() } }));
+  await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
+  await expect(card.getByText("No comment", { exact: true })).toHaveCount(0);
+  await app.close();
+});
+
+// "Your exact words are kept." is said of words, so a card with none does not say it, though the engine put the capture back: it does that whenever
+// the agent changed the file, and an agent has more reason to annotate a screenshot that has no comment than one that has.
+test("a filed card with no words does not say that the words are kept, though the engine put the capture back", async () => {
+  const { app, capsule } = await launchOn(await makeLibrary());
+  const card = capsule.getByRole("article");
+  const head = card.locator("header");
+  const line = head.getByText("Your exact words are kept.", { exact: true });
+  await call(app, "setCapsule", filedCard({ text: "", restored: true }));
+  await expect(card.getByRole("listitem")).toHaveCount(3); // the card has been drawn
+  await expect(head.getByText("Thought", { exact: true })).toBeVisible();
+  await expect(line).toHaveCount(0);
+  // Nor does a filing that only noted its capture.
+  await call(app, "setCapsule", filedCard({ text: "", restored: true, noted: true, pages: [] }));
+  await expect(card.getByText("Claude Code noted it in the log.", { exact: true })).toBeVisible(); // the new card has been drawn
+  await expect(line).toHaveCount(0);
+  // Words that were put back do say it, on either card.
+  await call(app, "setCapsule", filedCard({ restored: true }));
+  await expect(line).toBeVisible();
+  await call(app, "setCapsule", filedCard({ restored: true, noted: true, pages: [] }));
+  await expect(card.getByText("Claude Code noted it in the log.", { exact: true })).toBeVisible();
+  await expect(line).toBeVisible();
+  await app.close();
+});
+
 test("a filing whose agent rewrote the capture keeps the person's words, and its card says so", async () => {
   const { library, app, capsule } = await launchOn(await makeLibrary(), { FAKE_AGENT_MODE: "tamper" }); // files, then rewrites the capture
   const line = capsule.getByRole("article").locator("header").getByText("Your exact words are kept.", { exact: true });

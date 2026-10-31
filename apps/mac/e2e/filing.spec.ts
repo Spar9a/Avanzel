@@ -1587,7 +1587,8 @@ test("a Stop that git won't take back, whose card another recording replaced, te
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await app.evaluate(() => (globalThis as Left).letItEnd?.());
   await call(app, "idleForTests");
-  expect(await call(app, "notificationsForTests")).toEqual([{ title: FINISHED, body: BOTH_VERSIONS }]);
+  // Silent: a recording runs, and macOS's sound for the notification would be heard in the words (every notification is silent then: `notify`).
+  expect(await call(app, "notificationsForTests")).toEqual([{ title: FINISHED, body: BOTH_VERSIONS, silent: true }]);
   expect(await capsuleKind(app)).toBe("listening");
   expect(await kindsSent(app)).not.toContain("error");
   await call(app, "cancelRecording");

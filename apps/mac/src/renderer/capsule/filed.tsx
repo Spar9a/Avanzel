@@ -24,10 +24,15 @@ const hasReceipt = (state: StateOf<"filed">) => !state.noted && state.pages.leng
  * Noted, and offers no Open: Hide, and Undo while there is a commit.
  *
  * Either card, when the agent had changed the capture and the engine put the person's words back (`restored`), says so in its head, in
- * the caption slot beside the label: "Your exact words are kept." The stamp, the footer and the words' lines stay as they are.
+ * the caption slot beside the label: "Your exact words are kept." The stamp, the footer and the words' lines stay as they are. Said of
+ * words, so only when there are some: the engine puts a capture back whenever the agent changed its file, an annotated screenshot with no
+ * comment included, and a card that says "No comment" does not also say its words are kept.
  *
  * "Show the last receipt" puts the same card up again (`reprint`): a filing that ended some time ago is not being stamped now, so the stamp
- * is still, and prints the day the thought was filed and not today's. Everything else on the card and the bar is as it was.
+ * is still, and prints the day the thought was filed and not today's. Everything else on the card and the bar is as it was. A reprint of a
+ * capture with no words (a note dropped into the inbox by hand with none, or an archive that can't be read) says "No comment" on its card
+ * as a Saved card with no words does, and not a blank ruled sheet, which in a product that keeps the person's exact words would read as
+ * words that were lost. A card a filing puts up always has words.
  */
 export function filedScene(state: StateOf<"filed">): Scene {
   return {
@@ -47,11 +52,12 @@ function FiledCard({ state }: { state: StateOf<"filed"> }) {
   return (
     <Card
       label="Thought"
-      meta={state.restored ? "Your exact words are kept." : undefined}
+      meta={state.restored && state.text ? "Your exact words are kept." : undefined}
+      placeholder="No comment"
       stamp={state.noted ? { word: "noted", date: day } : { word: "filed", date: day, animate: !state.reprint }}
       footer={state.noted ? <Text variant="footnote">{notedLine(state.agent)}</Text> : receipt ? <Pages pages={state.pages} /> : undefined}
     >
-      <Words lines={receipt ? 3 : 4}>{state.text}</Words>
+      {state.text ? <Words lines={receipt ? 3 : 4}>{state.text}</Words> : null}
     </Card>
   );
 }

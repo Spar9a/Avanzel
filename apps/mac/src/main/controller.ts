@@ -953,21 +953,37 @@ export class Controller {
   }
 
   /**
+   * The menu's Undo the last evening review has nothing to take back in the library at `root` (`executeTask`: a review of that library
+   * threw, and may have filed some of its inbox after the review that the record is of). Its record goes from `undoRecords` whether or not
+   * the library is open, and for the open library from the menu, which is built again, but only if it was holding the commits.
+   */
+  private clearLastEvening(root: string): void {
+    this.undoRecords.patch(root, { evening: [] });
+    if (root !== this.vault?.root || this.lastEveningCommits.length === 0) return;
+    this.lastEveningCommits = [];
+    this.refreshMenu();
+  }
+
+  /**
    * The commit of the filing the menu would take back is being taken back already (`takeBack`, `revertFiling`, `undoLastFiling`):
    * `commit` is that commit, and any other filing's take-back leaves it be. It is dropped from the menu and from `undoRecords` before
    * the take-back's first await, so that it is asked for once, here and after a relaunch, and so is the last receipt when it is that
    * filing's: what it prints is no longer so. Both go in one patch and the menu is built again once, but only if it was holding either.
+   * `root` is the library the take-back is made in, the open one unless said: a card's Undo takes back in the library of its filing, which
+   * may not be the open one (`undo`). The menu holds only the open library's filing and receipt, so another library's are read from, and
+   * dropped from, `undoRecords` alone, and are not offered again when that library opens.
    */
-  private forgetFiling(commit: string): void {
-    const last = this.lastFiled;
-    const forgetsFiling = last !== null && last.commit === commit;
-    const forgetsReceipt = this.lastReceipt !== null && this.lastReceipt.commit === commit;
+  private forgetFiling(commit: string, root: string | undefined = this.vault?.root): void {
+    if (root === undefined) return;
+    const open = root === this.vault?.root;
+    const saved = open ? null : this.undoRecords.get(root);
+    const forgetsFiling = saved ? saved.filing === commit : this.lastFiled?.commit === commit;
+    const forgetsReceipt = saved ? saved.receipt?.commit === commit : this.lastReceipt?.commit === commit;
     if (!forgetsFiling && !forgetsReceipt) return;
-    if (forgetsFiling) this.lastFiled = null;
-    if (forgetsReceipt) this.lastReceipt = null;
-    const root = last?.library ?? this.vault?.root; // the open library's, which both are
-    if (root !== undefined) this.undoRecords.patch(root, { ...(forgetsFiling ? { filing: null } : {}), ...(forgetsReceipt ? { receipt: null } : {}) });
-    this.refreshMenu();
+    if (open && forgetsFiling) this.lastFiled = null;
+    if (open && forgetsReceipt) this.lastReceipt = null;
+    this.undoRecords.patch(root, { ...(forgetsFiling ? { filing: null } : {}), ...(forgetsReceipt ? { receipt: null } : {}) });
+    if (open) this.refreshMenu();
   }
 
   /** Counts today's filings in the log of the library at `root` for the menu's head (`filedToday`), and notes the day they are for. */
@@ -1200,7 +1216,8 @@ export class Controller {
    *   twin of what happened. Nor is one sent to a page that has gone.
    * - Nothing is sent once Avanzel is quitting (`stopForQuit`): an evening review that the quit stopped still comes to its end, and its
    *   Letter would play on the way out.
-   * The evening review asks whether its Letter was sent, since the review's notification is silent only then (`executeTask`).
+   * The evening review asks whether its Letter was sent, since the review's notification makes no sound of its own then (`executeTask`);
+   * over a recording it is quiet all the same (`notify`).
    */
   private sound(name: SoundName): boolean {
     if (this.quitting || !this.store.get().sounds || !this.capsuleListening) return false;
@@ -1940,6 +1957,7 @@ export class Controller {
       return this.leftWithoutRun();
     }
     const library = this.vault; // the note's own: another library may open while the agent runs
+    if (library) job.library = library; // kept with the job: its card's Undo takes the filing back there, whichever library is open by then (`undo`)
     // Its run begins: the filing before it is not the last any more, whatever becomes of this one (it may fail, or be taken back). It is set
     // before the clearing, whose rebuild of the menu is the one that the run's start makes (the steps build none): it must already hide the
     // receipt, or the item would stand for the whole run (`filingRun`).
@@ -1975,7 +1993,12 @@ export class Controller {
     // No outcome at all: the capture left the inbox while the run waited for the library, and another Avanzel filed it. As when
     // the note was gone before the run's turn, setup's window says so while it is open, and there is nothing else to tell: the
     // agent didn't stop without filing, and its card or notification would say that, and that the note is in the inbox.
-    if (!outcome || !library) return this.noteGone(job); // (an outcome comes from a run made with `library`: this only narrows its type)
+    if (!outcome || !library) {
+      this.noteGone(job); // (an outcome comes from a run made with `library`: this only narrows its type)
+      // The menu is built again: with no card to show (its card was put away, or it was in the background) nothing else builds it, and it was
+      // last built while the run went on, which held the last receipt back (`filingRun`).
+      return this.refreshMenu();
+    }
     if (!outcome.ok) return this.filingFailed(job, outcome.error || outcome.message || "The agent stopped without filing.", outcome, library);
     // The pages are the note's own library's, the one it was filed in. The menu lists the open library's recent pages, so it
     // takes them only while that library is the open one: not once it has closed, or another has opened.
@@ -2546,6 +2569,9 @@ export class Controller {
       this.setCapsule({ kind: "cancelled", text: job.text, agent: job.agent, partial, leftovers, review }, STOPPED_SHOW_MS);
       return;
     }
+    // The card has gone, which would have built the menu, and a notification builds nothing. It was last built while the stopped run went on,
+    // which held the last receipt back (`filingRun`), and a take-back builds it only when git refuses (`takeBack`).
+    this.refreshMenu();
     const notice = stoppedNotice(job.agent, partial, leftovers, review);
     if (notice) this.notify(notice.title, notice.body);
   }
@@ -2766,11 +2792,12 @@ export class Controller {
    * puts its capture back in the inbox. Whether it did; either way the menu's recent pages are read again (those of the library that is
    * open by then). The menu stops offering `commit` as the last filing as soon as it is asked for, whoever asks: it is taken back once.
    * It takes back in the library it was asked in, through a librarian made for that library (`librarianFor`), whichever library is open
-   * when the queue gets to it: the person asked to undo that filing there. It throws, as `librarian()` does, when no library is open.
+   * when the queue gets to it: the person asked to undo that filing there. That is the open library, and it throws, as `librarian()` does,
+   * when none is open, unless `library` says which: the card's Undo (`undo`) asks in the library its filing was made in (`FilingJob.library`),
+   * and its card may be up after another library has opened. It is taken as the Undo is asked for, before the queue.
    */
-  private async revertFiling(commit: string): Promise<boolean> {
-    const library = this.requireVault(); // before the queue: the library the Undo is asked in
-    this.forgetFiling(commit); // before the first await: the menu doesn't offer a commit that is being taken back
+  private async revertFiling(commit: string, library: Vault = this.requireVault()): Promise<boolean> {
+    this.forgetFiling(commit, library.root); // before the first await: the menu doesn't offer a commit that is being taken back
     this.reverting.add(commit); // from before it waits in the queue until it lands: a reprint's Undo of this commit does nothing meanwhile
     try {
       return (await this.enqueue(async () => (await this.librarianFor(library)).undo([commit]))) === 1;
@@ -2786,22 +2813,26 @@ export class Controller {
    * `undoneNote` words). When git refuses, or the revert fails, it says that this one can't be undone automatically (`undoRefused`).
    * It answers once for a filing (`undoing`), as setup's Undo does: a press while the first runs, or after it, does nothing. A second
    * revert of the same commit would find it taken back already, and git would refuse it, which would turn the Undone card into the
-   * refusal. It answers only while the filed card of the newest filing is up, which is the one that offers it. The revert waits its turn
-   * in the queue, and a newer card may be up by the time it lands: a recording's (which goes on recording, since its recorder is the
-   * page's), or a newer filing's editor, which a card put over it would close under the person's typing. So its card replaces only the
-   * filed card it was pressed on, and over any other card a notification says the same.
+   * refusal. The commit may be being taken back by someone else (`reverting`: the menu's Undo or the shortcut, whose record was loaded
+   * without this job when its library opened again while the card was up): the card asks for nothing then, and that take-back tells it
+   * (`tellUndone`). It answers only while the filed card of the newest filing is up, which is the one that offers it. The revert waits
+   * its turn in the queue, and a newer card may be up by the time it lands: a recording's (which goes on recording, since its recorder is
+   * the page's), or a newer filing's editor, which a card put over it would close under the person's typing. So its card replaces only
+   * the filed card it was pressed on, and over any other card a notification says the same. It takes the filing back in the library the
+   * filing was made in (`FilingJob.library`), which may not be the open one: the card stays up across a library switch, and a filing
+   * that ends after one puts up its card all the same.
    */
   async undo(): Promise<void> {
     if (this.reprint) return this.undoReprint(this.reprint);
     const job = this.job;
     const commit = job?.outcome?.commit;
-    if (!job || !commit || job.undoing || this.capsuleState.kind !== "filed") return;
+    if (!job || !commit || job.undoing || this.reverting.has(commit) || this.capsuleState.kind !== "filed") return;
     job.undoing = true;
-    const undone = await this.revertFiling(commit).catch((error) => {
+    const undone = await this.revertFiling(commit, job.library).catch((error) => {
       console.warn("undo", error); // a revert that threw is a refusal to the card: it would otherwise wait on its Undo for ever
       return false;
     });
-    this.tellUndone(job, undone, commit);
+    this.tellUndone(undone, commit);
   }
 
   /**
@@ -2837,7 +2868,7 @@ export class Controller {
       console.warn("undo", error); // a revert that threw is a refusal, as it is on the card
       return false;
     });
-    this.tellUndone(last.job, undone, last.commit);
+    this.tellUndone(undone, last.commit);
   }
 
   /**
@@ -2846,7 +2877,7 @@ export class Controller {
    * - A take-back is in flight (`reverting`): it has taken the filing already, so a second press would find none to undo and put the bar
    *   over the very card the first take-back is about to turn to Undone. The first tells the person, once.
    * With a filing to undo (`undoableFiling`) it is the menu's Undo (`undoLastFiling`): one try, told once on the filed card of that filing
-   * or else by a notification, even while a recording runs (that notification is silent then, `tellUndone`). With none, a bar says so for
+   * or else by a notification, even while a recording runs (`notify` makes it silent then). With none, a bar says so for
    * `NOTHING_TO_UNDO_MS`, but not while the open library's saved Undo is still being checked (`undoChecked`: a filing may be about to be
    * offered, and the menu waits for the check too), and only when the capsule is free for a reply (`capsuleFreeForReply`): not once Avanzel
    * is quitting, while a filing or a review goes on or a thought is in flight (a refile whose card is hidden too), nor over a card that is
@@ -2863,25 +2894,31 @@ export class Controller {
 
   /**
    * How an Undo of the filing of `commit` ended, told once, whoever asked for it (the filed card, a reprint of it, or the menu): it worked
-   * (`undone`), or git refused it, or the revert threw. `job` is the filing's own, which only a filing of this app run has. The filed card
-   * of that filing, if the capsule still shows it, turns to Undone or to the refusal: the reprint when the capsule shows one and it is of
-   * this commit, else the card of `job`. A newer card the person is using (a recording's, or an editor) is left as it is, and a
-   * notification says the same over it, and when the card has gone: silent while a recording runs (`notify`), as the shortcut's Undo may
-   * be pressed mid-dictation. The menu is built again for what the revert left; a card does that by itself (`setCapsule`), a notification not.
+   * (`undone`), or git refused it, or the revert threw. The filed card of that filing, if the capsule still shows it, turns to Undone or to
+   * the refusal: the reprint when the capsule shows one and it is of this commit, else the newest filing's card when its commit is this
+   * one. The card is found by its commit and not by the job that asked, so that the first take-back to land, from wherever, turns it: the
+   * menu's Undo of a filing whose library opened again while its card was up has no job of that card's (`openLibrary` loads the record
+   * from disk), and a card that it left alone would offer a second take-back that git refuses. A newer card the person is using (a
+   * recording's, or an editor) is left as it is, and a notification says the same over it, and when the card has gone (silent while a
+   * recording runs, as the shortcut's Undo may be pressed mid-dictation: `notify`). The menu is built again for what the revert left; a
+   * card does that by itself (`setCapsule`), a notification not.
    */
-  private tellUndone(job: FilingJob | undefined, undone: boolean, commit: string): void {
+  private tellUndone(undone: boolean, commit: string): void {
+    // The filed card the capsule shows: the reprint when one does, else the newest filing's. It is this filing's when its commit is `commit`,
+    // and `shown` is then its words.
     const reprint = this.reprint;
-    const showing =
-      this.capsuleState.kind === "filed" && (reprint !== null ? reprint.commit === commit : job !== undefined && this.job === job);
+    const job = this.job;
+    const card = this.capsuleState.kind !== "filed" ? null : reprint ?? (job ? { commit: job.outcome?.commit, text: job.text } : null);
+    const shown = card !== null && card.commit === commit ? card.text : null;
     if (!undone) {
-      if (showing) this.fail(undoRefused);
-      else this.notify(undoRefused.title, undoRefused.body, undefined, !!this.recording);
+      if (shown !== null) this.fail(undoRefused);
+      else this.notify(undoRefused.title, undoRefused.body);
     } else {
       const note = undoneNote(this.openReview());
-      if (showing) this.setCapsule({ kind: "saved", text: reprint !== null ? reprint.text : (job?.text ?? ""), note, undone: true }, 3500);
-      else this.notify("Undone", note, undefined, !!this.recording);
+      if (shown !== null) this.setCapsule({ kind: "saved", text: shown, note, undone: true }, 3500);
+      else this.notify("Undone", note);
     }
-    if (!showing) this.refreshMenu();
+    if (shown === null) this.refreshMenu();
   }
 
   /** The pages the capsule's filed card lists: the reprint's while one shows, else the newest filing's. */
@@ -3230,15 +3267,18 @@ export class Controller {
 
   /**
    * A notification, with macOS's sound. `silent`: without it, because something else has made the sound (the evening review's Letter, which
-   * is its sound), or because a recording runs and its recorder keeps no echo cancellation, so the sound would be heard in the words (an
-   * Undo pressed from the shortcut mid-dictation, `tellUndone`). `notified` keeps `silent` only on a silent one, so the tests' `{ title, body }`
-   * assertions stand for the others.
+   * is its sound). It is also without it, whoever posts it, while a recording runs, as the app's own sounds are (`sound`): the recorder keeps
+   * no echo cancellation (recorder.ts), so macOS's sound would be heard in the person's words, as the Letter's would. That rule lives here
+   * and nowhere else, so that no call site has to remember it: a filing that ends in the background mid-dictation, a failure, the evening
+   * review's end and its Undo, and the Undo pressed from the shortcut are all quiet then. `notified` keeps `silent` only on a silent one,
+   * so the tests' `{ title, body }` assertions stand for the others.
    */
   private notify(title: string, body: string, onClick?: () => void, silent = false): void {
     if (this.quitting) return;
-    if (process.env.AVANZEL_TEST === "1") this.notified.push({ title, body, ...(silent ? { silent: true as const } : {}) });
+    const quiet = silent || this.recording !== null;
+    if (process.env.AVANZEL_TEST === "1") this.notified.push({ title, body, ...(quiet ? { silent: true as const } : {}) });
     if (!Notification.isSupported()) return;
-    const note = new Notification({ title, body, silent });
+    const note = new Notification({ title, body, silent: quiet });
     if (onClick) note.on("click", onClick);
     note.show();
   }
@@ -4043,17 +4083,19 @@ export class Controller {
         // leaves to undo is kept with this one (`undoRecords`). A missing library throws to the `catch` below, as `librarian()` would.
         const library = this.requireVault();
         let filedNothing = false;
+        let ranToItsEnd = false;
         try {
           const result = await this.withRun(async (signal) => {
             const librarian = await this.librarian(task.agent);
             // The count's total is read here, as the review begins.
             return librarian.eveningReview({ instructions: task.instructions, signal, leave: this.countReview(task.id, left) });
           });
+          ranToItsEnd = true;
           filedNothing = !result.outcomes.length;
           this.fallAsleep(); // it ran to its end, whatever it found to file
           // The Letter plays as the review ends, whatever it found to file, and with it the review's notification makes no sound of its
-          // own: the Letter is its sound (spec §8, "Passive (silent)"). With sounds off, over a recording, or as Avanzel quits, none is
-          // sent, and macOS's sound stays.
+          // own: the Letter is its sound (spec §8, "Passive (silent)"). With sounds off, or as Avanzel quits, none is sent, and macOS's
+          // sound stays. Over a recording none is sent either, and `notify` keeps macOS's sound out of the person's words.
           const silent = this.sound("letter");
           if (filedNothing) {
             this.notify(task.name, nothingFiled(left.size), undefined, silent);
@@ -4074,6 +4116,10 @@ export class Controller {
           );
         } finally {
           if (!filedNothing) this.clearLastFiled(library.root);
+          // A review that threw (its agent gone when it came to the next note, say) may have filed some of the inbox first, and committed after
+          // the review before it: a revert of that one would meet the newer lines and end partial. Its record ends here too, since it outlives
+          // the app run (`undoRecords`). The throw itself is told below.
+          if (!ranToItsEnd) this.clearLastEvening(library.root);
         }
       } else if (task.kind === "review") {
         const outcome = await this.withRun(async (signal) => (await this.librarian(task.agent)).review({ signal }));
@@ -4094,8 +4140,10 @@ export class Controller {
   /**
    * Undo the last evening review, from the menu: the commits it made (`lastEveningCommits`) are taken back once the queue gets to them.
    * It answers only once the saved Undo is checked (`undoChecked`) and not while Avanzel quits, as the filing's does (`undoableFiling`):
-   * a quit leaves the record where it is. The commits are taken before the first await, here and in `undoRecords`, so it is asked for
-   * once, and that is its only try. It takes back in the library it was asked in, through a librarian made for that library
+   * a quit leaves the record where it is. The commits are taken before the first await, here and in `undoRecords`, and the menu is built
+   * again at once, as `forgetFiling` does for the filing: its item doesn't stand while the take-back waits in the queue (behind a filing
+   * or a review that can be a while), when a press of it would do nothing. So it is asked for once, and that is its only try. It takes
+   * back in the library it was asked in, through a librarian made for that library
    * (`librarianFor`), whichever library is open when the queue gets to it: the person asked to undo that review there. A take-back that
    * throws (git can't run) is told as a refusal (`undoRefused`), as a filing's is: the menu doesn't wait for this, so nothing is left
    * unhandled.
@@ -4106,6 +4154,7 @@ export class Controller {
     if (library === null || !commits.length || !this.undoChecked() || this.quitting) return;
     this.lastEveningCommits = [];
     this.undoRecords.patch(library.root, { evening: [] });
+    this.refreshMenu(); // the item goes now, not when the take-back lands
     const undone = await this.enqueue(async () => (await this.librarianFor(library)).undo(commits)).catch((error: unknown) => {
       console.warn("undo evening review", error); // a take-back that threw is a refusal, as it is for a filing
       return null;

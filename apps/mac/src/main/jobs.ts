@@ -1,7 +1,7 @@
 // What setup (setup.ts) and the controller share: a recording, a filing and its corrected words, how a question ended, the
 // agents' names, the library's folder picker, and how an error reads.
 import type { OpenDialogOptions } from "electron";
-import type { FileOutcome } from "@avanzel/engine";
+import type { FileOutcome, Vault } from "@avanzel/engine";
 import type { CapsuleMode, FileMode, FiledPage, NarrationRow, ScreenContext } from "../shared/ipc.ts";
 import type { AgentFailure } from "../shared/problems.ts";
 
@@ -62,6 +62,11 @@ export interface FilingJob {
    */
   background?: { by: "wait"; until: number } | { by: "watch" };
   outcome?: FileOutcome;
+  /**
+   * The library its run filed in, set as the run begins (`runFiling`): another may be open by the time the filing's card is up, or Undo is
+   * pressed on it, and an Undo takes the filing back in the library it was made in (`undo`). Unset until the run begins.
+   */
+  library?: Vault;
   pages?: FiledPage[];
   /**
    * What the agent has done so far, a row for each step it takes (`withStep`), oldest first. Every filing that has a card or
