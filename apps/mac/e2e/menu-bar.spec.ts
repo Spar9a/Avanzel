@@ -9,7 +9,22 @@ import path from "node:path";
 import { loadSettings, localDate, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { FilingReceipt } from "../src/main/undo-records.ts";
-import { dictate, inbox, launchOn, notified, reachedUndo, sleep, stampDay, undoCalls, undone, watchUndos, type Left } from "./capsule-helpers.ts";
+import {
+  dictate,
+  filedFromTheCapsule,
+  holdTheQueue,
+  inbox,
+  launchOn,
+  letTheQueueGo,
+  notified,
+  reachedUndo,
+  sleep,
+  stampDay,
+  undoCalls,
+  undone,
+  watchUndos,
+  type Left,
+} from "./capsule-helpers.ts";
 import {
   agentCalls,
   agentStubs,
@@ -223,21 +238,6 @@ async function holdTheBubble(app: ElectronApplication): Promise<void> {
 const swallowedCloses = (app: ElectronApplication) => app.evaluate(() => (globalThis as { swallowedCloses?: string[] }).swallowedCloses ?? []);
 
 const letTheBubbleGo = (app: ElectronApplication) => app.evaluate(() => Object.assign(globalThis, { bubbleHeld: false })).then(() => undefined);
-
-/**
- * From now on, the app's queue is held by a piece of work that runs no agent (as saving a review's settings, or taking a commit
- * back, is) until `letTheQueueGo`: whatever is queued behind it waits its turn. `idleForTests` waits for the queue, so it is not
- * asked while the queue is held.
- */
-async function holdTheQueue(app: ElectronApplication): Promise<void> {
-  await call(app, "capsuleStateForTests");
-  await app.evaluate(() => {
-    const controller = (globalThis as unknown as { __avanzel: { enqueue(work: () => Promise<void>): Promise<void> } }).__avanzel;
-    void controller.enqueue(() => new Promise<void>((resolve) => Object.assign(globalThis, { letTheQueueGo: resolve })));
-  });
-}
-
-const letTheQueueGo = (app: ElectronApplication) => app.evaluate(() => (globalThis as { letTheQueueGo?: () => void }).letTheQueueGo?.()).then(() => undefined);
 
 /** The seconds a count says: "1:05" is 65. */
 const secondsOf = (title: string) => Number(title.split(":")[0]) * 60 + Number(title.split(":")[1]);
@@ -1171,12 +1171,6 @@ const showReceipt = (app: ElectronApplication) => call(app, "menuAction", "show-
 
 /** The notifications the app has posted, oldest first. */
 const said = (app: ElectronApplication) => call(app, "notificationsForTests") as Promise<{ title: string; body: string }[]>;
-
-/** A thought spoken and filed from the capsule: its card says Filed. */
-async function filedFromTheCapsule(app: ElectronApplication): Promise<void> {
-  await dictate(app);
-  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
-}
 
 /** From now on the engine's fake agent behaves as `mode` says (FAKE_AGENT_MODE) for the runs that follow: each run is handed the app's environment. */
 const agentMode = (app: ElectronApplication, mode: string) => app.evaluate((_electron, wanted) => void (process.env.FAKE_AGENT_MODE = wanted), mode);

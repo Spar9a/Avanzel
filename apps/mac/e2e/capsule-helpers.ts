@@ -1,12 +1,13 @@
 // What the specs of the capsule's cards share: how a card is read, and what the two Stopped cards show. Below those, what the specs of
 // a filing's run (filing.spec.ts), of the problems it ends in (capsule-problems.spec.ts) and of its results (capsule-results.spec.ts) share:
-// a library that Claude Code's stand-in files, dictating to it, and the wrappers that watch what the app sends and takes back.
+// a library that Claude Code's stand-in files, dictating to it, the wrappers that watch what the app sends and takes back, and the queue
+// held for a test.
 import { expect, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { agentStubs, call, filesUnder, gitOut, launch, makeLibrary, onlyAgentsIn, speechWav, windowFor } from "./helpers.ts";
+import { agentStubs, call, capsuleKind, filesUnder, gitOut, launch, makeLibrary, onlyAgentsIn, speechWav, windowFor } from "./helpers.ts";
 import { zel } from "./setup-helpers.ts";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -162,6 +163,12 @@ export async function dictate(app: ElectronApplication): Promise<void> {
   await call(app, "toggleDictate");
 }
 
+/** A thought spoken and filed from the capsule: its card says Filed. */
+export async function filedFromTheCapsule(app: ElectronApplication): Promise<void> {
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
+}
+
 /** The file name of the note the capsule's failure card is about, which its button files again; null while it shows no such card. */
 export async function cardNote(app: ElectronApplication): Promise<string | null> {
   const capture = (await call(app, "cardCaptureForTests")) as string | null;
@@ -257,6 +264,21 @@ export async function watchUndos(app: ElectronApplication, { hold = false, fail 
     };
   }, { holding: hold, failing: fail });
 }
+
+/**
+ * From now on, the app's queue is held by a piece of work that runs no agent (as saving a review's settings, or taking a commit
+ * back, is) until `letTheQueueGo`: whatever is queued behind it waits its turn. `idleForTests` waits for the queue, so it is not
+ * asked while the queue is held.
+ */
+export async function holdTheQueue(app: ElectronApplication): Promise<void> {
+  await call(app, "capsuleStateForTests");
+  await app.evaluate(() => {
+    const controller = (globalThis as unknown as { __avanzel: { enqueue(work: () => Promise<void>): Promise<void> } }).__avanzel;
+    void controller.enqueue(() => new Promise<void>((resolve) => Object.assign(globalThis, { letTheQueueGo: resolve })));
+  });
+}
+
+export const letTheQueueGo = (app: ElectronApplication) => app.evaluate(() => (globalThis as { letTheQueueGo?: () => void }).letTheQueueGo?.()).then(() => undefined);
 
 /** `library`, opened by an app that hears "Plant tulips in October" and files with the engine's fake agent; `env` steers them. */
 export async function launchOn(library: string, env: Record<string, string> = {}) {

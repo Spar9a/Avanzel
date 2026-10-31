@@ -1,7 +1,7 @@
 // The capsule's result cards' words that are made from values: what a filing says of itself and of its pages, and the two Stopped
 // cards, which name the evening review only while the library's runs. Also the taken-shortcut notice's second sentence, which says
 // where the action's item is. The rest of their words are main's (a saved thought's note) or fixed, and are written where they are shown.
-import { ACTION_NAMES } from "../../main/shortcuts.ts";
+import { inMenuLine } from "../../main/shortcuts.ts";
 import type { FiledPage, Shortcuts } from "../../shared/ipc.ts";
 import { shortened } from "../../shared/clip.ts";
 import { reviewDoes, stoppedLine } from "../../shared/problems.ts";
@@ -99,10 +99,7 @@ export function recordedLine(review: string | null): string {
   return later === null ? "It's in the inbox." : `It's in the inbox. ${later}`;
 }
 
-/**
- * The taken-shortcut notice's body: pick another shortcut, and where the action's item is. Undo the last filing's item is in the menu bar
- * only after a filing, so it is not "still" there.
- */
+/** The taken-shortcut notice's body: pick another shortcut, and where the action's item is (`inMenuLine`, which Settings → Voice says too). */
 export function stillInMenuLine(key: keyof Shortcuts): string {
-  return `Pick another shortcut. “${ACTION_NAMES[key]}” ${key === "undo" ? "is in the menu bar after each filing" : "is still in the menu bar"}.`;
+  return `Pick another shortcut. ${inMenuLine(key)}`;
 }

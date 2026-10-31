@@ -74,8 +74,10 @@ export function reachKey(accelerator: string): string | null {
 }
 
 /**
- * The shortcuts offered in place of one another app holds, best first. None is one of macOS's own: they keep clear of
- * ⌃Space and ⌃⌥Space (input sources), ⌘Space and ⌥⌘Space (Spotlight), ⌃⌘Space (emoji and symbols) and ⌥⌘D (the Dock).
+ * The shortcuts offered in place of one another app holds, best first. They keep clear of the system shortcuts named here: ⌃Space and
+ * ⌃⌥Space (input sources), ⌘Space and ⌥⌘Space (Spotlight), ⌃⌘Space (emoji and symbols) and ⌥⌘D (the Dock). Not of every key macOS has:
+ * with VoiceOver on, ⌃⌥ is its modifier, so the ⌃⌥ ones meet VoiceOver's own keys. That is a known cost of offering ⌃⌥ and a letter, and
+ * an owner item.
  */
 export const ALTERNATIVES: Readonly<Record<keyof Shortcuts, readonly string[]>> = {
   dictate: ["Control+Shift+Space", "Control+Alt+R", "Control+Alt+D"],
@@ -103,6 +105,14 @@ export function likelyHolder(accelerator: string, running: readonly string[]): s
 /** "⌥Space is used by another app, probably Alfred.": what happened to a shortcut another app holds. */
 export function takenMessage(accelerator: string, holder: string | null): string {
   return `${prettyAccelerator(accelerator)} is used by another app${holder ? `, probably ${holder}` : ""}.`;
+}
+
+/**
+ * "“Record a thought” is still in the menu bar.": where the action's item is, for the notices of a shortcut that doesn't work (the
+ * capsule's, and Settings → Voice's). Undo the last filing's item is in the menu bar only after a filing, so it is not "still" there.
+ */
+export function inMenuLine(key: keyof Shortcuts): string {
+  return `“${ACTION_NAMES[key]}” ${key === "undo" ? "is in the menu bar after each filing" : "is still in the menu bar"}.`;
 }
 
 export interface Registration {

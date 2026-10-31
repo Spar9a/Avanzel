@@ -8,7 +8,7 @@ import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { CapsuleState, SettingsSnapshot } from "../src/shared/ipc.ts";
-import { dictate, inbox, launchOn, notified, reachedUndo, undoCalls, undone, watchUndos, type Left } from "./capsule-helpers.ts";
+import { dictate, filedFromTheCapsule, holdTheQueue, inbox, launchOn, letTheQueueGo, notified, reachedUndo, undoCalls, undone, watchUndos, type Left } from "./capsule-helpers.ts";
 import { call, capsuleKind, emptyHfCache, firstRun, launch, makeLibrary, openSettings, snap, windowFor } from "./helpers.ts";
 import { zel } from "./setup-helpers.ts";
 
@@ -398,15 +398,9 @@ const UNDONE_NOTE = "Your words are back in the inbox for the evening review at 
 /** ⌥⇧Z, pressed as the person would: the callback the shortcut stand-in holds for it runs. False when it holds none. */
 const pressUndo = (app: ElectronApplication) => call(app, "pressShortcutForTests", "undo") as Promise<boolean>;
 
-/** A thought spoken and filed from the capsule: its card says Filed. */
-async function filed(app: ElectronApplication): Promise<void> {
-  await dictate(app);
-  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
-}
-
 /** A thought filed and its card put away: only the menu and ⌥⇧Z offer to take it back now. */
 async function filedAndPutAway(app: ElectronApplication): Promise<void> {
-  await filed(app);
+  await filedFromTheCapsule(app);
   await call(app, "dismiss");
 }
 
@@ -433,7 +427,7 @@ for (const relaunched of [false, true]) {
   test(`⌥⇧Z pressed twice while its take-back waits answers once${relaunched ? ", after a relaunch" : ""}: no bar, one take-back, told once`, async () => {
     const library = await makeLibrary({ git: true });
     const first = await launchOn(library);
-    await filed(first.app);
+    await filedFromTheCapsule(first.app);
     let app = first.app;
     if (relaunched) {
       // The filing was kept in the app's profile: the new run offers it, with nothing up.
@@ -547,6 +541,50 @@ test("while a filing or a review runs, or over a recording, ⌥⇧Z does nothing
   await review.app.close();
 });
 
+// Words filed again after an edit are in flight until the work that files them has its turn (`settleEdit`): they are in neither
+// `queuedToFile` nor `runs` meanwhile, and once their card is put away nothing shows them. Only `capturing` says so (B1), and the bar
+// must not say that there is no filing while a thought waits to be filed.
+test("with nothing to undo, ⌥⇧Z does nothing while words filed again after an edit wait for their turn, their card put away", async () => {
+  const { app } = await launchOn(await makeLibrary({ git: true }), { FAKE_AGENT_DELAY_MS: "3000" });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
+  await call(app, "edit"); // Edit stops its run, and the editor opens
+  await call(app, "idleForTests"); // the stopped run is over
+  await holdTheQueue(app); // the corrected words wait for their turn
+  await call(app, "submitEdit", "Plant tulips in late October");
+  expect(await capsuleState(app)).toMatchObject({ kind: "filing", waiting: true });
+  await call(app, "dismiss"); // their card is put away: nothing shows the thought now
+  expect(await capsuleKind(app)).toBe("hidden");
+  expect(await pressUndo(app)).toBe(true);
+  expect(await capsuleKind(app)).toBe("hidden");
+  await letTheQueueGo(app);
+  await app.close();
+});
+
+// A library that has just opened has its saved Undo checked against its git (`checkUndo`), and until that ends no filing is offered
+// (`undoChecked`) though one may be about to be: the bar must not say that there is none. The check is held at its door.
+test("⌥⇧Z says nothing while the saved Undo of the library just opened is being checked, and answers once it is", async () => {
+  const config = mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")); // the library that opens is remembered here, not in ~/.config
+  const { app } = await launchOn(await makeLibrary({ git: true }), { XDG_CONFIG_HOME: config });
+  await app.evaluate(() => {
+    const controller = (globalThis as unknown as { __avanzel: { checkUndo(vault: unknown): Promise<void> } }).__avanzel;
+    const checkUndo = controller.checkUndo.bind(controller);
+    controller.checkUndo = async (vault) => {
+      await new Promise<void>((resolve) => Object.assign(globalThis, { letTheCheckIn: resolve }));
+      return checkUndo(vault);
+    };
+  });
+  await call(app, "useLibrary", await makeLibrary({ git: true })); // another library opens, and its check waits
+  expect(await call(app, "undoChecked")).toBe(false);
+  expect(await pressUndo(app)).toBe(true);
+  expect(await capsuleKind(app)).toBe("hidden");
+  await app.evaluate(() => (globalThis as { letTheCheckIn?: () => void }).letTheCheckIn?.());
+  await expect.poll(() => call(app, "undoChecked"), { timeout: 10_000 }).toBe(true);
+  expect(await pressUndo(app)).toBe(true);
+  expect(await capsuleState(app)).toEqual({ kind: "nothing-to-undo" });
+  await app.close();
+});
+
 test("Undo the last filing has its row in Settings → Voice, recorded and saved like the others", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app, "Voice");
@@ -568,6 +606,11 @@ test("a taken ⌥⇧Z gets the launch notice, with ⌃⌥Z and ⌃⌥U, and says
   await expect(capsule.getByText("Pick another shortcut. “Undo the last filing” is in the menu bar after each filing.", { exact: true })).toBeVisible();
   // Hide first; the best one last, as the primary.
   await expect(capsule.getByRole("button")).toHaveText(["Hide", "Use ⌃⌥U", "Use ⌃⌥Z"]);
+  // Settings → Voice keeps the problem, and says of the item what the capsule does: it is in the menu after a filing, not "still" there.
+  await call(app, "showSettings", "voice");
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByText(/⌥⇧Z is used by another app.* Pick another shortcut\./)).toBeVisible();
+  await expect(settings.getByText("“Undo the last filing” is in the menu bar after each filing.", { exact: true })).toBeVisible();
   await capsule.getByRole("button", { name: "Use ⌃⌥Z" }).click();
   await expect(capsule.getByRole("status").getByText("Undo the last filing now uses ⌃⌥Z", { exact: true })).toBeVisible();
   expect((await snapshot(app)).app.shortcuts.undo).toBe("Control+Alt+Z");

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ALTERNATIVES,
   freeAlternatives,
+  inMenuLine,
   keyCaps,
   leftToApps,
   likelyHolder,
@@ -134,6 +135,16 @@ describe("global shortcuts", () => {
     expect(reachKey("CommandOrControl+Shift+K")).toBe("Shift");
     expect(reachKey("Command+K")).toBe("Meta");
     expect(reachKey("F13")).toBeNull();
+  });
+});
+
+describe("inMenuLine: where an action's item is in the menu bar", () => {
+  it("says each item is still there, except Undo the last filing's, which is there after each filing", () => {
+    expect(inMenuLine("dictate")).toBe("“Record a thought” is still in the menu bar.");
+    expect(inMenuLine("capture")).toBe("“Capture screen with a comment” is still in the menu bar.");
+    expect(inMenuLine("type")).toBe("“Type a thought” is still in the menu bar.");
+    expect(inMenuLine("ask")).toBe("“Ask your library” is still in the menu bar.");
+    expect(inMenuLine("undo")).toBe("“Undo the last filing” is in the menu bar after each filing.");
   });
 });
 

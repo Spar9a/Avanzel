@@ -864,16 +864,25 @@ export class Controller {
   }
 
   /**
+   * The capsule is free for a reply to a press of the person's: a reprint of the last receipt (`showLastReceipt`) or the bar that says
+   * there is no filing to undo (`pressUndoShortcut`). Avanzel isn't quitting, no thought is in flight (`capturing`: a recording, a
+   * transcription, a filing's card or its hidden run, the editor, a refile that waits for its turn), no filing or review goes on
+   * (`filingOrReviewGoing`), and the capsule shows nothing or a finished card (`showsFinishedCard`), which the reply may replace. A refile is
+   * in neither `queuedToFile` nor `runs` until its turn, and the editor keeps the menu's rebuilds going (`tick`, `leftWithoutRun`), so
+   * `capturing` is what holds a reply back there. Both replies ask this, so that a condition added for one is added for the other.
+   */
+  private capsuleFreeForReply(): boolean {
+    return !this.quitting && !this.capturing() && !this.filingOrReviewGoing() && this.showsFinishedCard();
+  }
+
+  /**
    * Whether "Show the last receipt" can be chosen now: the open library has a receipt and its saved Undo is checked (`undoChecked`, which
-   * also dropped a receipt whose commit has left the history), Avanzel isn't quitting, no thought is in flight (`capturing`: a recording,
-   * a transcription, a filing's card or its hidden run, the editor, a refile that waits for its turn) and no filing or review goes on
-   * (`filingOrReviewGoing`), and the capsule shows nothing or a finished card (`showsFinishedCard`). Over a problem's notice, the editor or
-   * a capture the item is not there, as Undo's is not where it can't act: a press would do nothing, and a notice stays until the person acts.
-   * `setCapsule` builds the menu for every card, so the item follows them. A refile is in neither `queuedToFile` nor `runs` until its turn,
-   * and the editor keeps the menu's rebuilds going (`tick`, `leftWithoutRun`), so `capturing` is what holds the item back there.
+   * also dropped a receipt whose commit has left the history), and the capsule is free for a reply (`capsuleFreeForReply`). Over a problem's
+   * notice, the editor or a capture the item is not there, as Undo's is not where it can't act: a press would do nothing, and a notice stays
+   * until the person acts. `setCapsule` builds the menu for every card, so the item follows them.
    */
   private receiptShowable(): boolean {
-    return this.lastReceipt !== null && this.undoChecked() && !this.quitting && !this.capturing() && !this.filingOrReviewGoing() && this.showsFinishedCard();
+    return this.lastReceipt !== null && this.undoChecked() && this.capsuleFreeForReply();
   }
 
   /**
@@ -2838,15 +2847,17 @@ export class Controller {
    *   over the very card the first take-back is about to turn to Undone. The first tells the person, once.
    * With a filing to undo (`undoableFiling`) it is the menu's Undo (`undoLastFiling`): one try, told once on the filed card of that filing
    * or else by a notification, even while a recording runs (that notification is silent then, `tellUndone`). With none, a bar says so for
-   * `NOTHING_TO_UNDO_MS`, except once Avanzel is quitting, while a filing or a review goes on (`filingOrReviewGoing`) or a thought is in
-   * flight (`capturing`, which includes a refile whose card is hidden), and over any card that is not finished (`showsFinishedCard`): a
-   * recording, an editor, a problem with its fix, a Stopped card that says edits stay, a Saved card with a line about its recording. The
-   * bar replaces a finished card.
+   * `NOTHING_TO_UNDO_MS`, but not while the open library's saved Undo is still being checked (`undoChecked`: a filing may be about to be
+   * offered, and the menu waits for the check too), and only when the capsule is free for a reply (`capsuleFreeForReply`): not once Avanzel
+   * is quitting, while a filing or a review goes on or a thought is in flight (a refile whose card is hidden too), nor over a card that is
+   * not finished: a recording, an editor, a problem with its fix, a Stopped card that says edits stay, a Saved card with a line about its
+   * recording. The bar replaces a finished card.
    */
   private pressUndoShortcut(): void {
     if (this.setup.isOpen() || this.reverting.size > 0) return;
     if (this.undoableFiling()) return void this.undoLastFiling();
-    if (this.quitting || this.filingOrReviewGoing() || this.capturing() || !this.showsFinishedCard()) return;
+    if (this.vault !== null && !this.undoChecked()) return;
+    if (!this.capsuleFreeForReply()) return;
     this.setCapsule({ kind: "nothing-to-undo" }, NOTHING_TO_UNDO_MS);
   }
 
@@ -2864,7 +2875,7 @@ export class Controller {
       this.capsuleState.kind === "filed" && (reprint !== null ? reprint.commit === commit : job !== undefined && this.job === job);
     if (!undone) {
       if (showing) this.fail(undoRefused);
-      else this.notify(undoRefused.title, undoRefused.body);
+      else this.notify(undoRefused.title, undoRefused.body, undefined, !!this.recording);
     } else {
       const note = undoneNote(this.openReview());
       if (showing) this.setCapsule({ kind: "saved", text: reprint !== null ? reprint.text : (job?.text ?? ""), note, undone: true }, 3500);

@@ -830,13 +830,17 @@ test("an Undo whose take-back throws says it can't be undone, and the card doesn
 });
 
 // The take-back waits its turn in the queue, and a newer card may be up by the time it lands: a recording's, which goes on recording
-// (its recorder is the page's, not the card's), or a newer filing's editor. Its word then comes as a notification, and the card stays. The
-// Undone one is silent: the recording is on, and macOS's sound would be heard in the words.
+// (its recorder is the page's, not the card's), or a newer filing's editor. Its word then comes as a notification, and the card stays. Over
+// a recording the notification is silent, the refusal's too: macOS's sound would be heard in the words.
 for (const { refused, said } of [
   { refused: false, said: { title: "Undone", body: "Your words are back in the inbox for the evening review at 21:00.", silent: true } },
   {
     refused: true,
-    said: { title: "This one can't be undone automatically.", body: "Usually a later change touched the same lines. The library's history keeps both versions." },
+    said: {
+      title: "This one can't be undone automatically.",
+      body: "Usually a later change touched the same lines. The library's history keeps both versions.",
+      silent: true,
+    },
   },
 ]) {
   test(`an Undo ${refused ? "refused" : "done"} while a new recording listens leaves the listening card up, and says so in one notification`, async () => {

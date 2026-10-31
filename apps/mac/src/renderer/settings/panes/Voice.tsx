@@ -2,7 +2,7 @@
 // and the speech model that turns what it hears into text. Each control applies at once.
 import { Actions, Button, Group, GroupRow, Kbd, Notice, Progress, Row, Stack, Text } from "@avanzel/ui";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { ACTION_NAMES, prettyAccelerator } from "../../../main/shortcuts.ts";
+import { ACTION_NAMES, inMenuLine, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { ModelStatus, Shortcuts } from "../../../shared/ipc.ts";
 import { downloadFailedProblem, voiceSettingsProblem } from "../../../shared/problems.ts";
 import { passesThrough, toAccelerator } from "../accelerator.ts";
@@ -109,10 +109,10 @@ export function Voice(props: PaneProps): ReactNode {
   // Each shortcut row's group of controls, to put the focus on its Change when a button the person used has gone.
   const groups = useRef<Partial<Record<keyof Shortcuts, HTMLDivElement | null>>>({});
   const rows = Object.entries(ACTION_NAMES) as [keyof Shortcuts, string][];
-  const problems = rows.flatMap(([key, name]) => {
+  const problems = rows.flatMap(([key]) => {
     const message = snap.shortcutProblems[key];
     // The snapshot lists the best free shortcut first; it goes last here, where a row of buttons keeps its primary.
-    return message ? [{ key, name, message, alternatives: [...(snap.shortcutAlternatives[key] ?? [])].reverse() }] : [];
+    return message ? [{ key, message, alternatives: [...(snap.shortcutAlternatives[key] ?? [])].reverse() }] : [];
   });
   // The pane has one primary button, the fix of the first Notice that has one to offer: the best free shortcut of the
   // first problem with any, or else Try again. A Notice with nothing to offer leaves it to the next.
@@ -178,7 +178,7 @@ export function Voice(props: PaneProps): ReactNode {
         ))}
       </Group>
       {/* One Notice for each shortcut with a problem. The primary is the best free shortcut of the one primaryKey names. */}
-      {problems.map(({ key, name, message, alternatives }) => (
+      {problems.map(({ key, message, alternatives }) => (
         <Notice
           key={key}
           tone="error"
@@ -200,8 +200,8 @@ export function Voice(props: PaneProps): ReactNode {
             ) : undefined
           }
         >
-          {/* Without a library the menu has no such item yet. */}
-          {snap.library?.exists ? `“${name}” is still in the menu bar.` : undefined}
+          {/* Where the action's item is, in the capsule's words (`inMenuLine`); without a library the menu has no such item yet. */}
+          {snap.library?.exists ? inMenuLine(key) : undefined}
         </Notice>
       ))}
       <MicrophoneGroup {...props} />
