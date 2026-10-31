@@ -133,18 +133,21 @@ function leftoverEdits(agent: string): string {
   return `${agent}'s partial edits stay as they are, because nothing recorded them.`;
 }
 
+/**
+ * What a run left in the library that a commit holds is told in this one sentence wherever it is told, as `leftoverEdits` tells what
+ * nothing recorded: a failed filing's card, a Stopped filing's card, setup's Cancel, and a save that saved no page (`unsavedLine`).
+ */
+function committedEdits(agent: string): string {
+  return `${agent}'s partial edits are kept as their own commit in the library's history.`;
+}
+
 /** What a failed filing says, in the words of the copy table: the title, the body and, for a sign-in, the command to run. */
 export function filingProblem(f: AgentFailure, now: Date, o: FilingProblemOptions = {}): Problem {
   const { where, partial = null, after = "wait", eveningReview = true, lineMax } = o;
   const safe = where ? `Your words are kept in ${where}, and the inbox holds the agent's version` : "Your note is safe in the inbox";
   // The sentence that says what is safe, ending with the evening review's promise while the library's review is on.
   const reassure = eveningReview ? `${safe}; the evening review will try again.` : `${safe}.`;
-  const left =
-    partial === "commit"
-      ? ` ${f.agent}'s partial edits are kept as their own commit in the library's history.`
-      : partial === "uncommitted"
-        ? ` ${leftoverEdits(f.agent)}`
-        : "";
+  const left = partial === "commit" ? ` ${committedEdits(f.agent)}` : partial === "uncommitted" ? ` ${leftoverEdits(f.agent)}` : "";
   const done = (title: string, body: string, command?: string): Problem => ({ title, body: `${body}${left}`, ...(command ? { command } : {}) });
 
   switch (f.kind) {
@@ -210,14 +213,26 @@ function changedSentence(agent: string, files: number): string {
   return files === 1 ? `${agent} changed 1 file while answering; it's left as it is.` : `${agent} changed ${files} files while answering; they're left as they are.`;
 }
 
+/** What is safe when a run left the library as it was. */
+const LIBRARY_UNCHANGED = "Your library hasn't changed.";
+
+/** The words in which a failed question and a failed save differ (`askProblemWith`). */
+interface AskWords {
+  /** What the agent couldn't do and is needed for, after "couldn't" and after "to": "answer", or "save the answer". */
+  doing: string;
+  /** What a sign-in is followed by, before "again": "ask", or "save". */
+  again: string;
+}
+
+const QUESTION_WORDS: AskWords = { doing: "answer", again: "ask" };
+const SAVE_WORDS: AskWords = { doing: "save the answer", again: "save" };
+
 /**
- * What a question that failed says, in the words of the copy table's Ask rows: the title says what happened, the body that the
- * library hasn't changed (or what the run changed, `changedFiles` files, which is left as it is) and then what to do, and the
- * window offers the fix `terminal` and `settings` name; any other failure, and a usage limit or a timeout, is fixed by asking again.
+ * A failed question or save in the Ask window's words (`askProblem`, `saveProblem`): the title says what happened, the body what is
+ * safe (`safe`) and then what to do, and the window offers the fix `terminal` and `settings` name. `words` are the ones that differ.
  * Nothing ran when no agent is installed, so that row says nothing of the library.
  */
-export function askProblem(f: AgentFailure, changedFiles: number, now: Date): AskProblem {
-  const safe = changedFiles > 0 ? changedSentence(f.agent, changedFiles) : "Your library hasn't changed.";
+function askProblemWith(f: AgentFailure, safe: string, now: Date, words: AskWords): AskProblem {
   const done = (title: string, body: string, offers: { command?: string; terminal?: boolean; settings?: boolean } = {}): AskProblem => ({
     title,
     body,
@@ -235,18 +250,52 @@ export function askProblem(f: AgentFailure, changedFiles: number, now: Date): As
     case "signin": {
       const title = `${f.agent} isn't signed in on this Mac.`;
       const signIn = signInOf(f);
-      if (signIn === null) return done(title, `${safe} Sign in to ${f.agent} in Terminal, then ask again.`, { terminal: true });
-      return done(title, `${safe} ${signIn.run}, then ask again.`, { command: signIn.command, terminal: true });
+      if (signIn === null) return done(title, `${safe} Sign in to ${f.agent} in Terminal, then ${words.again} again.`, { terminal: true });
+      return done(title, `${safe} ${signIn.run}, then ${words.again} again.`, { command: signIn.command, terminal: true });
     }
     case "timeout":
       return done(`${f.agent} took longer than ${duration(f.seconds)} and was stopped.`, safe);
     case "gone":
       return done(`${f.agent} isn't installed on this Mac any more.`, `${safe} Settings → Agents can choose another agent, or has its install command.`, { settings: true });
     case "missing":
-      return done("Avanzel needs an AI agent to answer.", "Claude Code works best, and Settings → Agents has its install command.", { settings: true });
+      return done(`Avanzel needs an AI agent to ${words.doing}.`, "Claude Code works best, and Settings → Agents has its install command.", { settings: true });
     case "other":
-      return done(`${f.agent} couldn't answer.`, [safe, ownLine(f.line)].filter(Boolean).join(" "));
+      return done(`${f.agent} couldn't ${words.doing}.`, [safe, ownLine(f.line)].filter(Boolean).join(" "));
   }
+}
+
+/**
+ * What a question that failed says, in the words of the copy table's Ask rows: the title says what happened, the body that the
+ * library hasn't changed (or what the run changed, `changedFiles` files, which is left as it is) and then what to do, and the
+ * window offers the fix `terminal` and `settings` name; any other failure, and a usage limit or a timeout, is fixed by asking again.
+ * Nothing ran when no agent is installed, so that row says nothing of the library.
+ */
+export function askProblem(f: AgentFailure, changedFiles: number, now: Date): AskProblem {
+  return askProblemWith(f, changedFiles > 0 ? changedSentence(f.agent, changedFiles) : LIBRARY_UNCHANGED, now, QUESTION_WORDS);
+}
+
+/**
+ * What a save of the answer that saved no page left in the library (`partial`, as `leftBehind` finds it), as the sentence that says what
+ * is safe: that it hasn't changed, or that `agent`'s partial edits are kept as their own commit, or stay with nothing to take them back.
+ * A Stopped save says it too (`stoppedSaveLine`).
+ */
+export function unsavedLine(agent: string, partial: PartialEdits): string {
+  return partial === "commit" ? committedEdits(agent) : partial === "uncommitted" ? leftoverEdits(agent) : LIBRARY_UNCHANGED;
+}
+
+/** Why a save pressed on an answer from another library saved nothing (`saveProblem` tells it as a failure of Avanzel's own). */
+export const ANOTHER_LIBRARY = "This answer came from another library. Change back to it in Settings → General, then save again.";
+
+/**
+ * What a save of the answer that saved no page says, for the Ask window: a question's words (`askProblem`) with what the save left
+ * (`unsavedLine`) in place of the library's being unchanged, and the save as what the agent couldn't do or the person does again. `f` is
+ * null for a run that ended well and wrote no page: its title says so. The save writes, so it may have left edits (`partial`), which a
+ * question never does.
+ */
+export function saveProblem(f: AgentFailure | null, agent: string, partial: PartialEdits, now: Date): AskProblem {
+  const safe = unsavedLine(agent, partial);
+  if (f === null) return { title: `${agent} didn't save a page.`, body: safe, terminal: false, settings: false };
+  return askProblemWith(f, safe, now, SAVE_WORDS);
 }
 
 /**
@@ -316,7 +365,7 @@ export const stopRefused: Problem = {
  * automatic commits off), which stay as they are; it doesn't say how many. A run that changed nothing says so.
  */
 export function cancelledLine(agent: string, partial: boolean, leftovers: number): string {
-  if (partial) return `Your words are back in the inbox, untouched. ${agent}'s partial edits are kept as their own commit in the library's history.`;
+  if (partial) return `Your words are back in the inbox, untouched. ${committedEdits(agent)}`;
   if (leftovers > 0) return `Your words are back in the inbox. ${leftoverEdits(agent)}`;
   return "Your words are back in the inbox, untouched, and nothing else changed.";
 }

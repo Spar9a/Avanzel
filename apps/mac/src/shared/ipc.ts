@@ -672,7 +672,24 @@ export interface AskResult {
    * isn't installed is told by its failure (`gone`, or `missing` when none is).
    */
   failure: AgentFailure | null;
+  /**
+   * The root of the library the question was asked in, read as it began; null when none was open. The window hands it back with Save
+   * (`ask.save`), so an answer is saved only in the library it came from, whichever is open by then.
+   */
+  library: string | null;
 }
+
+/** How a save of an answer as a page ended (`ask.save`). */
+export type SaveResult =
+  /** The agent wrote the page. `commit` is the save's own, which takes it back: null without git, or with automatic commits off. */
+  | { kind: "saved"; page: FiledPage; commit: string | null }
+  /**
+   * Nothing was saved. `failure` says why, as the window tells it (`saveProblem`); null for a run that ended well and wrote no page.
+   * `partial` is what the run left in the library.
+   */
+  | { kind: "unsaved"; agent: string; failure: AgentFailure | null; partial: PartialEdits }
+  /** Stop, or closing the window, gave the save up. `partial` is what the run left in the library. */
+  | { kind: "stopped"; agent: string; partial: PartialEdits };
 
 /** Preload bridge exposed as `window.avanzel`. */
 export interface AvanzelBridge {
@@ -777,12 +794,18 @@ export interface AvanzelBridge {
   };
   ask: {
     ask(question: string): Promise<AskResult>;
-    /** What the question in progress is doing now, e.g. waiting for a filing to finish, then looking through the library. */
+    /**
+     * Saves `answer`, the one the person was shown to `question`, as a page of the library it came from (`library`, as
+     * AskResult gave it): the agent writes the page and the app commits it. It saves nothing in another library than the open one;
+     * the result says so. Only the Ask window's own page may save: sent from any other window, it rejects and runs nothing.
+     */
+    save(question: string, answer: string, library: string | null): Promise<SaveResult>;
+    /** What the question or save in progress is doing now, e.g. waiting for a filing to finish, then looking through the library. */
     onProgress(callback: (message: string) => void): () => void;
     /**
-     * Stop, while a question is answered: it is given up as closing the window gives it up. Its agent stops, and the
-     * library is free for a filing waiting on it; what ask() then sends back is the cancelled run's. Only the Ask window's
-     * own page is heard: sent from any other window, it gives up no question.
+     * Stop, while a question is answered or an answer is saved: it is given up as closing the window gives it up. Its agent
+     * stops, and the library is free for a filing waiting on it; what ask() or save() then sends back is the cancelled run's.
+     * Only the Ask window's own page is heard: sent from any other window, it gives up nothing.
      */
     cancel(): void;
     openPage(name: string): void;

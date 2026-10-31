@@ -68,6 +68,8 @@ import {
 } from "@avanzel/engine";
 import { isSettingsPane, noSuchReview } from "../shared/ipc.ts";
 import {
+  ANOTHER_LIBRARY,
+  avanzelFailure,
   commentNotStartedProblem,
   correctedWordsProblem,
   filingProblem,
@@ -103,6 +105,7 @@ import type {
   FiledPage,
   ModelStatus,
   RecordingProblem,
+  SaveResult,
   ScreenContext,
   SettingsPane,
   SettingsSnapshot,
@@ -269,8 +272,11 @@ interface Transcribing {
   stopped: boolean;
 }
 
-/** What a failed filing's run left behind in the library: its edits as their own commit, or outside any history; null when it left none. */
-function leftBehind(outcome: FileOutcome | undefined): PartialEdits {
+/**
+ * What a failed run left behind in the library (a filing's, or a save's): its edits as their own commit, or outside any history; null when
+ * it left none, and when there is no outcome to look at.
+ */
+function leftBehind(outcome: { commit: string | null; changes: { empty: boolean } } | undefined): PartialEdits {
   return !outcome ? null : outcome.commit ? "commit" : outcome.changes.empty ? null : "uncommitted";
 }
 
@@ -316,8 +322,13 @@ export class Controller {
   private settingsWindow: BrowserWindow | null = null;
   private quickWindow: BrowserWindow | null = null;
   private askWindow: BrowserWindow | null = null;
-  /** Gives up the Ask window's question being answered, as closing that window does: Stop calls it (cancelAsk). */
+  /** Gives up the Ask window's question being answered or answer being saved, as closing that window does: Stop calls it (cancelAsk). */
   private giveUpAsk: (() => void) | null = null;
+  /**
+   * An answer is being saved as a page (`saveAnswer`), from Save's press until it answers, whether the save waits for the library or
+   * runs. The save commits after any filing that ended while it waited, so none of those is offered for Undo meanwhile (`undoableFiling`).
+   */
+  private saving = false;
   /** First-run setup: its window and session, and Zel's bubble once it has ended (setup.ts). */
   readonly setup: Setup;
   private menuBar!: MenuBar;
@@ -830,13 +841,16 @@ export class Controller {
 
   /**
    * Whether the menu offers Undo the last filing: there is one (`lastFiled`), the library it filed in is the open one and its saved
-   * Undo is checked (`undoChecked`), Avanzel isn't quitting, and no filing or review waits or runs. A filing whose run has begun has
-   * cleared `lastFiled` already, so the filing that waits for its turn (`queuedToFile`) and the review that waits or runs (`running`)
-   * are what the item hides for.
+   * Undo is checked (`undoChecked`), Avanzel isn't quitting, and no filing, review or save of an answer waits or runs. A filing whose run
+   * has begun has cleared `lastFiled` already, so the filing that waits for its turn (`queuedToFile`) and the review that waits or runs
+   * (`running`) are what the item hides for. A save clears it as it begins (`saveAnswer`) but it waits for the library as a question
+   * does, and a filing that ends meanwhile would be offered with the save about to commit after it: the save (`saving`) hides it too.
    */
   private undoableFiling(): boolean {
     const last = this.lastFiled;
-    return last !== null && this.vault?.root === last.library && this.undoChecked() && !this.quitting && this.queuedToFile.size === 0 && this.running.size === 0;
+    return (
+      last !== null && this.vault?.root === last.library && this.undoChecked() && !this.quitting && this.queuedToFile.size === 0 && this.running.size === 0 && !this.saving
+    );
   }
 
   /**
@@ -2873,10 +2887,12 @@ export class Controller {
   }
 
   /**
-   * The Undo shortcut is pressed, in any app. It does nothing in two cases:
+   * The Undo shortcut is pressed, in any app. It does nothing in three cases:
    * - Setup's window is open: the first thought it shows has an Undo of its own on screen, and a bar over that window would contradict it.
    * - A take-back is in flight (`reverting`): it has taken the filing already, so a second press would find none to undo and put the bar
    *   over the very card the first take-back is about to turn to Undone. The first tells the person, once.
+   * - An answer is being saved (`saving`): a filing that ended while the save waited is not offered (`undoableFiling`), and a bar that
+   *   says there is none to undo would be wrong about it. As during a review, nothing happens.
    * With a filing to undo (`undoableFiling`) it is the menu's Undo (`undoLastFiling`): one try, told once on the filed card of that filing
    * or else by a notification, even while a recording runs (`notify` makes it silent then). With none, a bar says so for
    * `NOTHING_TO_UNDO_MS`, but not while the open library's saved Undo is still being checked (`undoChecked`: a filing may be about to be
@@ -2886,7 +2902,7 @@ export class Controller {
    * recording. The bar replaces a finished card.
    */
   private pressUndoShortcut(): void {
-    if (this.setup.isOpen() || this.reverting.size > 0) return;
+    if (this.setup.isOpen() || this.reverting.size > 0 || this.saving) return;
     if (this.undoableFiling()) return void this.undoLastFiling();
     if (this.vault !== null && !this.undoChecked()) return;
     if (!this.capsuleFreeForReply()) return;
@@ -3152,16 +3168,25 @@ export class Controller {
     return this.libraryPages() === 0 ? [] : suggestQuestions(this.recent);
   }
 
-  async ask(question: string): Promise<AskResult> {
-    const win = this.askWindow; // the window that asked, even once another one opens
-    // The engine's messages go to the Ask window as they are, except its waiting one, which names no run: in the window's
-    // words it names none either, for what holds the library may be a filing, a review, or a stopped question letting go.
-    const progress = (message: string) => {
+  /**
+   * What the Ask window `win` (the one that asked, even once another one opens) hears of its question or save. The engine's messages go
+   * to it as they are, except its waiting one, which names no run: in the window's words it names none either, for what holds the
+   * library may be a filing, a review, or a stopped question letting go.
+   */
+  private askProgress(win: BrowserWindow | null): (message: string) => void {
+    return (message) => {
       if (!win || win.isDestroyed()) return;
       win.webContents.send("ask:progress", message === WAITING ? "Waiting for Avanzel to finish with your library…" : message);
     };
-    // Closing that window, or Stop in it, gives the question up: its agent run stops, and the library is free for a
-    // filing waiting on it. One question is answered at a time, so Stop gives up the newest one.
+  }
+
+  /**
+   * Runs `run`, a question or a save, as what the Ask window is doing: `abort` is what closing that window, or Stop in it, gives up
+   * (`giveUpAsk`): its agent run stops, and the library is free for a filing waiting on it. One is run at a time, so Stop gives up the
+   * newest one. `progress` tells the window what the run is doing (`askProgress`). The face thinks meanwhile.
+   */
+  private async inAskSlot<T>(run: (abort: AbortController, progress: (message: string) => void) => Promise<T>): Promise<T> {
+    const win = this.askWindow; // the window that asked, even once another one opens
     const abort = new AbortController();
     const giveUp = () => abort.abort();
     this.giveUpAsk = giveUp;
@@ -3169,6 +3194,19 @@ export class Controller {
     if (win?.isDestroyed()) giveUp();
     else win?.once("closed", giveUp);
     try {
+      return await run(abort, this.askProgress(win));
+    } finally {
+      if (win && !win.isDestroyed()) win.removeListener("closed", giveUp);
+      if (this.giveUpAsk === giveUp) {
+        this.giveUpAsk = null;
+        this.refreshTray();
+      }
+    }
+  }
+
+  async ask(question: string): Promise<AskResult> {
+    const library = this.vault?.root ?? null; // the library the question is asked in, which Save hands back
+    return this.inAskSlot(async (abort, progress) => {
       const { ok, ran, text, agent, seconds, changedFiles, failure } = await this.answerQuestion(question, abort, progress);
       // A run that failed says whose it was; a message thrown before any run comes back as it is. An answer comes with its
       // lines and the pages its links name; anything else has none. Either says how many files the run changed in the library,
@@ -3181,22 +3219,65 @@ export class Controller {
         ...(ok ? answeredFrom(this.vault?.root ?? null, text) : { paragraphs: [], sources: [] }),
         changedFiles,
         failure,
+        library,
       };
-    } finally {
-      if (win && !win.isDestroyed()) win.removeListener("closed", giveUp);
-      if (this.giveUpAsk === giveUp) {
-        this.giveUpAsk = null;
-        this.refreshTray();
-      }
-    }
+    });
   }
 
   /**
-   * Stop, in the Ask window: the question being answered is given up, as closing the window gives it up. Only that window's
-   * own page can: `sender` is the page the message came from (`event.sender`), and any other window's gives up nothing.
+   * Stop, in the Ask window: the question being answered, or the answer being saved, is given up, as closing the window gives it up.
+   * Only that window's own page can: `sender` is the page the message came from (`event.sender`), and any other window's gives up nothing.
    */
   cancelAsk(sender: WebContents): void {
     if (isPageOf(sender, this.askWindow)) this.giveUpAsk?.();
+  }
+
+  /**
+   * Saves `answer`, the one the Ask window showed for `question`, as a page of the library it came from (`library`: AskResult.library):
+   * the agent writes it, and the engine commits it. Only that window's own page can: `sender` is the page the message came from
+   * (`event.sender`), and any other window's is refused with an error and runs nothing. Nor does it run once another library is open:
+   * the answer would be filed, with links that name the first library's pages, in one it didn't come from (`ANOTHER_LIBRARY`).
+   *
+   * It runs where a question does (`inAskSlot`) and waits for the library as a question does. Stop gives it up; so does closing the
+   * window, or quitting, and nobody is told then. What a run left is kept as its own commit by the engine (`partial`).
+   *
+   * The menu's Undo the last filing goes as the save begins (`clearLastFiled`) and stays away while the save waits or runs (`saving`): the
+   * save commits after a filing that ends meanwhile, which can then no longer be taken back. A save that commits nothing offers that
+   * filing again when it ends; one that commits drops its record (`clearLastFiled`).
+   *
+   * It ends `saved` when the run wrote a page, even if Stop landed as it ended, with the save's own commit, which takes it back; else
+   * `stopped` when Stop, or the window's closing, gave it up; else `unsaved`: the run ended well and wrote no page (no `failure`), it
+   * failed, or it couldn't start (`partial` is then null).
+   */
+  async saveAnswer(sender: WebContents, question: string, answer: string, library: string | null): Promise<SaveResult> {
+    if (!isPageOf(sender, this.askWindow)) throw new Error("Only the Ask window saves an answer.");
+    const agent = this.agentName();
+    const harness = this.selectedHarness(); // the agent the save goes to, named before it runs
+    if (library !== (this.vault?.root ?? null)) return { kind: "unsaved", agent, failure: avanzelFailure(ANOTHER_LIBRARY), partial: null };
+    this.saving = true;
+    try {
+      this.clearLastFiled();
+      return await this.inAskSlot(async (abort, progress): Promise<SaveResult> => {
+        try {
+          const vault = this.requireVault();
+          const outcome = await this.withRun(async (signal) => (await this.librarianFor(vault)).ask(question, { save: true, answer, signal, progress }), abort);
+          const { result, changes } = outcome;
+          if (outcome.commit) this.clearLastFiled(vault.root); // it comes after any filing that ended while the save waited
+          const page = result.ok ? filedPages(vault.root, changes)[0] : undefined;
+          if (page) return { kind: "saved", page, commit: outcome.commit };
+          const partial = leftBehind(outcome);
+          if (abort.signal.aborted) return { kind: "stopped", agent, partial };
+          if (result.ok) return { kind: "unsaved", agent, failure: null, partial };
+          return { kind: "unsaved", agent, failure: this.agentFailure(harness, lastLines(result.stderr || result.output), classifyFailure(result)), partial };
+        } catch (error) {
+          const failure = error instanceof NoAgentError ? this.agentFailure(this.failedHarness("auto", error), error) : avanzelFailure(errorMessage(error));
+          return { kind: "unsaved", agent, failure, partial: null };
+        }
+      });
+    } finally {
+      this.saving = false;
+      this.refreshMenu();
+    }
   }
 
   /**

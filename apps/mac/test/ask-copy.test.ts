@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answeredLine, emptyLine, failedAnswer, LOOKING, waitingLine } from "../src/renderer/ask/copy.ts";
+import { answeredLine, emptyLine, failedAnswer, LOOKING, savedLine, SAVING_LINES, stoppedSaveLine, waitingLine } from "../src/renderer/ask/copy.ts";
 import type { AskResult } from "../src/shared/ipc.ts";
 import type { AgentFailure } from "../src/shared/problems.ts";
 
@@ -16,6 +16,7 @@ const failed = (over: Partial<AskResult> = {}): AskResult => ({
   sources: [],
   changedFiles: 0,
   failure: claude,
+  library: null,
   ...over,
 });
 
@@ -109,5 +110,48 @@ describe("ask copy", () => {
     const waiting = "Waiting for Avanzel to finish with your library…";
     expect(waitingLine(waiting, 3)).toEqual({ line: waiting, counting: false });
     expect(waitingLine(waiting, 42)).toEqual({ line: waiting, counting: false });
+  });
+
+  it("waitingLine, with the save's lines, says the save, main's own words while it waits, and counts from 10 s", () => {
+    const saving = "Saving the answer as a page…";
+    // Before main has said anything, and once it says the agent looks: a save's agent looks too, and the line says the save.
+    expect(waitingLine(null, 3, SAVING_LINES)).toEqual({ line: saving, counting: false });
+    expect(waitingLine(LOOKING, 3, SAVING_LINES)).toEqual({ line: saving, counting: false });
+    expect(waitingLine(null, 9.9, SAVING_LINES)).toEqual({ line: saving, counting: false });
+    expect(waitingLine(null, 10, SAVING_LINES)).toEqual({ line: "Saving the answer as a page: 10 s", counting: true });
+    expect(waitingLine(null, 12.7, SAVING_LINES)).toEqual({ line: "Saving the answer as a page: 12 s", counting: true });
+    // While it waits for the library, the line is main's own, as a question's is.
+    const waiting = "Waiting for Avanzel to finish with your library…";
+    expect(waitingLine(waiting, 30, SAVING_LINES)).toEqual({ line: waiting, counting: false });
+  });
+
+  it("savedLine names the page and its shelf, or its folder", () => {
+    expect(savedLine({ title: "Answer", shelf: "topics", path: "topics/answer.md" })).toBe("Saved as “Answer” in Topics.");
+    expect(savedLine({ title: "Trip", shelf: "projects", path: "projects/trip.md" })).toBe("Saved as “Trip” in projects.");
+  });
+
+  it("stoppedSaveLine says what the stopped save left", () => {
+    expect(stoppedSaveLine("Claude Code", null)).toBe("Stopped. Your library hasn't changed.");
+    expect(stoppedSaveLine("Claude Code", "commit")).toBe("Stopped. Claude Code's partial edits are kept as their own commit in the library's history.");
+    expect(stoppedSaveLine("Claude Code", "uncommitted")).toBe("Stopped. Claude Code's partial edits stay as they are, because nothing recorded them.");
+  });
+
+  it("the save's words are written as the design rules ask", () => {
+    const lines = [
+      SAVING_LINES.first,
+      SAVING_LINES.counting(12),
+      savedLine({ title: "Answer", shelf: "topics", path: "topics/answer.md" }),
+      savedLine({ title: "Trip", shelf: "projects", path: "projects/trip.md" }),
+      stoppedSaveLine("Claude Code", null),
+      stoppedSaveLine("Claude Code", "commit"),
+      stoppedSaveLine("Claude Code", "uncommitted"),
+    ];
+    for (const line of lines) {
+      expect(line, line).toMatch(/^\p{Lu}/u);
+      expect(line, line).not.toContain("!");
+      expect(line, line).not.toContain("...");
+      expect(line, line).not.toMatch(/\p{Emoji_Presentation}/u);
+      expect(line, line).not.toMatch(/(^|[^\p{L}'’])I(?=$|[^\p{L}'’])/u);
+    }
   });
 });

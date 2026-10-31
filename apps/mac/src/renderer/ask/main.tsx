@@ -5,17 +5,22 @@
 // hasn't changed (or what the run changed); the newest turn's offers the one fix: Ask again, Open Terminal for a sign-in
 // (beside Ask again), or Open Settings when the library's agent isn't installed. The newest turn is on top. Before the first
 // question a line says where answers come from, or, while the six shelves hold no pages, to say something first; under it, up to
-// three questions about the pages filed last, each in words beside Ask this, which asks it. One question is answered at a time,
-// and Esc closes the window, which gives up a question that is still being answered.
+// three questions about the pages filed last, each in words beside Ask this, which asks it. The newest answer that can be kept
+// offers Save as a page: the agent writes the answer the person was shown as a page, while a line says what it is doing, beside a
+// Stop. It ends with where the page is, beside Open; or with Stopped, and the offer again; or with a Notice that says what the
+// save left and offers Save again. One question is answered, or answer saved, at a time, and Esc closes the window, which gives up
+// whichever is going on.
 import "@avanzel/ui/base.css";
 import { Actions, Button, Notice, Row, ShelfTag, Spinner, Stack, Text, TextField } from "@avanzel/ui";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import type { AskResult, AvanzelBridge } from "../../shared/ipc.ts";
+import type { AskResult, AvanzelBridge, SaveResult } from "../../shared/ipc.ts";
+import { avanzelFailure, saveProblem, type AskProblem } from "../../shared/problems.ts";
 import { pageName } from "../../shared/wikilinks.ts";
 import { problemBody } from "../common/problem.tsx";
+import { remoteMessage } from "../settings/copy.ts";
 import { isShelf, sourceTitle } from "../setup/copy.ts";
-import { answeredLine, emptyLine, failedAnswer, waitingLine } from "./copy.ts";
+import { answeredLine, ASKING_LINES, emptyLine, failedAnswer, savedLine, SAVING_LINES, stoppedSaveLine, waitingLine, type WaitLines } from "./copy.ts";
 import "./styles.css";
 
 declare global {
@@ -32,11 +37,22 @@ const TICK_MS = 250;
 /** How a turn ended: null while the agent looks, "stopped" once Stop gave it up, else what main sent back. */
 type Outcome = AskResult | "stopped" | null;
 
+/**
+ * A turn's answer being saved as a page, or saved: `result` is null while the save runs, and then what main sent back. `stopping`:
+ * Stop gave the save up, and main hasn't said how it ended, which may be as late as the end of a filing the save waits behind.
+ */
+interface Saving {
+  result: SaveResult | null;
+  stopping?: true;
+}
+
 interface Turn {
   /** Counts up from the first question, so a turn keeps its place in the page as newer ones come above it. */
   id: number;
   question: string;
   outcome: Outcome;
+  /** Its answer's save: none until Save as a page is pressed on it. */
+  saving?: Saving;
 }
 
 /** What the question being answered is doing, as main last said it (null: nothing yet), and since when. */
@@ -67,7 +83,7 @@ function Ask() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const counter = useRef(0);
   const field = useRef<HTMLInputElement>(null);
-  const busy = turns.some((turn) => turn.outcome === null);
+  const busy = turns.some((turn) => turn.outcome === null || turn.saving?.result === null);
 
   // Whatever main says next starts the count again: the seconds are those of what the question is doing now.
   useEffect(() => api.onProgress((message) => setProgress({ message, since: Date.now() })), []);
@@ -97,8 +113,8 @@ function Ask() {
   }, []);
 
   /**
-   * Asks `words`, as a new turn on top; whether it did. One question at a time: while one is answered, asking does
-   * nothing. What main sends back for a turn Stop has given up is dropped: that turn says "Stopped.".
+   * Asks `words`, as a new turn on top; whether it did. One run at a time: while a question is answered or an answer saved, asking
+   * does nothing. What main sends back for a turn Stop has given up is dropped: that turn says "Stopped.".
    */
   const ask = (words: string): boolean => {
     const asked = words.trim();
@@ -112,10 +128,37 @@ function Ask() {
     return true;
   };
 
-  /** Stop: the question being answered is given up, and the field, which gets the focus, is free for the next. */
+  /**
+   * Saves the answer `turn` shows as a page, as its newest answered turn offers; whether it did. One run at a time: while a question
+   * is answered or an answer saved, saving does nothing. The save is the library's it came from (`AskResult.library`): main refuses
+   * it in another. A save that main can't take is read as one that failed, so a turn never stays busy. The field gets the focus, which
+   * the button that was pressed leaves.
+   */
+  const save = (turn: Turn) => {
+    const { id, question: asked, outcome } = turn;
+    if (busy || outcome === null || outcome === "stopped" || !outcome.ok) return;
+    const setSaving = (next: Saving) => setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, saving: next } : t)));
+    setProgress({ message: null, since: Date.now() });
+    setSaving({ result: null });
+    void api
+      .save(asked, outcome.answer, outcome.library)
+      .catch((error: unknown): SaveResult => ({ kind: "unsaved", agent: "Avanzel", failure: avanzelFailure(remoteMessage(error)), partial: null }))
+      .then((result) => setSaving({ result }));
+    field.current?.focus();
+  };
+
+  /**
+   * Stop: what runs is given up, and the field, which gets the focus, is free for the next. A question says "Stopped." at once. A
+   * save says it is stopping until main answers (`Saving.stopping`): its result is what the turn tells, and it is the save's own
+   * if Stop came as it ended.
+   */
   const stop = () => {
     api.cancel();
-    setTurns((prev) => prev.map((turn) => (turn.outcome === null ? { ...turn, outcome: "stopped" } : turn)));
+    setTurns((prev) =>
+      prev.map((turn) =>
+        turn.outcome === null ? { ...turn, outcome: "stopped" } : turn.saving?.result === null ? { ...turn, saving: { result: null, stopping: true } } : turn,
+      ),
+    );
     field.current?.focus();
   };
 
@@ -170,14 +213,17 @@ function Ask() {
                   <Text variant="headline" as="h2">{turn.question}</Text>
                   {turn.outcome !== null && turn.outcome !== "stopped" && !turn.outcome.ok ? (
                     <Failed
-                      result={turn.outcome}
+                      problem={failedAnswer(turn.outcome, new Date())}
                       // Only the newest turn offers its fix: a failure a later question has come after is past. Ask again keeps
                       // what is typed in the field, which gets the focus as Ask again goes.
-                      onAskAgain={
+                      again={
                         place === 0
-                          ? () => {
-                              ask(turn.question);
-                              field.current?.focus();
+                          ? {
+                              label: "Ask again",
+                              onPress: () => {
+                                ask(turn.question);
+                                field.current?.focus();
+                              },
                             }
                           : undefined
                       }
@@ -185,6 +231,7 @@ function Ask() {
                   ) : (
                     <Reply outcome={turn.outcome} progress={progress} onStop={stop} />
                   )}
+                  <SaveAsPage turn={turn} newest={place === 0} progress={progress} onSave={() => save(turn)} onStop={stop} />
                 </Stack>
               </article>
             ))}
@@ -215,53 +262,108 @@ function Suggestion({ question, onAsk }: { question: string; onAsk(): void }) {
 }
 
 /**
- * A turn's reply, in a status region that stays from the question to its end: VoiceOver hears the line the agent starts
- * with, then the answer, or "Stopped.", as it takes that line's place. While the agent looks, a spinner, the waiting line
- * and a quiet Stop. From 10 s on the line counts the seconds outside the region, so they aren't read out at each tick.
+ * What a question or a save says from its start to its end, in a status region that stays: VoiceOver hears the line the agent
+ * starts with, then what `children` say once it ends, as that takes the line's place. While it is `running`, a spinner, the waiting
+ * line (`lines`) and a quiet Stop, which says it is stopping (`stopping`) until the run's result has come. From 10 s on the line
+ * counts the seconds outside the region, so they aren't read out at each tick.
  */
-function Reply({ outcome, progress, onStop }: { outcome: Outcome; progress: Progress; onStop(): void }) {
-  const looking = outcome === null;
-  const now = useClock(TICK_MS, looking);
-  const { line, counting } = waitingLine(progress.message, (now - progress.since) / 1000);
+function StatusRow({
+  running,
+  progress,
+  lines,
+  stopping = false,
+  onStop,
+  children,
+}: {
+  running: boolean;
+  progress: Progress;
+  lines: WaitLines;
+  stopping?: boolean;
+  onStop(): void;
+  children?: ReactNode;
+}) {
+  const now = useClock(TICK_MS, running);
+  const { line, counting } = waitingLine(progress.message, (now - progress.since) / 1000, lines);
   return (
     <Row gap={8}>
-      {looking && <Spinner size="small" />}
+      {running && <Spinner size="small" />}
       <div className="ask-reply">
-        <div role="status">
-          {outcome === null ? (
-            !counting && <Text variant="footnote" tone="secondary">{line}</Text>
-          ) : outcome === "stopped" ? (
-            <Text variant="footnote" tone="secondary">Stopped.</Text>
-          ) : (
-            <Answer result={outcome} />
-          )}
-        </div>
-        {looking && counting && <Text variant="footnote" tone="secondary" numeric>{line}</Text>}
+        <div role="status">{running ? !counting && <Text variant="footnote" tone="secondary">{line}</Text> : children}</div>
+        {running && counting && <Text variant="footnote" tone="secondary" numeric>{line}</Text>}
       </div>
-      {looking && <Button size="small" variant="quiet" onClick={onStop}>Stop</Button>}
+      {running && <Button size="small" variant="quiet" busy={stopping} onClick={onStop}>Stop</Button>}
     </Row>
   );
 }
 
+/** A turn's reply: while the agent looks the waiting line, then the answer, or "Stopped." (`StatusRow`). */
+function Reply({ outcome, progress, onStop }: { outcome: Outcome; progress: Progress; onStop(): void }) {
+  return (
+    <StatusRow running={outcome === null} progress={progress} lines={ASKING_LINES} onStop={onStop}>
+      {outcome === "stopped" ? <Text variant="footnote" tone="secondary">Stopped.</Text> : outcome !== null && <Answer result={outcome} />}
+    </StatusRow>
+  );
+}
+
 /**
- * A failed answer: what happened is the Notice's title; its body says the library hasn't changed (or what the run changed)
- * and what to do, with the command to run set as code (failedAnswer). Given `onAskAgain`, it offers the one fix, the moment's
- * only primary: Ask again; for an agent that isn't signed in, Open Terminal (through setup's channel, which opens it), with Ask
- * again beside it, secondary; for an agent that isn't there, Open Settings on Agents (through the capsule's, which opens
- * Settings), since asking again would only fail again. The primary comes last. A Notice is an alert itself, so it sits outside
- * the turn's status region.
+ * What a turn does with its answer, under its reply. The newest answered turn offers Save as a page, unless its answer has been
+ * saved, is being saved, or failed to be: a save that stopped is offered again. The save has its own status region (`StatusRow`),
+ * mounted empty with the offer and kept while the turn has the offer or a save, so that its first line is a change VoiceOver reads.
+ * While it saves: the waiting line and Stop. Saved: where the page is, and Open. Stopped: what the save left, and the offer. A save that
+ * saved nothing is a Notice, outside the region, with the fix Save again on the newest turn (`Failed`), and none on an older one.
  */
-function Failed({ result, onAskAgain }: { result: AskResult; onAskAgain?: (() => void) | undefined }) {
-  const problem = failedAnswer(result, new Date());
+function SaveAsPage({ turn, newest, progress, onSave, onStop }: { turn: Turn; newest: boolean; progress: Progress; onSave(): void; onStop(): void }) {
+  const { outcome, saving } = turn;
+  const result = saving?.result ?? null;
+  const answered = outcome !== null && outcome !== "stopped" && outcome.ok && outcome.paragraphs.length > 0;
+  const offered = newest && answered && (saving === undefined || result?.kind === "stopped");
+  if (!offered && saving === undefined) return null;
+  return (
+    <Stack gap={8}>
+      <StatusRow running={result === null && saving !== undefined} progress={progress} lines={SAVING_LINES} stopping={saving?.stopping === true} onStop={onStop}>
+        {result?.kind === "saved" && <Text variant="footnote" tone="secondary">{savedLine(result.page)}</Text>}
+        {result?.kind === "stopped" && <Text variant="footnote" tone="secondary">{stoppedSaveLine(result.agent, result.partial)}</Text>}
+      </StatusRow>
+      {result?.kind === "unsaved" && (
+        <Failed
+          problem={saveProblem(result.failure, result.agent, result.partial, new Date())}
+          again={newest ? { label: "Save again", onPress: onSave } : undefined}
+        />
+      )}
+      {(offered || result?.kind === "saved") && (
+        <Actions align="start">
+          {offered && <Button size="small" onClick={onSave}>Save as a page</Button>}
+          {result?.kind === "saved" && <Button size="small" onClick={() => api.openPage(pageName(result.page.path))}>Open</Button>}
+        </Actions>
+      )}
+    </Stack>
+  );
+}
+
+/** What a failure's Notice offers to try again: the fix that asks, or saves, the same again. */
+interface Again {
+  label: "Ask again" | "Save again";
+  onPress(): void;
+}
+
+/**
+ * A failed answer or save: what happened is the Notice's title; its body says what is safe (that the library hasn't changed, or what
+ * the run changed or left) and what to do, with the command to run set as code (`failedAnswer`, `saveProblem`). Given `again`, it
+ * offers the one fix, the moment's only primary: Ask again, or Save again; for an agent that isn't signed in, Open Terminal (through
+ * setup's channel, which opens it), with that beside it, secondary; for an agent that isn't there, Open Settings on Agents (through the
+ * capsule's, which opens Settings), since trying again would only fail again. The primary comes last. A Notice is an alert itself, so
+ * it sits outside the turn's status regions.
+ */
+function Failed({ problem, again }: { problem: AskProblem; again?: Again | undefined }) {
   return (
     <Notice
       tone="error"
       title={problem.title}
       actions={
-        onAskAgain && (
+        again && (
           <Actions align="start">
             {!problem.settings && (
-              <Button size="small" variant={problem.terminal ? "secondary" : "primary"} onClick={onAskAgain}>Ask again</Button>
+              <Button size="small" variant={problem.terminal ? "secondary" : "primary"} onClick={again.onPress}>{again.label}</Button>
             )}
             {problem.terminal && <Button size="small" variant="primary" onClick={() => window.avanzel.setup.openTerminal()}>Open Terminal</Button>}
             {problem.settings && (

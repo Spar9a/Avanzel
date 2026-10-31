@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as setupCopy from "../src/renderer/setup/copy.ts";
 import { ownLine as clipOwnLine } from "../src/shared/clip.ts";
 import {
+  ANOTHER_LIBRARY,
   askProblem,
   avanzelFailure,
   cancelledLine,
@@ -14,6 +15,7 @@ import {
   ownLine,
   recordingLost,
   resetPhrase,
+  saveProblem,
   screenCaptureProblem,
   stopFailedProblem,
   stopRefused,
@@ -619,6 +621,79 @@ describe("askProblem: what the Notice offers", () => {
     for (const kind of ["limit", "timeout", "gone", "missing", "other"] as const) {
       expect(askProblem(failure({ kind, resetsAt: on(1, 9) }), 0, now).command, kind).toBeUndefined();
     }
+  });
+});
+
+// A save of the answer the person was shown (the Ask window's Save as a page): an agent that writes, so a save that failed says first
+// what it left in the library, where a question says that the library hasn't changed. It reads as a question's otherwise.
+describe("saveProblem", () => {
+  const COMMITTED = "Claude Code's partial edits are kept as their own commit in the library's history.";
+
+  it("a run that ended well with no page says so, and what it left", () => {
+    expect(saveProblem(null, "Claude Code", null, now)).toEqual({
+      title: "Claude Code didn't save a page.",
+      body: UNCHANGED,
+      terminal: false,
+      settings: false,
+    });
+    expect(saveProblem(null, "Claude Code", "commit", now).body).toBe(COMMITTED);
+    expect(saveProblem(null, "Claude Code", "uncommitted", now).body).toBe("Claude Code's partial edits stay as they are, because nothing recorded them.");
+  });
+
+  it("any other failure says the answer couldn't be saved, what it left, then the agent's line", () => {
+    expect(saveProblem(failure({ line: "ERROR: the model is not supported with this account" }), "Claude Code", "commit", now)).toEqual({
+      title: "Claude Code couldn't save the answer.",
+      body: `${COMMITTED} The model is not supported with this account.`,
+      terminal: false,
+      settings: false,
+    });
+  });
+
+  it("a sign-in names the command, then to save again, and offers Terminal", () => {
+    expect(saveProblem(failure({ kind: "signin" }), "Claude Code", null, now)).toEqual({
+      title: "Claude Code isn't signed in on this Mac.",
+      body: `${UNCHANGED} Run claude once in Terminal and sign in, then save again.`,
+      command: "claude",
+      terminal: true,
+      settings: false,
+    });
+    expect(saveProblem(failure({ kind: "signin", ...codex }), "Codex", null, now).body).toBe(`${UNCHANGED} Run codex login in Terminal, then save again.`);
+    expect(saveProblem(failure({ kind: "signin", ...opencode }), "OpenCode", null, now).body).toBe(`${UNCHANGED} Sign in to OpenCode in Terminal, then save again.`);
+  });
+
+  it("with no agent installed, Avanzel needs one to save the answer", () => {
+    expect(saveProblem(failure({ kind: "missing", agent: "Avanzel", command: null }), "your agent", null, now)).toEqual({
+      title: "Avanzel needs an AI agent to save the answer.",
+      body: "Claude Code works best, and Settings → Agents has its install command.",
+      terminal: false,
+      settings: true,
+    });
+  });
+
+  it("a limit, a timeout and a gone agent read as a question's, after what the save left", () => {
+    for (const bad of [failure({ kind: "limit", resetsAt: on(0, 15) }), failure({ kind: "timeout" }), failure({ kind: "gone" })]) {
+      const asked = askProblem(bad, 0, now);
+      const saved = saveProblem(bad, "Claude Code", null, now);
+      expect(saved.title, bad.kind).toBe(asked.title);
+      expect(saved.body, bad.kind).toBe(asked.body);
+      expect(saved.body, bad.kind).toMatch(/^Your library hasn't changed\./);
+      expect({ terminal: saved.terminal, settings: saved.settings }, bad.kind).toEqual({ terminal: asked.terminal, settings: asked.settings });
+    }
+    // What the save left leads, whatever else the body says.
+    expect(saveProblem(failure({ kind: "timeout" }), "Claude Code", "commit", now).body).toBe(COMMITTED);
+    expect(saveProblem(failure({ kind: "gone" }), "Claude Code", "uncommitted", now).body).toBe(
+      "Claude Code's partial edits stay as they are, because nothing recorded them. Settings → Agents can choose another agent, or has its install command.",
+    );
+  });
+
+  it("a save pressed in another library says so, and how to save it", () => {
+    expect(ANOTHER_LIBRARY).toBe("This answer came from another library. Change back to it in Settings → General, then save again.");
+    expect(saveProblem(avanzelFailure(ANOTHER_LIBRARY), "Claude Code", null, now)).toEqual({
+      title: "Avanzel couldn't save the answer.",
+      body: `${UNCHANGED} This answer came from another library. Change back to it in Settings → General, then save again.`,
+      terminal: false,
+      settings: false,
+    });
   });
 });
 

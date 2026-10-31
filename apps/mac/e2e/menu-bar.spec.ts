@@ -7,9 +7,9 @@ import { chmodSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync,
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, localDate, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
-import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { FilingReceipt } from "../src/main/undo-records.ts";
 import {
+  agentMode,
   dictate,
   filedFromTheCapsule,
   filedInto,
@@ -17,12 +17,15 @@ import {
   inbox,
   launchOn,
   letTheQueueGo,
+  menuOf,
   notified,
   onDay,
   reachedUndo,
+  receiptItem,
   sleep,
   stampDay,
   undoCalls,
+  undoItem,
   undone,
   watchUndos,
   type Left,
@@ -816,9 +819,6 @@ test("quitting on either path stops the count where it was", async () => {
 /** The default evening review's next run as the status line says it: tomorrow once 21:00 has passed today. */
 const eveningWhen = () => (new Date().getHours() >= 21 ? "tomorrow at 21:00" : "at 21:00");
 
-/** The menu's model now. */
-const menuOf = async (app: ElectronApplication) => (await call(app, "menuForTests")) as MenuItemModel[];
-
 /** The words of the menu's head now. */
 const headOf = async (app: ElectronApplication) => {
   const [head] = await menuOf(app);
@@ -1105,14 +1105,8 @@ test("the count is read from the log once, and again when the day turns", async 
 // (`undo-records.json`, below): it comes back with the library, and after a relaunch.
 // A filing has a commit to take back only in a library with git, so these tests make one (`makeLibrary({ git: true })`).
 
-/** The menu's Undo the last filing in the model now, or undefined while the menu doesn't offer it. */
-const undoItem = async (app: ElectronApplication) => (await menuOf(app)).find((item) => item.type === "item" && item.action === "undo-filing");
-
 /** The menu's Undo the last evening review in the model now, or undefined while the menu doesn't offer it. */
 const reviewItem = async (app: ElectronApplication) => (await menuOf(app)).find((item) => item.type === "item" && item.action === "undo-review");
-
-/** The menu's Show the last receipt in the model now, or undefined while the menu doesn't offer it. */
-const receiptItem = async (app: ElectronApplication) => (await menuOf(app)).find((item) => item.type === "item" && item.action === "show-receipt");
 
 /** The item as the menu models it: a plain item, with no shortcut, shelf or sublabel. */
 const RECEIPT_ITEM = { type: "item", label: "Show the last receipt", action: "show-receipt" };
@@ -1162,9 +1156,6 @@ const showReceipt = (app: ElectronApplication) => call(app, "menuAction", "show-
 
 /** The notifications the app has posted, oldest first. */
 const said = (app: ElectronApplication) => call(app, "notificationsForTests") as Promise<{ title: string; body: string }[]>;
-
-/** From now on the engine's fake agent behaves as `mode` says (FAKE_AGENT_MODE) for the runs that follow: each run is handed the app's environment. */
-const agentMode = (app: ElectronApplication, mode: string) => app.evaluate((_electron, wanted) => void (process.env.FAKE_AGENT_MODE = wanted), mode);
 
 /** The Undone card's note, under the default evening review at 21:00. */
 const UNDONE_NOTE = "Your words are back in the inbox for the evening review at 21:00.";

@@ -60,7 +60,8 @@ export function registerIpc(controller: Controller): void {
   handle("quick:submit", (_e, text: string) => controller.submitQuick(text));
   on("quick:close", () => controller.closeQuick());
   handle("ask:ask", (_e, question: string) => controller.ask(question));
-  on("ask:cancel", (e) => controller.cancelAsk(e.sender)); // only the Ask window's own page gives up its question
+  handle("ask:save", (e, question: string, answer: string, library: string | null) => controller.saveAnswer(e.sender, question, answer, library)); // only the Ask window's own page saves
+  on("ask:cancel", (e) => controller.cancelAsk(e.sender)); // only the Ask window's own page gives up its question or save
   on("ask:open-page", (_e, name: string) => controller.openPageByName(name));
   on("ask:close", () => controller.closeAsk());
   handle("ask:library-pages", () => controller.libraryPages());

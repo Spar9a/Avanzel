@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
+import type { MenuItemModel } from "../src/main/menu-model.ts";
 import { agentStubs, call, capsuleKind, filesUnder, gitOut, launch, makeLibrary, onlyAgentsIn, speechWav, windowFor } from "./helpers.ts";
 import { zel } from "./setup-helpers.ts";
 
@@ -298,6 +299,18 @@ export async function launchOn(library: string, env: Record<string, string> = {}
 export const undone = (library: string) => gitOut(library, "log", "--format=%s").split("\n").filter((subject) => subject.startsWith("avanzel: undo"));
 
 // ---- Shared by menu-bar.spec.ts and ask-extras.spec.ts ----
+
+/** The menu's model now. */
+export const menuOf = async (app: ElectronApplication) => (await call(app, "menuForTests")) as MenuItemModel[];
+
+/** The menu's Undo the last filing in the model now, or undefined while the menu doesn't offer it. */
+export const undoItem = async (app: ElectronApplication) => (await menuOf(app)).find((item) => item.type === "item" && item.action === "undo-filing");
+
+/** The menu's Show the last receipt in the model now, or undefined while the menu doesn't offer it. */
+export const receiptItem = async (app: ElectronApplication) => (await menuOf(app)).find((item) => item.type === "item" && item.action === "show-receipt");
+
+/** From now on the engine's fake agent behaves as `mode` says (FAKE_AGENT_MODE) for the runs that follow: each run is handed the app's environment. */
+export const agentMode = (app: ElectronApplication, mode: string) => app.evaluate((_electron, wanted) => void (process.env.FAKE_AGENT_MODE = wanted), mode);
 
 /** A date `days` from now, at noon: a day other than today, whatever the hour is. */
 export const onDay = (days: number) => {
