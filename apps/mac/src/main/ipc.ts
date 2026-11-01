@@ -65,8 +65,7 @@ export function registerIpc(controller: Controller): void {
   on("ask:cancel", (e) => controller.cancelAsk(e.sender)); // only the Ask window's own page gives up its question or save
   on("ask:open-page", (_e, name: string) => controller.openPageByName(name));
   on("ask:close", () => controller.closeAsk());
-  handle("ask:library-pages", () => controller.libraryPages());
-  handle("ask:suggestions", () => controller.askSuggestions());
+  handle("ask:get", () => controller.askSnapshot()); // the shelves counted once, with the suggestions and the dictate shortcut
 
   // setup
   handle("setup:get", () => controller.setup.snapshot());

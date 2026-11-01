@@ -99,6 +99,7 @@ import type {
   AgentStatus,
   AppSettings,
   AskResult,
+  AskSnapshot,
   CapsuleMode,
   CapsuleState,
   CardAction,
@@ -212,6 +213,9 @@ const FILED_FACE_MS = 2_000;
  */
 const reasonMax = (error: unknown): number | undefined => (error instanceof AvanzelError ? undefined : CAPSULE_LINE_MAX);
 
+/** A recording that holds no words (too short to hold speech, or nothing said) leaves nothing, thought or question: its card says so. */
+const NOTHING_HEARD: Problem = { title: "Nothing was heard.", body: "Is the right microphone selected? Nothing was saved." };
+
 /** How long quitting waits for stopped agent runs: QUIT_WAIT_MS, or in tests the positive number of ms in AVANZEL_QUIT_WAIT_MS. */
 function quitWaitMs(): number {
   const shortened = process.env.AVANZEL_TEST === "1" ? Number(process.env.AVANZEL_QUIT_WAIT_MS) : 0;
@@ -263,6 +267,7 @@ interface SignInWatch {
  * (`stopTranscribing`). `vault`: the library the recording was made in, which another may replace meanwhile. `audioPath`: where
  * that library keeps the recording under raw/audio/, null when it keeps none (`claimRecording`). `now`: when its audio arrived, which
  * names a recording that has no `audioPath`. `stopped`: Stop has kept the recording, so whatever the transcription gives is dropped.
+ * `forAsk`: the transcription of a question for the Ask window (`heardQuestion`), whose recording is never kept: Stop only drops its words.
  */
 interface Transcribing {
   vault: Vault;
@@ -270,6 +275,7 @@ interface Transcribing {
   now: Date;
   samples: Float32Array;
   stopped: boolean;
+  forAsk: boolean;
 }
 
 /**
@@ -1313,10 +1319,16 @@ export class Controller {
 
   /**
    * Record a thought's own shortcut was pressed: setup's press test hears it (`setup.notePress`), then it records or stops
-   * as Record a thought in the menu does. Only this is a press of the shortcut.
+   * as Record a thought in the menu does. Only this is a press of the shortcut. With the Ask window the key window, and nothing
+   * recording (a press stops a recording, whoever is in front) or taking the press (setup's first-thought step), it records a question
+   * for that window instead (`heardQuestion`). Record a thought in the menu (`toggleDictate`) never does: it records a thought.
    */
   private pressDictate(): void {
     this.setup.notePress();
+    if (!this.setup.takesPress() && !this.recording && this.askHasFocus()) {
+      void this.startRecording("dictate", undefined, { askPage: this.askWindow!.webContents.id });
+      return;
+    }
     void this.toggleDictate();
   }
 
@@ -1424,9 +1436,15 @@ export class Controller {
 
   /**
    * `forSetup`: setup's first spoken thought (`Setup.recordThought`), which has no file mode to switch (`toggleFileMode` tells why)
-   * and is offered no Stop while its words are made (`transcribeWithStop` tells why).
+   * and is offered no Stop while its words are made (`transcribeWithStop` tells why). `askPage`: the Ask window's `webContents.id`,
+   * for a question that window is to hear (`pressDictate`): it has no file mode either, and its words go to that window alone
+   * (`heardQuestion`).
    */
-  private async startRecording(mode: CapsuleMode, shot?: Recording["shot"], { forSetup = false } = {}): Promise<void> {
+  private async startRecording(
+    mode: CapsuleMode,
+    shot?: Recording["shot"],
+    { forSetup = false, askPage = null }: { forSetup?: boolean; askPage?: number | null } = {},
+  ): Promise<void> {
     if (mode === "dictate" && !(await this.readyToListen())) return;
     if (this.recording) {
       // Another tap started one while this one waited (say, on the microphone prompt).
@@ -1437,8 +1455,10 @@ export class Controller {
     const maxSeconds = this.vault ? loadSettings(this.vault.root).voice.maxRecordSeconds : 600;
     const recording: Recording = {
       mode,
-      fileMode: mode === "dictate" && !forSetup ? this.store.get().fileMode : null,
+      fileMode: mode === "dictate" && !forSetup && askPage === null ? this.store.get().fileMode : null,
       forSetup,
+      forAsk: askPage !== null,
+      askPage,
       startedAt: Date.now(),
       shot,
       stopping: false,
@@ -1489,8 +1509,9 @@ export class Controller {
    * recording's alone: the setting stays as it is, and the next recording starts from it again. The stop reads the mode
    * (`afterCapture`), so the switch ends with the card that listens: a press does nothing once the recording is stopped (the card
    * says it is transcribing), nor while another card has replaced the listening one (a typed thought's, say). There is nothing to
-   * switch (`fileMode` is null) for a screen comment, which is always saved, and for setup's first spoken thought, which its step
-   * files whatever the mode. Only the capsule's own page is heard (`sender` is the page the message came from, `event.sender`).
+   * switch (`fileMode` is null) for a screen comment, which is always saved, for setup's first spoken thought, which its step
+   * files whatever the mode, and for a question for the Ask window, which is never filed. Only the capsule's own page is heard
+   * (`sender` is the page the message came from, `event.sender`).
    */
   toggleFileMode(sender: WebContents): void {
     const recording = this.recording;
@@ -1582,6 +1603,7 @@ export class Controller {
     if (!recording?.stopping) return; // audio no stop asked for, e.g. a late one from a recording given up
     this.clearAudioTimeout();
     this.recording = null;
+    if (recording.forAsk) return this.heardQuestion(recording, received);
     const vault = this.requireVault();
     const now = new Date();
     // What a failure can say is safe: the recording, once written to the library, whether its words were made, and, for a screen
@@ -1601,7 +1623,7 @@ export class Controller {
         }
         const started = performance.now();
         const stoppable = recording.mode === "dictate" && !recording.forSetup;
-        const transcript = await this.transcribeWithStop(samples, stoppable ? { vault, audioPath, now, samples, stopped: false } : null);
+        const transcript = await this.transcribeWithStop(samples, stoppable ? { vault, audioPath, now, samples, stopped: false, forAsk: false } : null);
         if (!transcript) return; // Stop kept the recording in the inbox meanwhile: the words it made, or its failure, are dropped
         seconds = (performance.now() - started) / 1000;
         text = transcript.text.trim();
@@ -1633,13 +1655,7 @@ export class Controller {
       }
       if (!text) {
         // Its recording went with it: nothing is kept.
-        return this.recordingFailed(
-          recording,
-          { problem: "silence" },
-          { title: "Nothing was heard.", body: "Is the right microphone selected? Nothing was saved." },
-          "open-settings:voice",
-          "Choose microphone",
-        );
+        return this.recordingFailed(recording, { problem: "silence" }, NOTHING_HEARD, "open-settings:voice", "Choose microphone");
       }
       const capture = vault.newCapture(text, { source: "voice", audio: audioPath, transcriber: engine, now });
       this.captureCount.add(); // its words are in the inbox: kept, whatever becomes of them next
@@ -1659,6 +1675,34 @@ export class Controller {
         { problem: text ? "unsaved" : "unheard", kept: kept !== null },
         comment || text ? unsavedProblem(why, kept, comment, reasonMax(error)) : unheardProblem(why, kept, reasonMax(error)),
       );
+    }
+  }
+
+  /**
+   * `recording`, a question for the Ask window (`pressDictate`), has its audio. Its words go to that window's field (`ask:heard`) and
+   * nowhere in the library: no capture, no kept recording, no count of kept recordings and no filing (`afterCapture`), and no
+   * notification. Under 0.3 s of samples there are no words, as for a thought, and the card says so, as it says a recording that could
+   * not be turned into words, both with "Nothing was saved.". Stop on the slow transcription drops the words it makes
+   * (`stopTranscribing`). They go to the Ask window of the press alone (`Recording.askPage`): once it has closed they are dropped
+   * quietly, even when another Ask window has opened since, which no one has said them to. The capsule's card of the transcription goes
+   * in every case where it is still up.
+   */
+  private async heardQuestion(recording: Recording, received: Float32Array): Promise<void> {
+    try {
+      const samples = process.env.AVANZEL_FAKE_AUDIO ? await this.fakeAudio(process.env.AVANZEL_FAKE_AUDIO) : received;
+      let words = "";
+      if (samples.length >= 16000 * 0.3) {
+        const transcript = await this.transcribeWithStop(samples, { vault: this.requireVault(), audioPath: null, now: new Date(), samples, stopped: false, forAsk: true });
+        if (!transcript) return; // Stop dropped the question meanwhile: the words it made, or its failure, are dropped
+        words = transcript.text.trim();
+      }
+      if (!words) return this.recordingFailed(recording, { problem: "silence" }, NOTHING_HEARD, "open-settings:voice", "Choose microphone");
+      if (this.capsuleState.kind === "transcribing") this.setCapsule({ kind: "hidden" });
+      const win = this.askWindow;
+      if (win && !win.isDestroyed() && win.webContents.id === recording.askPage) win.webContents.send("ask:heard", words);
+    } catch (error) {
+      console.error("question", error);
+      this.recordingFailed(recording, { problem: "unheard" }, unheardProblem(errorMessage(error), null, reasonMax(error)));
     }
   }
 
@@ -1737,7 +1781,8 @@ export class Controller {
    * slow card: a press before then, a second one, one after the transcription has ended, and one on the card of a screen comment
    * or of setup's first spoken thought (which never turn slow) do nothing. Before the recording lands, the library's git is told to
    * keep it out (`keepAudioOutOfGit`, as the library did when it opened): that takes a moment, in which the transcription may end or
-   * a second press come, so the press is looked at again once it is done.
+   * a second press come, so the press is looked at again once it is done. A question for the Ask window (`Transcribing.forAsk`) has no
+   * recording to keep: Stop drops its words, whenever they come, and hides the card, with no Recorded card and no count.
    */
   async stopTranscribing(sender: WebContents): Promise<void> {
     const transcribing = this.transcribing;
@@ -1749,6 +1794,13 @@ export class Controller {
       return this.transcribing === transcribing && !transcribing.stopped && state.kind === "transcribing" && !!state.slow;
     };
     if (!stoppable()) return;
+    if (transcribing.forAsk) {
+      // A question keeps nothing: its words are dropped when they come, and its card goes. No recording is moved, none is counted and no
+      // card says it is recorded.
+      transcribing.stopped = true;
+      this.setCapsule({ kind: "hidden" });
+      return;
+    }
     await this.keepAudioOutOfGit(transcribing.vault.root);
     if (!stoppable()) return;
     try {
@@ -3160,6 +3212,20 @@ export class Controller {
     if (this.askWindow && !this.askWindow.isDestroyed()) this.askWindow.close();
   }
 
+  /** Whether the Ask window is the key window: it exists, isn't destroyed, and has the keyboard. Then a press of Record a thought's shortcut asks (`pressDictate`). */
+  private askHasFocus(): boolean {
+    return !!this.askWindow && !this.askWindow.isDestroyed() && this.askWindow.isFocused();
+  }
+
+  /**
+   * Record a thought's shortcut, which says a question in the Ask window and which its hint names. Null while that shortcut isn't
+   * registered (`shortcutProblems` names it: another app holds it, or it can't work), as there is then no key to name.
+   */
+  askShortcut(): string | null {
+    const { dictate } = this.store.get().shortcuts;
+    return dictate && !this.shortcutProblems.dictate ? dictate : null;
+  }
+
   /**
    * The pages on the six shelves, counted as Settings' library line counts them: a folder of the owner's own doesn't count.
    * Ask invites a first thought, not a question, while there are none. Nothing without a library that is there.
@@ -3175,10 +3241,21 @@ export class Controller {
    * The questions Ask suggests before the first one: one about each of the pages filed last, newest first (`recent`, at most three,
    * from filings only, so a page saved from Ask is never one). None while the six shelves hold no pages, as Ask then invites a first
    * thought: `recent` takes a page from any folder but the library's own (inbox, raw, reviews, tasks), which `libraryPages` does not
-   * count, so a filing outside the shelves would otherwise sit under "Your shelves are empty…".
+   * count, so a filing outside the shelves would otherwise sit under "Your shelves are empty…". `pages`: the shelves' count, when it is
+   * already known (`askSnapshot`), so that they are counted once.
    */
-  askSuggestions(): string[] {
-    return this.libraryPages() === 0 ? [] : suggestQuestions(this.recent);
+  askSuggestions(pages = this.libraryPages()): string[] {
+    return pages === 0 ? [] : suggestQuestions(this.recent);
+  }
+
+  /**
+   * What the Ask window draws around its field, read at one moment: the shelves are counted once (`libraryPages` looks at every file of
+   * the library), and the suggestions, the line under the field and the hint are drawn from that one count and the shortcut, which
+   * the window draws together.
+   */
+  askSnapshot(): AskSnapshot {
+    const pages = this.libraryPages();
+    return { pages, suggestions: this.askSuggestions(pages), shortcut: this.askShortcut() };
   }
 
   /**

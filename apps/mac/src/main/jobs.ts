@@ -21,6 +21,16 @@ export interface Recording {
    * (`transcribeWithStop`).
    */
   forSetup: boolean;
+  /**
+   * A question for the Ask window (`pressDictate` while Ask is the key window): its words go to Ask's field (`heardQuestion`) and nowhere in
+   * the library, and it has no file mode.
+   */
+  forAsk: boolean;
+  /**
+   * The Ask window's `webContents.id` at the press, for a question; null otherwise. The words go to that window alone: if it has closed by
+   * then, they are dropped quietly, even when another Ask window has opened since.
+   */
+  askPage: number | null;
   startedAt: number;
   shot?: { path: string; thumbnail: string; context: ScreenContext };
   maxTimer: NodeJS.Timeout;

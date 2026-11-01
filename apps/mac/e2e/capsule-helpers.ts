@@ -354,3 +354,50 @@ export function filedInto(library: string, folder: string, name: string, title: 
   writeFileSync(path.join(library, folder, `${name}.md`), `# ${title}\n`);
   new Vault(library).appendLog("file", `[[capture-${name}]] → [[${name}]]`, when);
 }
+
+// ---- Shared by recording.spec.ts and ask-extras.spec.ts ----
+
+/**
+ * Stop, pressed on `page` as the transcribing card's Stop will press it. A page's messages reach main in the order they were sent, so
+ * the settings round trip after the press is answered once main has heard it: this returns when the press has taken effect, in a
+ * library without git. In one with git, Stop first has git keep the recording out (`keepAudioOutOfGit`), which takes a moment more,
+ * so a test there waits for the effect.
+ */
+export const stopTranscribing = (page: Page) =>
+  page.evaluate(async () => {
+    window.avanzel.capsule.stopTranscribing();
+    await window.avanzel.settings.get();
+  });
+
+/** The controller's own `transcribe`, which these tests wrap in the main process. */
+export type Hearing = { transcribe(samples: unknown): Promise<unknown> };
+
+/**
+ * From now on, counts the transcriptions that have started and those that have ended, with their words or with a failure
+ * (`transcriptions`): the controller's own `transcribe`, wrapped. With `failWith`, each fails with that message once the stand-in
+ * for the speech model has given its words. With `hold`, each waits once it has started, until the test lets that one go
+ * (`letTranscriptionGo`, by the order they started in).
+ */
+export async function noteTranscriptions(app: ElectronApplication, { failWith, hold = false }: { failWith?: string; hold?: boolean } = {}): Promise<void> {
+  await app.evaluate((_electron, { failure, holding }) => {
+    const controller = (globalThis as unknown as { __avanzel: Hearing }).__avanzel;
+    const transcribe = controller.transcribe.bind(controller);
+    const counts = { started: 0, ended: 0 };
+    const goes = new Map<number, () => void>();
+    Object.assign(globalThis, { transcriptions: counts, letTranscriptionGo: (nth: number) => goes.get(nth)?.() });
+    controller.transcribe = async (samples) => {
+      const nth = ++counts.started;
+      try {
+        if (holding) await new Promise<void>((resolve) => goes.set(nth, resolve));
+        const heard = await transcribe(samples);
+        if (failure !== undefined) throw new Error(failure);
+        return heard;
+      } finally {
+        counts.ended++;
+      }
+    };
+  }, { failure: failWith, holding: hold });
+}
+
+export const transcriptions = (app: ElectronApplication) =>
+  app.evaluate(() => (globalThis as { transcriptions?: { started: number; ended: number } }).transcriptions ?? { started: 0, ended: 0 });

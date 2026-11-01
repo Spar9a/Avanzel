@@ -38,6 +38,16 @@ export function emptyLine(pages: number | null): string {
     : "Answers come from your library only, with links to the pages they use.";
 }
 
+/**
+ * The field after a question has been said into it (Record a thought's shortcut, with Ask in front): the spoken `words` come after what
+ * was `typed`, with one space between. What is typed loses its trailing spaces first, and a field that holds no words (empty, or
+ * only spaces) holds just the `words`.
+ */
+export function withHeard(typed: string, words: string): string {
+  const before = typed.trimEnd();
+  return before ? `${before} ${words}` : words;
+}
+
 /** What the waiting line says while the agent looks, before its seconds count: main's own words for it, too. */
 export const LOOKING = "Looking through your library…";
 

@@ -436,8 +436,10 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
   await expect(ask.getByText(/^Answers come from your library only/)).toBeVisible();
-  // The usual line shows before the suggestions are read: read the window once its suggestion, with Ask this, is there.
+  // The usual line shows before the window has read anything: read it once its suggestion, with Ask this, and the hint under the field,
+  // with its keys, are there. Both rows of Ask read the hint.
   await expect(ask.getByRole("button", { name: "Ask this", exact: true })).toBeVisible();
+  await expect(ask.locator("kbd")).toBeVisible();
   found.push(...(await readable(app, ask, "Ask, empty", desktops)));
   // The fake agent repeats the question, so the answer links to a page: its shelf and its button are read too.
   await ask.getByRole("textbox", { name: "Ask your library" }).fill("What are my goals besides [[run-a-marathon]]?");

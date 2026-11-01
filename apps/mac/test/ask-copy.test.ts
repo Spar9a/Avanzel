@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answeredLine, emptyLine, failedAnswer, LOOKING, savedLine, SAVING_LINES, stoppedSaveLine, undoneLine, waitingLine } from "../src/renderer/ask/copy.ts";
+import { answeredLine, emptyLine, failedAnswer, LOOKING, savedLine, SAVING_LINES, stoppedSaveLine, undoneLine, waitingLine, withHeard } from "../src/renderer/ask/copy.ts";
 import type { AskResult } from "../src/shared/ipc.ts";
 import type { AgentFailure } from "../src/shared/problems.ts";
 
@@ -147,6 +147,14 @@ describe("ask copy", () => {
     // Undo puts a changed page back as it was; the page is still in the library, so it is not said to be gone.
     expect(undoneLine({ title: "Answer", shelf: "topics", path: "topics/answer.md", created: false })).toBe("Undone. “Answer” is back as it was.");
     expect(undoneLine({ title: "Trip", shelf: "projects", path: "projects/trip.md", created: false })).toBe("Undone. “Trip” is back as it was.");
+  });
+
+  it("withHeard puts the spoken words after what is typed, with one space", () => {
+    expect(withHeard("", "What about tulips?")).toBe("What about tulips?");
+    expect(withHeard("Also,", "what about tulips?")).toBe("Also, what about tulips?");
+    // What is typed loses its trailing space, so the join has the one; a field of spaces holds no words.
+    expect(withHeard("Also, ", "x")).toBe("Also, x");
+    expect(withHeard("   ", "x")).toBe("x");
   });
 
   it("the save's words are written as the design rules ask", () => {

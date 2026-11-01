@@ -1,22 +1,29 @@
 // What the Ask window adds to a question: before the first one, up to three questions about the pages filed last, each in words
 // beside Ask this, which asks it; and on the newest answer, Save as a page, which the turn can take back with its own Undo. The fake
 // agent answers an ask with "Q: " and the question, as app.spec.ts's Ask tests read it, and when it is asked to save the answer it
-// writes topics/answer.md.
+// writes topics/answer.md. Under the field a hint names Record a thought's shortcut, which, pressed with this window in front, says a
+// question into the field and keeps nothing in the library (the last tests).
 import { expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
+import { loadSettings, saveSettings, Vault, writeWav } from "../../../packages/engine/src/index.ts";
 import {
   agentMode,
+  archived,
   dictate,
+  expectProblem,
   filedFromTheCapsule,
   filedInto,
+  inbox,
   launchOn,
+  noteTranscriptions,
   notified,
   onDay,
   reachedUndo,
   receiptItem,
+  stopTranscribing,
+  transcriptions,
   trayOffersUndo,
   undoCalls,
   undoItem,
@@ -24,7 +31,8 @@ import {
   watchUndos,
   type Left,
 } from "./capsule-helpers.ts";
-import { alive, call, capsuleKind, exists, gitOut, launch, makeLibrary, onlyAgentsIn, openedWith, read, recentlyFiled, snap, stubOpening, windowFor } from "./helpers.ts";
+import { alive, call, capsuleKind, exists, filesUnder, gitOut, launch, makeLibrary, onlyAgentsIn, openedWith, read, recentlyFiled, snap, speechWav, stubOpening, windowFor } from "./helpers.ts";
+import { pressShortcut, sentToCapsule, settingsSnap, watchCapsule } from "./setup-helpers.ts";
 
 /** The line under the field before the first question, and the one a library with no pages gets instead. */
 const USUAL = "Answers come from your library only, with links to the pages they use.";
@@ -90,6 +98,9 @@ test("with nothing filed, Ask suggests nothing, and its line is as it was", asyn
   await call(first, "openAsk");
   const withPage = await windowFor(first, "ask");
   await expect(withPage.getByText(USUAL, { exact: true })).toBeVisible();
+  // The usual line stands before the window has read anything, so it proves nothing. The hint is drawn by the same read as the suggestions
+  // (the shelves, the questions and the shortcut come back together): once it shows, the absence of a group is what that read found.
+  await expect(withPage.locator("kbd")).toBeVisible();
   await expect(withPage.getByRole("group")).toHaveCount(0);
   await first.close();
   // No page at all: the line that invites a first thought, which the window draws with the same read that finds no question.
@@ -137,6 +148,8 @@ test("a long title wraps in the question, never in its button", async () => {
   const title = "A very long title for a page of notes that goes on and on about the garden, the bulbs, the soil, the sun and the frosts.";
   expect(title).toHaveLength(120);
   filedInto(library, "ideas", "long-title", title, onDay(0));
+  // A short page beside it, whose question fits one line: its button is the one a long question's button must match.
+  filedInto(library, "people", "maya", "Maya", onDay(-1));
   const app = await launch({ AVANZEL_LIBRARY: library });
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
@@ -152,6 +165,11 @@ test("a long title wraps in the question, never in its button", async () => {
   expect(await ask.locator(".ask-turns").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
   const questionBox = (await group.getByText(`What did I say about “${title}”?`, { exact: true }).boundingBox())!;
   expect(questionBox.height).toBeGreaterThan(buttonBox.height);
+  // Both buttons are one line: the long question's is as tall as the short one's, whatever its question does.
+  const asks = ask.getByRole("button", { name: "Ask this", exact: true });
+  await expect(asks).toHaveCount(2);
+  const heights = await asks.evaluateAll((all) => all.map((one) => one.getBoundingClientRect().height));
+  expect(heights[0]).toBeCloseTo(heights[1]!, 0);
   await app.close();
 });
 
@@ -787,6 +805,40 @@ test("Save again waits for an Undo that waits, as the offer does", async () => {
   await app.close();
 });
 
+test("a saved turn's Undo waits while another save runs, and does nothing when pressed", async () => {
+  // The mirror of the offer waiting for an Undo: a newer save that commits first would make git refuse this Undo, which has one try. So
+  // while any save runs (here the fake agent holds the newest turn's, 30 s), the older turn's Undo is busy, and a press on it takes nothing back.
+  const { app } = await launchOn(await makeLibrary({ git: true }));
+  await watchUndos(app);
+  await savedIn(app);
+  const ask = await answeredIn(app, "What are my goals?");
+  const undo = undoOf(turnAt(ask, 1));
+  await expect(undo).toBeVisible();
+  await expect(undo).not.toHaveAttribute("aria-busy", "true");
+  await app.evaluate(() => {
+    process.env.FAKE_AGENT_DELAY_MS = "30000";
+  });
+  await saveOffer(ask).click();
+  const stop = turnAt(ask).getByRole("button", { name: "Stop", exact: true });
+  await expect(stop).toBeVisible();
+  await expect(undo).toHaveAttribute("aria-busy", "true");
+  await snap(ask, "9-ask-undo-waiting");
+  await undo.click();
+  expect(await undoCalls(app)).toBe(0);
+  await expect(turnAt(ask, 1).getByRole("status").nth(1)).toHaveText(SAVED);
+  // Stop gives the save up. The Undo is free once the save has ended, and takes the first save back, once.
+  await stop.click();
+  await expect(saveRegion(ask)).toHaveText("Stopped. Your library hasn't changed.", { timeout: 30_000 });
+  await app.evaluate(() => {
+    delete process.env.FAKE_AGENT_DELAY_MS;
+  });
+  await expect(undo).not.toHaveAttribute("aria-busy", "true");
+  await undo.click();
+  await expect(turnAt(ask, 1).getByRole("status").nth(1)).toHaveText(UNDONE, { timeout: 30_000 });
+  expect(await undoCalls(app)).toBe(1);
+  await app.close();
+});
+
 /**
  * Starts a save of the answer to `question` from the Ask window's page, in the main process, as `saves[name]`, and doesn't wait for it. The
  * window can't send two saves at once, but one it gave up by closing goes on polling the library's lock as the next one begins: this is
@@ -898,4 +950,186 @@ test("a save that takes 10 s counts its seconds beside Stop, in the flow of its 
   await stop.click();
   await expect(saveRegion(ask)).toHaveText("Stopped. Your library hasn't changed.", { timeout: 30_000 });
   await app.close();
+});
+
+// ---------------------------------------------------------------- ⌥Space into Ask
+
+// Record a thought's shortcut, pressed while the Ask window is the key window, records a question: its words go to the field, after
+// what is typed, and nowhere in the library. A test app is seldom the front app of a Mac in use, so the window answers whether it is
+// the key window as the test says (`askIsKey`); `pressShortcut` presses the shortcut as the keys do, and the menu's Record a thought is
+// `toggleDictate`.
+
+/** Whether the Ask window of `app` answers that it is the key window (`isFocused`), which is what `pressDictate` asks. */
+const askIsKey = (app: ElectronApplication, key: boolean) =>
+  app.evaluate(({ BrowserWindow }, isKey) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/ask/"));
+    if (!win) throw new Error("There is no Ask window.");
+    win.isFocused = () => isKey;
+  }, key);
+
+/** The press that starts a recording doesn't wait for the microphone: the card listens a moment later, and a second press stops it. */
+const untilListening = (app: ElectronApplication) => expect.poll(() => capsuleKind(app), { timeout: 15_000 }).toBe("listening");
+
+/** A press of the shortcut, and the one that stops what it started: the recording's audio is then on its way to be heard. */
+async function sayIt(app: ElectronApplication): Promise<void> {
+  expect(await pressShortcut(app)).toBe(true);
+  await untilListening(app);
+  expect(await pressShortcut(app)).toBe(true);
+}
+
+/** Nothing of a question is kept: no capture, no recording, no count of kept recordings (`captures.json`), and nothing notified. */
+async function expectNothingKept(app: ElectronApplication, library: string, userData: string): Promise<void> {
+  expect(inbox(library)).toEqual([]);
+  expect(filesUnder(library, "raw")).toEqual([]);
+  expect(exists(userData, "captures.json")).toBe(false);
+  expect(await call(app, "notificationsForTests")).toEqual([]);
+}
+
+test("⌥Space in the Ask window puts the spoken question in its field, after what is typed, and keeps nothing", async () => {
+  const library = await makeLibrary();
+  const { app, userData } = await launchOn(library, { AVANZEL_FAKE_TRANSCRIPT: "what about the tulips?" });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await askIsKey(app, true);
+  const field = ask.getByRole("textbox", { name: "Ask your library" });
+  await field.fill("Also,");
+  // The person clicks elsewhere in the window: the field has lost the focus.
+  await field.blur();
+  // The first press records a question: the card listens, has no file mode to switch, and names the shortcut that finishes it.
+  expect(await pressShortcut(app)).toBe(true);
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 15_000 }).toMatchObject({ kind: "listening", mode: "dictate", fileMode: null, hint: "Alt+Space" });
+  // The second stops it: the words go after what is typed, with one space, the card goes, and the field has the focus again.
+  expect(await pressShortcut(app)).toBe(true);
+  await expect(field).toHaveValue("Also, what about the tulips?", { timeout: 30_000 });
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  await expect(field).toBeFocused();
+  // Nothing was asked, and nothing is kept.
+  await expect(ask.getByRole("heading")).toHaveCount(0);
+  await expectNothingKept(app, library, userData);
+  // Return asks it, as it asks what is typed.
+  await field.press("Enter");
+  await expect(ask.getByRole("heading", { name: "Also, what about the tulips?", exact: true })).toBeVisible();
+  await expect(ask.getByText("Q: Also, what about the tulips?")).toBeVisible({ timeout: 60_000 });
+  await app.close();
+});
+
+test("⌥Space records a thought while another app is in front of Ask, and the menu's Record a thought always does", async () => {
+  const library = await makeLibrary();
+  const { app } = await launchOn(library);
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  const field = ask.getByRole("textbox", { name: "Ask your library" });
+  // Another app is in front: two presses file a thought, as they do with no Ask window, and the field is left alone.
+  await askIsKey(app, false);
+  expect(await pressShortcut(app)).toBe(true);
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 15_000 }).toMatchObject({ kind: "listening", mode: "dictate", fileMode: "now" });
+  expect(await pressShortcut(app)).toBe(true);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await expect.poll(() => archived(library), { timeout: 30_000 }).toHaveLength(1);
+  await expect(field).toHaveValue("");
+  // Ask is in front: Record a thought in the menu still records a thought, whoever is in front.
+  await askIsKey(app, true);
+  await dictate(app);
+  await expect.poll(() => archived(library), { timeout: 60_000 }).toHaveLength(2);
+  await expect(field).toHaveValue("");
+  // A thought that began so is stopped by the press, even with Ask in front, and filed: the press stops what is recording.
+  await call(app, "toggleDictate");
+  expect(await pressShortcut(app)).toBe(true);
+  await expect.poll(() => archived(library), { timeout: 60_000 }).toHaveLength(3);
+  await expect(field).toHaveValue("");
+  await app.close();
+});
+
+test("a question that heard nothing, or whose words couldn't be made, says so, and keeps nothing", async () => {
+  const library = await makeLibrary();
+  const blip = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-audio-")), "blip.wav");
+  writeWav(blip, new Float32Array(1600)); // 0.1 s: under 0.3 s there are no words
+  const { app, userData, capsule } = await launchOn(library, { AVANZEL_FAKE_AUDIO: blip });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await askIsKey(app, true);
+  const field = ask.getByRole("textbox", { name: "Ask your library" });
+  // Too short to hold speech: nothing was heard, as for a thought, and the card sends the person to Settings → Voice.
+  await sayIt(app);
+  await expectProblem(capsule, { title: "Nothing was heard.", lines: ["Is the right microphone selected? Nothing was saved."], fix: "Choose microphone" });
+  await expect(field).toHaveValue("");
+  await expectNothingKept(app, library, userData);
+  // Speech the app hears, and a speech model that falls over once it has given its words: the card says the recording couldn't be turned
+  // into words, that nothing was saved, and has no fix.
+  await app.evaluate((_electron, file) => void (process.env.AVANZEL_FAKE_AUDIO = file), speechWav("hello"));
+  await noteTranscriptions(app, { failWith: "The speech model fell over" });
+  await sayIt(app);
+  await expectProblem(capsule, { title: "The recording couldn't be turned into words.", lines: ["The speech model fell over. Nothing was saved."] });
+  await expect(field).toHaveValue("");
+  await expectNothingKept(app, library, userData);
+  await app.close();
+});
+
+test("Stop on a question's slow transcription keeps nothing, and its words never come", async () => {
+  const library = await makeLibrary();
+  const { app, userData, capsule } = await launchOn(library, { AVANZEL_TRANSCRIBE_STOP_MS: "500", AVANZEL_FAKE_TRANSCRIPT_DELAY_MS: "4000" });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await askIsKey(app, true);
+  const field = ask.getByRole("textbox", { name: "Ask your library" });
+  await noteTranscriptions(app);
+  await sayIt(app);
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "transcribing", slow: true });
+  // Stop keeps nothing of a question: its card goes, with no Recorded card, and the recording is not moved into the inbox.
+  await stopTranscribing(capsule);
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  // The transcription itself can't be stopped, so it goes on and ends; what it made is dropped.
+  await expect.poll(() => transcriptions(app), { timeout: 15_000 }).toMatchObject({ ended: 1 });
+  await expect(field).toHaveValue("");
+  await expectNothingKept(app, library, userData);
+  await app.close();
+});
+
+test("words that arrive after the Ask window closed are dropped quietly, even into a new one", async () => {
+  const library = await makeLibrary();
+  const { app, userData } = await launchOn(library, { AVANZEL_FAKE_TRANSCRIPT_DELAY_MS: "3000" });
+  await watchCapsule(app);
+  await noteTranscriptions(app);
+  await call(app, "openAsk");
+  const first = await windowFor(app, "ask");
+  await askIsKey(app, true);
+  await sayIt(app);
+  // The words are being made when the window they were said for is closed, and another opens: they are the first window's, which has gone.
+  await call(app, "closeAsk");
+  await expect.poll(() => first.isClosed()).toBe(true);
+  await call(app, "openAsk");
+  const second = await windowFor(app, "ask");
+  expect(second).not.toBe(first);
+  await expect.poll(() => transcriptions(app), { timeout: 15_000 }).toMatchObject({ ended: 1 });
+  await expect.poll(() => capsuleKind(app), { timeout: 15_000 }).toBe("hidden");
+  // No card said anything went wrong, the new window's field is empty, and nothing is kept or notified.
+  expect(await sentToCapsule(app)).not.toContain("error");
+  await expect(second.getByRole("textbox", { name: "Ask your library" })).toHaveValue("");
+  await expectNothingKept(app, library, userData);
+  await app.close();
+});
+
+test("Ask's hint names the dictate shortcut, follows a change, and is gone while the shortcut isn't registered", async () => {
+  const { app } = await launchOn(await makeLibrary());
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  const hint = ask.getByText("Press ⌥Space to say your question.", { exact: true });
+  await expect(hint).toBeVisible();
+  await expect(hint.locator("kbd")).toHaveText("⌥Space");
+  await snap(ask, "9-ask-hint");
+  // The shortcut is changed in Settings: the window reads it again when it has the focus again.
+  await call(app, "setApp", { shortcuts: { ...(await settingsSnap(app)).app.shortcuts, dictate: "Control+Alt+K" } });
+  await ask.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(ask.getByText("Press ⌃⌥K to say your question.", { exact: true })).toBeVisible();
+  await expect(ask.locator("kbd")).toHaveText("⌃⌥K");
+  await app.close();
+  // Another app holds ⌥Space: nothing is registered, so there is no key to name. The window shows no hint once it has read (its shelves
+  // are empty, and it says so with the same read that finds no shortcut).
+  const { app: taken } = await launchOn(await makeLibrary(), { AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
+  expect(await call(taken, "askShortcut")).toBeNull();
+  await call(taken, "openAsk");
+  const bare = await windowFor(taken, "ask");
+  await expect(bare.getByText(EMPTY, { exact: true })).toBeVisible();
+  await expect(bare.locator("kbd")).toHaveCount(0);
+  await taken.close();
 });

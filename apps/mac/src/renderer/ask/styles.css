@@ -27,8 +27,11 @@
   text-align: center;
 }
 /* The questions suggested under that line: each in words beside the button that asks it, which take the line's free width and wrap
-   there. */
+   there. They sit in one centred column, on the axis of the centred line above them, so a short question isn't a window's width from
+   its button. */
 .ask-suggestions {
+  max-width: 480px;
+  margin: 0 auto;
   padding-top: var(--av-space-16);
 }
 .ask-offer {

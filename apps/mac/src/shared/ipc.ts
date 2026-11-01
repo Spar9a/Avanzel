@@ -648,6 +648,19 @@ export interface UpHereSnapshot {
   model: ModelStatus;
 }
 
+/**
+ * What the Ask window draws around its field, read in one go (`ask.get`) so that it draws what was read at one moment: one drawn
+ * means all three were read.
+ */
+export interface AskSnapshot {
+  /** How many pages the six shelves hold, as Settings' library line counts them (a folder of the owner's own doesn't count): 0 tells the window to invite a first thought rather than a question. */
+  pages: number;
+  /** The questions to suggest before the first one, as sentences: one about each of the pages filed last, newest first, at most three (none while `pages` is 0). */
+  suggestions: string[];
+  /** Record a thought's shortcut as an accelerator ("Alt+Space"), which says a question in this window; null while it isn't registered, as there is then no key to name. */
+  shortcut: string | null;
+}
+
 export interface AskResult {
   ok: boolean;
   /**
@@ -820,15 +833,16 @@ export interface AvanzelBridge {
     openPage(name: string): void;
     close(): void;
     /**
-     * How many pages the six shelves hold, as Settings' library line counts them (a folder of the owner's own doesn't count):
-     * 0 tells the window to invite a first thought rather than a question.
+     * What the window draws around its field: the shelves' page count, the questions to suggest and the shortcut that says a question, read
+     * at one moment (the shelves are counted once). Read when the window opens and whenever it has the focus.
      */
-    libraryPages(): Promise<number>;
+    get(): Promise<AskSnapshot>;
     /**
-     * The questions to suggest before the first one, as sentences: one about each of the pages filed last, newest first, at
-     * most three (none while `libraryPages` is 0). Read with `libraryPages`, when the window opens and has the focus.
+     * The words of a question said with Record a thought's shortcut while this window was the key window (they come after a second
+     * press, once they are made), for the field: after what is typed there. Only the window the question was said in hears them: one
+     * opened since hears none, and a question said to a window that has closed comes to no one.
      */
-    suggestions(): Promise<string[]>;
+    onHeard(callback: (words: string) => void): () => void;
   };
   setup: {
     get(): Promise<SetupSnapshot>;

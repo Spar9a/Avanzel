@@ -22,7 +22,7 @@ import {
   throughFound,
   windowFor,
 } from "./helpers.ts";
-import { expectInPanel, expectProblem, expectStoppedRecording } from "./capsule-helpers.ts";
+import { expectInPanel, expectProblem, expectStoppedRecording, noteTranscriptions, stopTranscribing, transcriptions } from "./capsule-helpers.ts";
 import { pressShortcut, sentToCapsule, watchCapsule, zel } from "./setup-helpers.ts";
 
 const WAIT_FOR_AUDIO_MS = 3000; // AVANZEL_AUDIO_TIMEOUT_MS: how long the app waits for audio after a stop (15 s outside tests)
@@ -139,18 +139,6 @@ const SLOW_MS = 500;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Stop, pressed on `page` as the transcribing card's Stop will press it. A page's messages reach main in the order they were sent, so
- * the settings round trip after the press is answered once main has heard it: this returns when the press has taken effect, in a
- * library without git. In one with git, Stop first has git keep the recording out (`keepAudioOutOfGit`), which takes a moment more,
- * so a test there waits for the effect.
- */
-const stopTranscribing = (page: Page) =>
-  page.evaluate(async () => {
-    window.avanzel.capsule.stopTranscribing();
-    await window.avanzel.settings.get();
-  });
-
-/**
  * A launch that hears "Plant tulips in October" after `delayMs`, and whose transcription is slow after SLOW_MS, on `library` (a new
  * one unless given); `env` adds to it. Nothing records yet (`dictate`). The states sent to the capsule are noted from here on.
  */
@@ -182,39 +170,6 @@ async function dictate(app: ElectronApplication): Promise<void> {
 /** Waits until the transcription has run long: the card has turned slow, and offers Stop. */
 const untilSlow = (app: ElectronApplication) =>
   expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "transcribing", slow: true });
-
-/** The controller's own `transcribe`, which these tests wrap in the main process. */
-type Hearing = { transcribe(samples: unknown): Promise<unknown> };
-
-/**
- * From now on, counts the transcriptions that have started and those that have ended, with their words or with a failure
- * (`transcriptions`): the controller's own `transcribe`, wrapped. With `failWith`, each fails with that message once the stand-in
- * for the speech model has given its words. With `hold`, each waits once it has started, until the test lets that one go
- * (`letTranscriptionGo`, by the order they started in).
- */
-async function noteTranscriptions(app: ElectronApplication, { failWith, hold = false }: { failWith?: string; hold?: boolean } = {}): Promise<void> {
-  await app.evaluate((_electron, { failure, holding }) => {
-    const controller = (globalThis as unknown as { __avanzel: Hearing }).__avanzel;
-    const transcribe = controller.transcribe.bind(controller);
-    const counts = { started: 0, ended: 0 };
-    const goes = new Map<number, () => void>();
-    Object.assign(globalThis, { transcriptions: counts, letTranscriptionGo: (nth: number) => goes.get(nth)?.() });
-    controller.transcribe = async (samples) => {
-      const nth = ++counts.started;
-      try {
-        if (holding) await new Promise<void>((resolve) => goes.set(nth, resolve));
-        const heard = await transcribe(samples);
-        if (failure !== undefined) throw new Error(failure);
-        return heard;
-      } finally {
-        counts.ended++;
-      }
-    };
-  }, { failure: failWith, holding: hold });
-}
-
-const transcriptions = (app: ElectronApplication) =>
-  app.evaluate(() => (globalThis as { transcriptions?: { started: number; ended: number } }).transcriptions ?? { started: 0, ended: 0 });
 
 /** Lets the `nth` transcription that `noteTranscriptions` holds go on. */
 const letTranscriptionGo = (app: ElectronApplication, nth: number) =>
