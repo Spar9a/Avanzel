@@ -22,7 +22,7 @@ import {
   throughFound,
   windowFor,
 } from "./helpers.ts";
-import { expectInPanel, expectProblem, expectStoppedRecording, noteTranscriptions, stopTranscribing, transcriptions } from "./capsule-helpers.ts";
+import { expectInPanel, expectProblem, expectStoppedRecording, letTranscriptionGo, noteTranscriptions, stopTranscribing, transcriptions } from "./capsule-helpers.ts";
 import { pressShortcut, sentToCapsule, watchCapsule, zel } from "./setup-helpers.ts";
 
 const WAIT_FOR_AUDIO_MS = 3000; // AVANZEL_AUDIO_TIMEOUT_MS: how long the app waits for audio after a stop (15 s outside tests)
@@ -170,10 +170,6 @@ async function dictate(app: ElectronApplication): Promise<void> {
 /** Waits until the transcription has run long: the card has turned slow, and offers Stop. */
 const untilSlow = (app: ElectronApplication) =>
   expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "transcribing", slow: true });
-
-/** Lets the `nth` transcription that `noteTranscriptions` holds go on. */
-const letTranscriptionGo = (app: ElectronApplication, nth: number) =>
-  app.evaluate((_electron, which) => (globalThis as { letTranscriptionGo?: (nth: number) => void }).letTranscriptionGo?.(which), nth);
 
 /** The samples of a recording: what two files must share to be the same recording. */
 const samplesOf = (file: string) => readWav(file).samples;

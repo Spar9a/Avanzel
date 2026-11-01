@@ -759,7 +759,10 @@ export interface AvanzelBridge {
     openSettingsFor(action: string): void;
     /** Try again, after the speech models' download failed: it starts over, and the capsule shows its progress. */
     retryDownload(): void;
-    /** Type instead, while Avanzel can't listen yet: the capsule hides and Quick opens. */
+    /**
+     * Type instead, while Avanzel can't listen yet: the capsule hides and Quick opens, unless the Ask window is the key window with a page
+     * on a shelf (the controller's `pressAsks`): its field is in front already, and only the capsule goes.
+     */
     typeInstead(): void;
     /** Use, on the notice of a taken shortcut: `accelerator` becomes `key`'s shortcut. */
     useShortcut(key: keyof Shortcuts, accelerator: string): void;
@@ -838,9 +841,15 @@ export interface AvanzelBridge {
     close(): void;
     /**
      * What the window draws around its field: the shelves' page count, the questions to suggest and the shortcut that says a question, read
-     * at one moment (the shelves are counted once). Read when the window opens and whenever it has the focus.
+     * at one moment (the shelves are counted once). Read when the window opens, whenever it has the focus, and whenever main says the
+     * shelves may have changed (`onChanged`).
      */
     get(): Promise<AskSnapshot>;
+    /**
+     * The shelves may have changed (a filing ended, a filing or a review was taken back, another library opened): read again (`get`). The
+     * capsule that files a thought never takes the key, so with this window in front no focus comes to say so.
+     */
+    onChanged(callback: () => void): () => void;
     /**
      * The words of a question said with Record a thought's shortcut while this window was the key window (they come after a second
      * press, once they are made), for the field: after what is typed there. Only the window the question was said in hears them: one

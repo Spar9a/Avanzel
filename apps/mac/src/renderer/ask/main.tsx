@@ -100,19 +100,26 @@ function Ask() {
   // (its log and index lines touch the same lines), so no save begins while one waits. A question touches no commit: it isn't held back.
   const undoing = turns.some((turn) => turn.saving?.undo === "asked");
   // The mirror: a save that runs, on any turn (a stopping one too, until main answers), may commit before an Undo that is pressed
-  // meanwhile, and git then refuses that Undo, which has one try. So no Undo begins while a save runs: its buttons say they wait.
+  // meanwhile, and git then refuses that Undo, which has one try. So no Undo begins while a save runs: its buttons are disabled.
   const saveRuns = turns.some((turn) => turn.saving?.result === null);
 
   // Whatever main says next starts the count again: the seconds are those of what the question is doing now.
   useEffect(() => api.onProgress((message) => setProgress({ message, since: Date.now() })), []);
   // The shelves are counted, the suggestions read and the shortcut looked up when the window opens, and again whenever it has the
-  // focus: a note may have been filed, or the shortcut changed, meanwhile. Main reads them in one go, counting the shelves once, and
-  // the window draws what that one read returned, so one drawn means all were read; a read that fails leaves what was drawn as it was.
+  // focus: a note may have been filed, or the shortcut changed, meanwhile. And again when main says the shelves may have changed (a
+  // filing ended, one was taken back, another library opened): the capsule that files a thought never takes the key, so with this
+  // window in front no focus comes, and each press of the shortcut is routed by a fresh count. Main reads them in one go, counting the
+  // shelves once, and the window draws what that one read returned, so one drawn means all were read; a read that fails leaves what
+  // was drawn as it was.
   useEffect(() => {
     const read = () => void api.get().then(setAround, () => undefined);
     read();
     window.addEventListener("focus", read);
-    return () => window.removeEventListener("focus", read);
+    const stopListening = api.onChanged(read);
+    return () => {
+      window.removeEventListener("focus", read);
+      stopListening();
+    };
   }, []);
   // A question said with Record a thought's shortcut, this window in front, comes after what is typed, and the field gets the focus,
   // to be asked with Return or added to.
@@ -151,10 +158,10 @@ function Ask() {
 
   /**
    * Saves the answer `turn` shows as a page, as its newest answered turn offers; whether it did. One run at a time: while a question
-   * is answered or an answer saved, saving does nothing, and nor does it while an Undo waits (`undoing`): the buttons that save say they
-   * wait (`busy`), and drop the press. The save is the library's it came from (`AskResult.library`): main refuses it in another. A
-   * save that main can't take is read as one that failed, so a turn never stays busy. The field gets the focus, which the button that
-   * was pressed leaves.
+   * is answered or an answer saved, saving does nothing, and nor does it while an Undo waits (`undoing`): the buttons that save are
+   * disabled then, and this drops a press that gets here anyway. The save is the library's it came from (`AskResult.library`): main
+   * refuses it in another. A save that main can't take is read as one that failed, so a turn never stays busy. The field gets the
+   * focus, which the button that was pressed leaves.
    */
   const save = (turn: Turn) => {
     const { id, question: asked, outcome } = turn;
@@ -173,9 +180,9 @@ function Ask() {
    * Undo, on the turn whose answer was saved with a commit (`SaveResult.commit`): git takes the save back, once, in the library it was
    * saved in, and the turn tells how it went (`Saving.undo`): Undone, with the offer back on the newest turn, or a Notice that git
    * refused it. It is not an agent's run, so it stops nothing: a question can go on beside it. A save can't (`undoing`): it waits until
-   * the Undo is answered, and an Undo waits while a save runs (`saveRuns`): the buttons that undo say they wait (`busy`), and drop the
-   * press. A reply main can't give is read as a refusal, so the button never waits for ever. The field gets the focus, which the button
-   * that was pressed leaves.
+   * the Undo is answered, and an Undo waits while a save runs (`saveRuns`): the buttons that undo are disabled then, and this drops a
+   * press that gets here anyway. A reply main can't give is read as a refusal, so the button never waits for ever. The field gets the
+   * focus, which the button that was pressed leaves.
    */
   const undo = (turn: Turn) => {
     const { id, saving } = turn;
@@ -241,8 +248,9 @@ function Ask() {
             </div>
             {suggestions.length > 0 && (
               // Before the first question only. Ask this asks the question as a new turn, which takes them away, and gives the field
-              // the focus, ready for the next; what is typed there stays.
-              <div className="ask-suggestions">
+              // the focus, ready for the next; what is typed there stays. The questions are a group of their own, named for what they
+              // are, so a screen reader says where they begin and that each group in it is one question.
+              <div className="ask-suggestions" role="group" aria-label="Suggested questions">
                 <Stack gap={8}>
                   {suggestions.map((suggested) => (
                     <Suggestion
@@ -383,8 +391,9 @@ function Reply({ outcome, progress, onStop }: { outcome: Outcome; progress: Prog
  * - An Undo git refused: a Notice under the saved line, which keeps Open and offers no second try.
  * - Stopped: what the save left, and the offer.
  * A save that saved nothing is a Notice, outside the region, with the fix Save again on the newest turn (`Failed`), and none on an older one.
- * While an Undo waits (`undoing`) the buttons that save, the offer and Save again, wait too (`busy`); and while a save runs (`saveRuns`)
- * the Undo of a saved page waits, whichever turn's save it is.
+ * While an Undo waits (`undoing`) the buttons that save, the offer and Save again, are disabled; and while a save runs (`saveRuns`)
+ * the Undo of a saved page is, whichever turn's save it is. A spinner is work in progress (DESIGN.md: Spinner), so only the button that was
+ * pressed has one: an Undo that waits for main's answer is busy, and a button that only waits is disabled.
  */
 function SaveAsPage({
   turn,
@@ -430,14 +439,16 @@ function SaveAsPage({
         {result?.kind === "unsaved" && (
           <Failed
             problem={saveProblem(result.failure, result.agent, result.partial, new Date())}
-            again={newest ? { label: "Save again", onPress: onSave, withSettings: true, busy: undoing } : undefined}
+            again={newest ? { label: "Save again", onPress: onSave, withSettings: true, disabled: undoing } : undefined}
           />
         )}
         {undo === "refused" && <Notice tone="error" title={undoRefused.title}>{undoRefused.body}</Notice>}
         {(offered || saved) && (
           <Actions align="start">
-            {offered && <Button size="small" busy={undoing} onClick={onSave}>Save as a page</Button>}
-            {saved && saved.commit !== null && undo !== "refused" && <Button size="small" busy={undo === "asked" || saveRuns} onClick={onUndo}>Undo</Button>}
+            {offered && <Button size="small" disabled={undoing} onClick={onSave}>Save as a page</Button>}
+            {saved && saved.commit !== null && undo !== "refused" && (
+              <Button size="small" busy={undo === "asked"} disabled={saveRuns && undo !== "asked"} onClick={onUndo}>Undo</Button>
+            )}
             {saved && <Button size="small" onClick={() => api.openPage(pageName(saved.page.path))}>Open</Button>}
           </Actions>
         )}
@@ -456,8 +467,11 @@ interface Again {
    * settings are mended this is the only way.
    */
   withSettings?: true;
-  /** Shows the button waiting, and drops the press: a save waits for an Undo that waits (`Ask`'s `undoing`). */
-  busy?: boolean;
+  /**
+   * Disables the button, which waits without a spinner (a spinner is work in progress, and the button that was pressed has it): a save
+   * waits for an Undo that waits (`Ask`'s `undoing`).
+   */
+  disabled?: boolean;
 }
 
 /**
@@ -477,7 +491,7 @@ function Failed({ problem, again }: { problem: AskProblem; again?: Again | undef
         again && (
           <Actions align="start">
             {(!problem.settings || again.withSettings) && (
-              <Button size="small" variant={problem.terminal || problem.settings ? "secondary" : "primary"} busy={again.busy} onClick={again.onPress}>{again.label}</Button>
+              <Button size="small" variant={problem.terminal || problem.settings ? "secondary" : "primary"} disabled={again.disabled} onClick={again.onPress}>{again.label}</Button>
             )}
             {problem.terminal && <Button size="small" variant="primary" onClick={() => window.avanzel.setup.openTerminal()}>Open Terminal</Button>}
             {problem.settings && (

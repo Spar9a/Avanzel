@@ -22,8 +22,8 @@ export interface Recording {
    */
   forSetup: boolean;
   /**
-   * A question for the Ask window (`pressDictate` while Ask is the key window): its words go to Ask's field (`heardQuestion`) and nowhere in
-   * the library, and it has no file mode.
+   * A question for the Ask window (`pressDictate` while Ask is the key window and the shelves hold a page: `pressAsks`): its words go to
+   * Ask's field (`heardQuestion`) and nowhere in the library, and it has no file mode.
    */
   forAsk: boolean;
   /**

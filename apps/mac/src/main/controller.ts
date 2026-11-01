@@ -119,7 +119,7 @@ import type {
 import { frontContext } from "./front-app.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
-import { answeredFrom, captureMeta, captureWords, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "./library-info.ts";
+import { answeredFrom, askLinks, captureMeta, captureWords, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog, savedPage } from "./library-info.ts";
 import { buildMenuModel, reviewProgress, speechProblemOf, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
@@ -370,6 +370,12 @@ export class Controller {
    * and `stopRecording`, which takes the card for a newer recording).
    */
   private transcribing: Transcribing | null = null;
+  /**
+   * The recording whose Transcribing card the capsule was last given (`stopRecording`), whoever has the capsule since: a newer recording's
+   * stop takes the card. A transcription that ends hides a card only if it is its own (`heardQuestion`), so one that ends late leaves a
+   * newer recording's card, its slow state and its Stop alone.
+   */
+  private transcribingCardOf: Recording | null = null;
   private job: FilingJob | null = null;
   /** The job whose words are in the capsule's editor: from Edit until File or Cancel (`refile`), or `keepEdit`. */
   private inEditor: FilingJob | null = null;
@@ -572,9 +578,19 @@ export class Controller {
 
   /**
    * What goes wrong opening it is kept in `libraryProblem`, which the menu and Settings show. A remembered library that isn't
-   * there is no problem of opening it: its place is kept in `libraryMissing`, which they name too.
+   * there is no problem of opening it: its place is kept in `libraryMissing`, which they name too. However it went, an Ask window that is
+   * open is told to read again (`askChanged`): its pages, suggestions and hint were those of the library that closed.
    */
   private openLibrary(libraryPath: string | null): void {
+    try {
+      this.closeAndOpenLibrary(libraryPath);
+    } finally {
+      this.askChanged();
+    }
+  }
+
+  /** `openLibrary`'s work: the library that is open closes, and the one at `libraryPath`, if any, opens in its place. */
+  private closeAndOpenLibrary(libraryPath: string | null): void {
     // A reprint that shows is the closing library's: its Open opens that library's pages and its Undo takes back that library's filing.
     if (this.reprint) this.setCapsule({ kind: "hidden" });
     this.dropLibraryTimers(); // a wait or a watch is for the library that closes; the next one's waits are armed again by whoever opens it
@@ -862,8 +878,9 @@ export class Controller {
    * Whether the menu offers Undo the last filing: there is one (`lastFiled`), the library it filed in is the open one and its saved
    * Undo is checked (`undoChecked`), Avanzel isn't quitting, and no filing, review or save of an answer waits or runs. A filing whose run
    * has begun has cleared `lastFiled` already, so the filing that waits for its turn (`queuedToFile`) and the review that waits or runs
-   * (`running`) are what the item hides for. A save clears it as it begins (`saveAnswer`) but it waits for the library as a question
-   * does, and a filing that ends meanwhile would be offered with the save about to commit after it: the saves going (`savesGoing`) hide it too.
+   * (`running`) are what the item hides for. A save clears nothing as it begins (`saveAnswer`), but it waits for the library as a question
+   * does, and a filing that ends meanwhile would be offered with the save about to commit after it: the saves going (`savesGoing`) hide it
+   * too, and a save that commits drops it for good as it ends. One that commits nothing leaves it, and the item comes back.
    */
   private undoableFiling(): boolean {
     const last = this.lastFiled;
@@ -1036,6 +1053,7 @@ export class Controller {
       // Best effort: the menu keeps the pages it had. A library folder that can't be read is not worth failing the take-back that asked.
       console.warn("recent pages", error);
     }
+    this.askChanged(); // a take-back or a review ended: the shelves may hold fewer pages, or more
   }
 
   refreshMenu(): void {
@@ -1537,6 +1555,7 @@ export class Controller {
     this.transcribing = null;
     // A screen comment keeps its screenshot's card while its words are made, as it had it while it listened.
     this.setCapsule({ kind: "transcribing", mode: recording.mode, onThisMac, ...(recording.shot ? { thumbnail: recording.shot.thumbnail, context: recording.shot.context } : {}) });
+    this.transcribingCardOf = recording; // whose card it is: an older question's words, when they come, hide only their own (`heardQuestion`)
     this.setup.moveThought(recording, { kind: "transcribing", startedAt: Date.now(), onThisMac });
     // Listening stops, as the card says it has. The Tock goes out ahead of the stop, and the page plays it once the stop has let go of the
     // microphone, before the audio is sent: it is not heard in the recording, and it is no later than the card (the audio can be 38 MB).
@@ -1689,7 +1708,7 @@ export class Controller {
    * not be turned into words, both with "Nothing was saved.". Stop on the slow transcription drops the words it makes
    * (`stopTranscribing`). They go to the Ask window of the press alone (`Recording.askPage`): once it has closed they are dropped
    * quietly, even when another Ask window has opened since, which no one has said them to. The capsule's card of the transcription goes
-   * in every case where it is still up.
+   * in every case where it is still up and is the question's own: a recording stopped since has the card, and keeps it.
    */
   private async heardQuestion(recording: Recording, received: Float32Array): Promise<void> {
     try {
@@ -1701,7 +1720,8 @@ export class Controller {
         words = transcript.text.trim();
       }
       if (!words) return this.recordingFailed(recording, { problem: "silence" }, NOTHING_HEARD, "open-settings:voice", "Choose microphone");
-      if (this.capsuleState.kind === "transcribing") this.setCapsule({ kind: "hidden" });
+      // Only the question's own card: a recording stopped since has taken the card (`transcribingCardOf`), and its slow state and Stop are its.
+      if (this.capsuleState.kind === "transcribing" && this.transcribingCardOf === recording) this.setCapsule({ kind: "hidden" });
       const win = this.askWindow;
       if (win && !win.isDestroyed() && win.webContents.id === recording.askPage) win.webContents.send("ask:heard", words);
     } catch (error) {
@@ -2144,6 +2164,7 @@ export class Controller {
       this.notify(`Filed by ${job.agent}`, first ? `${first.title} (${first.shelf})${job.pages.length > 1 ? ` and ${job.pages.length - 1} more` : ""}` : outcome.message, () => first && this.openPage(first.path));
     }
     this.refreshMenu();
+    this.askChanged(); // the shelves hold its pages: an Ask window in front reads again, as the capsule never takes its key
   }
 
   /**
@@ -3190,10 +3211,10 @@ export class Controller {
 
   /**
    * Type instead, on the capsule's card while Avanzel can't listen yet (the speech model is on its way, or its download failed): the
-   * capsule goes and Quick opens. Not while a press of Record a thought's shortcut asks (`pressAsks`; the capsule is a panel that never
-   * takes the key, so Ask is still the key window when the button is pressed): the field to type the question in is already in front of
-   * the person, with what they typed in it, and the capsule only goes. With no page the press recorded a thought, and Quick is where
-   * a thought is typed.
+   * capsule goes and Quick opens. Not while a press of Record a thought's shortcut now would ask (`pressAsks`; the capsule is a panel that
+   * never takes the key, so Ask is still the key window when the button is pressed): the field to type the question in is already in
+   * front of the person, with what they typed in it, and the capsule only goes. With no page the press recorded a thought, and Quick is
+   * where a thought is typed. It goes by the window and its shelves as the button is pressed, not by the press that brought the card.
    */
   typeInstead(): void {
     this.setCapsule({ kind: "hidden" });
@@ -3239,10 +3260,18 @@ export class Controller {
 
   /**
    * Whether a press of Record a thought's shortcut now asks a question (`pressDictate`): the Ask window is the key window, and the
-   * shelves hold a page to ask about. With none, the window's own line invites a thought, and the press records one.
+   * shelves hold a page to ask about. With none, the window's own line invites a thought, and the press records one. So does a press
+   * when the shelves can't be counted (a library folder that can't be listed): it runs in the global shortcut's callback, where a throw
+   * would bring up Electron's error box and the press would do nothing.
    */
   private pressAsks(): boolean {
-    return this.askHasFocus() && this.libraryPages() > 0;
+    if (!this.askHasFocus()) return false;
+    try {
+      return this.libraryPages() > 0;
+    } catch (error) {
+      console.warn("ask: the shelves couldn't be counted, so the press doesn't ask", error);
+      return false;
+    }
   }
 
   /**
@@ -3285,6 +3314,17 @@ export class Controller {
   askSnapshot(): AskSnapshot {
     const pages = this.libraryPages();
     return { pages, suggestions: this.askSuggestions(pages), shortcut: this.askShortcut() };
+  }
+
+  /**
+   * The shelves may have changed (a filing ended, a filing or a review was taken back, another library opened): the Ask window is told
+   * to read again what it draws around its field (`askSnapshot`). It reads when it has the focus, but the capsule that files a thought
+   * never takes the key from it, so with Ask in front no focus comes, and its line, hint and suggestions would stay as its last read
+   * left them while each press of the shortcut is routed by a fresh count (`pressAsks`).
+   */
+  private askChanged(): void {
+    const win = this.askWindow;
+    if (win && !win.isDestroyed()) win.webContents.send("ask:changed");
   }
 
   /**
@@ -3360,9 +3400,10 @@ export class Controller {
    * It runs where a question does (`inAskSlot`) and waits for the library as a question does. Stop gives it up; so does closing the
    * window, or quitting, and nobody is told then. What a run left is kept as its own commit by the engine (`partial`).
    *
-   * The menu's Undo the last filing goes as the save begins (`clearLastFiled`) and stays away while the save waits or runs (`savesGoing`):
-   * the save commits after a filing that ends meanwhile, which can then no longer be taken back. A save that commits nothing offers that
-   * filing again when it ends; one that commits drops its record (`clearLastFiled`).
+   * The menu's Undo the last filing stays away while the save waits or runs (`savesGoing`): the save commits after a filing that ends
+   * meanwhile, which can then no longer be taken back. A save that commits nothing leaves the filing's Undo, offered again when the save
+   * ends (the save's start clears nothing: a save that wrote nothing has not touched the filing); one that commits drops its record
+   * (`clearLastFiled`).
    *
    * It ends `saved` when the run wrote a page, even if Stop landed as it ended, with the save's own commit, which takes it back
    * (`undoSave`) while the window that saved is open (`savedAnswers`); else `stopped` when Stop, or the window's closing, gave it up; else
@@ -3376,14 +3417,15 @@ export class Controller {
     if (library !== (this.vault?.root ?? null)) return { kind: "unsaved", agent, failure: avanzelFailure(ANOTHER_LIBRARY), partial: null };
     this.savesGoing++;
     try {
-      this.clearLastFiled();
       return await this.inAskSlot(async (abort, progress): Promise<SaveResult> => {
         try {
           const vault = this.requireVault();
           const outcome = await this.withRun(async (signal) => (await this.librarianFor(vault)).ask(question, { save: true, answer, signal, progress }), abort);
           const { result, changes } = outcome;
           if (outcome.commit) this.clearLastFiled(vault.root); // it comes after any filing that ended while the save waited
-          const page = result.ok ? filedPages(vault.root, changes)[0] : undefined;
+          // The save's own page: a run can make others too (`savedPage`).
+          const pages = result.ok ? filedPages(vault.root, changes) : [];
+          const page = savedPage(pages, askLinks(vault.root));
           if (page) {
             if (outcome.commit && win !== null && !win.isDestroyed()) this.savedAnswers.set(outcome.commit, vault); // its window can take it back, while it is open
             return { kind: "saved", page, commit: outcome.commit };

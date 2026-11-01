@@ -3,6 +3,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSyn
 import path from "node:path";
 import { localDate } from "@avanzel/engine";
 import type { FiledPage } from "../shared/ipc.ts";
+import { pageName, WIKILINK } from "../shared/wikilinks.ts";
 import { answerSources } from "./setup-model.ts";
 
 const NOT_PAGES = new Set(["inbox", "raw", "reviews", "tasks"]);
@@ -63,6 +64,41 @@ export function filedPages(root: string, changes: { created: string[]; modified:
   const made = new Set(changes.created);
   const ordered = [...changes.created.filter(isPage), ...changes.modified.filter(isPage)];
   return [...new Set(ordered)].map((rel) => ({ ...pageInfo(root, rel), created: made.has(rel) }));
+}
+
+/**
+ * The page a save made, among the pages the run wrote (`pages`, as `filedPages` lists them: new ones first). A run can make more than
+ * one new page (a person's, say, in people/, which sorts before topics/), and the first listed is not always the answer. So, among the new
+ * pages: the one the run's Ask line links, when it links just one of them (`linked`: its names, `askLinks`; the engine's own line lists
+ * every page the run wrote, and says nothing then); else the first in topics/, where the library keeps saved answers (its AGENTS.md); else
+ * the first page listed, as before. A page the run only changed is never named by the line, which an older save could have written.
+ */
+export function savedPage(pages: readonly FiledPage[], linked: readonly string[]): FiledPage | undefined {
+  const made = pages.filter((page) => page.created);
+  const named = made.filter((page) => linked.includes(pageName(page.path)));
+  if (named.length === 1) return named[0];
+  return made.find((page) => page.path.startsWith("topics/")) ?? pages[0];
+}
+
+// An Ask line as Vault.appendLog writes it, `- 2026-10-20 14:03 | ask | question → [[page]]`, and only an Ask's: the words of a question
+// that mention " | ask | " are no such line, since the operation is the third field.
+const ASK_LINE = /^- \d{4}-\d{2}-\d{2}[^|]*\| ask \| /;
+
+/**
+ * The page names the newest Ask line of the library's log links (what an answer saved as a page leaves, written by the agent or, when it
+ * wrote none, by the engine): the names after its last arrow, as a link gives them (`[[name|label]]` and `[[name#heading]]` are `name`).
+ * None when the log has no such line or can't be read.
+ */
+export function askLinks(root: string): string[] {
+  let lines: string[];
+  try {
+    lines = readFileSync(path.join(root, "log.md"), "utf8").split("\n");
+  } catch {
+    return [];
+  }
+  const line = lines.reverse().find((one) => ASK_LINE.test(one));
+  if (!line) return [];
+  return [...line.slice(line.lastIndexOf("→") + 1).matchAll(WIKILINK)].map((link) => (link[1] ?? "").trim());
 }
 
 function walk(dir: string, rel = ""): string[] {

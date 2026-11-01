@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault } from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
-import { answeredFrom, captureMeta, captureWords, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog } from "../src/main/library-info.ts";
+import { answeredFrom, askLinks, captureMeta, captureWords, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog, savedPage } from "../src/main/library-info.ts";
+import type { FiledPage } from "../src/shared/ipc.ts";
 
 function library() {
   const root = mkdtempSync(path.join(tmpdir(), "avz-lib-"));
@@ -148,6 +149,56 @@ describe("library info", () => {
     expect(pageInfo(root, "goals/launch-podcast.md")).not.toHaveProperty("created");
     expect(recentFromLog(root).some((page) => "created" in page)).toBe(false);
     expect(answeredFrom(root, "See [[mark]].").sources.some((page) => "created" in page)).toBe(false);
+  });
+
+  describe("the page a save made", () => {
+    const page = (rel: string, created = true): FiledPage => ({ title: rel, shelf: rel.split("/")[0] ?? "", path: rel, created });
+
+    it("is the page created in topics/, though a new page that sorts before it was made too", () => {
+      const pages = [page("goals/build-greenhouse.md"), page("people/anna.md"), page("topics/greenhouse.md"), page("ideas/garden.md", false)];
+      expect(savedPage(pages, [])).toBe(pages[2]);
+    });
+
+    it("is the one new page the run's Ask line links, when none is in topics/", () => {
+      const pages = [page("goals/build-greenhouse.md"), page("ideas/greenhouse.md"), page("people/anna.md")];
+      expect(savedPage(pages, ["greenhouse"])).toBe(pages[1]);
+    });
+
+    it("is the page the Ask line links before the first one in topics/, when it links just one of the new pages", () => {
+      const pages = [page("topics/frost-dates.md"), page("topics/greenhouse.md")];
+      expect(savedPage(pages, ["greenhouse"])).toBe(pages[1]);
+    });
+
+    it("is not told by a line that links several of the new pages, as the engine's own line does: topics/ then decides", () => {
+      const pages = [page("goals/build-greenhouse.md"), page("topics/greenhouse.md")];
+      expect(savedPage(pages, ["build-greenhouse", "greenhouse"])).toBe(pages[1]);
+    });
+
+    it("is not told by a link to a page the run only changed: a line from an older save would link one", () => {
+      const pages = [page("goals/build-greenhouse.md"), page("topics/greenhouse.md"), page("topics/older-answer.md", false)];
+      expect(savedPage(pages, ["older-answer"])).toBe(pages[1]);
+    });
+
+    it("is the first page listed (new pages first) when nothing says better, and none when the run wrote none", () => {
+      const pages = [page("goals/build-greenhouse.md"), page("people/anna.md"), page("ideas/garden.md", false)];
+      expect(savedPage(pages, ["garden"])).toBe(pages[0]);
+      expect(savedPage([page("ideas/garden.md", false)], [])).toEqual(page("ideas/garden.md", false));
+      expect(savedPage([], ["greenhouse"])).toBeUndefined();
+    });
+
+    it("reads the names the newest Ask line of the log links, and none from a library with no such line", () => {
+      const root = library();
+      expect(askLinks(root)).toEqual([]);
+      appendFileSync(path.join(root, "log.md"), [
+        "- 2026-10-20 14:03 | ask | Summarize my ideas → [[old-answer]]",
+        "- 2026-10-20 14:09 | file | [[2026-10-20-140900]] → [[mark]]",
+        "- 2026-10-20 14:10 | ask | Is this → or that? → [[build-greenhouse]], [[greenhouse|the greenhouse]], [[frost#dates]]",
+        "- 2026-10-20 14:11 | file | [[2026-10-20-141100]] → [[balcony-garden]]",
+        "",
+      ].join("\n"));
+      expect(askLinks(root)).toEqual(["build-greenhouse", "greenhouse", "frost"]);
+      expect(askLinks(path.join(root, "nowhere"))).toEqual([]);
+    });
   });
 
   it("opens pages in Obsidian only when Obsidian knows the library as a vault", () => {

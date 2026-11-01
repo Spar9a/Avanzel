@@ -18,6 +18,7 @@ import {
   filedInto,
   inbox,
   launchOn,
+  letTranscriptionGo,
   noteTranscriptions,
   notified,
   onDay,
@@ -61,9 +62,12 @@ test.afterEach(closeModelHubs);
 const USUAL = "Answers come from your library only, with links to the pages they use.";
 const EMPTY = "Your shelves are empty. Say something first, then ask about it.";
 
-/** The names of the groups `ask` shows, in order: each group is named by the words its aria-labelledby points at. */
-const groupNames = (ask: Page) =>
-  ask.getByRole("group").evaluateAll((groups) => groups.map((group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent ?? ""));
+/** The names of the groups in `scope` (the window, or a group of it), in order: each group is named by the words its aria-labelledby points at. */
+const groupNames = (scope: Page | Locator) =>
+  scope.getByRole("group").evaluateAll((groups) => groups.map((group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent ?? ""));
+
+/** The group that holds the suggested questions, named for what they are (not drawn: it names the questions for a screen reader). */
+const suggestionsOf = (ask: Page) => ask.getByRole("group", { name: "Suggested questions", exact: true });
 
 test("Ask suggests a question about each page filed last, newest first, and Ask this asks it", async () => {
   const library = await makeLibrary();
@@ -77,14 +81,18 @@ test("Ask suggests a question about each page filed last, newest first, and Ask 
   const app = await launch({ AVANZEL_LIBRARY: library });
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
-  // The usual line shows, and over three groups, one about each page, the newest first: a person's page asks what they are doing with them.
+  // The usual line shows, and under it a group named "Suggested questions" that holds three groups, one about each page, the newest first:
+  // a person's page asks what they are doing with them.
   const usual = ask.getByText(USUAL, { exact: true });
-  const groups = ask.getByRole("group");
+  const suggestions = suggestionsOf(ask);
+  const groups = suggestions.getByRole("group");
+  await expect(suggestions).toBeVisible();
+  await expect(ask.getByRole("group")).toHaveCount(4); // the one that holds the questions, and a group for each
   await expect(groups).toHaveCount(3);
   await expect(usual).toBeVisible();
-  const [lineBox, firstBox] = [await usual.boundingBox(), await groups.first().boundingBox()];
+  const [lineBox, firstBox] = [await usual.boundingBox(), await suggestions.boundingBox()];
   expect(lineBox!.y + lineBox!.height).toBeLessThanOrEqual(firstBox!.y);
-  expect(await groupNames(ask)).toEqual([
+  expect(await groupNames(suggestions)).toEqual([
     "What did I say about “Plant tulips in October”?",
     "What am I doing with Maya?",
     "What did I say about “Run a marathon”?",
@@ -104,8 +112,10 @@ test("Ask suggests a question about each page filed last, newest first, and Ask 
   await ask.getByRole("group", { name: "What am I doing with Maya?", exact: true }).getByRole("button", { name: "Ask this", exact: true }).click();
   await expect(ask.getByRole("heading", { name: "What am I doing with Maya?", exact: true })).toBeVisible();
   await expect(ask.getByText("Q: What am I doing with Maya?")).toBeVisible({ timeout: 60_000 });
-  // No suggestion is left, and no group is named by one: the only group is the answer's Save as a page, which nothing names yet.
+  // No suggestion is left, nor the group that held them, and no group is named by one: the only group is the answer's Save as a page,
+  // which nothing names yet.
   await expect(ask.getByRole("button", { name: "Ask this", exact: true })).toHaveCount(0);
+  await expect(suggestionsOf(ask)).toHaveCount(0);
   expect(await groupNames(ask)).toEqual([""]);
   await expect(field).toHaveValue("draft");
   await expect(field).toBeFocused();
@@ -417,9 +427,10 @@ test("Save as a page is offered on the newest answered turn only", async () => {
   await app.close();
 });
 
-test("a save clears the menu's Undo the last filing, as it starts and after a filing that ended while it waited", async () => {
-  // As it starts: the filing's Undo is on the menu until the save is pressed, and not after it, nor once the page is saved. Only the
-  // Undo goes: the filing's receipt stays on the menu. Both the model and the menu the tray holds say it (`trayOffersUndo`).
+test("a save hides the menu's Undo the last filing while it waits and runs, and drops it once it commits after the filing", async () => {
+  // While the save runs: the filing's Undo is on the menu until the save is pressed, and away while it runs (`savesGoing`), and after it,
+  // once the page is saved: the save committed after the filing, so the record is dropped. Only the Undo goes: the filing's receipt stays
+  // on the menu. Both the model and the menu the tray holds say it (`trayOffersUndo`).
   const first = await launchOn(await makeLibrary({ git: true }));
   await filedFromTheCapsule(first.app);
   await expect.poll(() => undoItem(first.app), { timeout: 20_000 }).toBeDefined();
@@ -451,8 +462,10 @@ test("a save clears the menu's Undo the last filing, as it starts and after a fi
   await second.app.close();
 });
 
-test("a save that saved no page doesn't bring back the Undo it took off the menu as it began", async () => {
-  const { app } = await launchOn(await makeLibrary({ git: true }));
+test("a save that commits nothing leaves the last filing's Undo", async () => {
+  // The Undo is hidden while the save waits or runs (`savesGoing`), and nothing is cleared as the save begins: a save that saved no page
+  // committed nothing after the filing, so the filing's Undo is on the menu again when it ends, and takes the filing back.
+  const { app, library } = await launchOn(await makeLibrary({ git: true }));
   await filedFromTheCapsule(app);
   await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
   await expect.poll(() => trayOffersUndo(app)).toBe(true);
@@ -460,8 +473,11 @@ test("a save that saved no page doesn't bring back the Undo it took off the menu
   await agentMode(app, "noop");
   await saveOffer(ask).click();
   await expect(ask.getByRole("alert").getByText("fake didn't save a page.", { exact: true })).toBeVisible({ timeout: 60_000 });
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  await expect.poll(() => undoItem(app)).toBeDefined();
+  await expect.poll(() => trayOffersUndo(app)).toBe(true);
+  // It is the filing's Undo, still good: ⌥⇧Z takes the filing back.
+  expect(await call(app, "pressShortcutForTests", "undo")).toBe(true);
+  await expect.poll(() => undone(library), { timeout: 30_000 }).toHaveLength(1);
   await app.close();
 });
 
@@ -768,28 +784,31 @@ test("closing the Ask window ends its Undo, and the library's history keeps the 
 
 test("Save as a page waits for an Undo that waits, and a question doesn't", async () => {
   // A save that commits before an Undo that waits can make git refuse that Undo, which has one try. So while an Undo waits (here it is
-  // held at the library's door), the newest turn's offer is busy, and a press on it saves nothing. A question touches no commit: it goes on.
+  // held at the library's door), the newest turn's offer is disabled, with no spinner (a spinner is work in progress, and the Undo that
+  // was pressed has it), and no save can begin. A question touches no commit: it goes on.
   const record = newRecord();
   const { app, library } = await launchOn(await makeLibrary({ git: true }), { FAKE_AGENT_RECORD: record });
   await watchUndos(app, { hold: true });
   await savedIn(app);
   const ask = await answeredIn(app, "What are my goals?");
-  await expect(saveOffer(ask)).not.toHaveAttribute("aria-busy", "true");
+  await expect(saveOffer(ask)).toBeEnabled();
   await undoOf(turnAt(ask, 1)).click();
   await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
-  // The offer says it waits, and a press on it begins no save: the turn shows no Stop and no line, and the agent is not run.
-  await expect(saveOffer(ask)).toHaveAttribute("aria-busy", "true");
+  // The offer waits, disabled and not busy, and the Undo that was pressed is the busy one. A disabled button takes no press: the turn
+  // shows no Stop and no line, and the agent is not run.
+  await expect(saveOffer(ask)).toBeDisabled();
+  await expect(saveOffer(ask)).not.toHaveAttribute("aria-busy", "true");
+  await expect(undoOf(turnAt(ask, 1))).toHaveAttribute("aria-busy", "true");
   await snap(ask, "9-ask-save-offer-waiting");
-  await saveOffer(ask).click();
   await expect(turnAt(ask).getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
   await expect(saveRegion(ask)).toHaveText("");
   // A question is answered beside the Undo, and the offer on its turn waits as well.
   await answeredIn(app, "What about my people?");
-  await expect(saveOffer(ask)).toHaveAttribute("aria-busy", "true");
+  await expect(saveOffer(ask)).toBeDisabled();
   // The Undo lands: the first turn says so, and the offer is free to save.
   await app.evaluate(() => (globalThis as Left).letUndoIn?.());
   await expect(turnAt(ask, 2).getByRole("status").nth(1)).toHaveText(UNDONE, { timeout: 30_000 });
-  await expect(saveOffer(ask)).not.toHaveAttribute("aria-busy", "true");
+  await expect(saveOffer(ask)).toBeEnabled();
   await saveOffer(ask).click();
   await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
   // Two saves ran, the first and the last: the press on the waiting offer began none.
@@ -810,43 +829,44 @@ test("Save again waits for an Undo that waits, as the offer does", async () => {
   await expect(alert.getByText("fake didn't save a page.", { exact: true })).toBeVisible({ timeout: 60_000 });
   await agentMode(app, "ok");
   const again = alert.getByRole("button", { name: "Save again", exact: true });
-  await expect(again).not.toHaveAttribute("aria-busy", "true");
+  await expect(again).toBeEnabled();
   await undoOf(turnAt(ask, 1)).click();
   await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
-  // It waits, and a press on it begins no save: the Notice stays, and no Stop shows.
-  await expect(again).toHaveAttribute("aria-busy", "true");
-  await again.click();
+  // It waits, disabled and with no spinner, and takes no press: the Notice stays, and no Stop shows.
+  await expect(again).toBeDisabled();
+  await expect(again).not.toHaveAttribute("aria-busy", "true");
   await expect(turnAt(ask).getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
   await expect(alert).toHaveCount(1);
   // The Undo lands, and Save again saves.
   await app.evaluate(() => (globalThis as Left).letUndoIn?.());
   await expect(turnAt(ask, 1).getByRole("status").nth(1)).toHaveText(UNDONE, { timeout: 30_000 });
-  await expect(again).not.toHaveAttribute("aria-busy", "true");
+  await expect(again).toBeEnabled();
   await again.click();
   await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
   await expect(alert).toHaveCount(0);
   await app.close();
 });
 
-test("a saved turn's Undo waits while another save runs, and does nothing when pressed", async () => {
+test("a saved turn's Undo is disabled while another save runs, and takes no press", async () => {
   // The mirror of the offer waiting for an Undo: a newer save that commits first would make git refuse this Undo, which has one try. So
-  // while any save runs (here the fake agent holds the newest turn's, 30 s), the older turn's Undo is busy, and a press on it takes nothing back.
+  // while any save runs (here the fake agent holds the newest turn's, 30 s), the older turn's Undo is disabled, with no spinner (the save's
+  // Stop is the work in progress), and takes nothing back.
   const { app } = await launchOn(await makeLibrary({ git: true }));
   await watchUndos(app);
   await savedIn(app);
   const ask = await answeredIn(app, "What are my goals?");
   const undo = undoOf(turnAt(ask, 1));
   await expect(undo).toBeVisible();
-  await expect(undo).not.toHaveAttribute("aria-busy", "true");
+  await expect(undo).toBeEnabled();
   await app.evaluate(() => {
     process.env.FAKE_AGENT_DELAY_MS = "30000";
   });
   await saveOffer(ask).click();
   const stop = turnAt(ask).getByRole("button", { name: "Stop", exact: true });
   await expect(stop).toBeVisible();
-  await expect(undo).toHaveAttribute("aria-busy", "true");
+  await expect(undo).toBeDisabled();
+  await expect(undo).not.toHaveAttribute("aria-busy", "true");
   await snap(ask, "9-ask-undo-waiting");
-  await undo.click();
   expect(await undoCalls(app)).toBe(0);
   await expect(turnAt(ask, 1).getByRole("status").nth(1)).toHaveText(SAVED);
   // Stop gives the save up. The Undo is free once the save has ended, and takes the first save back, once.
@@ -855,7 +875,7 @@ test("a saved turn's Undo waits while another save runs, and does nothing when p
   await app.evaluate(() => {
     delete process.env.FAKE_AGENT_DELAY_MS;
   });
-  await expect(undo).not.toHaveAttribute("aria-busy", "true");
+  await expect(undo).toBeEnabled();
   await undo.click();
   await expect(turnAt(ask, 1).getByRole("status").nth(1)).toHaveText(UNDONE, { timeout: 30_000 });
   expect(await undoCalls(app)).toBe(1);
@@ -1135,6 +1155,34 @@ test("Stop on a question's slow transcription keeps nothing, and its words never
   await app.close();
 });
 
+test("a question's words that come after a newer recording was stopped leave that recording its card and its Stop", async () => {
+  // Two transcriptions overlap: the question's, and then a thought's, said from the menu (Record a thought records a thought whoever is in
+  // front). The thought's stop took the capsule's card from the question. When the question's words come they hide only their own card:
+  // the thought's stays, has turned slow, and its Stop keeps its recording for the evening review.
+  const library = await libraryWithAPage();
+  const { app, capsule } = await launchOn(library, { AVANZEL_TRANSCRIBE_STOP_MS: "500" });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await askIsKey(app, true);
+  await watchHeard(app);
+  await noteTranscriptions(app, { hold: true }); // each one's words come when the test says
+  await sayIt(app); // the question
+  await expect.poll(async () => (await transcriptions(app)).started, { timeout: 30_000 }).toBe(1);
+  await dictate(app); // the thought, said and stopped while the question's words are still being made
+  await expect.poll(async () => (await transcriptions(app)).started, { timeout: 30_000 }).toBe(2);
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "transcribing", slow: true });
+  // The question's words come now, and go to its field. The capsule still shows the thought's card, slow, and Stop is still the thought's.
+  await letTranscriptionGo(app, 1);
+  await expect.poll(async () => (await transcriptions(app)).ended, { timeout: 30_000 }).toBe(1);
+  expect(await heardBy(app)).toEqual(["Plant tulips in October"]);
+  await expect(ask.getByRole("textbox", { name: "Ask your library" })).toHaveValue("Plant tulips in October");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "transcribing", slow: true });
+  await stopTranscribing(capsule);
+  await expect.poll(() => capsuleKind(app)).toBe("recorded");
+  expect(filesUnder(library, "inbox")).toHaveLength(1); // the thought's recording, kept for the evening review
+  await app.close();
+});
+
 test("words that arrive after the Ask window closed are dropped quietly, even into a new one", async () => {
   const library = await libraryWithAPage();
   // Long enough that the new window is open and watched, as this test checks, while the words are still being made.
@@ -1208,6 +1256,90 @@ test("an empty library shows no hint, and ⌥Space with Ask in front records a t
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   await expect.poll(() => archived(library), { timeout: 30_000 }).toHaveLength(1);
   await expect(field).toHaveValue("");
+  await app.close();
+});
+
+test("a press whose shelves can't be counted records a thought, and doesn't throw in the shortcut's callback", async () => {
+  // The callback of the shortcut counts the shelves to route the press (`pressAsks`). A library folder that can't be listed makes the count
+  // throw, which in the global shortcut's callback would bring up Electron's error box and do nothing. The press records a thought instead,
+  // as one with nothing to ask about does.
+  const library = await libraryWithAPage();
+  const { app } = await launchOn(library);
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await askIsKey(app, true);
+  await app.evaluate(() => {
+    const vault = (globalThis as unknown as { __avanzel: { vault: { shelfCounts(): unknown } } }).__avanzel.vault;
+    vault.shelfCounts = () => {
+      throw new Error("EACCES: permission denied, scandir");
+    };
+  });
+  expect(await pressShortcut(app)).toBe(true);
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 15_000 }).toMatchObject({ kind: "listening", mode: "dictate", fileMode: "now" });
+  expect(await pressShortcut(app)).toBe(true);
+  await expect.poll(() => archived(library), { timeout: 60_000 }).toHaveLength(1);
+  await expect(ask.getByRole("textbox", { name: "Ask your library" })).toHaveValue("");
+  await app.close();
+});
+
+/** From now on, counts the focus events the Ask window `ask` gets (`focusesOf`): the ones it reads on. */
+const countFocus = (ask: Page) =>
+  ask.evaluate(() => {
+    const seen = { focus: 0 };
+    Object.assign(window, { seen });
+    window.addEventListener("focus", () => void (seen.focus += 1));
+  });
+
+const focusesOf = (ask: Page) => ask.evaluate(() => (window as unknown as { seen: { focus: number } }).seen.focus);
+
+test("Ask reads the shelves again when a filing ends or is taken back, though no focus comes to say so", async () => {
+  // The capsule that files a thought never takes the key from Ask, so with Ask in front the window has no focus to read on. Main tells it
+  // the shelves may have changed (`ask:changed`): in an empty library the first filing brings the hint, and the suggestion about it, and
+  // taking that filing back takes them away, so the key the hint names is never one that files a thought.
+  const { app } = await launchOn(await makeLibrary({ git: true }));
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await askIsKey(app, true);
+  await countFocus(ask);
+  const hint = ask.getByText("Press ⌥Space to say your question.", { exact: true });
+  await expect(ask.getByText(EMPTY, { exact: true })).toBeVisible();
+  await expect(hint).toHaveCount(0);
+  await filedFromTheCapsule(app);
+  await expect(hint).toBeVisible();
+  await expect(ask.getByText(USUAL, { exact: true })).toBeVisible();
+  await expect(ask.getByRole("group", { name: "What did I say about “Plant tulips in October”?", exact: true })).toBeVisible();
+  // Taken back with ⌥⇧Z, the only filing leaves the shelves empty: the hint goes, and the line that invites a thought is back.
+  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
+  expect(await call(app, "pressShortcutForTests", "undo")).toBe(true);
+  await expect(ask.getByText(EMPTY, { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(hint).toHaveCount(0);
+  await expect(ask.getByRole("button", { name: "Ask this", exact: true })).toHaveCount(0);
+  expect(await focusesOf(ask)).toBe(0); // all of it with no focus event, which is what this tests
+  await app.close();
+});
+
+test("Ask reads the shelves again when another library opens, though no focus comes to say so", async () => {
+  // A library switch is made in Settings or by the menu, while Ask may stay in front: its pages, suggestions and hint are the closed library's
+  // until it reads again. The libraries that open are remembered in the config folder, which is this test's own.
+  const library = await libraryWithAPage();
+  const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await countFocus(ask);
+  const askThis = ask.getByRole("button", { name: "Ask this", exact: true }); // the suggestion's button
+  await expect(askThis).toBeVisible();
+  await expect(ask.locator("kbd")).toBeVisible();
+  // An empty library opens: the line that invites a thought, and neither suggestions nor hint.
+  const other = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-")), "Avanzel");
+  await call(app, "createLibrary", other);
+  await expect(ask.getByText(EMPTY, { exact: true })).toBeVisible();
+  await expect(askThis).toHaveCount(0);
+  await expect(ask.locator("kbd")).toHaveCount(0);
+  // The first is back: its suggestion and the hint with it.
+  await call(app, "useLibrary", library);
+  await expect(askThis).toBeVisible();
+  await expect(ask.locator("kbd")).toBeVisible();
+  expect(await focusesOf(ask)).toBe(0);
   await app.close();
 });
 

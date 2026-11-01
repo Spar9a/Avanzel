@@ -402,6 +402,10 @@ export async function noteTranscriptions(app: ElectronApplication, { failWith, h
 export const transcriptions = (app: ElectronApplication) =>
   app.evaluate(() => (globalThis as { transcriptions?: { started: number; ended: number } }).transcriptions ?? { started: 0, ended: 0 });
 
+/** Lets the `nth` transcription that `noteTranscriptions` holds (`hold`) go on. */
+export const letTranscriptionGo = (app: ElectronApplication, nth: number) =>
+  app.evaluate((_electron, which) => (globalThis as { letTranscriptionGo?: (nth: number) => void }).letTranscriptionGo?.(which), nth);
+
 // ---- Shared by ask-extras.spec.ts and setup-think.spec.ts ----
 
 /**
