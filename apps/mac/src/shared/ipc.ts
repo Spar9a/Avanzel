@@ -657,7 +657,11 @@ export interface AskSnapshot {
   pages: number;
   /** The questions to suggest before the first one, as sentences: one about each of the pages filed last, newest first, at most three (none while `pages` is 0). */
   suggestions: string[];
-  /** Record a thought's shortcut as an accelerator ("Alt+Space"), which says a question in this window; null while it isn't registered, as there is then no key to name. */
+  /**
+   * Record a thought's shortcut as an accelerator ("Alt+Space"), which says a question in this window; null while it isn't registered, as
+   * there is then no key to name. The window names it only while `pages` isn't 0: with no page there is nothing to ask about, and the
+   * press records a thought.
+   */
   shortcut: string | null;
 }
 

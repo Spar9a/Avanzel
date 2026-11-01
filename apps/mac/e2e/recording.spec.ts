@@ -1,5 +1,5 @@
 // The recording state machine: tap to start, tap to stop, and what happens when taps or audio go astray.
-import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { expect, test, type ElectronApplication } from "@playwright/test";
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";

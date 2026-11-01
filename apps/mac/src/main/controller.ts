@@ -216,6 +216,9 @@ const reasonMax = (error: unknown): number | undefined => (error instanceof Avan
 /** A recording that holds no words (too short to hold speech, or nothing said) leaves nothing, thought or question: its card says so. */
 const NOTHING_HEARD: Problem = { title: "Nothing was heard.", body: "Is the right microphone selected? Nothing was saved." };
 
+/** Fewer samples than this (0.3 s at 16 kHz) are too short to hold speech: a recording of them, a thought's or a question's, has no words. */
+const MIN_SPEECH_SAMPLES = 16000 * 0.3;
+
 /** How long quitting waits for stopped agent runs: QUIT_WAIT_MS, or in tests the positive number of ms in AVANZEL_QUIT_WAIT_MS. */
 function quitWaitMs(): number {
   const shortened = process.env.AVANZEL_TEST === "1" ? Number(process.env.AVANZEL_QUIT_WAIT_MS) : 0;
@@ -1321,11 +1324,12 @@ export class Controller {
    * Record a thought's own shortcut was pressed: setup's press test hears it (`setup.notePress`), then it records or stops
    * as Record a thought in the menu does. Only this is a press of the shortcut. With the Ask window the key window, and nothing
    * recording (a press stops a recording, whoever is in front) or taking the press (setup's first-thought step), it records a question
-   * for that window instead (`heardQuestion`). Record a thought in the menu (`toggleDictate`) never does: it records a thought.
+   * for that window instead (`heardQuestion`), if the shelves hold a page: with none there is nothing to ask about, and the window's own
+   * line invites a thought, so the press records one. Record a thought in the menu (`toggleDictate`) never records a question.
    */
   private pressDictate(): void {
     this.setup.notePress();
-    if (!this.setup.takesPress() && !this.recording && this.askHasFocus()) {
+    if (!this.setup.takesPress() && !this.recording && this.pressAsks()) {
       void this.startRecording("dictate", undefined, { askPage: this.askWindow!.webContents.id });
       return;
     }
@@ -1612,11 +1616,11 @@ export class Controller {
     let text = "";
     let captured = false;
     try {
-      const samples = process.env.AVANZEL_FAKE_AUDIO ? await this.fakeAudio(process.env.AVANZEL_FAKE_AUDIO) : received;
+      const samples = await this.samplesOf(received);
       const { audioPath, unkept } = this.claimRecording(vault, now);
       let engine = "";
       let seconds: number | null = null;
-      if (samples.length >= 16000 * 0.3) {
+      if (samples.length >= MIN_SPEECH_SAMPLES) {
         if (audioPath) {
           writeWav(audioPath, samples, 16000);
           written = audioPath;
@@ -1689,9 +1693,9 @@ export class Controller {
    */
   private async heardQuestion(recording: Recording, received: Float32Array): Promise<void> {
     try {
-      const samples = process.env.AVANZEL_FAKE_AUDIO ? await this.fakeAudio(process.env.AVANZEL_FAKE_AUDIO) : received;
+      const samples = await this.samplesOf(received);
       let words = "";
-      if (samples.length >= 16000 * 0.3) {
+      if (samples.length >= MIN_SPEECH_SAMPLES) {
         const transcript = await this.transcribeWithStop(samples, { vault: this.requireVault(), audioPath: null, now: new Date(), samples, stopped: false, forAsk: true });
         if (!transcript) return; // Stop dropped the question meanwhile: the words it made, or its failure, are dropped
         words = transcript.text.trim();
@@ -1722,6 +1726,12 @@ export class Controller {
       console.error("recording", error);
       return { audioPath: null, unkept: "Only your words were kept: the recording couldn't be saved." };
     }
+  }
+
+  /** The samples of a recording, a thought's or a question's: the `received` ones, or, in tests, the wav that AVANZEL_FAKE_AUDIO names in their place. */
+  private async samplesOf(received: Float32Array): Promise<Float32Array> {
+    const fake = process.env.AVANZEL_FAKE_AUDIO;
+    return fake ? this.fakeAudio(fake) : received;
   }
 
   private async fakeAudio(file: string): Promise<Float32Array> {
@@ -3095,8 +3105,9 @@ export class Controller {
    * page sent it, says what to do (see CardAction), and the card goes away. `refile:<agent>` files the card's note
    * (`cardCapture`) again with that agent (`fileAgainWith`): the filing the capsule shows replaces the card. A second click
    * on the button finds no note, since that filing has replaced the card, and does nothing. `type-a-thought`, the fix of a thought
-   * that couldn't be saved, opens Type a thought again, with its words still in it (`typeInstead`), and only while an error card is
-   * what the capsule shows: a press that finds another card up, a recording say, is a stale one, and opens and hides nothing.
+   * that couldn't be saved, opens Type a thought again, with its words still in it, whichever window is in front (Type instead, which
+   * stays in Ask when the press that brought its card was a question's, is `typeInstead`), and only while an error card is what the
+   * capsule shows: a press that finds another card up, a recording say, is a stale one, and opens and hides nothing.
    *
    * Other windows send it too (the Ask window's Open Settings, setup's Open Settings), while the capsule shows something
    * that isn't a card: a recording, or a note being edited. It hides only the two cards it is the button of, an error card
@@ -3109,7 +3120,10 @@ export class Controller {
       return;
     }
     if (action === "type-a-thought") {
-      if (this.capsuleState.kind === "error") this.typeInstead();
+      if (this.capsuleState.kind === "error") {
+        this.setCapsule({ kind: "hidden" });
+        this.openQuick(); // the words wait in Quick, whichever window is in front: unlike Type instead, this never stays in Ask
+      }
       return;
     }
     if (action === "open-microphone-settings") void this.openPrivacy("microphone");
@@ -3174,10 +3188,16 @@ export class Controller {
     this.quickWindow?.hide();
   }
 
-  /** Type instead, on the capsule while Avanzel can't listen yet: the capsule goes and Quick opens. */
+  /**
+   * Type instead, on the capsule's card while Avanzel can't listen yet (the speech model is on its way, or its download failed): the
+   * capsule goes and Quick opens. Not while a press of Record a thought's shortcut asks (`pressAsks`; the capsule is a panel that never
+   * takes the key, so Ask is still the key window when the button is pressed): the field to type the question in is already in front of
+   * the person, with what they typed in it, and the capsule only goes. With no page the press recorded a thought, and Quick is where
+   * a thought is typed.
+   */
   typeInstead(): void {
     this.setCapsule({ kind: "hidden" });
-    this.openQuick();
+    if (!this.pressAsks()) this.openQuick();
   }
 
   async submitQuick(text: string): Promise<void> {
@@ -3212,14 +3232,23 @@ export class Controller {
     if (this.askWindow && !this.askWindow.isDestroyed()) this.askWindow.close();
   }
 
-  /** Whether the Ask window is the key window: it exists, isn't destroyed, and has the keyboard. Then a press of Record a thought's shortcut asks (`pressDictate`). */
+  /** Whether the Ask window is the key window: it exists, isn't destroyed, and has the keyboard. */
   private askHasFocus(): boolean {
     return !!this.askWindow && !this.askWindow.isDestroyed() && this.askWindow.isFocused();
   }
 
   /**
-   * Record a thought's shortcut, which says a question in the Ask window and which its hint names. Null while that shortcut isn't
-   * registered (`shortcutProblems` names it: another app holds it, or it can't work), as there is then no key to name.
+   * Whether a press of Record a thought's shortcut now asks a question (`pressDictate`): the Ask window is the key window, and the
+   * shelves hold a page to ask about. With none, the window's own line invites a thought, and the press records one.
+   */
+  private pressAsks(): boolean {
+    return this.askHasFocus() && this.libraryPages() > 0;
+  }
+
+  /**
+   * Record a thought's shortcut, which says a question in the Ask window and which its hint names (while the shelves hold a page: the
+   * window draws no hint over its empty line). Null while that shortcut isn't registered (`shortcutProblems` names it: another app holds
+   * it, or it can't work), as there is then no key to name.
    */
   askShortcut(): string | null {
     const { dictate } = this.store.get().shortcuts;

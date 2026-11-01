@@ -11,6 +11,7 @@ import { loadSettings, saveSettings, Vault, writeWav } from "../../../packages/e
 import {
   agentMode,
   archived,
+  askIsKey,
   dictate,
   expectProblem,
   filedFromTheCapsule,
@@ -31,8 +32,30 @@ import {
   watchUndos,
   type Left,
 } from "./capsule-helpers.ts";
-import { alive, call, capsuleKind, exists, filesUnder, gitOut, launch, makeLibrary, onlyAgentsIn, openedWith, read, recentlyFiled, snap, speechWav, stubOpening, windowFor } from "./helpers.ts";
+import {
+  alive,
+  call,
+  capsuleKind,
+  closeModelHubs,
+  emptyHfCache,
+  exists,
+  fakeModelHub,
+  filesUnder,
+  gitOut,
+  launch,
+  makeLibrary,
+  onlyAgentsIn,
+  openedWith,
+  read,
+  recentlyFiled,
+  snap,
+  speechWav,
+  stubOpening,
+  windowFor,
+} from "./helpers.ts";
 import { pressShortcut, sentToCapsule, settingsSnap, watchCapsule } from "./setup-helpers.ts";
+
+test.afterEach(closeModelHubs);
 
 /** The line under the field before the first question, and the one a library with no pages gets instead. */
 const USUAL = "Answers come from your library only, with links to the pages they use.";
@@ -954,18 +977,39 @@ test("a save that takes 10 s counts its seconds beside Stop, in the flow of its 
 
 // ---------------------------------------------------------------- ⌥Space into Ask
 
-// Record a thought's shortcut, pressed while the Ask window is the key window, records a question: its words go to the field, after
-// what is typed, and nowhere in the library. A test app is seldom the front app of a Mac in use, so the window answers whether it is
-// the key window as the test says (`askIsKey`); `pressShortcut` presses the shortcut as the keys do, and the menu's Record a thought is
-// `toggleDictate`.
+// Record a thought's shortcut, pressed while the Ask window is the key window and the shelves hold a page, records a question: its words
+// go to the field, after what is typed, and nowhere in the library. With no page there is nothing to ask about, and it records a thought,
+// as the window's empty line invites. A test app is seldom the front app of a Mac in use, so the window answers whether it is the key
+// window as the test says (`askIsKey`, capsule-helpers.ts); `pressShortcut` presses the shortcut as the keys do, and the menu's Record a
+// thought is `toggleDictate`.
 
-/** Whether the Ask window of `app` answers that it is the key window (`isFocused`), which is what `pressDictate` asks. */
-const askIsKey = (app: ElectronApplication, key: boolean) =>
-  app.evaluate(({ BrowserWindow }, isKey) => {
+/** A library with one page on a shelf, which is what a question needs: with none, the shortcut records a thought, whoever is in front. */
+async function libraryWithAPage(): Promise<string> {
+  const library = await makeLibrary();
+  filedInto(library, "ideas", "tulips", "Plant tulips in October", onDay(0));
+  return library;
+}
+
+/**
+ * From now on, notes the words main sends to the Ask window that is open now on `ask:heard` (`heardBy`): its `webContents.send`, wrapped as
+ * `watchCapsule` wraps the capsule's. `send` is synchronous, so what a question's transcription sent is noted by the time it has ended.
+ */
+async function watchHeard(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/ask/"));
-    if (!win) throw new Error("There is no Ask window.");
-    win.isFocused = () => isKey;
-  }, key);
+    if (!win) throw new Error("There is no Ask window to watch.");
+    const sent: string[] = [];
+    (globalThis as { heardBy?: string[] }).heardBy = sent;
+    const send = win.webContents.send.bind(win.webContents);
+    win.webContents.send = (channel: string, ...args: unknown[]) => {
+      if (channel === "ask:heard") sent.push(String(args[0]));
+      send(channel, ...args);
+    };
+  });
+}
+
+/** The words that `watchHeard`'s window was sent, oldest first. */
+const heardBy = (app: ElectronApplication) => app.evaluate(() => (globalThis as { heardBy?: string[] }).heardBy ?? []);
 
 /** The press that starts a recording doesn't wait for the microphone: the card listens a moment later, and a second press stops it. */
 const untilListening = (app: ElectronApplication) => expect.poll(() => capsuleKind(app), { timeout: 15_000 }).toBe("listening");
@@ -986,11 +1030,12 @@ async function expectNothingKept(app: ElectronApplication, library: string, user
 }
 
 test("⌥Space in the Ask window puts the spoken question in its field, after what is typed, and keeps nothing", async () => {
-  const library = await makeLibrary();
+  const library = await libraryWithAPage();
   const { app, userData } = await launchOn(library, { AVANZEL_FAKE_TRANSCRIPT: "what about the tulips?" });
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
   await askIsKey(app, true);
+  await watchHeard(app);
   const field = ask.getByRole("textbox", { name: "Ask your library" });
   await field.fill("Also,");
   // The person clicks elsewhere in the window: the field has lost the focus.
@@ -1003,6 +1048,8 @@ test("⌥Space in the Ask window puts the spoken question in its field, after wh
   await expect(field).toHaveValue("Also, what about the tulips?", { timeout: 30_000 });
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await expect(field).toBeFocused();
+  // The words were sent to this window, once: the watch sees words when they are sent, which the tests below rely on when it sees none.
+  expect(await heardBy(app)).toEqual(["what about the tulips?"]);
   // Nothing was asked, and nothing is kept.
   await expect(ask.getByRole("heading")).toHaveCount(0);
   await expectNothingKept(app, library, userData);
@@ -1014,7 +1061,7 @@ test("⌥Space in the Ask window puts the spoken question in its field, after wh
 });
 
 test("⌥Space records a thought while another app is in front of Ask, and the menu's Record a thought always does", async () => {
-  const library = await makeLibrary();
+  const library = await libraryWithAPage(); // with a page, it is Ask being in front that makes the difference
   const { app } = await launchOn(library);
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
@@ -1041,7 +1088,7 @@ test("⌥Space records a thought while another app is in front of Ask, and the m
 });
 
 test("a question that heard nothing, or whose words couldn't be made, says so, and keeps nothing", async () => {
-  const library = await makeLibrary();
+  const library = await libraryWithAPage();
   const blip = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-audio-")), "blip.wav");
   writeWav(blip, new Float32Array(1600)); // 0.1 s: under 0.3 s there are no words
   const { app, userData, capsule } = await launchOn(library, { AVANZEL_FAKE_AUDIO: blip });
@@ -1066,11 +1113,12 @@ test("a question that heard nothing, or whose words couldn't be made, says so, a
 });
 
 test("Stop on a question's slow transcription keeps nothing, and its words never come", async () => {
-  const library = await makeLibrary();
+  const library = await libraryWithAPage();
   const { app, userData, capsule } = await launchOn(library, { AVANZEL_TRANSCRIBE_STOP_MS: "500", AVANZEL_FAKE_TRANSCRIPT_DELAY_MS: "4000" });
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
   await askIsKey(app, true);
+  await watchHeard(app);
   const field = ask.getByRole("textbox", { name: "Ask your library" });
   await noteTranscriptions(app);
   await sayIt(app);
@@ -1078,16 +1126,19 @@ test("Stop on a question's slow transcription keeps nothing, and its words never
   // Stop keeps nothing of a question: its card goes, with no Recorded card, and the recording is not moved into the inbox.
   await stopTranscribing(capsule);
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
-  // The transcription itself can't be stopped, so it goes on and ends; what it made is dropped.
+  // The transcription itself can't be stopped, so it goes on and ends; what it made is dropped. Its words would be sent in the same
+  // turn that ends it, so once it has ended, the window was sent none.
   await expect.poll(() => transcriptions(app), { timeout: 15_000 }).toMatchObject({ ended: 1 });
+  expect(await heardBy(app)).toEqual([]);
   await expect(field).toHaveValue("");
   await expectNothingKept(app, library, userData);
   await app.close();
 });
 
 test("words that arrive after the Ask window closed are dropped quietly, even into a new one", async () => {
-  const library = await makeLibrary();
-  const { app, userData } = await launchOn(library, { AVANZEL_FAKE_TRANSCRIPT_DELAY_MS: "3000" });
+  const library = await libraryWithAPage();
+  // Long enough that the new window is open and watched, as this test checks, while the words are still being made.
+  const { app, userData } = await launchOn(library, { AVANZEL_FAKE_TRANSCRIPT_DELAY_MS: "5000" });
   await watchCapsule(app);
   await noteTranscriptions(app);
   await call(app, "openAsk");
@@ -1100,9 +1151,14 @@ test("words that arrive after the Ask window closed are dropped quietly, even in
   await call(app, "openAsk");
   const second = await windowFor(app, "ask");
   expect(second).not.toBe(first);
+  // The new window is watched while the words are still being made, which this checks: the words, if they were sent, would be sent to it.
+  await watchHeard(app);
+  expect(await transcriptions(app)).toMatchObject({ ended: 0 });
   await expect.poll(() => transcriptions(app), { timeout: 15_000 }).toMatchObject({ ended: 1 });
   await expect.poll(() => capsuleKind(app), { timeout: 15_000 }).toBe("hidden");
-  // No card said anything went wrong, the new window's field is empty, and nothing is kept or notified.
+  // Nothing was sent to the new window (its transcription has ended, and would have sent them in the same turn), no card said anything
+  // went wrong, its field is empty, and nothing is kept or notified.
+  expect(await heardBy(app)).toEqual([]);
   expect(await sentToCapsule(app)).not.toContain("error");
   await expect(second.getByRole("textbox", { name: "Ask your library" })).toHaveValue("");
   await expectNothingKept(app, library, userData);
@@ -1110,7 +1166,7 @@ test("words that arrive after the Ask window closed are dropped quietly, even in
 });
 
 test("Ask's hint names the dictate shortcut, follows a change, and is gone while the shortcut isn't registered", async () => {
-  const { app } = await launchOn(await makeLibrary());
+  const { app } = await launchOn(await libraryWithAPage()); // with no page, the window shows no hint
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
   const hint = ask.getByText("Press ⌥Space to say your question.", { exact: true });
@@ -1123,13 +1179,118 @@ test("Ask's hint names the dictate shortcut, follows a change, and is gone while
   await expect(ask.getByText("Press ⌃⌥K to say your question.", { exact: true })).toBeVisible();
   await expect(ask.locator("kbd")).toHaveText("⌃⌥K");
   await app.close();
-  // Another app holds ⌥Space: nothing is registered, so there is no key to name. The window shows no hint once it has read (its shelves
-  // are empty, and it says so with the same read that finds no shortcut).
-  const { app: taken } = await launchOn(await makeLibrary(), { AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
+  // Another app holds ⌥Space: nothing is registered, so there is no key to name. The window shows no hint once it has read: its shelves
+  // hold a page, so the question suggested about it, which the same read brings, is the signal that it has.
+  const { app: taken } = await launchOn(await libraryWithAPage(), { AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
   expect(await call(taken, "askShortcut")).toBeNull();
   await call(taken, "openAsk");
   const bare = await windowFor(taken, "ask");
-  await expect(bare.getByText(EMPTY, { exact: true })).toBeVisible();
+  await expect(bare.getByRole("button", { name: "Ask this", exact: true })).toBeVisible();
   await expect(bare.locator("kbd")).toHaveCount(0);
   await taken.close();
+});
+
+test("an empty library shows no hint, and ⌥Space with Ask in front records a thought, as the empty line invites", async () => {
+  // With no page on any shelf there is nothing to ask about: the line says to say something first, and the key it would name files
+  // nothing. The press records a thought, as with another app in front.
+  const library = await makeLibrary();
+  const { app } = await launchOn(library);
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await askIsKey(app, true);
+  const field = ask.getByRole("textbox", { name: "Ask your library" });
+  // The empty line is drawn by the same read that would bring the hint: once it shows, the hint's absence is what that read found.
+  await expect(ask.getByText(EMPTY, { exact: true })).toBeVisible();
+  await expect(ask.locator("kbd")).toHaveCount(0);
+  expect(await pressShortcut(app)).toBe(true);
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 15_000 }).toMatchObject({ kind: "listening", mode: "dictate", fileMode: "now" });
+  expect(await pressShortcut(app)).toBe(true);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  await expect.poll(() => archived(library), { timeout: 30_000 }).toHaveLength(1);
+  await expect(field).toHaveValue("");
+  await app.close();
+});
+
+/**
+ * From now on, counts the times Quick is asked to open (`quickOpened`): the controller's own `openQuick`, wrapped. Quick hides itself
+ * when it loses the key, so whether it is on screen later says nothing of whether it was opened.
+ */
+async function watchQuick(app: ElectronApplication): Promise<void> {
+  await app.evaluate(() => {
+    const controller = (globalThis as unknown as { __avanzel: { openQuick(): void } }).__avanzel;
+    const open = controller.openQuick.bind(controller);
+    const opened = { count: 0 };
+    Object.assign(globalThis, { quickOpened: opened });
+    controller.openQuick = () => {
+      opened.count++;
+      open();
+    };
+  });
+}
+
+const quickOpened = (app: ElectronApplication) => app.evaluate(() => (globalThis as { quickOpened?: { count: number } }).quickOpened?.count ?? 0);
+
+/**
+ * `library`, opened by an app whose speech model is still downloading (a stand-in hub holds it), with the Ask window open and the key
+ * window, and Quick watched (`watchQuick`): a press of the shortcut then brings the card of the model, whose Type instead is the next press.
+ */
+async function askWhileTheModelDownloads(library: string) {
+  const hub = await fakeModelHub("stall");
+  // The card stays up while the test reads it; it hides by itself after 8 s otherwise.
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache(), AVANZEL_PREPARING_SHOW_MS: "120000" });
+  await call(app, "snapshot"); // the app has started: the poll's 5 s count from here, not from launch
+  await expect.poll(async () => (await settingsSnap(app)).model.kind).toBe("downloading");
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  await askIsKey(app, true);
+  await watchQuick(app);
+  return { app, ask, capsule };
+}
+
+test("Type instead, on the card a press brings while the speech model downloads, stays in Ask and opens no Quick", async () => {
+  // The hint shows while the model is on its way, so a press in Ask reaches its card, whose Type instead would open Quick: in Ask the
+  // field is already in front of the person, with what they typed in it.
+  const { app, ask, capsule } = await askWhileTheModelDownloads(await libraryWithAPage());
+  const field = ask.getByRole("textbox", { name: "Ask your library" });
+  await field.fill("Also,");
+  await expect(ask.locator("kbd")).toHaveText("⌥Space"); // the window has read: it names the key the person presses
+  expect(await pressShortcut(app)).toBe(true);
+  await expect(capsule.getByText("The speech model is still downloading.", { exact: true })).toBeVisible();
+  // Type instead: the card goes, and the press has reached main by the time the round trip sent behind it is answered.
+  await capsule.getByRole("button", { name: "Type instead", exact: true }).click();
+  await capsule.evaluate(() => window.avanzel.settings.get());
+  expect(await capsuleKind(app)).toBe("hidden");
+  expect(await quickOpened(app)).toBe(0);
+  await expect(field).toHaveValue("Also,");
+  await app.close();
+});
+
+test("Type instead, on the card an empty library's press brings, opens Quick: that press was a thought's", async () => {
+  // With no page the press records a thought, as the window's empty line invites, so the person who types instead is sent to Type a
+  // thought, where it is filed. Ask's field only asks.
+  const { app, ask, capsule } = await askWhileTheModelDownloads(await makeLibrary());
+  await expect(ask.getByText(EMPTY, { exact: true })).toBeVisible();
+  expect(await pressShortcut(app)).toBe(true);
+  await expect(capsule.getByText("The speech model is still downloading.", { exact: true })).toBeVisible();
+  await capsule.getByRole("button", { name: "Type instead", exact: true }).click();
+  await expect.poll(() => quickOpened(app)).toBe(1);
+  expect(await capsuleKind(app)).toBe("hidden");
+  await app.close();
+});
+
+test("the fix of a thought that couldn't be saved opens Type a thought, though Ask is in front", async () => {
+  // Only the model's card sends the person to Ask's field: the card of a thought that couldn't be saved holds words in Type a thought,
+  // and its one fix opens them there, whichever window is in front.
+  const library = await libraryWithAPage();
+  const { app, capsule } = await launchOn(library);
+  await call(app, "openAsk");
+  await windowFor(app, "ask");
+  await askIsKey(app, true);
+  await watchQuick(app);
+  await call(app, "setCapsule", { kind: "error", message: "That thought couldn't be saved.", detail: "Your words are still in “Type a thought”.", action: "type-a-thought", actionLabel: "Type a thought" });
+  await capsule.getByRole("button", { name: "Type a thought", exact: true }).click();
+  await expect.poll(() => quickOpened(app)).toBe(1);
+  expect(await capsuleKind(app)).toBe("hidden");
+  await app.close();
 });

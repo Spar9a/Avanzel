@@ -7,9 +7,9 @@ import { ScreenshotCard } from "./screenshot.tsx";
 
 /**
  * The line says where, once, and changes once if it takes long (`slow`): then Stop keeps the recording in the inbox for the
- * evening review. A screen comment's and setup's first spoken thought's are never slow. A screen comment keeps its screenshot's card
- * (`thumbnail`, which the state carries for it), the same card it listened with, so that it is not drawn away for the words to be made
- * and drawn again, smaller, once they are saved.
+ * evening review, or, for a question said into Ask, keeps nothing and drops its words. A screen comment's and setup's first spoken
+ * thought's are never slow. A screen comment keeps its screenshot's card (`thumbnail`, which the state carries for it), the same card
+ * it listened with, so that it is not drawn away for the words to be made and drawn again, smaller, once they are saved.
  */
 export function transcribingScene(state: StateOf<"transcribing">): Scene {
   return {

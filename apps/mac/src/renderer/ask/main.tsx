@@ -5,10 +5,11 @@
 // hasn't changed (or what the run changed); the newest turn's offers the one fix: Ask again, Open Terminal for a sign-in
 // (beside Ask again), or Open Settings when the library's agent isn't installed. The newest turn is on top. A hint under the field
 // names the shortcut that says a question: Record a thought's, pressed with this window in front, puts the words it hears into the
-// field, after what is typed, to be asked with Return; they are kept nowhere else. Before the first question a line says where
-// answers come from, or, while the six shelves hold no pages, to say something first; under it, up to three questions about the
-// pages filed last, each in words beside Ask this, which asks it. The newest answer that can be kept offers Save as a page: the agent
-// writes the answer the person was shown as a page, while a line says what it is doing, beside a
+// field, after what is typed, to be asked with Return; they are kept nowhere else. While the six shelves hold no pages the hint is
+// gone, for there is nothing to ask about, and the same press records a thought, as the line below invites. Before the first question
+// a line says where answers come from, or, while the shelves hold no pages, to say something first; under it, up to three questions
+// about the pages filed last, each in words beside Ask this, which asks it. The newest answer that can be kept offers Save as a
+// page: the agent writes the answer the person was shown as a page, while a line says what it is doing, beside a
 // Stop. It ends with where the page is, beside Undo, which takes the save back, and Open; or with Stopped, and the offer again; or
 // with a Notice that says what the save left and offers Save again. An Undo ends with Undone (the page gone, or back as it was when
 // the save only changed it) and the offer again, or, when git refuses it, with a Notice under the saved line, which keeps Open. One
@@ -87,7 +88,7 @@ function Ask() {
   const [progress, setProgress] = useState<Progress>(() => ({ message: null, since: Date.now() }));
   // What main last read for the window (null until it has): the pages on the six shelves, which decide the line under the field before
   // the first question; the questions suggested under that line (none until read); and the shortcut that says a question, which the hint
-  // under the field names (none until read, and while it isn't registered).
+  // under the field names (none until read, while it isn't registered, and while the shelves hold no pages).
   const [around, setAround] = useState<AskSnapshot | null>(null);
   const pages = around?.pages ?? null;
   const suggestions = around?.suggestions ?? [];
@@ -225,7 +226,7 @@ function Ask() {
             }}
             autoFocus
           />
-          {shortcut !== null && (
+          {shortcut !== null && pages !== 0 && (
             <Text variant="footnote" tone="secondary">
               Press <Kbd>{prettyAccelerator(shortcut)}</Kbd> to say your question.
             </Text>

@@ -1,11 +1,13 @@
-// The setup window's first-thought step (Think): the press test of Record a thought's shortcut and the keycaps, then the
-// first thought typed and filed. Every test launches as a first run (firstRun), taken through Found.
+// The setup window's first-thought step (Think): the press test of Record a thought's shortcut and the keycaps, which the step
+// takes even with the Ask window in front, then the first thought typed and filed. Every test launches as a first run (firstRun),
+// taken through Found.
 import { expect, test, type Page } from "@playwright/test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { NarrationRow } from "../src/shared/ipc.ts";
-import { call, capsuleKind, capturesKept, filesUnder, filingClaude, firstRun, launch, throughFound, typeFirstThought, windowFor } from "./helpers.ts";
+import { askIsKey, filedInto, onDay } from "./capsule-helpers.ts";
+import { call, capsuleKind, capturesKept, filesUnder, filingClaude, firstRun, launch, speechWav, throughFound, typeFirstThought, windowFor } from "./helpers.ts";
 import {
   inbox,
   INSTRUCTION,
@@ -191,6 +193,23 @@ test("the keycaps press themselves twice each time the step opens, and stay stil
   await setup.waitForTimeout(2_500); // past the time of both presses
   expect(await presses()).toHaveLength(8);
   await expect(keycaps(setup)).toHaveText(["⌥", "Space"]);
+  await app.close();
+});
+
+test("a press with Ask in front is still setup's: the step records its first thought, not a question", async () => {
+  // The step takes the press before Ask does (`pressDictate`). Ask is the key window and the shelves hold a page, which are all a
+  // question needs, and the press still starts the step's own recording: its window says it listens, as for any press on the step.
+  const { env, home } = firstRun();
+  const app = await launch({ ...env, AVANZEL_FAKE_AUDIO: speechWav("hello"), AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October" });
+  const setup = await throughFound(app);
+  filedInto(path.join(home, "Avanzel"), "ideas", "tulips", "Plant tulips in October", onDay(0));
+  await call(app, "openAsk");
+  await windowFor(app, "ask");
+  await askIsKey(app, true);
+  await pressShortcut(app);
+  await expect.poll(async () => (await setupSnap(app)).thought.kind, { timeout: 15_000 }).toBe("listening");
+  await expect(setup.getByText("I'm listening.", { exact: true })).toBeVisible();
+  await call(app, "cancelRecording");
   await app.close();
 });
 

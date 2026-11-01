@@ -401,3 +401,16 @@ export async function noteTranscriptions(app: ElectronApplication, { failWith, h
 
 export const transcriptions = (app: ElectronApplication) =>
   app.evaluate(() => (globalThis as { transcriptions?: { started: number; ended: number } }).transcriptions ?? { started: 0, ended: 0 });
+
+// ---- Shared by ask-extras.spec.ts and setup-think.spec.ts ----
+
+/**
+ * Whether the Ask window of `app` answers that it is the key window (`isFocused`), which is what `pressDictate` asks. A test app is seldom
+ * the front app of a Mac in use, so a test says it. Call it once the Ask window is open.
+ */
+export const askIsKey = (app: ElectronApplication, key: boolean) =>
+  app.evaluate(({ BrowserWindow }, isKey) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/ask/"));
+    if (!win) throw new Error("There is no Ask window.");
+    win.isFocused = () => isKey;
+  }, key);
