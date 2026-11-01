@@ -42,7 +42,7 @@ and wakes up on a shortcut.
 | ⌥Space | Start talking; press again to stop. A capsule above the Dock shows the waveform, then the transcript while your agent files it, then the pages it touched, with Undo and Open. Esc cancels. |
 | ⌥⇧S | Capture the screen and say why it matters. The screenshot, the app, the page and your comment wait in the inbox for the evening review. |
 | ⌥⇧Space | Type a thought. |
-| ⌥⇧A | Ask your library; the answer links to the pages it used. Before your first question, Ask suggests a few about what you filed last. **Save as a page** keeps an answer as a page in your library, and its **Undo** takes the page back. |
+| ⌥⇧A | Ask your library; the answer links to the pages it used. Before your first question, Ask suggests a few about what you filed last. **Save as a page** keeps an answer as a page in your library, and in a git library its **Undo** takes the save back. |
 | ⌥⇧Z | Undo the last filing, from any app. |
 
 The **evening review** (a scheduled review, 21:00 by default) files the day's inbox, writes a
