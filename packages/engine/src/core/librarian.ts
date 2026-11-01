@@ -30,7 +30,7 @@ import {
 import { createInside, lstatOrNull, realFoldersTo, removeInside, writeInside } from "./inside.ts";
 import { askPrompt, filePrompt, reviewPrompt } from "./prompts.ts";
 import { insideLibrary, stepPath, type FilingStep } from "./steps.ts";
-import { AUDIO_EXTS, IMAGE_EXTS, TEXT_EXTS, type Capture, type Vault } from "./vault.ts";
+import { AUDIO_EXTS, IMAGE_EXTS, SPECIAL_DIRS, TEXT_EXTS, type Capture, type Vault } from "./vault.ts";
 import { watchWrites } from "./watch.ts";
 
 const SOURCES = ["inbox/", "raw/"];
@@ -437,7 +437,9 @@ export class Librarian {
    * that ran alongside a filing could put back a change the filing's guard had just undone. When it
    * has to wait for the lock, `progress` hears `WAITING` once, then `LOOKING` once the lock is held,
    * before the agent starts; when the library is free, it hears nothing. A save given `answer`, the one
-   * the owner was shown, keeps its words as the page.
+   * the owner was shown, keeps its words as the page. A save is `saved` only by a page on the shelves: the thoughts caught while
+   * it runs (a capture takes no lock) land in inbox/, and its own folders hold no answer (`isShelfPage`), so a run that wrote no
+   * page commits as leftovers and logs no Ask line, however much else it finds changed.
    */
   async ask(
     question: string,
@@ -459,9 +461,10 @@ export class Librarian {
       const { result, guarded } = await this.#run(prompt, { write: save, signal });
       const changes = diff(before, snapshot(this.vault.root)).without(guarded);
       let commit: string | null = null;
-      if (save && result.ok && changes.pages.length) {
+      const saved = changes.pages.filter(isShelfPage);
+      if (save && result.ok && saved.length) {
         if (!changes.modified.includes("log.md")) {
-          const pages = changes.pages.map(wikilink).join(", ");
+          const pages = saved.map(wikilink).join(", ");
           this.vault.appendLog("ask", `${codePoints(collapse(question), 80)} → ${pages}`, now);
         }
         commit = await this.#commit(`avanzel: save answer to “${codePoints(collapse(question), 60)}”`);
@@ -734,6 +737,11 @@ function wikilink(page: string): string {
 
 function isPage(path: string): boolean {
   return path.endsWith(".md") && path.includes("/");
+}
+
+/** A page of a shelf: a page in none of the folders that hold no shelf pages (inbox/, raw/, reviews/ and tasks/: `SPECIAL_DIRS`). */
+function isShelfPage(path: string): boolean {
+  return isPage(path) && !SPECIAL_DIRS.includes(path.split("/")[0] ?? "");
 }
 
 function collapse(text: string): string {

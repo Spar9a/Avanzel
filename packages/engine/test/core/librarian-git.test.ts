@@ -6,7 +6,7 @@ import * as git from "../../src/core/git.ts";
 import { Librarian } from "../../src/core/librarian.ts";
 import { Vault } from "../../src/core/vault.ts";
 import { NOW, envHome, gitIdentity, write } from "./helpers.ts";
-import { fakeSettings, lstatOrNull, mode, only, read, tmp } from "./librarian-fixtures.ts";
+import { fakeSettings, lstatOrNull, mode, only, read, recordRuns, tmp } from "./librarian-fixtures.ts";
 
 let vault: Vault;
 let librarian: Librarian;
@@ -227,6 +227,33 @@ describe.skipIf(!git.available())("with git", () => {
     expect(outcome.result.ok).toBe(false);
     expect(outcome.commit).toBe(head());
     expect(subjects()[0]).toBe("avanzel: leftovers of an answer that was not saved");
+  });
+
+  it("a thought caught while a save runs is no saved page: a save that wrote none commits as leftovers, with no Ask line", async () => {
+    mode("noop"); // the agent answers in words and writes no page
+    vi.stubEnv("FAKE_AGENT_DELAY_MS", "800"); // a moment in which the run is on
+    const runs = recordRuns();
+    const saving = librarian.ask("Summarize my ideas", { save: true, answer: "You want a greenhouse." });
+    await vi.waitFor(() => expect(runs()).toHaveLength(1), { timeout: 10_000 }); // the agent has begun, so the library was looked at before it
+    const capture = librarian.captureText("A thought said meanwhile"); // a capture takes no lock: it lands in inbox/ while the save runs
+    const outcome = await saving;
+    expect(outcome.result.ok).toBe(true);
+    expect(outcome.changes.created).toEqual([versioned.relativePath(capture.path)]); // the run's changes do hold it
+    expect(outcome.commit).toBe(head());
+    expect(subjects()[0]).toBe("avanzel: leftovers of an answer that was not saved");
+    expect(read(versioned.logPath)).not.toContain("| ask |");
+  });
+
+  it("a save's commit and Ask line name the page it wrote, not a thought caught while it ran", async () => {
+    vi.stubEnv("FAKE_AGENT_DELAY_MS", "800");
+    const runs = recordRuns();
+    const saving = librarian.ask("Summarize my ideas", { save: true, answer: "You want a greenhouse." });
+    await vi.waitFor(() => expect(runs()).toHaveLength(1), { timeout: 10_000 });
+    librarian.captureText("A thought said meanwhile");
+    const outcome = await saving;
+    expect(outcome.commit).toBe(head());
+    expect(subjects()[0]).toBe("avanzel: save answer to “Summarize my ideas”");
+    expect(read(versioned.logPath)).toContain("- 2026-10-20 14:03 | ask | Summarize my ideas → [[answer]]\n");
   });
 
   it("a read-only ask, and a save that changed nothing, hand out no commit", async () => {
