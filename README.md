@@ -42,7 +42,7 @@ and wakes up on a shortcut.
 | ⌥Space | Start talking; press again to stop. A capsule above the Dock shows the waveform, then the transcript while your agent files it, then the pages it touched, with Undo and Open. Esc cancels. |
 | ⌥⇧S | Capture the screen and say why it matters. The screenshot, the app, the page and your comment wait in the inbox for the evening review. |
 | ⌥⇧Space | Type a thought. |
-| ⌥⇧A | Ask your library; the answer links to the pages it used. |
+| ⌥⇧A | Ask your library; the answer links to the pages it used. Before your first question, Ask suggests a few about what you filed last. **Save as a page** keeps an answer as a page in your library, and its **Undo** takes the page back. |
 | ⌥⇧Z | Undo the last filing, from any app. |
 
 The **evening review** (a scheduled review, 21:00 by default) files the day's inbox, writes a
@@ -98,7 +98,12 @@ Good to know:
   commit (in a git library) and the note stays in the inbox for the evening review.
 - **Ask** waits for a filing in progress, and says so. A note you dictate while your agent answers
   waits for the answer, and says so too. Stop, or closing the Ask window, gives the question up and
-  stops your agent.
+  stops your agent. With Ask in front and a page in your library, ⌥Space says a question into its
+  field instead of recording a thought, and Return asks it; nothing of it is kept in your library.
+  **Save as a page** is another run of your agent, which is told the answer you were shown and
+  asked to keep its words. Stop, closing the Ask window or quitting gives that run up, and what it
+  had changed is kept as its own commit (in a git library). The save's **Undo** takes it back, once,
+  while the Ask window stays open.
 - **Settings → Agents** checks that each agent is signed in. For Claude Code and Codex the checks
   run when the pane opens and when a library is set up; they read only the sign-in and never ask
   the model. Check asks other agents one short question, and Claude Code or Codex too when their
