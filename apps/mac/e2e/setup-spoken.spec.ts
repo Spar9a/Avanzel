@@ -292,25 +292,14 @@ test("while the ears are still arriving, a press says so and typing is the way",
 test("Esc while listening cancels, and setup asks again", async () => {
   const { env, home } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October" });
   const app = await launch(env);
-  // Esc's own callback, as a recording registers it: the test presses it.
-  await app.evaluate(({ globalShortcut }) => {
-    const register = globalShortcut.register.bind(globalShortcut);
-    globalShortcut.register = (accelerator: string, callback: () => void) => {
-      if (accelerator === "Escape") (globalThis as { pressEsc?: () => void }).pressEsc = callback;
-      return register(accelerator, callback);
-    };
-  });
   const setup = await throughFound(app);
   await pressShortcut(app);
   await expect(setup.getByText(LISTENING)).toBeVisible();
   await expect(setup.getByText(INSTRUCTION)).toHaveCount(0);
   await expect(setup.getByText(FREE)).toBeVisible();
   await expect(setup.getByText(DONE_TALKING)).toBeVisible();
-  expect(await app.evaluate(() => {
-    const pressEsc = (globalThis as { pressEsc?: () => void }).pressEsc;
-    pressEsc?.();
-    return !!pressEsc;
-  })).toBe(true);
+  // Esc's own callback, pressed by the test: the real Esc is faked in test runs.
+  expect(await call(app, "pressShortcutForTests", "Escape")).toBe(true);
   await expect(setup.getByText(INSTRUCTION)).toBeVisible();
   await expect(setup.getByText(LISTENING)).toHaveCount(0);
   // Nothing records now, so Esc's promise goes with the recording.
