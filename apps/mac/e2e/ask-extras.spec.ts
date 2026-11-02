@@ -462,6 +462,36 @@ test("a save hides the menu's Undo the last filing while it waits and runs, and 
   await second.app.close();
 });
 
+test("a save that is held hides the Undo the tray holds from the press of Save, and Stop brings it back", async () => {
+  // The tray holds the menu as it was last built, and a save clears nothing as it begins, so the save's start must build the menu again
+  // (`savesGoing`): else the held menu keeps Undo the last filing for the whole of the save, and a click on it does nothing. The fake holds
+  // the save 30 s, so the menu is read while the save runs, and not once it has ended and built the menu itself.
+  const { app } = await launchOn(await makeLibrary({ git: true }));
+  await filedFromTheCapsule(app);
+  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
+  await expect.poll(() => trayOffersUndo(app)).toBe(true);
+  const ask = await answeredIn(app, "Summarize my ideas");
+  expect(await trayOffersUndo(app)).toBe(true);
+  await app.evaluate(() => {
+    process.env.FAKE_AGENT_DELAY_MS = "30000";
+  });
+  await saveOffer(ask).click();
+  const stop = turnAt(ask).getByRole("button", { name: "Stop", exact: true });
+  await expect(stop).toBeVisible();
+  // The model hides the item at once; the menu the tray holds has to follow within seconds, long before the save ends.
+  await expect.poll(() => undoItem(app)).toBeUndefined();
+  await expect.poll(() => trayOffersUndo(app), { timeout: 5_000 }).toBe(false);
+  // Stop gives the save up with nothing committed: the filing's Undo is on the held menu again.
+  await stop.click();
+  await expect(saveRegion(ask)).toHaveText("Stopped. Your library hasn't changed.", { timeout: 30_000 });
+  await app.evaluate(() => {
+    delete process.env.FAKE_AGENT_DELAY_MS;
+  });
+  expect(await undoItem(app)).toBeDefined();
+  await expect.poll(() => trayOffersUndo(app)).toBe(true);
+  await app.close();
+});
+
 test("a save that commits nothing leaves the last filing's Undo", async () => {
   // The Undo is hidden while the save waits or runs (`savesGoing`), and nothing is cleared as the save begins: a save that saved no page
   // committed nothing after the filing, so the filing's Undo is on the menu again when it ends, and takes the filing back.

@@ -3127,7 +3127,7 @@ export class Controller {
    * (`cardCapture`) again with that agent (`fileAgainWith`): the filing the capsule shows replaces the card. A second click
    * on the button finds no note, since that filing has replaced the card, and does nothing. `type-a-thought`, the fix of a thought
    * that couldn't be saved, opens Type a thought again, with its words still in it, whichever window is in front (Type instead, which
-   * stays in Ask when the press that brought its card was a question's, is `typeInstead`), and only while an error card is what the
+   * stays in Ask while a press of Record a thought's shortcut there would ask (`pressAsks`), is `typeInstead`), and only while an error card is what the
    * capsule shows: a press that finds another card up, a recording say, is a stale one, and opens and hides nothing.
    *
    * Other windows send it too (the Ask window's Open Settings, setup's Open Settings), while the capsule shows something
@@ -3417,6 +3417,7 @@ export class Controller {
     if (library !== (this.vault?.root ?? null)) return { kind: "unsaved", agent, failure: avanzelFailure(ANOTHER_LIBRARY), partial: null };
     this.savesGoing++;
     try {
+      this.refreshMenu(); // the tray holds the menu as last built, and a save clears nothing as it begins: build it again without Undo the last filing (`undoableFiling`)
       return await this.inAskSlot(async (abort, progress): Promise<SaveResult> => {
         try {
           const vault = this.requireVault();
