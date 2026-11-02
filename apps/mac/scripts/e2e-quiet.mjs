@@ -23,7 +23,7 @@ try {
   const out = createWriteStream(report);
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  const child = spawn("taskpolicy", ["-b", "caffeinate", "-i", "-s", "npx", "playwright", "test", ...process.argv.slice(2)], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("/usr/sbin/taskpolicy", ["-b", "caffeinate", "-i", "-s", "npx", "playwright", "test", ...process.argv.slice(2)], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.pipe(out, { end: false });
   child.stderr.pipe(out, { end: false });
   code = await new Promise((resolve) => child.on("close", (c) => resolve(c ?? 1)));
