@@ -4,12 +4,17 @@ import { build } from "esbuild";
 import { cpSync, mkdirSync, readdirSync, rmSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { distDir, runningMessage, suiteRunning } from "./e2e-lock.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const dist = path.join(root, "dist");
+const dist = distDir(root);
 const engineTemplates = path.join(root, "..", "..", "packages", "engine", "templates");
 const watch = process.argv.includes("--watch");
 
+if (suiteRunning(root) && !process.env.AVANZEL_DIST) {
+  console.error(runningMessage());
+  process.exit(1);
+}
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 
@@ -65,4 +70,4 @@ cpSync(engineTemplates, path.join(dist, "templates"), { recursive: true });
 const engineAssets = path.join(root, "..", "..", "packages", "engine", "assets");
 if (existsSync(engineAssets)) cpSync(engineAssets, path.join(dist, "engine-assets"), { recursive: true });
 if (existsSync(path.join(root, "assets"))) cpSync(path.join(root, "assets"), path.join(dist, "assets"), { recursive: true });
-console.log(`built ${pages.length} renderer(s) into dist/${watch ? " (watch not implemented)" : ""}`);
+console.log(`built ${pages.length} renderer(s) into ${dist === path.join(root, "dist") ? "dist" : dist}/${watch ? " (watch not implemented)" : ""}`);

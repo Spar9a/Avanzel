@@ -233,7 +233,7 @@ export async function launch(env: Record<string, string>, switches: string[] = [
   const packaged = process.env.AVANZEL_E2E_PACKAGED;
   return electron.launch({
     ...(packaged ? { executablePath: packaged } : {}),
-    args: packaged ? switches : [appDir, ...switches],
+    args: packaged ? switches : [process.env.AVANZEL_DIST ? path.join(path.resolve(process.env.AVANZEL_DIST), "main.mjs") : appDir, ...switches],
     cwd: appDir,
     // Nothing listens on port 9, so a speech model download fails at once unless the test passes a fakeModelHub's url.
     // The shortcuts register with a stand-in that holds none for real and finds none taken unless the test lists them,

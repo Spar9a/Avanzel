@@ -14,3 +14,4 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 .claude/worktrees/
+apps/mac/.e2e-running

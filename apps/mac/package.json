@@ -12,6 +12,7 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "e2e": "node scripts/build.mjs && playwright test",
+    "e2e:quiet": "node scripts/e2e-quiet.mjs",
     "dist": "node scripts/build.mjs && electron-builder --mac dir && codesign --force --deep --sign - release/mac-arm64/Avanzel.app",
     "icon": "node scripts/make-icon.mjs"
   },
