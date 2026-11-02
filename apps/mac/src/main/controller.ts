@@ -1440,7 +1440,7 @@ export class Controller {
     this.sound("tick");
     this.capsuleCommand("start");
     try {
-      globalShortcut.register("Escape", () => this.cancelRecording());
+      shortcutApi().register("Escape", () => this.cancelRecording());
     } catch {
       // Esc is a convenience; the menu and the shortcut still stop the recording.
     }
@@ -1480,7 +1480,7 @@ export class Controller {
     if (!recording || recording.stopping) return; // a second tap while its audio is on the way
     recording.stopping = true;
     clearTimeout(recording.maxTimer);
-    globalShortcut.unregister("Escape");
+    shortcutApi().unregister("Escape");
     const onThisMac = this.transcribesOnThisMac();
     // This card is the capsule's now: an older transcription still running no longer has it, so neither its slow state nor Stop can
     // reach this recording's card (`slowTranscription`, `stopTranscribing`).
@@ -1541,7 +1541,7 @@ export class Controller {
   private abandonRecording(recording: Recording): void {
     clearTimeout(recording.maxTimer);
     this.clearAudioTimeout();
-    globalShortcut.unregister("Escape");
+    shortcutApi().unregister("Escape");
     if (recording.shot) rmSync(recording.shot.path, { force: true });
     if (this.recording === recording) this.recording = null;
     this.capsuleCommand("cancel");
@@ -3276,7 +3276,11 @@ export class Controller {
   private notify(title: string, body: string, onClick?: () => void, silent = false): void {
     if (this.quitting) return;
     const quiet = silent || this.recording !== null;
-    if (process.env.AVANZEL_TEST === "1") this.notified.push({ title, body, ...(quiet ? { silent: true as const } : {}) });
+    if (process.env.AVANZEL_TEST === "1") {
+      // The tests read `notified`, not the screen: no banner and no sound reach this Mac's Notification Centre.
+      this.notified.push({ title, body, ...(quiet ? { silent: true as const } : {}) });
+      return;
+    }
     if (!Notification.isSupported()) return;
     const note = new Notification({ title, body, silent: quiet });
     if (onClick) note.on("click", onClick);
@@ -4213,8 +4217,8 @@ export class Controller {
    * registered for it runs. False when it holds none, as for a shortcut another app holds: that press never reaches
    * Avanzel.
    */
-  pressShortcutForTests(key: keyof Shortcuts): boolean {
-    const press = fakeShortcuts.get(this.store.get().shortcuts[key]);
+  pressShortcutForTests(key: keyof Shortcuts | "Escape"): boolean {
+    const press = fakeShortcuts.get(key === "Escape" ? key : this.store.get().shortcuts[key]);
     press?.();
     return press !== undefined;
   }

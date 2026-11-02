@@ -245,6 +245,9 @@ export async function launch(env: Record<string, string>, switches: string[] = [
       AVANZEL_USER_DATA: userData,
       AVANZEL_MODELS_URL: "http://127.0.0.1:9",
       AVANZEL_FAKE_TAKEN_SHORTCUTS: "",
+      // No test captures the real screen or asks which app is in front unless it passes its own.
+      AVANZEL_FAKE_SCREEN: screenshotFixture(),
+      AVANZEL_FAKE_FRONT_APP: "Safari|A page|https://example.com",
       PATH: agentPath(),
       ...env,
     },

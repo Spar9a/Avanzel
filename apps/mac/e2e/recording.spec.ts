@@ -886,3 +886,14 @@ test("quitting while a stopped transcription is still running leaves its recordi
   expect(samplesOf(path.join(library, "inbox", name!))).toEqual(samplesOf(recording));
   expect(filesUnder(library, "raw")).toEqual([]);
 });
+
+test("Esc gives a recording up through the shortcut stand-in, so no real Esc is taken from this Mac", async () => {
+  const { app } = await launchSlowly(60_000);
+  expect(await call(app, "pressShortcutForTests", "Escape")).toBe(false); // nothing is recording, so Esc is not registered
+  await call(app, "toggleCapture");
+  await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("listening");
+  await expect.poll(() => call(app, "pressShortcutForTests", "Escape")).toBe(true); // registered just after the card shows
+  await expect.poll(() => capsuleKind(app)).not.toBe("listening");
+  expect(await call(app, "pressShortcutForTests", "Escape")).toBe(false); // let go with the recording
+  await app.close();
+});
