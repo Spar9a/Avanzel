@@ -248,6 +248,8 @@ export async function launch(env: Record<string, string>, switches: string[] = [
       // No test captures the real screen or asks which app is in front unless it passes its own.
       AVANZEL_FAKE_SCREEN: screenshotFixture(),
       AVANZEL_FAKE_FRONT_APP: "Safari|A page|https://example.com",
+      // No window takes the keyboard or floats over the owner's Spaces; a test may pass its own value.
+      AVANZEL_QUIET_STAGE: "1",
       PATH: agentPath(),
       ...env,
     },

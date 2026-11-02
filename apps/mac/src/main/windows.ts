@@ -1,6 +1,7 @@
 // The app's windows. All renderers are sandboxed and talk to main only through the preload bridge.
 import { BrowserWindow, screen, type WebContents } from "electron";
 import path from "node:path";
+import { floatAbove, floatOverSpaces, panelOptions } from "./stage.ts";
 import { fileURLToPath } from "node:url";
 import type { SettingsPane } from "../shared/ipc.ts";
 
@@ -43,12 +44,12 @@ export function createCapsuleWindow(): BrowserWindow {
     fullscreenable: false,
     focusable: false,
     skipTaskbar: true,
-    alwaysOnTop: true,
+    ...panelOptions(),
     type: "panel",
     webPreferences: { ...webPreferences, backgroundThrottling: false },
   });
-  win.setAlwaysOnTop(true, "floating");
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  floatAbove(win);
+  floatOverSpaces(win);
   win.setIgnoreMouseEvents(true, { forward: true });
   void win.loadFile(pagePath("capsule"));
   return win;
@@ -122,11 +123,11 @@ export function createUpHereWindow(): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    alwaysOnTop: true,
+    ...panelOptions(),
     type: "panel",
     webPreferences,
   });
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  floatOverSpaces(win);
   void win.loadFile(pagePath("up-here"));
   return win;
 }
@@ -153,11 +154,11 @@ export function createQuickWindow(): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    alwaysOnTop: true,
+    ...panelOptions(),
     type: "panel",
     webPreferences,
   });
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  floatOverSpaces(win);
   void win.loadFile(pagePath("quick"));
   return win;
 }

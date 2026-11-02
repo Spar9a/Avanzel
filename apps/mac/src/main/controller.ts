@@ -147,6 +147,7 @@ import { afterStop, defaultLibraryPath, tildePath, tooBroad, unrecordedEdits } f
 import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
+import { bringForward, stealFocus } from "./stage.ts";
 import { MenuBar } from "./tray.ts";
 import { nextTrayWake, reviewEndedAt, sleepsAfterReview, trayView, wholePercent, type TrayInput, type TrayView } from "./tray-state.ts";
 import { UndoRecordStore, type FilingReceipt } from "./undo-records.ts";
@@ -3088,9 +3089,7 @@ export class Controller {
     }
     const win = this.quickWindow;
     placeQuick(win);
-    app.focus({ steal: true });
-    win.show();
-    win.focus();
+    bringForward(win);
   }
 
   closeQuick(): void {
@@ -3125,9 +3124,7 @@ export class Controller {
       this.askWindow = createAskWindow();
       this.askWindow.once("ready-to-show", () => this.askWindow?.show());
     }
-    app.focus({ steal: true });
-    this.askWindow.show();
-    this.askWindow.focus();
+    bringForward(this.askWindow);
   }
 
   closeAsk(): void {
@@ -3310,9 +3307,7 @@ export class Controller {
     } else if (pane) {
       this.settingsWindow.webContents.send("settings:show-pane", pane);
     }
-    app.focus({ steal: true });
-    this.settingsWindow.show();
-    this.settingsWindow.focus();
+    bringForward(this.settingsWindow);
   }
 
   /**
@@ -3999,7 +3994,7 @@ export class Controller {
       detail: `It runs${named ? ` with ${harnessName(named)}` : ""} on your plan, so it may count toward your usage limit.`,
     };
     // A menu bar app isn't the frontmost app when its menu is used: without this the question would come up behind the others.
-    app.focus({ steal: true });
+    stealFocus();
     const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
     return response === 0 && this.vault?.root === vault.root;
   }

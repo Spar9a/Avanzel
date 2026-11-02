@@ -45,6 +45,7 @@ import { errorMessage, harnessName, LIBRARY_PICKER, type Answered, type FilingJo
 import { answeredFrom, captureMeta, obsidianUrl } from "./library-info.ts";
 import { stepThrottle } from "./narration.ts";
 import { permissionStatus, requestMicrophone } from "./permissions.ts";
+import { bringForward } from "./stage.ts";
 import { runningAppNames } from "./running-apps.ts";
 import type { RunState } from "./schedule.ts";
 import {
@@ -283,9 +284,7 @@ export class Setup {
    */
   show(place?: string): void {
     if (this.session && !this.session.window.isDestroyed()) {
-      app.focus({ steal: true });
-      this.session.window.show();
-      this.session.window.focus();
+      bringForward(this.session.window);
       return;
     }
     const win = createSetupWindow();
@@ -293,9 +292,7 @@ export class Setup {
     // Shown once its page has drawn, so it never flashes blank first.
     win.once("ready-to-show", () => {
       if (win.isDestroyed()) return;
-      app.focus({ steal: true });
-      win.show();
-      win.focus();
+      bringForward(win);
     });
     win.on("closed", () => this.end(win));
     // Back from Terminal, say, where the person may have signed an agent in, or from Apple's installer, where they may have
@@ -1214,9 +1211,7 @@ export class Setup {
     this.host.refreshTray(); // no title beside the icon the bubble points at: it would widen the bounds the bubble centres on
     const { x, y } = upHerePlace(tray, screen.getDisplayMatching(tray).workArea, UP_HERE_SIZE);
     win.setPosition(x, y);
-    app.focus({ steal: true });
-    win.show();
-    win.focus();
+    bringForward(win);
     win.on("blur", () => {
       if (this.upHereWindow === win) this.closeUpHere();
     });
