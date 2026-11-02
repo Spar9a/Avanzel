@@ -25,6 +25,13 @@ export function bringForward(win: BrowserWindow): void {
   win.focus();
 }
 
+/** Shows a window once its page has drawn; in the quiet stage without activating it. */
+export function showWhenReady(win: BrowserWindow | null | undefined): void {
+  if (!win || win.isDestroyed()) return;
+  if (quiet()) win.showInactive();
+  else win.show();
+}
+
 /** Window options for a panel: on top of other windows, except in the quiet stage. */
 export function panelOptions(): { alwaysOnTop?: true } {
   return quiet() ? {} : { alwaysOnTop: true };

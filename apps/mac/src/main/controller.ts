@@ -147,7 +147,7 @@ import { afterStop, defaultLibraryPath, tildePath, tooBroad, unrecordedEdits } f
 import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
-import { bringForward, stealFocus } from "./stage.ts";
+import { bringForward, showWhenReady, stealFocus } from "./stage.ts";
 import { MenuBar } from "./tray.ts";
 import { nextTrayWake, reviewEndedAt, sleepsAfterReview, trayView, wholePercent, type TrayInput, type TrayView } from "./tray-state.ts";
 import { UndoRecordStore, type FilingReceipt } from "./undo-records.ts";
@@ -3122,7 +3122,7 @@ export class Controller {
     if (!this.vault) return this.showHome();
     if (!this.askWindow || this.askWindow.isDestroyed()) {
       this.askWindow = createAskWindow();
-      this.askWindow.once("ready-to-show", () => this.askWindow?.show());
+      this.askWindow.once("ready-to-show", () => showWhenReady(this.askWindow));
     }
     bringForward(this.askWindow);
   }
@@ -3290,7 +3290,7 @@ export class Controller {
   showSettings(pane?: SettingsPane): void {
     if (!this.settingsWindow || this.settingsWindow.isDestroyed()) {
       this.settingsWindow = createSettingsWindow(pane);
-      this.settingsWindow.once("ready-to-show", () => this.settingsWindow?.show());
+      this.settingsWindow.once("ready-to-show", () => showWhenReady(this.settingsWindow));
       // Back from System Settings, say, where the person may have allowed the microphone or Screen Recording: Privacy follows
       // it, as setup reads the sign-ins again when it has the focus (`rereadSignIns`). That is a read of what is on this
       // Mac, and starts no agent check, which could cost quota. Or back from Terminal, where they may have installed Apple's

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const focus = vi.hoisted(() => vi.fn());
 vi.mock("electron", () => ({ app: { focus } }));
 
-const { bringForward, floatAbove, floatOverSpaces, panelOptions, stealFocus } = await import("../src/main/stage.ts");
+const { bringForward, floatAbove, floatOverSpaces, panelOptions, showWhenReady, stealFocus } = await import("../src/main/stage.ts");
 
 function fakeWindow() {
   return {
@@ -70,5 +70,25 @@ describe("the quiet stage", () => {
     vi.stubEnv("AVANZEL_QUIET_STAGE", "1");
     stealFocus();
     expect(focus).not.toHaveBeenCalled();
+  });
+});
+
+describe("showing a window once its page has drawn", () => {
+  it("shows it, and in the quiet stage without activating it", () => {
+    const win = { ...fakeWindow(), isDestroyed: () => false };
+    showWhenReady(win as never);
+    expect(win.show).toHaveBeenCalled();
+    vi.stubEnv("AVANZEL_QUIET_STAGE", "1");
+    const quietWin = { ...fakeWindow(), isDestroyed: () => false };
+    showWhenReady(quietWin as never);
+    expect(quietWin.showInactive).toHaveBeenCalled();
+    expect(quietWin.show).not.toHaveBeenCalled();
+  });
+
+  it("skips a window that is gone", () => {
+    const win = { ...fakeWindow(), isDestroyed: () => true };
+    showWhenReady(win as never);
+    showWhenReady(undefined);
+    expect(win.show).not.toHaveBeenCalled();
   });
 });
