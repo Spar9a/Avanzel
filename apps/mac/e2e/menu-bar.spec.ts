@@ -727,7 +727,7 @@ const MID_THOUGHT: {
       await startReview(app);
       await expect.poll(() => detailOf(app), { timeout: 30_000, intervals: [50] }).toBe("Filing 1 of 1"); // its run has the note
       await call(app, "submitEdit", "Plant tulips in late October");
-      expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filing", waiting: true });
+      await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true }); // on 3 workers the edit lands a beat later
       if (hidden) await call(app, "dismiss");
     },
     atReviewEnd: async (app: ElectronApplication) => void expect(await capsuleKind(app)).toBe(hidden ? "hidden" : "filing"),
