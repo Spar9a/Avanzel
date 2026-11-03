@@ -1,6 +1,5 @@
-/* Plain-element defaults for a window built from @avanzel/ui. Import it once in a renderer that has
-   moved over (import "@avanzel/ui/base.css"); windows still on common/mac.css must not, because it
-   restyles their body and headings.
+/* Plain-element defaults for a window built from @avanzel/ui. Import it once in each renderer window
+   (import "@avanzel/ui/base.css").
    A window whose page is see-through, such as the capsule or Quick, sets <html data-backdrop="clear">. */
 @import "./foundations.css";
 

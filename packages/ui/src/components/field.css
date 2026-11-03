@@ -1,4 +1,4 @@
-.av-field { display: flex; flex-direction: column; gap: var(--av-space-4); min-width: 0; }
+.av-field { position: relative; display: flex; flex-direction: column; gap: var(--av-space-4); min-width: 0; }
 .av-field-label { font: var(--av-text-footnote); color: var(--av-ink-secondary); }
 .av-field-label[data-hidden] {
   position: absolute;
@@ -32,7 +32,8 @@
   user-select: text;
 }
 .av-field-input:focus-visible { outline: none; }
-.av-field-input::placeholder { color: var(--av-ink-secondary); }
+/* Placeholder ink: the ink, softened. --av-ink-secondary alone measured 4.26:1 on a Group's surface in dark mode, under AA's 4.5:1. */
+.av-field-input::placeholder { color: color-mix(in srgb, var(--av-ink) 72%, transparent); }
 .av-field[data-multiline] .av-field-box { padding: var(--av-space-6) var(--av-space-10); }
 .av-field[data-multiline] .av-field-input { resize: none; }
 .av-field[data-size="large"] .av-field-box { min-height: 44px; gap: var(--av-space-12); }

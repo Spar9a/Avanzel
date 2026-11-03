@@ -50,7 +50,8 @@ export function TextField({ label, labelHidden, value, onChange, placeholder, de
           aria-describedby={description ? `${id}-description` : undefined}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && onEnter) { e.preventDefault(); onEnter(); }
+            // Enter that confirms a word being composed (Chinese, Japanese, Korean) is the input method's, not a submit.
+            if (e.key === "Enter" && onEnter && !e.nativeEvent.isComposing) { e.preventDefault(); onEnter(); }
             if (e.key === "Escape" && onEscape) { e.preventDefault(); onEscape(); }
           }}
         />
@@ -87,7 +88,7 @@ export function TextArea({ label, labelHidden, value, onChange, placeholder, des
           aria-describedby={description ? `${id}-description` : undefined}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && onEnter) { e.preventDefault(); onEnter(); }
+            if (e.key === "Enter" && !e.shiftKey && onEnter && !e.nativeEvent.isComposing) { e.preventDefault(); onEnter(); }
             if (e.key === "Escape" && onEscape) { e.preventDefault(); onEscape(); }
           }}
         />
