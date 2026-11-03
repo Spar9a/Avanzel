@@ -9,7 +9,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import { encodePng } from "../src/main/png.ts";
-import { PREVIEW_AT_MS } from "../src/renderer/common/sounds.ts";
 import type { SetupSnapshot } from "../src/shared/ipc.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -417,68 +416,6 @@ export async function windowFor(app: ElectronApplication, name: string): Promise
 /** Whether a window of renderer `name` (say "quick") is on screen. */
 export const shown = (app: ElectronApplication, name: string) =>
   app.evaluate(({ BrowserWindow }, page) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes(`/renderer/${page}/`) && w.isVisible()), name);
-
-/**
- * What the sounds a page played, oldest first, each with the time it was played (`performance.now()` in that page): the page's own record
- * (`globalThis.__avanzelSounds`, renderer/common/sounds.ts), which only the page can read. The capsule, setup and Settings each play their own.
- */
-export const playedAt = (page: Page): Promise<{ name: string; at: number }[]> =>
-  page.evaluate(() => (globalThis as { __avanzelSounds?: { name: string; at: number }[] }).__avanzelSounds ?? []);
-
-/** The names of what a page played (`playedAt`), oldest first. */
-export const played = async (page: Page): Promise<string[]> => (await playedAt(page)).map((sound) => sound.name);
-
-/**
- * Preview sounds was pressed: the page plays the Tick, the Stamp, the Drawer and the Letter, one after the other, after the `already` that it played
- * before. The page's own record says when (`playedAt`), so nothing here is a wall-clock bound from the press, which a busy Mac would break. Each
- * sound comes about where Preview plans it (`PREVIEW_AT_MS`), after the one before it: a busy Mac fires a timer late, so each gap may lose up to
- * 40% of itself. (That the plan leaves each sound room to end before the next, by its length in `SOUND_MS`, is held by the unit tests, on fake
- * timers: the plan leaves as little as 60 ms between one sound's end and the next one's start, which a late timer can take.) The Letter comes
- * about 0.8 s after the Tick.
- */
-export async function expectPreviewPlayed(page: Page, already: string[] = []): Promise<void> {
-  await expect.poll(() => played(page), { timeout: 10_000 }).toEqual([...already, "tick", "stamp", "drawer", "letter"]);
-  const heard = (await playedAt(page)).slice(already.length);
-  const planned: Record<string, number> = { tick: 0, ...PREVIEW_AT_MS };
-  for (let i = 1; i < heard.length; i += 1) {
-    const [before, now] = [heard[i - 1]!, heard[i]!];
-    const gap = planned[now.name]! - planned[before.name]!;
-    expect(now.at - before.at, `${now.name} comes about ${gap} ms after ${before.name}`).toBeGreaterThanOrEqual(gap * 0.6);
-  }
-  expect(heard[3]!.at - heard[0]!.at, "the Letter comes about 0.8 s after the Tick").toBeGreaterThanOrEqual(750);
-}
-
-/** Mutes every window that is open now, so that a test of sounds makes none on the Mac it runs on: the pages play all the same. */
-export const muteWindows = (app: ElectronApplication) =>
-  app.evaluate(({ BrowserWindow }) => {
-    for (const win of BrowserWindow.getAllWindows()) win.webContents.setAudioMuted(true);
-  });
-
-/**
- * Notes each AudioContext a page makes from now on, for `audioContexts`. A page makes its one context when it first needs it (renderer/common/
- * sounds.ts), by `new AudioContext()`, so this stands a counting one in its place. Run it in a page (`page.evaluate`) to watch that page as it
- * is, or give it to `app.context().addInitScript` to watch every page that loads after it, from its first line.
- */
-export function watchAudioContexts(): void {
-  const Real = window.AudioContext;
-  const made: AudioContext[] = [];
-  (window as unknown as { audioContextsMade: AudioContext[] }).audioContextsMade = made;
-  window.AudioContext = class extends Real {
-    constructor(options?: AudioContextOptions) {
-      super(options);
-      made.push(this);
-    }
-  };
-}
-
-/**
- * The state of each AudioContext a page made since `watchAudioContexts`, in the order made; null for a page that isn't watched, and for one
- * that is loading again, which has no answer yet (a test that reloads a page polls this until the new page answers).
- */
-export const audioContexts = (page: Page): Promise<string[] | null> =>
-  page
-    .evaluate(() => (window as unknown as { audioContextsMade?: AudioContext[] }).audioContextsMade?.map((context) => context.state) ?? null)
-    .catch(() => null);
 
 /** Opens Settings (showSettings) and moves to `pane` on its toolbar; returns the window once that pane's heading shows. */
 export async function openSettings(app: ElectronApplication, pane = "General"): Promise<Page> {

@@ -113,7 +113,6 @@ import type {
   SetupSnapshot,
   SetupStep,
   Shortcuts,
-  SoundName,
   TaskInfo,
 } from "../shared/ipc.ts";
 import { frontContext } from "./front-app.ts";
@@ -1197,7 +1196,6 @@ export class Controller {
     this.hideTimer = null;
     const win = this.capsule;
     win.webContents.send("capsule:state", state);
-    this.cardSound(was, state); // after the state: the page times the Stamp by the card it has been sent
     if (state.kind === "hidden") {
       // A hidden panel can't be hovered, and no leave reaches it: the pointer that was on it (to press Hide, say) lets go of the hold
       // now, or the next card that hides itself would wait for a pointer that has gone (`scheduleHide`).
@@ -1229,77 +1227,17 @@ export class Controller {
     this.refreshMenu();
   }
 
-  /**
-   * The capsule page is listening: it may have missed the state sent while it loaded, and gets the commands held for it. A page that loads
-   * with sounds on is told so after them: it makes its AudioContext then, which takes it about a tenth of a second, and a held start must
-   * not wait behind that. A Tick doesn't wait behind it either: a sound isn't held for a page that isn't listening (`sound`), so the first
-   * Tick of the page's life is sent after this, to a page with its context made. With sounds off it is told nothing, which is how a page starts.
-   */
+  /** The capsule page is listening: it may have missed the state sent while it loaded, and gets the commands held for it. */
   capsuleReady(): void {
     this.capsuleListening = true;
     this.capsule.webContents.send("capsule:state", this.capsuleState);
     for (const command of this.heldCommands.splice(0)) this.capsule.webContents.send("capsule:command", command);
-    if (this.store.get().sounds) this.capsule.webContents.send("capsule:sounds-setting", true);
-  }
-
-  /**
-   * Tells the capsule's page that sounds went on or off (`capsule:sounds-setting`). On, it makes its AudioContext at once, so that the next
-   * Tick finds it made: opening the audio device takes about a tenth of a second, which the first Tick would otherwise spend on the page's
-   * thread, ahead of the recorder's start. Off, it closes the context, which lets go of the device. A page that isn't listening yet is told
-   * when it is (`capsuleReady`).
-   */
-  private tellSoundsSetting(on: boolean): void {
-    if (!this.capsuleListening || this.capsule.isDestroyed() || this.capsule.webContents.isDestroyed()) return;
-    this.capsule.webContents.send("capsule:sounds-setting", on);
   }
 
   /** A command for the capsule's recorder. Sent while its page loads, it would be lost: so it waits. */
   private capsuleCommand(command: "start" | "stop" | "cancel"): void {
     if (this.capsuleListening) this.capsule.webContents.send("capsule:command", command);
     else this.heldCommands.push(command);
-  }
-
-  /**
-   * Tells the capsule's page to play `name` (SoundName), and says whether it did. The page plays what it is told, so the rules are here:
-   * - While the setting is off nothing is sent.
-   * - While a recording runs only its own Tick and Tock are sent. The recorder keeps no echo cancellation (recorder.ts), so any other sound
-   *   would be heard in the words. A recording runs from `startRecording` until its audio arrives or it is given up.
-   * - A sound isn't held for a page that can't hear it yet, as a command is (`capsuleCommand`): it would come late, and a late sound is no
-   *   twin of what happened. Nor is one sent to a page that has gone.
-   * - Nothing is sent once Avanzel is quitting (`stopForQuit`): an evening review that the quit stopped still comes to its end, and its
-   *   Letter would play on the way out.
-   * The evening review asks whether its Letter was sent, since the review's notification makes no sound of its own then (`executeTask`);
-   * over a recording it is quiet all the same (`notify`).
-   */
-  private sound(name: SoundName): boolean {
-    if (this.quitting || !this.store.get().sounds || !this.capsuleListening) return false;
-    if (this.recording && name !== "tick" && name !== "tock") return false;
-    if (this.capsule.isDestroyed() || this.capsule.webContents.isDestroyed()) return false;
-    this.capsule.webContents.send("capsule:sound", name);
-    return true;
-  }
-
-  /**
-   * Whether a window may play a sound of its own now: setup's and Settings' Preview sounds, and the Stamp that says sounds are switched on
-   * (the bridge's `mayPlaySounds`). Not while a recording runs, as for the capsule's own sounds (`sound`) and for the same reason: the
-   * recorder keeps no echo cancellation (recorder.ts), so a sound from a window would be heard in the words. The windows play outside the
-   * setting, since Preview is for hearing the sounds before they are on, so this is all they ask. They ask right before each sound.
-   */
-  mayPlayWindowSounds(): boolean {
-    return !this.recording;
-  }
-
-  /**
-   * The sound a card makes as the capsule's state changes to `now`: the Stamp as a filed card is put up, and the Drawer as a filed card,
-   * or a saved one, is put away. The Undone card is a saved one (`undone`) that took a filing back: nothing was filed or saved, so it
-   * is not put in the drawer. A card that another card replaces is not put away either, and nor is a recording given up. A reprint
-   * (`reprint`) is a filed card printed again: nothing is filed as it shows, so no Stamp, and it was put in the drawer when it was
-   * filed, so no Drawer as it goes.
-   */
-  private cardSound(was: CapsuleState, now: CapsuleState): void {
-    if (now.kind === "filed") {
-      if (!now.reprint) this.sound("stamp");
-    } else if (now.kind === "hidden" && ((was.kind === "filed" && !was.reprint) || (was.kind === "saved" && !was.undone))) this.sound("drawer");
   }
 
   private scheduleHide(ms: number): void {
@@ -1501,10 +1439,6 @@ export class Controller {
       hint: this.hintFor(mode),
       ...(shot ? { thumbnail: shot.thumbnail, context: shot.context } : {}),
     });
-    // The Tick goes out before the recorder is told to start, and nothing waits for it: opening the microphone takes longer than the
-    // Tick lasts (getUserMedia, then the audio worklet, recorder.ts), so the Tick is usually over before anything is recorded. (A page
-    // whose audio has been quiet for 30 s wakes it first, from the listening card on: renderer/common/sounds.ts, `QUIET_MS`.)
-    this.sound("tick");
     this.capsuleCommand("start");
     try {
       shortcutApi().register("Escape", () => this.cancelRecording());
@@ -1557,9 +1491,6 @@ export class Controller {
     this.setCapsule({ kind: "transcribing", mode: recording.mode, onThisMac, ...(recording.shot ? { thumbnail: recording.shot.thumbnail, context: recording.shot.context } : {}) });
     this.transcribingCardOf = recording; // whose card it is: an older question's words, when they come, hide only their own (`heardQuestion`)
     this.setup.moveThought(recording, { kind: "transcribing", startedAt: Date.now(), onThisMac });
-    // Listening stops, as the card says it has. The Tock goes out ahead of the stop, and the page plays it once the stop has let go of the
-    // microphone, before the audio is sent: it is not heard in the recording, and it is no later than the card (the audio can be 38 MB).
-    this.sound("tock");
     this.capsuleCommand("stop");
     this.clearAudioTimeout();
     this.audioTimeout = setTimeout(() => {
@@ -1578,9 +1509,6 @@ export class Controller {
   cancelRecording(): void {
     const recording = this.recording;
     if (!recording) return;
-    // Listening stops here too, so it ends with a Tock, ahead of the cancel that lets go of the microphone. Not for a recording already
-    // stopped: its Tock was played with its stop.
-    if (!recording.stopping) this.sound("tock");
     this.abandonRecording(recording);
     this.setCapsule({ kind: "hidden" });
     this.setup.moveThought(recording, { kind: "waiting" });
@@ -3059,7 +2987,7 @@ export class Controller {
    * "Show the last receipt", from the menu: the open library's last filing, filed or noted, is put up again as a reprint, in the card's
    * own time (`FILED_SHOW_MS`; the pointer holds it as it holds any card). It is the same card with the pages it wrote that are still
    * there, Open, the line that the person's words were kept, and Undo while the menu would still take that filing back; but nothing is
-   * filed as it shows: its stamp is still and dated the day the thought was filed, no sound is sent (`cardSound`), the face doesn't wear
+   * filed as it shows: its stamp is still and dated the day the thought was filed, the face doesn't wear
    * its stamp (`markFiled` is not called) and no notification is posted. A receipt lasts for days and across restarts, and the person may
    * have renamed, moved or deleted a page since: its title and Open would open nothing (`openPage`), and Open puts the card away all the
    * same. So the pages are those that are plain files in the library when the item is chosen (`pageAt`), and a card left with none has no
@@ -3541,16 +3469,15 @@ export class Controller {
   }
 
   /**
-   * A notification, with macOS's sound. `silent`: without it, because something else has made the sound (the evening review's Letter, which
-   * is its sound). It is also without it, whoever posts it, while a recording runs, as the app's own sounds are (`sound`): the recorder keeps
-   * no echo cancellation (recorder.ts), so macOS's sound would be heard in the person's words, as the Letter's would. That rule lives here
-   * and nowhere else, so that no call site has to remember it: a filing that ends in the background mid-dictation, a failure, the evening
-   * review's end and its Undo, and the Undo pressed from the shortcut are all quiet then. `notified` keeps `silent` only on a silent one,
-   * so the tests' `{ title, body }` assertions stand for the others.
+   * A notification, with macOS's sound. It is without it, whoever posts it, while a recording runs: the recorder keeps no echo cancellation
+   * (recorder.ts), so macOS's sound would be heard in the person's words. That rule lives here and nowhere else, so that no call site has to
+   * remember it: a filing that ends in the background mid-dictation, a failure, the evening review's end and its Undo, and the Undo pressed
+   * from the shortcut are all quiet then. `notified` keeps `silent` only on a silent one, so the tests' `{ title, body }` assertions stand
+   * for the others.
    */
-  private notify(title: string, body: string, onClick?: () => void, silent = false): void {
+  private notify(title: string, body: string, onClick?: () => void): void {
     if (this.quitting) return;
-    const quiet = silent || this.recording !== null;
+    const quiet = this.recording !== null;
     if (process.env.AVANZEL_TEST === "1") {
       // The tests read `notified`, not the screen: no banner and no sound reach this Mac's Notification Centre.
       this.notified.push({ title, body, ...(quiet ? { silent: true as const } : {}) });
@@ -3741,7 +3668,6 @@ export class Controller {
    * set: on the step itself, or in Settings → Voice, where the step's Open Settings leads. Opening at login is saved,
    * and macOS's login items follow it in a packaged Avanzel. Not with AVANZEL_TEST=1, which leaves this Mac's login
    * items be, nor in a development run, whose app is node_modules' Electron.app: the setting is kept all the same.
-   * Sounds switched on or off, once saved, are told to the capsule's page (`tellSoundsSetting`).
    */
   private async changeApp(patch: Partial<AppSettings>, picked?: keyof Shortcuts): Promise<SettingsSnapshot> {
     const before = this.store.get();
@@ -3754,7 +3680,6 @@ export class Controller {
     if (patch.launchAtLogin !== undefined && process.env.AVANZEL_TEST !== "1" && app.isPackaged) {
       app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
     }
-    if (before.sounds !== after.sounds) this.tellSoundsSetting(after.sounds);
     this.broadcast();
     return this.snapshot();
   }
@@ -4370,12 +4295,8 @@ export class Controller {
           ranToItsEnd = true;
           filedNothing = !result.outcomes.length;
           this.fallAsleep(); // it ran to its end, whatever it found to file
-          // The Letter plays as the review ends, whatever it found to file, and with it the review's notification makes no sound of its
-          // own: the Letter is its sound (spec §8, "Passive (silent)"). With sounds off, or as Avanzel quits, none is sent, and macOS's
-          // sound stays. Over a recording none is sent either, and `notify` keeps macOS's sound out of the person's words.
-          const silent = this.sound("letter");
           if (filedNothing) {
-            this.notify(task.name, nothingFiled(left.size), undefined, silent);
+            this.notify(task.name, nothingFiled(left.size));
             return;
           }
           const filedIds = new Set(result.outcomes.filter((o) => o.ok).map((o) => o.captureId));
@@ -4389,7 +4310,6 @@ export class Controller {
             `${task.name}: ${filed} ${filed === 1 ? "thought" : "thoughts"} filed`,
             failed.length ? notFiled(failed, filed) : `${agent} sorted today's inbox. Click to read the summary.`,
             digest ? () => this.openPage(path.relative(this.requireVault().root, digest)) : undefined,
-            silent,
           );
         } finally {
           if (!filedNothing) this.clearLastFiled(library.root);

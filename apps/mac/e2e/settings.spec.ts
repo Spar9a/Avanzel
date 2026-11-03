@@ -5,28 +5,21 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { launchOn, sleep } from "./capsule-helpers.ts";
 import {
   agentCalls,
   answerDialogs,
   answerMenus,
-  audioContexts,
   call,
-  capsuleKind,
   emptyHfCache,
-  expectPreviewPlayed,
   launch,
   makeLibrary,
-  muteWindows,
   openedWith,
   openSettings,
-  played,
   read,
   shownMenus,
   snap,
   stubOpening,
   stubPicker,
-  watchAudioContexts,
   windowFor,
 } from "./helpers.ts";
 
@@ -91,38 +84,20 @@ test("General shows the library with its shelves, and each of its controls appli
   await app.close();
 });
 
-test("Settings has Play sounds, off, in a group of its own before Startup, and switching it on plays the Stamp", async () => {
+test("Settings has no sounds: General ends with its Startup group", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app);
-  await muteWindows(app); // the page plays all the same; the Mac it runs on does not hear it
-  await settings.evaluate(watchAudioContexts);
-  expect((await settings.getByRole("heading", { level: 3 }).allTextContents()).slice(-2)).toEqual(["Sounds", "Startup"]);
-  const sounds = settings.getByRole("switch", { name: "Play sounds" });
-  await expect(sounds).toHaveAttribute("aria-checked", "false");
-  await expect(sounds).toHaveAccessibleDescription(
-    "A tick and a tock as you start and stop recording, a stamp and a whoosh as the capsule files a card and puts it away, and two soft bell tones when the evening review is done.",
-  );
-  expect((await snapshot(app)).app.sounds).toBe(false);
-  expect(await played(settings)).toEqual([]);
-  // On: saved, and the Stamp is played, as the sign that it is on.
-  await sounds.click();
-  await expect.poll(async () => (await snapshot(app)).app.sounds).toBe(true);
-  await expect(sounds).toHaveAttribute("aria-checked", "true");
-  await expect.poll(() => played(settings)).toEqual(["stamp"]);
-  expect(await audioContexts(settings)).toHaveLength(1);
-  // Off: saved, nothing is played, and the page lets go of its audio device.
-  await sounds.click();
-  await expect.poll(async () => (await snapshot(app)).app.sounds).toBe(false);
-  await expect(sounds).toHaveAttribute("aria-checked", "false");
-  expect(await played(settings)).toEqual(["stamp"]);
-  await expect.poll(() => audioContexts(settings)).toEqual(["closed"]);
+  expect((await settings.getByRole("heading", { level: 3 }).allTextContents()).slice(-1)).toEqual(["Startup"]);
+  await expect(settings.getByRole("switch", { name: "Play sounds" })).toHaveCount(0);
+  await expect(settings.getByRole("button", { name: "Preview sounds" })).toHaveCount(0);
+  expect(Object.keys((await snapshot(app)).app)).not.toContain("sounds");
   await app.close();
 });
 
 test("Settings opens on General at its default size without a scroll, with the Startup switch in view", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app);
-  // General with its Library, After you speak, Sounds and Startup groups needs 557 px of pane: the window gives it room (the pane scrolls when
+  // General with its Library, After you speak and Startup groups needs less than 557 px of pane: the window gives it room (the pane scrolls when
   // another pane or a Notice needs more, and the window's least height stays).
   const { size, least, workArea } = await app.evaluate(({ BrowserWindow, screen }) => {
     const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes("/renderer/settings/"))!;
@@ -145,56 +120,6 @@ test("the Reviews pane names the evening review's Undo as the menu bar menu does
   const settings = await openSettings(app, "Reviews");
   const evening = settings.getByRole("group", { name: "Evening review", exact: true });
   await expect(evening.getByText("Undo the last evening review, in the menu bar menu, takes back its last run.", { exact: true })).toBeVisible();
-  await app.close();
-});
-
-test("Settings has Preview sounds under Play sounds, in its group, and it plays four sounds whatever the setting", async () => {
-  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
-  const settings = await openSettings(app);
-  await muteWindows(app);
-  const sounds = settings.getByRole("switch", { name: "Play sounds" });
-  const group = settings.locator("section").filter({ has: sounds }); // the Sounds group, which Group draws as a section
-  const preview = group.getByRole("button", { name: "Preview sounds" });
-  await expect(preview).toHaveAttribute("data-variant", "secondary");
-  await expect(preview).toHaveAttribute("data-size", "small");
-  // Right under the switch's row, in its panel and in line with its label, so it is plainly the switch's: nearer to it than to the next group.
-  const row = (await sounds.locator("xpath=..").boundingBox())!;
-  const button = (await preview.boundingBox())!;
-  const next = (await settings.getByRole("heading", { level: 3, name: "Startup" }).boundingBox())!;
-  expect(button.y, "below the switch's row").toBeGreaterThanOrEqual(row.y + row.height);
-  expect(button.y - (row.y + row.height), "nearer to the switch than to the next group").toBeLessThan(next.y - (button.y + button.height));
-  expect(Math.abs(button.x - row.x - 12), "in line with the switch's label, 12 in from the panel's edge").toBeLessThan(1.5);
-  // It plays the Tick, the Stamp, the Drawer and the Letter, though sounds are off, and they stay off.
-  await expect(sounds).toHaveAttribute("aria-checked", "false");
-  await preview.click();
-  await expectPreviewPlayed(settings);
-  expect((await snapshot(app)).app.sounds).toBe(false);
-  await expect(sounds).toHaveAttribute("aria-checked", "false");
-  await app.close();
-});
-
-test("Settings' Preview sounds and Play sounds stay quiet while a recording runs, and play once it is over", async () => {
-  const { app } = await launchOn(await makeLibrary());
-  const settings = await openSettings(app);
-  await muteWindows(app);
-  const sounds = settings.getByRole("switch", { name: "Play sounds" });
-  const preview = settings.getByRole("button", { name: "Preview sounds" });
-  await call(app, "toggleDictate"); // Record a thought: the capsule listens
-  await expect.poll(() => capsuleKind(app)).toBe("listening");
-  await preview.click();
-  await sounds.click();
-  await expect.poll(async () => (await snapshot(app)).app.sounds).toBe(true); // switched on and saved all the same
-  await sleep(1_500); // longer than the Preview takes: a sound that was not held back has been played by now
-  expect(await played(settings), "no sound of the window's own is played over a recording").toEqual([]);
-  // The recording is given up. Now the window's sounds are heard, the Stamp for switching on among them.
-  await call(app, "cancelRecording");
-  await expect.poll(() => capsuleKind(app)).toBe("hidden");
-  await preview.click();
-  await expectPreviewPlayed(settings);
-  await sounds.click(); // off
-  await expect.poll(async () => (await snapshot(app)).app.sounds).toBe(false);
-  await sounds.click(); // and on again
-  await expect.poll(() => played(settings)).toEqual(["tick", "stamp", "drawer", "letter", "stamp"]);
   await app.close();
 });
 
@@ -559,24 +484,21 @@ test("an app setting the disk won't take is told as Avanzel's own, in plain word
   await app.close();
 });
 
-test("Play sounds that can't be saved is told, stays off and plays no Stamp, and works once the settings can be written", async () => {
+test("A switch that can't be saved is told and stays off, and works once the settings can be written", async () => {
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
   const settings = await openSettings(app);
-  await muteWindows(app);
   // The app can't write its settings when a folder stands where the temporary file it writes first would go.
   mkdirSync(path.join(userData, "settings.json.tmp"));
-  const sounds = settings.getByRole("switch", { name: "Play sounds" });
-  await sounds.click();
+  const login = settings.getByRole("switch", { name: "Open Avanzel when you log in" });
+  await login.click();
   await expect(notSaved(settings)).toBeVisible();
-  await expect(sounds).toHaveAttribute("aria-checked", "false");
-  expect((await snapshot(app)).app.sounds).toBe(false);
-  expect(await played(settings), "the Stamp is the sign that sounds are on, and they are not").toEqual([]);
+  await expect(login).toHaveAttribute("aria-checked", "false");
+  expect((await snapshot(app)).app.launchAtLogin).toBe(false);
   rmSync(path.join(userData, "settings.json.tmp"), { recursive: true });
-  await sounds.click();
-  await expect.poll(async () => (await snapshot(app)).app.sounds).toBe(true);
+  await login.click();
+  await expect.poll(async () => (await snapshot(app)).app.launchAtLogin).toBe(true);
   await expect(notSaved(settings)).toHaveCount(0);
-  await expect.poll(() => played(settings)).toEqual(["stamp"]);
   await app.close();
 });
 

@@ -222,13 +222,6 @@ export interface Shortcuts {
 
 export type FileMode = "now" | "evening";
 
-/**
- * The app's five quiet sounds (spec §4.6), each the twin of something the person sees: the Tick as listening starts, the Tock as it
- * stops, the Stamp as a filed card is stamped, the Drawer as a filed or saved card is put away, and the Letter as the evening review
- * is done. The capsule's page plays them (`renderer/common/sounds.ts`) when main sends the name (`capsule:sound`).
- */
-export type SoundName = "tick" | "tock" | "stamp" | "drawer" | "letter";
-
 export interface AppSettings {
   version: 1;
   libraryPath: string | null;
@@ -236,8 +229,6 @@ export interface AppSettings {
   fileMode: FileMode;
   microphoneId: string | null;
   launchAtLogin: boolean;
-  /** Play the five sounds (`SoundName`). Off until the person turns it on: while it is off, main sends the capsule's page no sound at all. */
-  sounds: boolean;
 }
 
 export type PermissionStatus = "granted" | "denied" | "not-determined" | "restricted" | "unknown";
@@ -632,8 +623,6 @@ export interface SetupSnapshot {
   launchAtLogin: boolean;
   /** The library's evening review, the shadow task whose kind is "evening-review"; null without a library, or one that has none. */
   eveningReview: TaskInfo | null;
-  /** The five sounds are on (AppSettings.sounds): off until the person switches them on, as the last step offers. */
-  sounds: boolean;
 }
 
 /** What Zel's bubble says, once setup has ended in the menu bar. */
@@ -715,17 +704,6 @@ export interface AvanzelBridge {
     /** Listening now: send the current state again (one sent while the page loaded is lost). */
     ready(): void;
     onCommand(callback: (command: "start" | "stop" | "cancel") => void): () => void;
-    /**
-     * A sound to play (`SoundName`), sent only while the person has sounds on. The Tick comes before `start`, and the Tock before the
-     * `stop` or `cancel` that ends the recording: the page plays that one once the command has let go of the microphone, not before.
-     */
-    onSound(callback: (name: SoundName) => void): () => void;
-    /**
-     * Whether sounds are on (AppSettings.sounds), told when they are switched on or off and when the page loads with them on: not when it
-     * loads with them off, which is how it starts. The page makes its AudioContext on `true`, so that the first Tick doesn't wait for the
-     * audio device to open, and closes it on `false`, which lets go of the device.
-     */
-    onSoundsSetting(callback: (on: boolean) => void): () => void;
     sendAudio(samples: Float32Array): Promise<void>;
     reportMicError(message: string): void;
     setInteractive(interactive: boolean): void;
@@ -773,12 +751,6 @@ export interface AvanzelBridge {
     /** Settings is open and something else (an error card's Open Settings) asks for another pane. */
     onShowPane(callback: (pane: SettingsPane) => void): () => void;
     setApp(patch: Partial<AppSettings>): Promise<SettingsSnapshot>;
-    /**
-     * Whether a window may play a sound of its own now: Preview sounds, in setup and in Settings, and the Stamp that says sounds are
-     * switched on. Not while a recording runs: the recorder keeps no echo cancellation, so the sound would be heard in the words, as the
-     * capsule's own are kept out of them (the controller's `sound`). A window asks right before it plays, and plays only on true.
-     */
-    mayPlaySounds(): Promise<boolean>;
     setLibrary(patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }): Promise<SettingsSnapshot>;
     chooseLibrary(): Promise<SettingsSnapshot>;
     downloadModel(): Promise<SettingsSnapshot>;

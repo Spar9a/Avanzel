@@ -82,16 +82,12 @@ Good to know:
   the other four: Settings → Voice records it. **Show the last receipt**, right above Undo, reopens
   the last filing's card (filed, or noted) with the pages that are still there, Open, and Undo while
   that filing can still be taken back, also after a restart. Its stamp is still and dated the day
-  the thought was filed, and it makes no sound. It and ⌥⇧Z's "no filing" bar come only when the
+  the thought was filed. It and ⌥⇧Z's "no filing" bar come only when the
   capsule shows nothing or a finished card, never over a recording, a filing, a review or a problem.
   When the engine had to put your words back after the agent changed them, the card says "Your exact
   words are kept." A thought with no words says "No comment" instead.
-- **Play sounds** in Settings → General (off by default; setup's last step offers it too) adds a
-  tick and a tock as you start and stop recording, a stamp and a whoosh as the capsule files a card
-  and puts it away, and two soft bell tones when the evening review is done. **Preview sounds**
-  plays them first. While you record, nothing but the tick and the tock plays, and Avanzel's
-  notifications are silent too, with sounds on or off, so that macOS's sound is not heard in your
-  words.
+- **No sounds.** Avanzel makes none of its own. While you record, its notifications are silent, so
+  that macOS's sound is not heard in your words.
 - **Screen Recording**: macOS applies the permission only to a fresh start of the app. After you
   allow Avanzel in System Settings → Privacy & Security → Screen Recording, quit and reopen it.
 - **Quitting** while your agent is filing stops the agent; what it had changed is kept as its own

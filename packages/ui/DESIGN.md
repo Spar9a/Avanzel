@@ -106,13 +106,13 @@ The tokens handle light and dark, Increase Contrast and Reduce Transparency, so 
 - Quiet mode (`<html data-zel="quiet">`) leaves a plain stamp with no face.
 - Draw Zel only through `<Zel>`. The menu bar face comes from `menuBarFaceSvg()` in `@avanzel/ui/menu-bar`.
 
-## Motion and sound
+## Motion
 
 There is one orchestrated moment per surface: Zel stamping, the filing show, the setup window flying into the menu bar. Everything else is a quick reply to something the person did.
 
 Things that land use `ease-land`; things that leave use `ease-leave`. Reduce Motion ends every move at once, and the final frame is always the resting state.
 
-Sounds are off by default and always come with a visual twin.
+Avanzel makes no sounds of its own.
 
 ## Accessibility
 

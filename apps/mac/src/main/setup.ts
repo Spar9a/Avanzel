@@ -408,7 +408,6 @@ export class Setup {
       answer: this.session?.answer ?? null,
       launchAtLogin: this.host.settings().launchAtLogin,
       eveningReview: this.eveningReview(),
-      sounds: this.host.settings().sounds,
     };
   }
 

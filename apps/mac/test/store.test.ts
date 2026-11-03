@@ -43,25 +43,16 @@ describe("settings store", () => {
     expect(normalizeSettings({ shortcuts: four }).shortcuts).toEqual({ ...four, undo: "Alt+Shift+Z" });
   });
 
-  it("starts with sounds off, and only true turns them on", () => {
-    expect(DEFAULT_SETTINGS.sounds).toBe(false);
-    expect(new SettingsStore(path.join(tmp(), "settings.json")).get().sounds).toBe(false);
-    expect(normalizeSettings({}).sounds).toBe(false);
-    expect(normalizeSettings({ sounds: true }).sounds).toBe(true);
-    // Anything else, however it came to be in the file, is off: a setting that plays sounds is one the person turned on.
-    for (const wrong of [false, "true", "yes", 1, null, undefined, {}, []]) expect(normalizeSettings({ sounds: wrong }).sounds, String(wrong)).toBe(false);
-  });
-
-  it("keeps the sounds setting from one run to the next", () => {
+  it("drops the sounds setting an older file has: the app has no sounds", () => {
+    expect("sounds" in DEFAULT_SETTINGS).toBe(false);
+    expect("sounds" in normalizeSettings({ sounds: true })).toBe(false);
     const file = path.join(tmp(), "settings.json");
+    writeFileSync(file, JSON.stringify({ version: 1, sounds: true, fileMode: "evening" }));
     const store = new SettingsStore(file);
-    store.update({ sounds: true });
-    expect(JSON.parse(readFileSync(file, "utf8")).sounds).toBe(true);
-    expect(new SettingsStore(file).get().sounds).toBe(true);
-    store.update({ fileMode: "evening" }); // another change leaves it be
-    expect(new SettingsStore(file).get().sounds).toBe(true);
-    store.update({ sounds: false });
-    expect(new SettingsStore(file).get().sounds).toBe(false);
+    expect("sounds" in store.get()).toBe(false);
+    expect(store.get().fileMode).toBe("evening");
+    store.update({ launchAtLogin: true }); // the next write leaves it out of the file
+    expect("sounds" in JSON.parse(readFileSync(file, "utf8"))).toBe(false);
   });
 
   it("survives a corrupt file and persists updates", () => {

@@ -568,10 +568,10 @@ test("every setup step and the bubble are readable in light and dark", async () 
   await expect(setup.getByText("Pages I used:", { exact: true })).toBeVisible({ timeout: 30_000 });
   found.push(...(await readable(app, setup, "Setup › Ask, answered", desktops)));
 
-  // Done, with its three switches (opening at login, the evening review, Play sounds) and Preview sounds.
+  // Done, with its two switches (opening at login, the evening review).
   await setup.getByRole("button", { name: "Continue" }).click();
   await expect(setup.getByRole("heading", { name: "You're all set." })).toBeVisible();
-  await expect(setup.getByRole("switch")).toHaveCount(3);
+  await expect(setup.getByRole("switch")).toHaveCount(2);
   found.push(...(await readable(app, setup, "Setup › Done", desktops)));
 
   // Start using Avanzel flies the window to the icon, and Zel's bubble opens under it.
