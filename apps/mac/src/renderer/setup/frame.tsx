@@ -1,7 +1,7 @@
 // What every setup step stands in: a strip to drag the window by, the stage on the left beside the step on the right,
 // and a footer with the speech model's download on the left and the step's buttons on the right.
 import { Actions, Button, Progress, Row, Stage, Text } from "@avanzel/ui";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ModelStatus, SetupSnapshot, SetupStep } from "../../shared/ipc.ts";
 import { megabytes } from "./copy.ts";
 
@@ -33,13 +33,20 @@ export function useNow(ms: number): number {
 }
 
 export function Frame({ stage, children, actions, model }: { stage: ReactNode; children: ReactNode; actions?: ReactNode; model: ModelStatus }) {
+  const step = useRef<HTMLElement>(null);
+  // A step that has just appeared puts focus on its heading, so VoiceOver reads where it is. A step with a field of its own has
+  // claimed focus by now (its autoFocus), and keeps it.
+  useEffect(() => {
+    if (document.activeElement && document.activeElement !== document.body) return;
+    step.current?.querySelector<HTMLElement>("[tabindex='-1']")?.focus();
+  }, []);
   return (
     <div className="frame">
       <div className="drag" />
       <div className="stage">
         <Stage>{stage}</Stage>
       </div>
-      <main className="step">{children}</main>
+      <main className="step" ref={step}>{children}</main>
       <footer className="footer">
         <div className="download">
           <Download model={model} />

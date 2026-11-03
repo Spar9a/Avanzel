@@ -8,7 +8,7 @@
 // focus again.
 // Looks good (Use this folder, when the folder holds files or a library already) makes the library there with the
 // chosen agent. Zel waits on the stage, looking at the step, and is worried while a problem there needs the person.
-import { Actions, Button, Group, GroupRow, Icon, Notice, Row, Stack, Text, Zel } from "@avanzel/ui";
+import { Actions, Badge, Button, Group, GroupRow, Icon, Notice, Row, Stack, Text, Zel } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AGENT_INSTALLS, agentWorks, type AgentInstall, type SetupAgent, type SetupSnapshot } from "../../../shared/ipc.ts";
 import { agentLine, agentProblemTitle, isAgentProblem, ownLine, placeLine, tooBroadLine, type AgentProblem } from "../copy.ts";
@@ -95,7 +95,7 @@ export function Found({ snap, go }: StepProps) {
     >
       {/* 12 between the sections, as on Hello. Two agents and a new library fit; more scroll under the footer. */}
       <Stack gap={12}>
-        <Text variant="heading">Here's what I found.</Text>
+        <Text variant="heading" focusable>Here's what I found.</Text>
         <Group label="Your library">
           <GroupRow label={place.libraryLabel} description={place.tooBroad ? tooBroadLine(place.libraryLabel, place.tooBroad) : placeLine(place.folder, place.gitUsable)}>
             {/* While the problem shows, its own Change… is the way out: no screen has two buttons of one name. */}
@@ -135,7 +135,7 @@ export function Found({ snap, go }: StepProps) {
             >
               {snap.agents.map((agent) => (
                 <GroupRow key={agent.name} label={agent.label} description={agentLine(agent.status)}>
-                  {agent.name === "claude" && <Text variant="caption" tone="accent">Best results</Text>}
+                  {agent.name === "claude" && <Badge>Best results</Badge>}
                   {agent.name === snap.agent ? (
                     <span ref={chosenRef} className="found-chosen">
                       <Icon name="check" label="Chosen" />

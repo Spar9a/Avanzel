@@ -51,17 +51,22 @@ export interface ShelfTagProps {
   shelf: Shelf;
   /** chip: inline, as in a receipt or under an answer. tab: a divider tab, as in the drawer. */
   variant?: "chip" | "tab";
-  /** A count badge on a tab: how many cards just went in. */
+  /** A count badge on a tab: how many pages. VoiceOver reads it as "1 page" or "3 pages". */
   count?: number;
+  /** The count is how many pages the shelf holds, not how many just went in, so it shows at 0 too. */
+  total?: boolean;
 }
 
+const pages = (count: number) => `${count} ${count === 1 ? "page" : "pages"}`;
+
 /** A shelf with its colour, its glyph and its name, always all three. */
-export function ShelfTag({ shelf, variant = "chip", count }: ShelfTagProps) {
+export function ShelfTag({ shelf, variant = "chip", count, total }: ShelfTagProps) {
+  const counted = variant === "tab" && count !== undefined && (total || count > 0);
   return (
     <span className="av-shelf-tag" data-variant={variant} data-shelf={shelf}>
       <ShelfGlyph shelf={shelf} size={variant === "tab" ? 9 : 10} />
       <span className="av-shelf-name">{SHELF_NAMES[shelf]}</span>
-      {variant === "tab" && count !== undefined && count > 0 && <span className="av-shelf-count" aria-label={`${count} new`}>{count}</span>}
+      {counted && <span className="av-shelf-count" aria-label={pages(count)}>{count}</span>}
     </span>
   );
 }

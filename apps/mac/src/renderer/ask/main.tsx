@@ -244,7 +244,7 @@ function Ask() {
         {turns.length === 0 ? (
           <>
             <div className="ask-empty">
-              <Text variant="callout" tone="secondary">{emptyLine(pages)}</Text>
+              <Text variant="callout" tone="secondary" align="center">{emptyLine(pages)}</Text>
             </div>
             {suggestions.length > 0 && (
               // Before the first question only. Ask this asks the question as a new turn, which takes them away, and gives the field
@@ -525,7 +525,7 @@ function Answer({ result }: { result: AskResult }) {
           {result.sources.map((page) => (
             <Row key={page.path} gap={6} wrap>
               {isShelf(page.shelf) && <ShelfTag shelf={page.shelf} />}
-              <Button variant="link" onClick={() => api.openPage(pageName(page.path))}>{sourceTitle(page.title)}</Button>
+              <Button variant="page" wrap onClick={() => api.openPage(pageName(page.path))}>{sourceTitle(page.title)}</Button>
             </Row>
           ))}
         </Stack>

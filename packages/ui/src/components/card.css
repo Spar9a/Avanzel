@@ -22,6 +22,9 @@
   color: var(--av-ink-secondary);
   border-bottom: 1.5px solid var(--av-paper-rule-red);
 }
+/* One line each: a meta line that is too long gives way to the label with an ellipsis, never wrapping out of the head. */
+.av-card-head > span { white-space: nowrap; }
+.av-card-head > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .av-card-lines {
   min-height: 42px;
   padding: 1px 12px 0;

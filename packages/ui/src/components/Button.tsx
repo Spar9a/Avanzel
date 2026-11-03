@@ -4,13 +4,16 @@ import "../foundations.css";
 import "./button.css";
 
 /** primary: the one action the moment is about. secondary: the others. quiet: dismissals such as
-    "Not now". link: an action inside text. danger: an action that deletes or can't be undone. */
-export type ButtonVariant = "primary" | "secondary" | "quiet" | "link" | "danger";
+    "Not now". link: an action inside text. danger: an action that deletes or can't be undone.
+    page: opens a page of the library, as the sources under an answer do, so it reads as a page and not as a link. */
+export type ButtonVariant = "primary" | "secondary" | "quiet" | "link" | "danger" | "page";
 export type ButtonSize = "small" | "regular" | "large";
 
 interface Common {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  /** Let a long label wrap onto more lines, the button growing taller. Without it the label stays on one line. */
+  wrap?: boolean;
   disabled?: boolean;
   /** Shows a spinner and ignores clicks while the work runs. The label stays, saying what runs. */
   busy?: boolean;
@@ -36,7 +39,7 @@ interface IconOnly extends Common {
 export type ButtonProps = Labelled | IconOnly;
 
 export function Button(props: ButtonProps) {
-  const { variant = "secondary", size = "regular", disabled, busy, type = "button", autoFocus, onClick, icon, children, label } = props;
+  const { variant = "secondary", size = "regular", wrap, disabled, busy, type = "button", autoFocus, onClick, icon, children, label } = props;
   const iconOnly = children === undefined;
   return (
     <button
@@ -44,6 +47,7 @@ export function Button(props: ButtonProps) {
       className="av-button"
       data-variant={variant}
       data-size={size}
+      data-wrap={wrap ? "" : undefined}
       data-icon-only={iconOnly ? "" : undefined}
       disabled={disabled}
       aria-busy={busy || undefined}

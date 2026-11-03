@@ -6,7 +6,7 @@ import "./card.css";
 export interface CardProps {
   /** The small line above the red rule, on the left: "Thought", "Ideas", "Question". */
   label?: string;
-  /** The small line on the right: a time, a date, "of about 15". */
+  /** The small line on the right: a short line, such as a time, a date or "of about 15". A line too long for the head is cut with an ellipsis. */
   meta?: string;
   /** small: the capsule and setup, 21 px lines. regular: reading, 26 px lines. */
   size?: "small" | "regular";

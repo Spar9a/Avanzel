@@ -44,7 +44,7 @@ export function Filing({ snap, go }: StepProps) {
     <Frame model={snap.model} stage={<FilingStage filing={filing} />} actions={filing.kind === "running" ? undefined : onward}>
       <Stack gap={12}>
         <div role="status">
-          <Text variant="heading">{heading(filing)}</Text>
+          <Text variant="heading" focusable>{heading(filing)}</Text>
         </div>
         {filing.kind === "running" && <Working filing={filing} />}
         {filing.kind === "filed" && <Outcome filing={filing} where={snap.libraryLabel} inObsidian={snap.opensInObsidian} />}

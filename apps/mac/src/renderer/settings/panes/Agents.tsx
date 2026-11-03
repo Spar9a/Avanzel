@@ -2,7 +2,7 @@
 // the one that files and answers, Check asks it again, and an agent this Mac doesn't have offers its install command,
 // where it has one. The last row hands the choice back to Avanzel, and the agent in use names its model. Each control
 // applies at once. The pane needs a library: without one the shell draws NoLibrary in its place.
-import { Button, Group, GroupRow, Icon, Row, Stack, Text, TextField } from "@avanzel/ui";
+import { Badge, Button, Group, GroupRow, Icon, Row, Stack, Text, TextField } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { harnessName } from "../../../main/jobs.ts";
 import { AGENT_INSTALLS, isAgentProblem, type AgentInstall, type HarnessInfo } from "../../../shared/ipc.ts";
@@ -77,7 +77,7 @@ function AgentRow({ agent, chosen, inUse, checked, asked, copied, onUse, onCheck
           <span className="settings-status" role={asked ? "status" : undefined}>
             <Text variant="footnote" tone={tone} as="span">{statusWords(agent, tone)}</Text>
           </span>
-          {name === "claude" && <Text variant="caption" tone="accent">Best results</Text>}
+          {name === "claude" && <Badge>Best results</Badge>}
           {chosen ? (
             <Icon name="check" label="Chosen" />
           ) : (

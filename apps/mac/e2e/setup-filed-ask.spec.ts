@@ -297,7 +297,7 @@ test("an answer's links become the pages it used", async () => {
   await expect(setup.getByText("Pages I used:", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(setup.getByText("Ideas", { exact: true })).toBeVisible(); // the page's shelf
   const source = setup.getByRole("button", { name: "Plant tulips in October", exact: true });
-  await expect(source).toHaveAttribute("data-variant", "link");
+  await expect(source).toHaveAttribute("data-variant", "page");
   // In the answer the link reads as the words it gives; its page's title opens it.
   await expect(setup.getByText(`Q: What is in ${name}?`, { exact: true })).toBeVisible();
   await stubOpening(app);

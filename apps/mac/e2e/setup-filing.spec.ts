@@ -126,16 +126,16 @@ test("the shelf tabs count the pages while the filing runs", async () => {
   const working = await whileWorking(setup);
   const idea = working.findIndex((shown) => rowsOf(shown).includes("New idea page: Call the vet on Monday"));
   expect(idea).toBeGreaterThan(0);
-  // No tab counted anything before the idea's page was written. As its row showed, Ideas counted one, labelled "1 new",
+  // No tab counted anything before the idea's page was written. As its row showed, Ideas counted one, labelled "1 page",
   // and no other tab did; the index and the log are on no shelf, so it stayed so while the rest of the steps came.
   for (const shown of working.slice(0, idea)) expect(shown.counts).toEqual([]);
   for (const shown of working.slice(idea)) {
     expect(shown.tabs).toEqual(["Goals", "Ideas1", "Problems", "Memories", "People", "Topics"]);
-    expect(shown.counts).toEqual(["1 new"]);
+    expect(shown.counts).toEqual(["1 page"]);
   }
   // Once filed, the tabs count the same.
   await expect(tabs(setup)).toHaveText(["Goals", "Ideas1", "Problems", "Memories", "People", "Topics"]);
-  await expect(setup.getByLabel("1 new")).toBeVisible();
+  await expect(setup.getByLabel("1 page")).toBeVisible();
   await app.close();
 });
 

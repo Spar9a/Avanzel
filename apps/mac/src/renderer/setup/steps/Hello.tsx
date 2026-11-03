@@ -37,7 +37,7 @@ export function Hello({ snap, go }: StepProps) {
       actions={<Button variant="primary" size="large" onClick={() => go("found")}>Set me up</Button>}
     >
       <Stack gap={12}>
-        <Text variant="heading">Hi, I'm Zel.</Text>
+        <Text variant="heading" focusable>Hi, I'm Zel.</Text>
         <Text variant="callout">
           Talk to me anytime with <Kbd>{prettyAccelerator(snap.shortcut)}</Kbd>. I write each thought on a card and file it in a library of plain notes on your Mac.
         </Text>

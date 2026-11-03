@@ -4,6 +4,7 @@
 export { Text, type TextProps, type TextVariant, type TextTone } from "./components/Text.tsx";
 export { Stack, Row, Spacer, type StackProps, type RowProps } from "./components/Layout.tsx";
 export { Button, type ButtonProps, type ButtonVariant, type ButtonSize } from "./components/Button.tsx";
+export { Badge, type BadgeProps } from "./components/Badge.tsx";
 export { Actions, type ActionsProps } from "./components/Actions.tsx";
 export { Switch, type SwitchProps } from "./components/Switch.tsx";
 export { Segmented, type SegmentedProps, type SegmentedOption } from "./components/Segmented.tsx";

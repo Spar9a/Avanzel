@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ElementType, ReactNode, Ref } from "react";
 import "../foundations.css";
 import "./text.css";
 
@@ -35,15 +35,23 @@ export interface TextProps {
   numeric?: boolean;
   /** For the user's words: italic, as a quotation or a hint. */
   italic?: boolean;
+  /** Centre the lines, wrapped so that none ends on a lone word. */
+  align?: "center";
+  /** Lets code move focus here (ref.current?.focus()), as setup does to its heading when the step changes, so VoiceOver reads it. It is not a tab stop. */
+  focusable?: boolean;
+  ref?: Ref<HTMLElement>;
   id?: string;
   children: ReactNode;
 }
 
-export function Text({ variant = "body", tone = "default", as, truncate, numeric, italic, id, children }: TextProps) {
-  const Tag = as ?? ELEMENT[variant];
+export function Text({ variant = "body", tone = "default", as, truncate, numeric, italic, align, focusable, ref, id, children }: TextProps) {
+  const Tag = (as ?? ELEMENT[variant]) as ElementType;
   return (
     <Tag
+      ref={ref}
       id={id}
+      tabIndex={focusable ? -1 : undefined}
+      data-align={align}
       className="av-text"
       data-variant={variant}
       data-tone={tone === "default" ? undefined : tone}

@@ -4,7 +4,7 @@
 // main.tsx mounts it in a browser; static.tsx renders it to plain HTML for a preview.
 import { useState, type CSSProperties, type ReactNode } from "react";
 import {
-  Actions, Bubble, Button, CapsuleBar, CapsuleNotice, Card, Group, GroupRow, Hud, Icon, ICON_NAMES, Kbd, Letter, Link, Notice,
+  Actions, Badge, Bubble, Button, CapsuleBar, CapsuleNotice, Card, Group, GroupRow, Hud, Icon, ICON_NAMES, Kbd, Letter, Link, Notice,
   PermissionPrimer, Progress, Receipt, Row, Segmented, SHELVES, SHELF_NAMES, ShelfGlyph, ShelfMark, ShelfTag, Spacer, Spinner,
   Stack, Stage, Stamp, Switch, Text, TextArea, TextField, Wave, Zel, type ZelMood,
 } from "../src/index.ts";
@@ -49,7 +49,7 @@ const MOODS: [ZelMood, string, string][] = [
 ];
 
 function Controls() {
-  const [sounds, setSounds] = useState(true);
+  const [login, setLogin] = useState(true);
   const [desk, setDesk] = useState(false);
   const [mode, setMode] = useState<"auto" | "screen" | "type">("auto");
   const [library, setLibrary] = useState("~/Avanzel");
@@ -58,7 +58,7 @@ function Controls() {
   return (
     <Stack gap={16}>
       <Stack gap={10}>
-        <Switch label="Sounds" description="A soft stamp when a thought is filed." checked={sounds} onChange={setSounds} />
+        <Switch label="Open Avanzel at login" description="Avanzel waits in the menu bar." checked={login} onChange={setLogin} />
         <Switch label="Keep Zel on my desktop" checked={desk} onChange={setDesk} />
         <Switch label="Evening letter" checked={false} onChange={() => {}} disabled />
       </Stack>
@@ -151,7 +151,7 @@ export function Gallery() {
         )}
       </Specimen>
 
-      <Specimen id="controls" title="Controls" use="Settings apply at once. Every field has a label, even when it is hidden." code={'<Switch label="Sounds" checked={on} onChange={setOn} />'}>
+      <Specimen id="controls" title="Controls" use="Settings apply at once. Every field has a label, even when it is hidden." code={'<Switch label="Open Avanzel at login" checked={on} onChange={setOn} />'}>
         {() => <Controls />}
       </Specimen>
 
@@ -253,10 +253,10 @@ export function Gallery() {
         )}
       </Specimen>
 
-      <Specimen id="settings" title="Settings" use="Grouped rows, as in System Settings. On/off settings are switches; anything else is a row with its control on the right." code={'<Group label="Capture">\n  <Switch label="Sounds" … />\n  <GroupRow label="Shortcut"><Kbd>⌥Space</Kbd></GroupRow>\n</Group>'}>
+      <Specimen id="settings" title="Settings" use="Grouped rows, as in System Settings. On/off settings are switches; anything else is a row with its control on the right." code={'<Group label="Capture">\n  <Switch label="Open Avanzel at login" … />\n  <GroupRow label="Shortcut"><Kbd>⌥Space</Kbd></GroupRow>\n</Group>'}>
         {() => (
           <Group label="Capture" note="Avanzel keeps the audio only until it becomes text.">
-            <Switch label="Sounds" checked onChange={() => {}} />
+            <Switch label="Open Avanzel at login" checked onChange={() => {}} />
             <GroupRow label="Shortcut"><Kbd>⌥Space</Kbd><Button size="small">Change</Button></GroupRow>
             <GroupRow label="Agent" description="Claude Code is signed in."><Button size="small" variant="quiet">Choose</Button></GroupRow>
           </Group>
@@ -290,6 +290,28 @@ export function Gallery() {
               <Spacer />
               <Link href="https://github.com/">Contributing</Link>
             </Row>
+          </Stack>
+        )}
+      </Specimen>
+
+      <Specimen id="parts" title="Page buttons, badges and totals" use="A page button opens a page of the library and may wrap. A badge says one thing about its row. A shelf tab can carry its total." code={'<Button variant="page" wrap>Plant tulips in October</Button>\n<Badge>Best results</Badge>\n<ShelfTag shelf="ideas" variant="tab" total count={12} />'}>
+        {() => (
+          <Stack gap={16}>
+            <Stack gap={6}>
+              <Text variant="footnote" tone="secondary">Pages used:</Text>
+              <Row gap={6} wrap align="center"><ShelfTag shelf="topics" /><Button variant="page">Plant tulips in October</Button></Row>
+              <Row gap={6} wrap align="start"><ShelfTag shelf="ideas" /><Button variant="page" wrap>Move the trading system from Voxfor to new hosting before the end of the month</Button></Row>
+            </Stack>
+            <Button size="small" wrap>Ask about the voice capture tests and the other things to try this week</Button>
+            <Row gap={8} wrap align="center">
+              <Text variant="footnote" tone="secondary" as="span">Claude Code</Text>
+              <Badge>Best results</Badge>
+              <Badge tone="neutral">Signed in</Badge>
+            </Row>
+            <div className="g-tabs">
+              {SHELVES.map((shelf, i) => <ShelfTag key={shelf} shelf={shelf} variant="tab" total count={[3, 12, 0, 5, 8, 1][i]} />)}
+            </div>
+            <Text variant="callout" tone="secondary" align="center">Answers come from your library only, with links to the pages they use.</Text>
           </Stack>
         )}
       </Specimen>

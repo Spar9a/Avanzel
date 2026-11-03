@@ -41,10 +41,10 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
             </Row>
           </GroupRow>
           {/* The shelves, in the library's panel under its row: a row holds a label and a control, not a line of tabs, so
-              they sit in a box of their own. No counts: a tab's badge is the drawer's "new" count, not a total. */}
+              they sit in a box of their own. Each tab carries its total, read as "3 pages". */}
           <div className="settings-shelves">
             <Row gap={6} wrap>
-              {SHELVES.map((shelf) => <ShelfTag key={shelf} shelf={shelf} variant="tab" />)}
+              {SHELVES.map((shelf) => <ShelfTag key={shelf} shelf={shelf} variant="tab" total count={lib.shelves[shelf] ?? 0} />)}
             </Row>
           </div>
         </Group>

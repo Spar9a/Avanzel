@@ -45,6 +45,26 @@
 }
 .av-button[data-variant="link"]:not(:disabled):hover { filter: none; text-decoration: underline; }
 .av-button[data-variant="danger"] { color: var(--av-ink-danger); }
+.av-button[data-variant="page"] {
+  height: auto;
+  padding: 2px 8px;
+  border-radius: var(--av-radius-small);
+  background: var(--av-accent-wash);
+  color: var(--av-ink-accent);
+  font: var(--av-text-button-small);
+}
+.av-button[data-variant="page"]:not(:disabled):hover { filter: none; text-decoration: underline; }
+/* A label that may wrap: the button grows taller, and a word too long for the line breaks rather than overflowing. */
+.av-button[data-wrap] {
+  height: auto;
+  min-height: var(--av-size-control);
+  padding-block: 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+.av-button[data-wrap][data-size="small"] { min-height: var(--av-size-control-small); padding-block: 4px; }
+.av-button[data-wrap][data-variant="page"] { min-height: 0; padding-block: 2px; }
 
 .av-button[data-size="small"] { height: var(--av-size-control-small); padding: 0 11px; font: var(--av-text-button-small); }
 .av-button[data-size="large"] { height: var(--av-size-control-large); padding: 0 18px; font: var(--av-text-button-large); }

@@ -23,3 +23,5 @@
 .av-text[data-truncate] { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .av-text[data-numeric] { font-variant-numeric: tabular-nums; }
 .av-text[data-italic] { font-style: italic; }
+.av-text[data-align="center"] { text-align: center; text-wrap: balance; }
+.av-text[tabindex="-1"]:focus-visible { outline: none; }

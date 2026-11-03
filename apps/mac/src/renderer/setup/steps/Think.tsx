@@ -126,7 +126,7 @@ export function Think({ snap, go }: StepProps) {
       actions={asking ? <Button variant="quiet" onClick={() => go("found")}>Back</Button> : undefined}
     >
       <Stack gap={12}>
-        <Text variant="heading">What's on your mind this week?</Text>
+        <Text variant="heading" focusable>What's on your mind this week?</Text>
         <div>
           <Lead thought={thought} shortcut={shortcut} />
           {talking && (

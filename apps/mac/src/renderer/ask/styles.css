@@ -24,7 +24,6 @@
 }
 .ask-empty {
   padding-top: var(--av-space-24);
-  text-align: center;
 }
 /* The questions suggested under that line: each in words beside the button that asks it, which take the line's free width and wrap
    there. They sit in one centred column, on the axis of the centred line above them, so a short question isn't a window's width from

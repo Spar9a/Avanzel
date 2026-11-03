@@ -26,7 +26,7 @@ export function Done({ snap, finish }: StepProps & { finish(): void }) {
       actions={<Button variant="primary" onClick={() => finish()}>Start using Avanzel</Button>}
     >
       <Stack gap={12}>
-        <Text variant="heading">You're all set.</Text>
+        <Text variant="heading" focusable>You're all set.</Text>
         {snap.hears ? (
           <Text variant="callout">
             Press <Kbd>{prettyAccelerator(snap.shortcut)}</Kbd> anywhere to talk to me. I'll wait in the menu bar.

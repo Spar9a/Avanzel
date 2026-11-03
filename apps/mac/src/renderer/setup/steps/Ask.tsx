@@ -57,7 +57,7 @@ export function Ask({ snap, go }: StepProps) {
       }
     >
       <Stack gap={12}>
-        <Text variant="heading">Ask me about it.</Text>
+        <Text variant="heading" focusable>Ask me about it.</Text>
         <Text variant="callout">I answer from your library only, and show you the pages I used.</Text>
         {snap.filing?.kind === "undone" && <Notice title="Undone.">Everything is back as it was, and your words are in the inbox.</Notice>}
         {offer && (
@@ -187,7 +187,7 @@ function Answer({ answer }: { answer: Answered }) {
           {answer.sources.map((page) => (
             <Row key={page.path} gap={6} wrap>
               {isShelf(page.shelf) && <ShelfTag shelf={page.shelf} />}
-              <Button variant="link" onClick={() => window.avanzel.ask.openPage(pageName(page.path))}>{sourceTitle(page.title)}</Button>
+              <Button variant="page" wrap onClick={() => window.avanzel.ask.openPage(pageName(page.path))}>{sourceTitle(page.title)}</Button>
             </Row>
           ))}
         </Stack>

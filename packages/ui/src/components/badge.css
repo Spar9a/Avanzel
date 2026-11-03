@@ -1,0 +1,12 @@
+.av-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: 1px 8px;
+  border-radius: var(--av-radius-pill);
+  font: var(--av-text-caption);
+  white-space: nowrap;
+}
+/* The wash, thinned: the full wash under the accent ink measured 4.03:1 in dark mode, under AA's 4.5:1. */
+.av-badge[data-tone="accent"] { background: color-mix(in srgb, var(--av-accent-wash) 50%, transparent); color: var(--av-ink-accent); }
+.av-badge[data-tone="neutral"] { background: var(--av-surface-fill); color: var(--av-ink-secondary); }

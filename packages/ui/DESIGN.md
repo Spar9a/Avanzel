@@ -36,9 +36,10 @@ If nothing fits, add a component or a variant in `packages/ui` (see "When someth
 
 | Component | Use it for | Not for |
 |---|---|---|
-| `Text` | Every piece of text, by role: `title`, `heading`, `headline`, `body`, `callout`, `footnote`, `caption`, `voice` (Zel's lines), `words` and `words-small` (the user's words), `code` | Picking a size: choose a role |
+| `Text` | Every piece of text, by role: `title`, `heading`, `headline`, `body`, `callout`, `footnote`, `caption`, `voice` (Zel's lines), `words` and `words-small` (the user's words), `code`. `align="center"` centres and balances lines; `focusable` lets code move focus to a heading when a step changes | Picking a size: choose a role |
 | `Stack`, `Row`, `Spacer` | Columns and lines with gaps from the scale | Anything visual |
-| `Button` | Actions. Variants: `primary` (one per moment), `secondary`, `quiet` (dismiss), `link` (inside text), `danger` (deletes). Sizes: `small`, `regular`, `large`. An icon-only button needs `label` | Navigation to a web page: use `Link` |
+| `Button` | Actions. Variants: `primary` (one per moment), `secondary`, `quiet` (dismiss), `link` (inside text), `danger` (deletes), `page` (opens a page of the library, as the sources under an answer do). Sizes: `small`, `regular`, `large`. `wrap` lets a long label take more lines. An icon-only button needs `label` | Navigation to a web page: use `Link` |
+| `Badge` | A word or two about the row it sits in: `accent` ("Best results") or `neutral`. It takes no action | A button, or a status that needs a colour alone |
 | `Actions` | A row of buttons, with the primary last | More than one primary |
 | `Switch` | An on/off setting that applies at once | Choices with more than two states |
 | `Segmented` | Two to five short exclusive choices | Long lists |
@@ -52,7 +53,7 @@ If nothing fits, add a component or a variant in `packages/ui` (see "When someth
 | `Stage` | The tinted area where Zel and cards perform, one per window | Panels and cards |
 | `Card` | The index card: the user's words on ruled paper, with `label`, `meta`, `stamp` and `footer` | Settings or chrome: cards hold words |
 | `Stamp` | The receipt that ends a piece of work: `filed`, `noted`, `saved`, `letter`, `remembered`, `hello` | Decoration or emphasis |
-| `ShelfTag` | A shelf as a chip or a tab, always with its colour, glyph and name | Colour alone |
+| `ShelfTag` | A shelf as a chip or a tab, always with its colour, glyph and name. A tab's `count` is read as "1 page" or "3 pages"; `total` makes it the shelf's total, shown at 0 too | Colour alone |
 | `ShelfGlyph`, `ShelfMark` | A shelf's glyph or mini tab next to its visible name | Without the name |
 | `Zel` | The librarian: six moods (`idle`, `listening`, `thinking`, `filed`, `needs-you`, `asleep`) at four sizes | Anywhere outside Avanzel's own windows |
 | `Bubble` | Zel speaking, when asked or when something needs the person, such as a permission request | Tooltips and help text |
