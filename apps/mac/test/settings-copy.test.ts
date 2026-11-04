@@ -6,6 +6,7 @@ import {
   asSentence,
   CHANGE_NOT_SAVED,
   DAYS,
+  DICTIONARY_DESCRIPTION,
   DOWNLOAD_NOT_STARTED,
   failedSaveLine,
   fileModeLine,
@@ -183,6 +184,19 @@ describe("settings copy", () => {
     expect(notSavedLine("gone")).toBe("Gone. The setting keeps its old value.");
     // An error with nothing to say adds nothing to what the setting keeps.
     expect(notSavedLine(new Error(""))).toBe("The setting keeps its old value.");
+  });
+
+  it("a dictionary main won't keep is told plainly, and the Dictionary row says how a line is written", () => {
+    expect(
+      notSavedLine(
+        new Error(
+          "Error invoking remote method 'settings:set-library': AvanzelError: The dictionary has 501 lines, and 500 is the most it can hold. Remove the lines you use least.",
+        ),
+      ),
+    ).toBe("The dictionary has 501 lines, and 500 is the most it can hold. Remove the lines you use least. The setting keeps its old value.");
+    expect(DICTIONARY_DESCRIPTION).toBe(
+      "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya need that equals entry to be corrected.",
+    );
   });
 
   describe("the plain cause of a refusal", () => {

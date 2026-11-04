@@ -61,6 +61,10 @@
 .settings-field {
   width: 200px;
 }
+/* The dictionary's field, a few lines wide beside its row's words, leaving them room at the window's least width. */
+.settings-dictionary {
+  width: 240px;
+}
 /* A review's time, typed as HH:MM in a short field in its row. */
 .settings-time {
   width: 72px;

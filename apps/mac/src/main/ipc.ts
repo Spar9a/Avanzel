@@ -1,6 +1,6 @@
 // Wires the preload bridge's channels to the controller.
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
-import type { AppSettings, SetupStep, Shortcuts, TaskInfo } from "../shared/ipc.ts";
+import type { AppSettings, LibraryPatch, SetupStep, Shortcuts, TaskInfo } from "../shared/ipc.ts";
 import type { Controller } from "./controller.ts";
 
 type Handler = (event: IpcMainInvokeEvent, ...args: never[]) => unknown;
@@ -39,8 +39,7 @@ export function registerIpc(controller: Controller): void {
   // settings
   handle("settings:get", () => controller.snapshot());
   handle("settings:set-app", (_e, patch: Partial<AppSettings>) => controller.setApp(patch));
-  handle("settings:set-library", (_e, patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }) =>
-    controller.setLibrarySettings(patch));
+  handle("settings:set-library", (_e, patch: LibraryPatch) => controller.setLibrarySettings(patch));
   handle("settings:choose-library", () => controller.chooseLibrary());
   handle("settings:download-model", () => controller.downloadModel());
   handle("settings:save-task", (_e, task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">) =>

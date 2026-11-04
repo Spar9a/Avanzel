@@ -340,6 +340,17 @@ export interface LibraryInfo {
   harness: string;
   models: Record<string, string>;
   timeoutSeconds: number;
+  /** config.toml's `[voice] dictionary`: the owner's lines, "Term" or "Term = heard as, other", as saved (cleaned). */
+  dictionary: string[];
+}
+
+/** What Settings changes in the library's config.toml (`setLibrary`); a key left out keeps its value. */
+export interface LibraryPatch {
+  harness?: string;
+  models?: Record<string, string>;
+  timeoutSeconds?: number;
+  /** The Dictionary field's lines as typed: main stores them cleaned (`cleanDictionary`). */
+  dictionary?: string[];
 }
 
 /** Everything the settings window shows, in one snapshot. */
@@ -780,7 +791,7 @@ export interface AvanzelBridge {
     /** Settings is open and something else (an error card's Open Settings) asks for another pane. */
     onShowPane(callback: (pane: SettingsPane) => void): () => void;
     setApp(patch: Partial<AppSettings>): Promise<SettingsSnapshot>;
-    setLibrary(patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }): Promise<SettingsSnapshot>;
+    setLibrary(patch: LibraryPatch): Promise<SettingsSnapshot>;
     chooseLibrary(): Promise<SettingsSnapshot>;
     downloadModel(): Promise<SettingsSnapshot>;
     saveTask(task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">): Promise<SettingsSnapshot>;

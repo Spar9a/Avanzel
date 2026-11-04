@@ -1,12 +1,13 @@
 // Settings → Voice: the shortcuts, with a Notice for each one that has a problem; the microphone Avanzel listens with;
-// and the speech model that turns what it hears into text. Each control applies at once.
-import { Actions, Button, Group, GroupRow, Kbd, Notice, Progress, Row, Stack, Text } from "@avanzel/ui";
+// the speech model that turns what it hears into text; and the library's dictionary of names and terms. Each control applies
+// at once, the dictionary when the focus leaves its field.
+import { Actions, Button, Group, GroupRow, Kbd, Notice, Progress, Row, Stack, Text, TextArea } from "@avanzel/ui";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, inMenuLine, prettyAccelerator } from "../../../main/shortcuts.ts";
-import type { ModelStatus, Shortcuts } from "../../../shared/ipc.ts";
+import type { ModelStatus, SettingsSnapshot, Shortcuts } from "../../../shared/ipc.ts";
 import { downloadFailedProblem, voiceSettingsProblem } from "../../../shared/problems.ts";
 import { passesThrough, toAccelerator } from "../accelerator.ts";
-import { DOWNLOAD_NOT_STARTED, microphoneName, microphoneOptions, speechModelLine, type InputDevice } from "../copy.ts";
+import { DICTIONARY_DESCRIPTION, DOWNLOAD_NOT_STARTED, microphoneName, microphoneOptions, speechModelLine, type InputDevice } from "../copy.ts";
 import { attemptChange, ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -34,6 +35,39 @@ export function MicrophoneGroup(props: PaneProps): ReactNode {
           options={microphoneOptions(id, devices)}
           onChoose={(value) => attemptChange(props, () => api.setApp({ microphoneId: value || null }))}
         />
+      </GroupRow>
+    </Group>
+  );
+}
+
+/** The Dictionary field's text: the library's lines, one per line. */
+const dictionaryText = (snap: SettingsSnapshot) => (snap.library?.dictionary ?? []).join("\n");
+
+/**
+ * Voice's "Dictionary" group: the names and terms the speech is corrected to, one per line, saved when the focus leaves the
+ * field. The draft is the field's text until then; once saved, it is the lines main kept (blank and repeated ones dropped,
+ * spaces tidied). A draft that is what the library holds saves nothing. A save main refuses (too many lines, one too long)
+ * leaves the draft as typed, and the window says why: leaving the field again tries again. The pane keys this by its library,
+ * so another library's group starts from its own lines.
+ */
+function DictionaryGroup(props: PaneProps): ReactNode {
+  const { snap, onChange, attempt } = props;
+  const [draft, setDraft] = useState(() => dictionaryText(snap));
+  const save = async () => {
+    if (draft === dictionaryText(snap)) return;
+    const saved = (next: SettingsSnapshot) => {
+      onChange(next);
+      setDraft(dictionaryText(next));
+    };
+    await attemptChange({ onChange: saved, attempt }, () => api.setLibrary({ dictionary: draft.split("\n") }));
+  };
+  return (
+    <Group label="Dictionary">
+      <GroupRow label="Names and terms" description={DICTIONARY_DESCRIPTION}>
+        {/* TextArea takes no onBlur, so the box around it hears the focus leave (React's onBlur bubbles). */}
+        <div className="settings-dictionary" onBlur={() => void save()}>
+          <TextArea label="Dictionary" labelHidden rows={5} value={draft} onChange={setDraft} />
+        </div>
       </GroupRow>
     </Group>
   );
@@ -211,6 +245,8 @@ export function Voice(props: PaneProps): ReactNode {
         </GroupRow>
       </Group>
       <SpeechProblem model={snap.model} primary={primaryKey === undefined} onDownload={download} />
+      {/* The dictionary is the library's: with none open, or one Avanzel can't find, there is nowhere to keep it. */}
+      {snap.library?.exists && <DictionaryGroup key={snap.library.path} {...props} />}
     </Stack>
   );
 }

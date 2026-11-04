@@ -76,6 +76,14 @@ export const SPEECH_MODEL_DESCRIPTION =
   "Turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.";
 
 /**
+ * The Dictionary row's description: how a line is written, and that the heard-as entry is the sure way. A name whose sound is
+ * short (Priya) is matched only by its heard-as entry; the engine's sound-alike match leaves it alone.
+ */
+export const DICTIONARY_DESCRIPTION =
+  "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an " +
+  "equals sign: Ollama = Alema, Polymer. Short names such as Priya need that equals entry to be corrected.";
+
+/**
  * The speech models the engine runs that hear English alone (Parakeet v2); the others, the default among them, hear 25 languages.
  * The engine doesn't say which is which, so a model it gains is told with the default's languages until it is listed here:
  * test/settings-copy.test.ts fails for a model that no one has classified.

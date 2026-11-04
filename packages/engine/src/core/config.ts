@@ -255,7 +255,7 @@ function stringList(data: Table, key: string, path: string, prefix = ""): string
   return [...value];
 }
 
-const MAX_DICTIONARY_LINE_LENGTH = 200;
+export const MAX_DICTIONARY_LINE_LENGTH = 200;
 
 /** The `voice.dictionary` lines, refusing a list or a line longer than the dictionary can use. */
 function dictionaryLines(data: Table, path: string): string[] {

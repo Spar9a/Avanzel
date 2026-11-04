@@ -63,6 +63,7 @@ import {
   type Settings,
   type ShadowTask,
   type Transcriber,
+  type Transcript,
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
@@ -105,6 +106,7 @@ import type {
   CapsuleState,
   CardAction,
   FiledPage,
+  LibraryPatch,
   ModelStatus,
   RecordingProblem,
   SaveResult,
@@ -119,6 +121,7 @@ import type {
 import { callAppLabel, runningCallApps, type CallApp } from "./call-apps.ts";
 import { CALL_CONSENT_DIALOG, CALL_KEPT_LINE, CallNotes, MAX_CALL_MS, type CallHost } from "./call-notes.ts";
 import { CallTap } from "./calltap.ts";
+import { fakeTranscript, patchedSettings } from "./dictionary-settings.ts";
 import { frontContext } from "./front-app.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
@@ -167,6 +170,9 @@ import {
   placeCapsule,
   placeQuick,
 } from "./windows.ts";
+
+/** A recording's words: its text, the engine that made it, and `heard`, what was recognised, when the dictionary corrected it. */
+type Heard = Pick<Transcript, "text" | "engine" | "heard">;
 
 // Quitting waits at most this long for stopped agent runs to finish their bookkeeping.
 const QUIT_WAIT_MS = 10_000;
@@ -1605,6 +1611,7 @@ export class Controller {
       const samples = await this.samplesOf(received);
       const { audioPath, unkept } = this.claimRecording(vault, now);
       let engine = "";
+      let heard: string | undefined; // what the speech model recognised, when the dictionary corrected it
       let seconds: number | null = null;
       if (samples.length >= MIN_SPEECH_SAMPLES) {
         if (audioPath) {
@@ -1618,6 +1625,7 @@ export class Controller {
         seconds = (performance.now() - started) / 1000;
         text = transcript.text.trim();
         engine = transcript.engine;
+        heard = transcript.heard?.trim();
       }
       if (!text && audioPath) rmSync(audioPath, { force: true });
 
@@ -1647,7 +1655,7 @@ export class Controller {
         // Its recording went with it: nothing is kept.
         return this.recordingFailed(recording, { problem: "silence" }, NOTHING_HEARD, "open-settings:voice", "Choose microphone");
       }
-      const capture = vault.newCapture(text, { source: "voice", audio: audioPath, transcriber: engine, now });
+      const capture = vault.newCapture(text, { source: "voice", audio: audioPath, transcriber: engine, now, context: { heard } });
       this.captureCount.add(); // its words are in the inbox: kept, whatever becomes of them next
       this.afterCapture(capture.path, text, seconds, unkept, recording);
     } catch (error) {
@@ -1726,11 +1734,12 @@ export class Controller {
     return resampleTo16k(wav.samples, wav.sampleRate);
   }
 
-  private async transcribe(samples: Float32Array): Promise<{ text: string; engine: string }> {
+  /** The words of `samples`, through the library's dictionary; `heard` is what was recognised when the dictionary changed it. */
+  private async transcribe(samples: Float32Array): Promise<Heard> {
     const fake = process.env.AVANZEL_FAKE_TRANSCRIPT;
     if (fake !== undefined) {
       if (FAKE_TRANSCRIPT_DELAY_MS) await new Promise((resolve) => setTimeout(resolve, FAKE_TRANSCRIPT_DELAY_MS));
-      return { text: fake, engine: "fake" };
+      return fakeTranscript(fake, loadSettings(this.requireVault().root).voice);
     }
     const transcriber = await this.transcriberFor(loadSettings(this.requireVault().root).voice);
     return transcriber.transcribe(samples, 16000);
@@ -1743,7 +1752,7 @@ export class Controller {
    * setup's first spoken thought, whose window shows its own progress. The transcription itself can't be stopped (a `Transcriber`
    * takes no signal), so it runs on; once Stop has kept the recording, whatever it gives is dropped, words or failure: null.
    */
-  private async transcribeWithStop(samples: Float32Array, transcribing: Transcribing | null): Promise<{ text: string; engine: string } | null> {
+  private async transcribeWithStop(samples: Float32Array, transcribing: Transcribing | null): Promise<Heard | null> {
     if (!transcribing) return this.transcribe(samples);
     this.transcribing = transcribing;
     const slow = setTimeout(() => this.slowTranscription(transcribing), TRANSCRIBE_STOP_MS);
@@ -3804,9 +3813,10 @@ export class Controller {
             harness: settings?.harness ?? "auto",
             models: settings?.models ?? {},
             timeoutSeconds: settings?.timeoutSeconds ?? 900,
+            dictionary: settings?.voice.dictionary ?? [],
           }
         : kept
-          ? { path: kept, label: tildePath(kept, home), exists: false, isGit: false, gitUsable: git.gitUsable(), autoCommit: true, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900 }
+          ? { path: kept, label: tildePath(kept, home), exists: false, isGit: false, gitUsable: git.gitUsable(), autoCommit: true, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900, dictionary: [] }
           : null,
       harnesses: Object.values(all).map((h) => ({
         name: h.name,
@@ -3875,16 +3885,10 @@ export class Controller {
     return this.snapshot();
   }
 
-  async setLibrarySettings(patch: { harness?: string; models?: Record<string, string>; timeoutSeconds?: number }): Promise<SettingsSnapshot> {
+  async setLibrarySettings(patch: LibraryPatch): Promise<SettingsSnapshot> {
     const vault = this.requireVault();
     await this.enqueue(async () => {
-      const settings = loadSettings(vault.root);
-      saveSettings(vault.root, {
-        ...settings,
-        ...(patch.harness !== undefined ? { harness: patch.harness } : {}),
-        ...(patch.models !== undefined ? { models: patch.models } : {}),
-        ...(patch.timeoutSeconds !== undefined ? { timeoutSeconds: patch.timeoutSeconds } : {}),
-      });
+      saveSettings(vault.root, patchedSettings(loadSettings(vault.root), patch));
     });
     this.broadcast();
     return this.snapshot();
