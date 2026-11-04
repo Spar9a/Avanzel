@@ -53,6 +53,8 @@ If nothing fits, add a component or a variant in `packages/ui` (see "When someth
 | `Stage` | The tinted area where Zel and cards perform, one per window | Panels and cards |
 | `Card` | The index card: the user's words on ruled paper, with `label`, `meta`, `stamp` and `footer` | Settings or chrome: cards hold words |
 | `Stamp` | The receipt that ends a piece of work: `filed`, `noted`, `saved`, `letter`, `remembered`, `hello` | Decoration or emphasis |
+| `ShelfDrawer` | The six shelf tabs in one line, with the pages each holds (`total`) or has just taken in (the filing) | A single shelf: use `ShelfTag` |
+| `ChoiceRow` | A row of a `Group` where exactly one row is chosen, as with agents: a check on the chosen row and "Use X" on the others, with a badge and the row's other buttons | Settings with more than one choice at once: use `Switch` |
 | `ShelfTag` | A shelf as a chip or a tab, always with its colour, glyph and name. A tab's `count` is read as "1 page" or "3 pages"; `total` makes it the shelf's total, shown at 0 too | Colour alone |
 | `ShelfGlyph`, `ShelfMark` | A shelf's glyph or mini tab next to its visible name | Without the name |
 | `Zel` | The librarian: six moods (`idle`, `listening`, `thinking`, `filed`, `needs-you`, `asleep`) at four sizes | Anywhere outside Avanzel's own windows |

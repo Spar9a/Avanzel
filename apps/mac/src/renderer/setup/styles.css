@@ -76,10 +76,6 @@
   place-items: center;
   height: 100%;
 }
-/* The check on the chosen agent's row, held in a box of its own so the step can bring that row into view. */
-.found-chosen {
-  display: flex;
-}
 /* The footnote under the agents' note, in line with it: the note sits 4 in from the group's edges. */
 .found-footnote {
   padding: 0 var(--av-space-4);

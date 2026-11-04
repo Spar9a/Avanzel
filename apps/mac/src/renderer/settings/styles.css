@@ -55,7 +55,7 @@
    enough that the widest row, Claude Code's with Use, Check and "Best results", leaves its name on one line at the window's
    least width, beside a scrollbar. */
 .settings-status {
-  max-width: 144px;
+  max-width: 124px;
 }
 /* The model's field, a short one in its row. */
 .settings-field {

@@ -2,7 +2,7 @@
 // the one that files and answers, Check asks it again, and an agent this Mac doesn't have offers its install command,
 // where it has one. The last row hands the choice back to Avanzel, and the agent in use names its model. Each control
 // applies at once. The pane needs a library: without one the shell draws NoLibrary in its place.
-import { Badge, Button, Group, GroupRow, Icon, Row, Stack, Text, TextField } from "@avanzel/ui";
+import { Button, ChoiceRow, Group, GroupRow, Icon, Stack, Text, TextField } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { harnessName } from "../../../main/jobs.ts";
 import { AGENT_INSTALLS, isAgentProblem, type AgentInstall, type HarnessInfo } from "../../../shared/ipc.ts";
@@ -69,29 +69,29 @@ function AgentRow({ agent, chosen, inUse, checked, asked, copied, onUse, onCheck
   const problem = !available || isAgentProblem(agent.status);
   const tone: ProblemTone = inUse && problem ? "danger" : "secondary";
   return (
-    <GroupRow label={label} description={agent.experimental ? "Experimental" : undefined}>
-      <div role="group" aria-label={label}>
-        <Row gap={8}>
-          {/* Once the person has pressed Check, VoiceOver hears each change of it as the check runs and ends. The sign-in
-              reads the pane makes by itself as it opens are news nobody asked for, so until then it says nothing. */}
-          <span className="settings-status" role={asked ? "status" : undefined}>
-            <Text variant="footnote" tone={tone} as="span">{statusWords(agent, tone)}</Text>
-          </span>
-          {name === "claude" && <Badge>Best results</Badge>}
-          {chosen ? (
-            <Icon name="check" label="Chosen" />
-          ) : (
-            available && <Button size="small" variant="secondary" onClick={onUse}>{`Use ${label}`}</Button>
-          )}
-          {available ? (
-            // Busy rather than disabled while it checks, so it keeps the focus.
-            <Button size="small" variant="secondary" busy={checking} onClick={onCheck}>{checkedBefore ? "Check again" : "Check"}</Button>
-          ) : (
-            isInstallable(name) && <Button size="small" variant="secondary" onClick={() => onCopy(name)}>{copied ? "Copied" : "Copy install command"}</Button>
-          )}
-        </Row>
-      </div>
-    </GroupRow>
+    <ChoiceRow
+      label={label}
+      description={agent.experimental ? "Experimental" : undefined}
+      lead={
+        // Once the person has pressed Check, VoiceOver hears each change of it as the check runs and ends. The sign-in
+        // reads the pane makes by itself as it opens are news nobody asked for, so until then it says nothing.
+        <span className="settings-status" role={asked ? "status" : undefined}>
+          <Text variant="footnote" tone={tone} as="span">{statusWords(agent, tone)}</Text>
+        </span>
+      }
+      badge={name === "claude" ? "Best results" : undefined}
+      chosen={chosen}
+      unavailable={!available}
+      chooseLabel={`Use ${label}`}
+      onChoose={onUse}
+    >
+      {available ? (
+        // Busy rather than disabled while it checks, so it keeps the focus.
+        <Button size="small" variant="secondary" busy={checking} onClick={onCheck}>{checkedBefore ? "Check again" : "Check"}</Button>
+      ) : (
+        isInstallable(name) && <Button size="small" variant="secondary" onClick={() => onCopy(name)}>{copied ? "Copied" : "Copy install command"}</Button>
+      )}
+    </ChoiceRow>
   );
 }
 

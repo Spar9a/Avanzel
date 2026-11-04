@@ -4,8 +4,8 @@
 // main.tsx mounts it in a browser; static.tsx renders it to plain HTML for a preview.
 import { useState, type CSSProperties, type ReactNode } from "react";
 import {
-  Actions, Badge, Bubble, Button, CapsuleBar, CapsuleNotice, Card, Group, GroupRow, Hud, Icon, ICON_NAMES, Kbd, Letter, Link, Notice,
-  PermissionPrimer, Progress, Receipt, Row, Segmented, SHELVES, SHELF_NAMES, ShelfGlyph, ShelfMark, ShelfTag, Spacer, Spinner,
+  Actions, Badge, Bubble, Button, CapsuleBar, CapsuleNotice, Card, ChoiceRow, Group, GroupRow, Hud, Icon, ICON_NAMES, Kbd, Letter, Link, Notice,
+  PermissionPrimer, Progress, Receipt, Row, Segmented, SHELVES, SHELF_NAMES, ShelfDrawer, ShelfGlyph, ShelfMark, ShelfTag, Spacer, Spinner,
   Stack, Stage, Stamp, Switch, Text, TextArea, TextField, Wave, Zel, type ZelMood,
 } from "../src/index.ts";
 import "./gallery.css";
@@ -308,9 +308,15 @@ export function Gallery() {
               <Badge>Best results</Badge>
               <Badge tone="neutral">Signed in</Badge>
             </Row>
-            <div className="g-tabs">
-              {SHELVES.map((shelf, i) => <ShelfTag key={shelf} shelf={shelf} variant="tab" total count={[3, 12, 0, 5, 8, 1][i]} />)}
-            </div>
+            <ShelfDrawer total align="start" counts={{ goals: 3, ideas: 12, problems: 0, memories: 5, people: 8, topics: 1 }} />
+            <ShelfDrawer counts={{ ideas: 1 }} />
+            <Group label="Who should do the filing?">
+              <ChoiceRow label="Claude Code" description="Signed in." badge="Best results" chosen chooseLabel="Use Claude Code" onChoose={() => {}} />
+              <ChoiceRow label="Codex" description="Signed in." chosen={false} chooseLabel="Use Codex" onChoose={() => {}}>
+                <Button size="small" variant="secondary">Check</Button>
+              </ChoiceRow>
+              <ChoiceRow label="OpenCode" description="Not installed." chosen={false} unavailable chooseLabel="Use OpenCode" onChoose={() => {}} />
+            </Group>
             <Text variant="callout" tone="secondary" align="center">Answers come from your library only, with links to the pages they use.</Text>
           </Stack>
         )}

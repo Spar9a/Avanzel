@@ -7,7 +7,7 @@
 // what stayed and offers to file it again; a failed one says why, in the capsule's words, in a Notice with its one fix.
 // The heading sits in a status region, so VoiceOver hears the start and the end, not each second or each step. There is
 // no Back: the filing goes on by itself, even once the window closes.
-import { Actions, Button, Card, Kbd, Notice, Receipt, Row, SHELVES, ShelfTag, Stack, Text, Zel, type Shelf, type ZelMood } from "@avanzel/ui";
+import { Actions, Button, Card, Kbd, Notice, Receipt, Row, SHELVES, ShelfDrawer, Stack, Text, Zel, type Shelf, type ZelMood } from "@avanzel/ui";
 import { useEffect, useState } from "react";
 import { NOTE_GONE, type NarrationRow, type SetupFiling } from "../../../shared/ipc.ts";
 import { undoRefused } from "../../../shared/problems.ts";
@@ -96,9 +96,7 @@ function FilingStage({ filing }: { filing: SetupFiling }) {
       <Row justify="end">
         <Zel mood={MOOD[filing.kind]} size="medium" look="up" />
       </Row>
-      <Row gap={4} wrap justify="center">
-        {SHELVES.map((shelf) => <ShelfTag key={shelf} shelf={shelf} variant="tab" count={pagesOn(filing, shelf)} />)}
-      </Row>
+      <ShelfDrawer counts={Object.fromEntries(SHELVES.map((shelf) => [shelf, pagesOn(filing, shelf)]))} />
     </div>
   );
 }

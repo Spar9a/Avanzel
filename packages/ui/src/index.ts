@@ -23,6 +23,8 @@ export { ShelfGlyph, ShelfTag, ShelfMark, SHELF_NAMES, type ShelfTagProps } from
 export { Bubble, type BubbleProps } from "./components/Bubble.tsx";
 export { Notice, type NoticeProps } from "./components/Notice.tsx";
 export { Group, GroupRow, type GroupProps, type GroupRowProps } from "./components/Group.tsx";
+export { ChoiceRow, type ChoiceRowProps } from "./components/ChoiceRow.tsx";
+export { ShelfDrawer, type ShelfDrawerProps } from "./components/ShelfDrawer.tsx";
 export { Wave } from "./components/Wave.tsx";
 export { CapsuleBar, type CapsuleBarProps, type CapsuleMood } from "./patterns/CapsuleBar.tsx";
 export { CapsuleNotice, type CapsuleNoticeProps } from "./patterns/CapsuleNotice.tsx";

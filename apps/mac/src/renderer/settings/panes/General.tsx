@@ -1,7 +1,7 @@
 // Settings → General: the library, where it is and what it holds, with its six shelves under it; when a thought is
 // filed; and opening at login. Without a library, the Notice that says why stands where the library would be,
 // and the other groups follow as usual. Each control applies at once.
-import { Actions, Button, Group, GroupRow, Notice, Row, Segmented, SHELVES, ShelfTag, Stack, Switch, type SegmentedOption } from "@avanzel/ui";
+import { Actions, Button, Group, GroupRow, Notice, Row, Segmented, ShelfDrawer, Stack, Switch, type SegmentedOption } from "@avanzel/ui";
 import type { ReactNode } from "react";
 import type { FileMode } from "../../../shared/ipc.ts";
 import { fileModeLine, libraryLine } from "../copy.ts";
@@ -43,9 +43,7 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
           {/* The shelves, in the library's panel under its row: a row holds a label and a control, not a line of tabs, so
               they sit in a box of their own. Each tab carries its total, read as "3 pages". */}
           <div className="settings-shelves">
-            <Row gap={6} wrap>
-              {SHELVES.map((shelf) => <ShelfTag key={shelf} shelf={shelf} variant="tab" total count={lib.shelves[shelf] ?? 0} />)}
-            </Row>
+            <ShelfDrawer total align="start" counts={lib.shelves} />
           </div>
         </Group>
       ) : (

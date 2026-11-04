@@ -8,7 +8,7 @@
 // focus again.
 // Looks good (Use this folder, when the folder holds files or a library already) makes the library there with the
 // chosen agent. Zel waits on the stage, looking at the step, and is worried while a problem there needs the person.
-import { Actions, Badge, Button, Group, GroupRow, Icon, Notice, Row, Stack, Text, Zel } from "@avanzel/ui";
+import { Actions, Button, ChoiceRow, Group, GroupRow, Notice, Row, Stack, Text, Zel } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AGENT_INSTALLS, agentWorks, type AgentInstall, type SetupAgent, type SetupSnapshot } from "../../../shared/ipc.ts";
 import { agentLine, agentProblemTitle, isAgentProblem, ownLine, placeLine, tooBroadLine, type AgentProblem } from "../copy.ts";
@@ -134,16 +134,16 @@ export function Found({ snap, go }: StepProps) {
               note="Checking Claude Code or Codex reads their sign-in. Other agents are asked one short question when you pick them."
             >
               {snap.agents.map((agent) => (
-                <GroupRow key={agent.name} label={agent.label} description={agentLine(agent.status)}>
-                  {agent.name === "claude" && <Badge>Best results</Badge>}
-                  {agent.name === snap.agent ? (
-                    <span ref={chosenRef} className="found-chosen">
-                      <Icon name="check" label="Chosen" />
-                    </span>
-                  ) : (
-                    <Button size="small" onClick={idle(() => void api.chooseAgent(agent.name))}>{`Use ${agent.label}`}</Button>
-                  )}
-                </GroupRow>
+                <ChoiceRow
+                  key={agent.name}
+                  label={agent.label}
+                  description={agentLine(agent.status)}
+                  badge={agent.name === "claude" ? "Best results" : undefined}
+                  chosen={agent.name === snap.agent}
+                  chosenRef={chosenRef}
+                  chooseLabel={`Use ${agent.label}`}
+                  onChoose={idle(() => void api.chooseAgent(agent.name))}
+                />
               ))}
             </Group>
             {snap.agent !== null && CONFINED.has(snap.agent) && (

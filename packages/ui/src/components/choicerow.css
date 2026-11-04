@@ -1,0 +1,2 @@
+/* The check sits in a box of its own, so that code can bring the chosen row into view by it. */
+.av-choice-chosen { display: flex; }
