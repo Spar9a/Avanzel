@@ -12,6 +12,7 @@ import type { SetupAnswer } from "../../../shared/ipc.ts";
 import { pageName } from "../../../shared/wikilinks.ts";
 import { problemBody } from "../../common/problem.tsx";
 import { askingLine, failedAnswer, isShelf, sourceTitle } from "../copy.ts";
+import { afterAsk } from "../flow.ts";
 import { Frame, useNow, type StepProps } from "../frame.tsx";
 
 const api = window.avanzel.setup;
@@ -41,7 +42,7 @@ export function Ask({ snap, go }: StepProps) {
   const offer = answer === null || (answer.kind === "failed" && answer.question === suggestion) ? suggestion : null;
   const skip = () => {
     api.skipAsk();
-    go("done");
+    go(afterAsk(snap.permissions));
   };
   const mood: ZelMood = asking ? "thinking" : answer?.kind === "failed" ? "needs-you" : "idle";
   return (
@@ -50,7 +51,7 @@ export function Ask({ snap, go }: StepProps) {
       stage={<AskStage question={answer?.question ?? null} suggestion={suggestion} mood={mood} />}
       actions={
         answer?.kind === "answered" ? (
-          <Button variant="primary" onClick={() => go("done")}>Continue</Button>
+          <Button variant="primary" onClick={() => go(afterAsk(snap.permissions))}>Continue</Button>
         ) : (
           <Button variant="quiet" onClick={skip}>Skip</Button>
         )

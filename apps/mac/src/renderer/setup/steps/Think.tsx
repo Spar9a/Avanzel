@@ -17,6 +17,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { keyCaps, prettyAccelerator, reachKey, takenMessage } from "../../../main/shortcuts.ts";
 import type { SetupPress, SetupThought } from "../../../shared/ipc.ts";
 import { earsLine, recordingProblem, slowSeconds, transcribingLine } from "../copy.ts";
+import { beforeThink } from "../flow.ts";
 import { Frame, useNow, type StepProps } from "../frame.tsx";
 
 const api = window.avanzel.setup;
@@ -123,7 +124,7 @@ export function Think({ snap, go }: StepProps) {
     <Frame
       model={snap.model}
       stage={stage}
-      actions={asking ? <Button variant="quiet" onClick={() => go("found")}>Back</Button> : undefined}
+      actions={asking ? <Button variant="quiet" onClick={() => go(beforeThink(snap.permissions))}>Back</Button> : undefined}
     >
       <Stack gap={12}>
         <Text variant="heading" focusable>What's on your mind this week?</Text>

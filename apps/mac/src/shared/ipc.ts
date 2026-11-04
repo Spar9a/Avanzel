@@ -29,7 +29,7 @@ export type SettingsPane = (typeof SETTINGS_PANES)[number];
 export const isSettingsPane = (value: unknown): value is SettingsPane => SETTINGS_PANES.some((pane) => pane === value);
 
 /** The steps of the setup window, in order. */
-export const SETUP_STEPS = ["hello", "found", "think", "filing", "ask", "done"] as const;
+export const SETUP_STEPS = ["hello", "found", "microphone", "think", "filing", "ask", "screen", "done"] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 export const isSetupStep = (value: unknown): value is SetupStep => SETUP_STEPS.some((step) => step === value);
 
@@ -623,6 +623,16 @@ export interface SetupSnapshot {
   launchAtLogin: boolean;
   /** The library's evening review, the shadow task whose kind is "evening-review"; null without a library, or one that has none. */
   eveningReview: TaskInfo | null;
+  /**
+   * Where macOS stands on the two permissions, read afresh each time the window has the focus again (as from System
+   * Settings). The microphone and screen steps show only while theirs isn't "granted".
+   */
+  permissions: { microphone: PermissionStatus; screen: PermissionStatus };
+  /**
+   * Open System Settings was used on the screen step. macOS applies a Screen Recording grant only when Avanzel starts
+   * again, so Start using Avanzel reopens Avanzel once; the last step says so.
+   */
+  screenOpened: boolean;
 }
 
 /** What Zel's bubble says, once setup has ended in the menu bar. */
@@ -882,6 +892,16 @@ export interface AvanzelBridge {
     undo(): void;
     /** Continue, on the microphone's primer: macOS asks, and a grant starts the recording; setup:changed follows. */
     allowMicrophone(): void;
+    /**
+     * Continue, on the microphone step: macOS asks, if it hasn't. It resolves with the microphone's status once macOS has
+     * answered (or has nothing to ask: a microphone turned down stays so), and setup:changed follows.
+     */
+    askForMicrophone(): Promise<PermissionStatus>;
+    /**
+     * Open System Settings, on the screen step: Screen Recording opens, after one capture that makes macOS list Avanzel
+     * there. The grant applies when Avanzel starts again, which Start using Avanzel does once; setup:changed follows.
+     */
+    openScreenSettings(): void;
     /**
      * Try again, on a mic check's answer or a recording problem's Notice: a mic check's note and its recording leave the
      * library, and the step asks for the thought afresh; setup:changed follows.

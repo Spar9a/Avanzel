@@ -10,6 +10,8 @@ import { Done } from "./steps/Done.tsx";
 import { Filing } from "./steps/Filing.tsx";
 import { Found } from "./steps/Found.tsx";
 import { Hello } from "./steps/Hello.tsx";
+import { Microphone } from "./steps/Microphone.tsx";
+import { Screen } from "./steps/Screen.tsx";
 import { Think } from "./steps/Think.tsx";
 import "./styles.css";
 
@@ -76,12 +78,16 @@ function Setup() {
       return <Hello snap={snap} go={go} />;
     case "found":
       return <Found snap={snap} go={go} />;
+    case "microphone":
+      return <Microphone snap={snap} go={go} />;
     case "think":
       return <Think snap={snap} go={go} />;
     case "filing":
       return <Filing snap={snap} go={go} />;
     case "ask":
       return <Ask snap={snap} go={go} />;
+    case "screen":
+      return <Screen snap={snap} go={go} />;
     case "done":
       return <Done snap={snap} go={go} finish={finish} />;
   }

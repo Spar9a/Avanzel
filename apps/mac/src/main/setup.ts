@@ -28,6 +28,7 @@ import type {
   CapsuleState,
   FiledPage,
   ModelStatus,
+  PermissionStatus,
   SettingsSnapshot,
   SetupAgent,
   SetupAnswer,
@@ -130,6 +131,10 @@ export interface SetupHost {
   startRecording(mode: CapsuleMode, shot?: Recording["shot"]): Promise<void>;
   /** The capsule hides (`setCapsule`). */
   hideCapsule(): void;
+  /** System Settings opens at the privacy pane for `kind` (the controller's `openPrivacy`, which makes macOS list Avanzel under Screen Recording first). */
+  openPrivacy(kind: "microphone" | "screen"): Promise<void>;
+  /** Avanzel quits and opens again (the controller's `relaunch`), as Settings' Quit and reopen does. */
+  relaunch(): void;
   toggleDictate(): Promise<void>;
   openQuick(): void;
   /** `work` runs once the work queued before it has (the controller's queue, where every agent run waits its turn). */
@@ -229,8 +234,15 @@ interface SetupSession {
   recording: Recording | null;
   /** While the thought is a mic check: its capture in the inbox, which File it anyway files and Try again removes. */
   testCapture: string | null;
-  /** macOS is being asked about the microphone (`allowMicrophone`), which happens once at a time. */
+  /** macOS is being asked about the microphone (`allowMicrophone`, `askForMicrophone`), which happens once at a time. */
   askingMicrophone: boolean;
+  /**
+   * Open System Settings was used on the screen step. macOS applies a Screen Recording grant only when Avanzel starts
+   * again, so ending setup reopens Avanzel once (`finish`).
+   */
+  screenOpened: boolean;
+  /** The permissions the window was last sent, as text, to tell a change when it has the focus again (`rereadPermissions`). */
+  permissionsSent: string;
   /** The question on the Ask step and how it went; null until one is asked, and again after Skip. */
   answer: SetupAnswer | null;
   /** Stops the question being answered (Skip, or the window closing); null while none is. */
@@ -300,6 +312,7 @@ export class Setup {
     win.on("focus", () => {
       this.host.rereadSignIns();
       this.rereadGit();
+      this.rereadPermissions();
     });
     this.session = {
       window: win,
@@ -322,6 +335,8 @@ export class Setup {
       recording: null,
       testCapture: null,
       askingMicrophone: false,
+      screenOpened: false,
+      permissionsSent: "",
       answer: null,
       askAbort: null,
       doneEntered: false,
@@ -370,10 +385,27 @@ export class Setup {
   }
 
   /**
+   * The window has the focus again, and the person may have allowed the microphone or Screen Recording in System Settings:
+   * the steps for them follow, when either has changed since the window was last sent them.
+   */
+  private rereadPermissions(): void {
+    const session = this.session;
+    if (!session) return;
+    const now = JSON.stringify(this.permissions());
+    if (now !== session.permissionsSent) this.publish();
+  }
+
+  private permissions(): SetupSnapshot["permissions"] {
+    return { microphone: permissionStatus("microphone"), screen: permissionStatus("screen") };
+  }
+
+  /**
    * What the setup window shows; without a session, what a fresh one would show. A folder that is a library already
    * offers its own agent first (bestAgent), so a library brought from another Mac keeps the agent it files with.
    */
   snapshot(): SetupSnapshot {
+    const permissions = this.permissions();
+    if (this.session) this.session.permissionsSent = JSON.stringify(permissions);
     const libraryPath = this.session?.libraryPath ?? this.setupLibraryPath();
     const folder = libraryFolder(libraryPath);
     const agents = this.setupAgents();
@@ -408,6 +440,8 @@ export class Setup {
       answer: this.session?.answer ?? null,
       launchAtLogin: this.host.settings().launchAtLogin,
       eveningReview: this.eveningReview(),
+      permissions,
+      screenOpened: this.session?.screenOpened ?? false,
     };
   }
 
@@ -735,6 +769,33 @@ export class Setup {
     if (this.session !== session || session.step !== "think" || session.thought.kind !== "primer") return;
     if (granted) return this.recordThought(session);
     session.thought = { kind: "denied" };
+    this.host.broadcast();
+  }
+
+  /**
+   * Continue, on the microphone step: macOS asks, once at a time, when it hasn't; it has nothing to ask of a microphone
+   * that was allowed or turned down. Resolves with where the microphone stands, which the step goes on or says where to
+   * allow it by.
+   */
+  async askForMicrophone(): Promise<PermissionStatus> {
+    const session = this.session;
+    if (!session || session.step !== "microphone" || session.askingMicrophone) return permissionStatus("microphone");
+    session.askingMicrophone = true;
+    await requestMicrophone().catch(() => false);
+    session.askingMicrophone = false;
+    this.host.broadcast();
+    return permissionStatus("microphone");
+  }
+
+  /**
+   * Open System Settings, on the screen step. macOS lists Avanzel under Screen Recording only after it has tried to capture,
+   * which `openPrivacy` does first. The grant applies when Avanzel starts again, so the end of setup reopens it once.
+   */
+  async openScreenSettings(): Promise<void> {
+    const session = this.session;
+    if (!session || session.step !== "screen") return;
+    session.screenOpened = true;
+    await this.host.openPrivacy("screen");
     this.host.broadcast();
   }
 
@@ -1175,6 +1236,9 @@ export class Setup {
     if (session?.step !== "done" || session.finished || session.window.isDestroyed()) return;
     session.finished = true;
     this.host.firstRun.finished(new Date());
+    // macOS applies a Screen Recording grant only when Avanzel starts again: once the window has gone, it does, and Zel's
+    // bubble, which would go with it, is left out.
+    const reopen = session.screenOpened;
     const win = session.window;
     let icon: Box | null = null;
     try {
@@ -1191,7 +1255,8 @@ export class Setup {
       if (!win.isDestroyed()) {
         // Once the window has gone, so the bubble takes the focus from nothing on its way out.
         const at = icon;
-        if (at) win.once("closed", () => this.openUpHere(at));
+        if (reopen) win.once("closed", () => this.host.relaunch());
+        else if (at) win.once("closed", () => this.openUpHere(at));
         win.close();
       }
     }

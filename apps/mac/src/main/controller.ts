@@ -3839,6 +3839,8 @@ export class Controller {
       useShortcut: (key, accelerator) => this.useShortcut(key, accelerator),
       startRecording: (mode, shot) => this.startRecording(mode, shot, { forSetup: true }), // only setup's first spoken thought
       hideCapsule: () => this.setCapsule({ kind: "hidden" }),
+      openPrivacy: (kind) => this.openPrivacy(kind),
+      relaunch: () => this.relaunch(),
       toggleDictate: () => this.toggleDictate(),
       openQuick: () => this.openQuick(),
       enqueue: (work) => this.enqueue(work),

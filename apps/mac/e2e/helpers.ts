@@ -566,7 +566,13 @@ export async function throughFound(app: ElectronApplication): Promise<Page> {
   await setup.getByRole("button", { name: "Set me up" }).click();
   await expect.poll(async () => ((await call(app, "setupSnapshot")) as SetupSnapshot).agent, { timeout: 20_000 }).toBe("claude");
   await setup.getByRole("button", { name: "Looks good" }).click();
-  await expect(setup.getByRole("heading", { name: "What's on your mind this week?" })).toBeVisible({ timeout: 20_000 });
+  // A Mac that hasn't allowed the microphone has its own step first (setup-permissions.spec.ts tests that); the tests that
+  // call this are about what follows, so Skip leaves it, and macOS asks at the first press as it does for anyone who skipped.
+  const think = setup.getByRole("heading", { name: "What's on your mind this week?" });
+  const skip = setup.getByRole("button", { name: "Skip", exact: true });
+  await expect(think.or(skip)).toBeVisible({ timeout: 20_000 });
+  if (await skip.isVisible()) await skip.click();
+  await expect(think).toBeVisible({ timeout: 20_000 });
   return setup;
 }
 

@@ -13,6 +13,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AGENT_INSTALLS, agentWorks, type AgentInstall, type SetupAgent, type SetupSnapshot } from "../../../shared/ipc.ts";
 import { agentLine, agentProblemTitle, isAgentProblem, ownLine, placeLine, tooBroadLine, type AgentProblem } from "../copy.ts";
 import { Frame, reveal, type StepProps } from "../frame.tsx";
+import { afterFound } from "../flow.ts";
 
 const api = window.avanzel.setup;
 
@@ -58,7 +59,7 @@ export function Found({ snap, go }: StepProps) {
     void api.createLibrary().then(
       (next) => {
         setMaking(null);
-        if (next.libraryReady && next.makeProblem === null) go("think");
+        if (next.libraryReady && next.makeProblem === null) go(afterFound(next.permissions));
       },
       () => setMaking(null),
     );

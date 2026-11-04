@@ -84,6 +84,8 @@ export function registerIpc(controller: Controller): void {
   on("setup:file-again", () => controller.setup.fileSetupAgain());
   on("setup:undo", () => void controller.setup.undoSetupFiling());
   on("setup:allow-microphone", () => void controller.setup.allowMicrophone());
+  handle("setup:ask-for-microphone", () => controller.setup.askForMicrophone());
+  on("setup:open-screen-settings", () => void controller.setup.openScreenSettings());
   on("setup:try-again", () => controller.setup.retrySetupThought());
   on("setup:file-anyway", () => controller.setup.fileSetupAnyway());
   on("setup:skip-ask", () => controller.setup.skipSetupAsk());

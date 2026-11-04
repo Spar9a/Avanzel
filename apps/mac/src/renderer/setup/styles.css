@@ -69,9 +69,10 @@
   height: 100%;
 }
 
-/* Found's stage and Done's: Zel in the middle, waiting while the step is read. */
+/* Found's stage, Done's and the permission steps': Zel in the middle, waiting while the step is read. */
 .found,
-.done {
+.done,
+.permission {
   display: grid;
   place-items: center;
   height: 100%;

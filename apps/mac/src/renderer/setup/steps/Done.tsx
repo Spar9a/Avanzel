@@ -44,6 +44,7 @@ export function Done({ snap, finish }: StepProps & { finish(): void }) {
             )}
           </>
         )}
+        {snap.screenOpened && <Text variant="footnote" tone="secondary">I'll reopen once you start, so macOS applies screen recording.</Text>}
         <Group>
           <Switch label="Open Avanzel when I log in" checked={snap.launchAtLogin} onChange={(on) => void settings.setApp({ launchAtLogin: on })} />
           {review && (
