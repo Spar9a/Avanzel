@@ -46,18 +46,23 @@ describe("call apps", () => {
     expect(callAppsIn(parseProcesses("  PID  PPID COMMAND\n    1     0 launchd\n  500     1 Finder\n"))).toEqual([]);
   });
 
-  it("names the apps the plan lists", () => {
+  it("names the apps the plan lists, without Safari until it is checked on a real Mac", () => {
     expect(CALL_APPS).toEqual([
       "zoom.us", "Microsoft Teams", "Slack", "FaceTime", "Discord", "Webex",
-      "Google Chrome", "Safari", "Arc", "Microsoft Edge", "Firefox",
+      "Google Chrome", "Arc", "Microsoft Edge", "Firefox",
     ]);
+    expect(CALL_APPS).not.toContain("Safari");
   });
 });
 
 describe("call app labels", () => {
-  it("names Zoom as people know it, and every other app by its process name", () => {
+  it("names Zoom and Teams as people know them, the other call apps as they are, and an unknown process by its name", () => {
     expect(callAppLabel("zoom.us")).toBe("Zoom");
+    expect(callAppLabel("MSTeams")).toBe("Microsoft Teams");
     expect(callAppLabel("Microsoft Teams")).toBe("Microsoft Teams");
-    expect(callAppLabel("Google Chrome")).toBe("Google Chrome");
+    for (const name of ["Google Chrome", "Slack", "FaceTime", "Discord", "Webex", "Arc", "Microsoft Edge", "Firefox"]) {
+      expect(callAppLabel(name)).toBe(name);
+    }
+    expect(callAppLabel("SomeHelper")).toBe("SomeHelper");
   });
 });

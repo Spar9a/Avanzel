@@ -17,7 +17,7 @@ export const CALL_APPS: readonly string[] = [
   "Discord",
   "Webex",
   "Google Chrome",
-  "Safari",
+  // Safari is left out until tapping it is checked on a real Mac: its sound comes from WebKit processes that aren't its children.
   "Arc",
   "Microsoft Edge",
   "Firefox",
@@ -37,9 +37,15 @@ export function callAppsIn(processes: readonly RunningProcess[]): CallApp[] {
   return apps;
 }
 
-/** A call app's name as the picker offers it: Zoom's process is "zoom.us"; the others are named as people know them. */
+/** Process names that aren't what people call the app. */
+const LABELS: Readonly<Record<string, string>> = { "zoom.us": "Zoom", MSTeams: "Microsoft Teams" };
+
+/**
+ * A call app's name as people know it, for the picker, the notification and the capture's `app:`: Zoom's process is "zoom.us" and
+ * new Teams' is "MSTeams"; the others, and a process this doesn't know, are named as they are.
+ */
 export function callAppLabel(name: string): string {
-  return name === "zoom.us" ? "Zoom" : name;
+  return LABELS[name] ?? name;
 }
 
 /** The call apps running now. */
