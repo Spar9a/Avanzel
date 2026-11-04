@@ -81,8 +81,42 @@ describe("loadSettings", () => {
         quantization: "int8",
         command: [],
         maxRecordSeconds: 600,
+        dictionary: [],
+        dictionarySoundAlike: true,
       },
     });
+  });
+
+  it("reads the dictionary and its sound-alike switch, and an old config without them reads as empty and on", () => {
+    write(tmp(), ".avanzel/config.toml", '[voice]\ndictionary = ["Ollama = Alema, Polymer", "Kowalczyk"]\ndictionary_sound_alike = false\n');
+    expect(loadSettings(tmp()).voice).toMatchObject({
+      dictionary: ["Ollama = Alema, Polymer", "Kowalczyk"],
+      dictionarySoundAlike: false,
+    });
+    write(tmp(), ".avanzel/config.toml", '[voice]\nbackend = "onnx-asr"\n');
+    expect(loadSettings(tmp()).voice).toMatchObject({ dictionary: [], dictionarySoundAlike: true });
+  });
+
+  it("rejects a dictionary that is too long or has a line that is, naming voice.dictionary and what to change", () => {
+    const lines = (count: number) => Array.from({ length: count }, (_, i) => `"Term ${i}"`).join(", ");
+    write(tmp(), ".avanzel/config.toml", `[voice]\ndictionary = [${lines(501)}]\n`);
+    const tooMany = thrownBy(() => loadSettings(tmp()));
+    expect(tooMany).toBeInstanceOf(AvanzelError);
+    expect(tooMany.message).toContain("`voice.dictionary`");
+    expect(tooMany.message).toContain("501 lines");
+    expect(tooMany.message).toContain("Remove");
+    expect(tooMany.message).not.toContain("!");
+    write(tmp(), ".avanzel/config.toml", `[voice]\ndictionary = [${lines(500)}]\n`);
+    expect(loadSettings(tmp()).voice.dictionary).toHaveLength(500);
+
+    write(tmp(), ".avanzel/config.toml", `[voice]\ndictionary = ["Fine", "${"x".repeat(201)}"]\n`);
+    const tooLong = thrownBy(() => loadSettings(tmp()));
+    expect(tooLong).toBeInstanceOf(AvanzelError);
+    expect(tooLong.message).toContain("`voice.dictionary`");
+    expect(tooLong.message).toContain("line 2");
+    expect(tooLong.message).toContain("201 characters");
+    write(tmp(), ".avanzel/config.toml", `[voice]\ndictionary = ["${"x".repeat(200)}"]\n`);
+    expect(loadSettings(tmp()).voice.dictionary).toHaveLength(1);
   });
 
   it("reads a custom harness, models and the voice table", () => {
@@ -130,6 +164,9 @@ interactive = ["python", "agent.py"]
     ['[harnesses.x]\nheadless = "agent {prompt}"', "harnesses.x.headless"],
     ['[harnesses.x]\nheadless = ["agent"]', "{prompt}"],
     ['[voice]\ncommand = "whisper"', "voice.command"],
+    ['[voice]\ndictionary = "Ollama"', "voice.dictionary"],
+    ["[voice]\ndictionary = [1]", "voice.dictionary"],
+    ['[voice]\ndictionary_sound_alike = "no"', "voice.dictionary_sound_alike"],
     ["[voice]\nmax_record_seconds = -5", "voice.max_record_seconds"],
     ["harness = [", "config.toml"],
   ])("rejects %j naming %s", (body, needle) => {
@@ -156,6 +193,8 @@ describe("saveSettings", () => {
       'model = "nemo-parakeet-tdt-0.6b-v3"\n',
       'quantization = "int8"\n',
       "max_record_seconds = 600\n",
+      "dictionary = []\n",
+      "dictionary_sound_alike = true\n",
     ]) {
       expect(text).toContain(line);
     }
@@ -163,6 +202,20 @@ describe("saveSettings", () => {
     expect(text).not.toMatch(/^command = /m);
     expect(text).not.toMatch(/^\[harnesses/m);
     expect(loadSettings(tmp())).toEqual(defaultSettings());
+  });
+
+  it("renders each dictionary line, explains the line format and the sound-alike switch", () => {
+    const settings = defaultSettings();
+    settings.voice.dictionary = ["Ollama = Alema, Polymer", "Kowalczyk"];
+    saveSettings(tmp(), settings);
+    const text = readFileSync(configPath(), "utf8");
+    expect(text).toContain('"Ollama = Alema, Polymer"');
+    expect(text).toContain('"Kowalczyk"');
+    expect(text).toContain('"Term" or "Term = heard as, other"');
+    expect(text).toContain("Priya");
+    expect(text).toContain("false keeps only the exact heard-as entries");
+    expect(text).not.toContain("$");
+    expect(loadSettings(tmp()).voice.dictionary).toEqual(settings.voice.dictionary);
   });
 
   it("round-trips every setting, awkward strings included", () => {
@@ -181,6 +234,8 @@ describe("saveSettings", () => {
         quantization: "",
         command: ["whisper-cli", "-m", "/models/ggml large.bin", "-f", "{audio}"],
         maxRecordSeconds: 120,
+        dictionary: ["Ollama = Alema, Polymer", 'C++ = "see plus plus"', "Дмитро = Дмитрий", "Kowalczyk"],
+        dictionarySoundAlike: false,
       },
     };
     saveSettings(tmp(), settings);

@@ -613,7 +613,7 @@ test("when a symlinked inbox keeps the agent's rewrite, the capsule says where t
 /** A library whose speech-to-text is the command in its settings (`true`, which hears nothing), and not the engine's model on this Mac. */
 async function libraryWithSpeechCommand(): Promise<string> {
   const library = await makeLibrary();
-  const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600 };
+  const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600, dictionary: [], dictionarySoundAlike: true };
   saveSettings(library, { ...loadSettings(library), voice });
   return library;
 }

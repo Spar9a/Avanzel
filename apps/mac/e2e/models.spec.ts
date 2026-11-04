@@ -122,7 +122,7 @@ test("Settings → Voice says the speech row hears English alone for a library t
 
 test("Settings → Voice says the speech row runs the library's command for a library whose voice is one", async () => {
   const library = await makeLibrary();
-  const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600 };
+  const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600, dictionary: [], dictionarySoundAlike: true };
   saveSettings(library, { ...loadSettings(library), voice });
   const app = await launch({ AVANZEL_LIBRARY: library, HF_HUB_CACHE: emptyHfCache() });
   expect(((await call(app, "snapshot")) as SettingsSnapshot).voice).toEqual({ backend: "command", model: "" });
@@ -137,7 +137,7 @@ test("Settings → Voice says the speech row runs the library's command for a li
 test("a command backend needs no models", async () => {
   const hub = await fakeModelHub("stall");
   const library = await makeLibrary();
-  const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600 };
+  const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600, dictionary: [], dictionarySoundAlike: true };
   saveSettings(library, { ...loadSettings(library), voice });
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
   expect((await modelStatus(app)).kind).toBe("ready");

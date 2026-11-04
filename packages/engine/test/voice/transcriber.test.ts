@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AvanzelError, type Transcript, type VoiceOptions } from "../../src/types.ts";
+import { AvanzelError, type Transcriber, type Transcript, type VoiceOptions } from "../../src/types.ts";
 import { CommandTranscriber } from "../../src/voice/command.ts";
-import { lazily, makeTranscriber, MissingModelError, modelFiles, speechModels } from "../../src/voice/index.ts";
+import { lazily, makeTranscriber, MissingModelError, modelFiles, speechModels, withDictionary } from "../../src/voice/index.ts";
 import { pinnedSizeFiles, tempDir, useHfCache } from "./helpers.ts";
 
 const V3 = "nemo-parakeet-tdt-0.6b-v3";
@@ -279,5 +279,102 @@ describe("a lazily loading transcriber", () => {
     expect(await second).toEqual(heard);
     expect(load).toHaveBeenCalledTimes(2);
     expect(models[1]!.transcribe).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("withDictionary", () => {
+  const spoken = [
+    { start: 0, end: 2.5, text: "We tried Alema locally." },
+    { start: 3, end: 4, text: "It was slow." },
+    { start: 5, end: 7, text: "Then Alema again." },
+  ];
+  function inner(overrides: Partial<Transcriber> = {}): Transcriber {
+    return {
+      engine: "fake:asr",
+      transcribe: vi.fn(async () => ({ text: "We tried Alema locally.", engine: "fake:asr", seconds: 2.5 })),
+      transcribeSegments: vi.fn(async () => spoken.map((s) => ({ ...s }))),
+      release: vi.fn(async () => {}),
+      ...overrides,
+    };
+  }
+
+  it("corrects the text, keeps the engine and seconds, and keeps what was heard", async () => {
+    const wrapped = withDictionary(inner(), ["Ollama = Alema"]);
+    expect(wrapped.engine).toBe("fake:asr");
+    expect(await wrapped.transcribe(audio)).toEqual({
+      text: "We tried Ollama locally.",
+      engine: "fake:asr",
+      seconds: 2.5,
+      heard: "We tried Alema locally.",
+    });
+  });
+
+  it("sets heard only when the text changed", async () => {
+    const result = await withDictionary(inner(), ["Kowalczyk"]).transcribe(audio);
+    expect(result).toEqual({ text: "We tried Alema locally.", engine: "fake:asr", seconds: 2.5 });
+    expect("heard" in result).toBe(false);
+  });
+
+  it("passes the audio and sample rate through", async () => {
+    const transcribe = vi.fn(async () => heard);
+    await withDictionary(inner({ transcribe }), ["Ollama = Alema"]).transcribe(audio, 44100);
+    expect(transcribe).toHaveBeenCalledWith(audio, 44100);
+  });
+
+  it("corrects every segment and leaves the timings alone", async () => {
+    const wrapped = withDictionary(inner(), ["Ollama = Alema"]);
+    expect(await wrapped.transcribeSegments?.(audio, 16000)).toEqual([
+      { start: 0, end: 2.5, text: "We tried Ollama locally." },
+      { start: 3, end: 4, text: "It was slow." },
+      { start: 5, end: 7, text: "Then Ollama again." },
+    ]);
+  });
+
+  it("does not offer segments when the transcriber cannot time its speech", () => {
+    const wrapped = withDictionary(inner({ transcribeSegments: undefined }), ["Ollama = Alema"]);
+    expect(wrapped.transcribeSegments).toBeUndefined();
+  });
+
+  it("releases the transcriber it wraps, and has nothing to release when that has none", async () => {
+    const release = vi.fn(async () => {});
+    await withDictionary(inner({ release }), ["Ollama = Alema"]).release?.();
+    expect(release).toHaveBeenCalledOnce();
+    expect(withDictionary(inner({ release: undefined }), ["Ollama = Alema"]).release).toBeUndefined();
+  });
+
+  it("lets a failure through unchanged", async () => {
+    const wrapped = withDictionary(inner({ transcribe: () => Promise.reject(new AvanzelError("no model")) }), ["Ollama = Alema"]);
+    await expect(wrapped.transcribe(audio)).rejects.toThrow("no model");
+  });
+
+  it("honours the sound-alike switch", async () => {
+    const sounds = inner({ transcribe: async () => ({ text: "Mr Kowalkzik signed.", engine: "fake:asr", seconds: 1 }) });
+    expect((await withDictionary(sounds, ["Kowalczyk"]).transcribe(audio)).text).toBe("Mr Kowalczyk signed.");
+    const exact = await withDictionary(sounds, ["Kowalczyk"], { soundAlike: false }).transcribe(audio);
+    expect(exact.text).toBe("Mr Kowalkzik signed.");
+    expect("heard" in exact).toBe(false);
+  });
+
+  it("is the transcriber itself when the dictionary has nothing to correct", () => {
+    const model = inner();
+    expect(withDictionary(model, [])).toBe(model);
+    expect(withDictionary(model, ["", "  ", "= foo"])).toBe(model);
+  });
+
+  it("wraps what makeTranscriber makes only when options carry a dictionary", async () => {
+    const plain = await makeTranscriber(voice({ backend: "command", command: ["/opt/bin/whisper-cli", "{audio}"] }), tempDir());
+    expect(plain).toBeInstanceOf(CommandTranscriber);
+    const empty = await makeTranscriber(voice({ backend: "command", command: ["/opt/bin/whisper-cli", "{audio}"], dictionary: [] }), tempDir());
+    expect(empty).toBeInstanceOf(CommandTranscriber);
+    const listed = await makeTranscriber(
+      voice({ backend: "command", command: ["/opt/bin/whisper-cli", "{audio}"], dictionary: ["Ollama = Alema"] }),
+      tempDir(),
+    );
+    expect(listed).not.toBeInstanceOf(CommandTranscriber);
+    expect(listed.engine).toBe("command:whisper-cli");
+    const parakeet = await makeTranscriber(voice({ dictionary: ["Ollama = Alema"] }), tempDir());
+    expect(parakeet.engine).toBe("onnx-asr:nemo-parakeet-tdt-0.6b-v3");
+    expect(parakeet.transcribeSegments).toBeDefined();
+    await expect(parakeet.transcribe(audio)).rejects.toThrow(MissingModelError);
   });
 });

@@ -28,6 +28,7 @@ import {
   type RunResult,
 } from "./harness.ts";
 import { createInside, lstatOrNull, realFoldersTo, removeInside, writeInside } from "./inside.ts";
+import { parseDictionary } from "./dictionary.ts";
 import { askPrompt, filePrompt, reviewPrompt } from "./prompts.ts";
 import { insideLibrary, stepPath, type FilingStep } from "./steps.ts";
 import { AUDIO_EXTS, IMAGE_EXTS, SPECIAL_DIRS, TEXT_EXTS, type Capture, type Vault } from "./vault.ts";
@@ -381,7 +382,7 @@ export class Librarian {
     const attachments = this.#attachments(original.toString("utf8"));
     const before = snapshot(root);
     const call = this.#isCall(original.toString("utf8"));
-    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, instructions });
+    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term), instructions });
     // Only a caller that asked for the steps is told them: Claude Code's come from its own events, and other agents'
     // from the folder. The changes below are read from `after`, the library as the run left it, whether or not they are.
     const { result, guarded, after } = await this.#run(prompt, { write: true, images: attachments, signal, before, steps });

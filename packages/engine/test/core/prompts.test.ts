@@ -56,6 +56,16 @@ describe("filePrompt", () => {
     expect(filePrompt("inbox/x.md", "x", NOW, { call: false })).not.toContain("This capture is a call.");
   });
 
+  it("tells the agent how the owner spells names and terms, terms only (file_prompt_lists_names)", () => {
+    const prompt = filePrompt("inbox/x.md", "x", NOW, { names: ["Ollama", "Kowalczyk"] });
+    expect(prompt).toContain(
+      "\n\nThe owner uses these names and terms. Spell them exactly this way: Ollama, Kowalczyk.\n\n",
+    );
+    expect(prompt).not.toContain("$");
+    expect(filePrompt("inbox/x.md", "x", NOW, { names: [] })).not.toContain("The owner uses these names");
+    expect(filePrompt("inbox/x.md", "x", NOW)).not.toContain("The owner uses these names");
+  });
+
   it("passes on the owner's standing instructions, after the screenshot note", () => {
     const prompt = filePrompt("inbox/x.md", "x", NOW, {
       attachments: ["raw/a.png"],

@@ -25,6 +25,8 @@ export interface FilePromptOptions {
   attachments?: readonly string[];
   /** The capture is a call: a transcript of two streams, "You" and "Them". */
   call?: boolean;
+  /** The names and terms of the owner's dictionary, spelt as they want them (never the words they were heard as). */
+  names?: readonly string[];
   /** The owner's standing instructions for this run (a shadow task's body). */
   instructions?: string | null;
 }
@@ -41,7 +43,7 @@ export function filePrompt(
   captureRel: string,
   captureId: string,
   now: Date,
-  { attachments = [], call = false, instructions = null }: FilePromptOptions = {},
+  { attachments = [], call = false, names = [], instructions = null }: FilePromptOptions = {},
 ): string {
   const notes: string[] = [];
   if (attachments.length === 1) {
@@ -50,6 +52,7 @@ export function filePrompt(
     notes.push(`This capture has screenshots: ${attachments.join(", ")}. Open them to see what the owner was looking at.`);
   }
   if (call) notes.push(CALL);
+  if (names.length > 0) notes.push(`The owner uses these names and terms. Spell them exactly this way: ${names.join(", ")}.`);
   const standing = instructions?.trim();
   if (standing) notes.push(`The owner's standing instructions for this run: ${standing}`);
   return render("prompts/file.md", {

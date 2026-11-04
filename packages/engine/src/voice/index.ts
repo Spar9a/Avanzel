@@ -1,5 +1,6 @@
 // Local speech-to-text: Parakeet through onnxruntime-node, or any speech-to-text CLI.
 import { join } from "node:path";
+import { applyDictionary, parseDictionary } from "../core/dictionary.ts";
 import { AvanzelError, type TimedText, type Transcriber, type Transcript, type VoiceOptions } from "../types.ts";
 import { CommandTranscriber } from "./command.ts";
 import { locateModel, MissingModelError, MODELS, modelFiles, VAD_MODEL } from "./models.ts";
@@ -60,13 +61,46 @@ export function speechModels(options: VoiceOptions): string[] {
 export async function makeTranscriber(options: VoiceOptions, modelsDir: string): Promise<Transcriber> {
   checkVoice(options);
   const { backend, model, quantization } = options;
-  if (backend === "command") return new CommandTranscriber(options.command);
-  return lazily(`onnx-asr:${model}`, async () => {
+  const dictionary = options.dictionary ?? [];
+  const soundAlike = options.dictionarySoundAlike ?? true;
+  if (backend === "command") return withDictionary(new CommandTranscriber(options.command), dictionary, { soundAlike });
+  const transcriber = lazily(`onnx-asr:${model}`, async () => {
     const modelDir = locateModel(model, modelsDir, quantization);
     const vadDir = locateModel(VAD_MODEL, modelsDir);
     if (!modelDir || !vadDir) throw new MissingModelError([...(modelDir ? [] : [model]), ...(vadDir ? [] : [VAD_MODEL])]);
     return ParakeetTranscriber.load(modelDir, { model, quantization, vadPath: join(vadDir, modelFiles(VAD_MODEL)[0]!) });
   });
+  return withDictionary(transcriber, dictionary, { soundAlike });
+}
+
+/**
+ * `inner` with the owner's personal dictionary applied to every text it gives: `transcribe`, and each stretch from
+ * `transcribeSegments`. Nothing else changes (the engine, the seconds, the timings), and `heard` holds what the speech
+ * model recognised only when the dictionary changed the text. A dictionary with no entry in it gives `inner` itself.
+ */
+export function withDictionary(
+  inner: Transcriber,
+  dictionary: readonly string[],
+  { soundAlike = true }: { soundAlike?: boolean } = {},
+): Transcriber {
+  const entries = parseDictionary(dictionary);
+  if (entries.length === 0) return inner;
+  const correct = (text: string) => applyDictionary(text, entries, { soundAlike });
+  const wrapped: Transcriber = {
+    engine: inner.engine,
+    async transcribe(audio, sampleRate) {
+      const transcript = await inner.transcribe(audio, sampleRate);
+      const { text, changed } = correct(transcript.text);
+      return changed ? { ...transcript, text, heard: transcript.text } : transcript;
+    },
+  };
+  const { transcribeSegments, release } = inner;
+  if (transcribeSegments) {
+    wrapped.transcribeSegments = async (samples, sampleRate) =>
+      (await transcribeSegments.call(inner, samples, sampleRate)).map((part) => ({ ...part, text: correct(part.text).text }));
+  }
+  if (release) wrapped.release = () => release.call(inner);
+  return wrapped;
 }
 
 /**

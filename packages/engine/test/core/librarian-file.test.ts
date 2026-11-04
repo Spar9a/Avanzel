@@ -595,6 +595,25 @@ describe("file", () => {
     );
   });
 
+  it("tells the agent the terms of the owner's dictionary, never the heard-as words", async () => {
+    const runs = recordRuns();
+    const settings = fakeSettings();
+    settings.voice = { ...settings.voice, dictionary: ["Ollama = Alema, Polymer", "Kowalczyk"] };
+    librarian = new Librarian(vault, settings, { clock: () => NOW });
+    librarian.captureText("A thought");
+    await librarian.file();
+    const prompt = runs()[0]?.prompt ?? "";
+    expect(prompt).toContain("The owner uses these names and terms. Spell them exactly this way: Ollama, Kowalczyk.");
+    expect(prompt).not.toContain("Alema");
+  });
+
+  it("says nothing of names when the dictionary is empty", async () => {
+    const runs = recordRuns();
+    librarian.captureText("A thought");
+    await librarian.file();
+    expect(runs()[0]?.prompt).not.toContain("The owner uses these names");
+  });
+
   it("stops when cancelled, leaving the rest in the inbox", async () => {
     mode("slow-noisy");
     const runs = recordRuns();

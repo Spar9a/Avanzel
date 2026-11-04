@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse, TomlError } from "smol-toml";
 import { AvanzelError, type VoiceOptions } from "../types.ts";
+import { MAX_DICTIONARY_ENTRIES } from "./dictionary.ts";
 import { render } from "./templates.ts";
 
 export const VAULT_MARKER = ".avanzel";
@@ -27,6 +28,8 @@ export interface CustomHarness {
 /** The `[voice]` table. */
 export interface VoiceSettings extends VoiceOptions {
   maxRecordSeconds: number;
+  dictionary: string[];
+  dictionarySoundAlike: boolean;
 }
 
 export interface Settings {
@@ -51,6 +54,8 @@ export function defaultSettings(): Settings {
       quantization: "int8",
       command: [],
       maxRecordSeconds: 600,
+      dictionary: [],
+      dictionarySoundAlike: true,
     },
   };
 }
@@ -119,6 +124,10 @@ function renderConfig(settings: Settings): string {
     voice_quantization: tomlString(voice.quantization),
     voice_command: voice.command.length ? `command = ${tomlArray(voice.command)}\n` : "",
     voice_max_record_seconds: String(voice.maxRecordSeconds),
+    voice_dictionary: voice.dictionary.length
+      ? `dictionary = [\n${voice.dictionary.map((line) => `  ${tomlString(line)},\n`).join("")}]\n`
+      : "dictionary = []\n",
+    voice_dictionary_sound_alike: String(voice.dictionarySoundAlike),
     harnesses: Object.entries(settings.harnesses)
       .map(
         ([name, spec]) =>
@@ -177,6 +186,8 @@ function parseSettings(data: Table, path: string): Settings {
     quantization: stringValue(voiceData, "quantization", defaults.voice.quantization, path, "voice."),
     command: stringList(voiceData, "command", path, "voice."),
     maxRecordSeconds: positiveInt(voiceData, "max_record_seconds", defaults.voice.maxRecordSeconds, path, "voice."),
+    dictionary: dictionaryLines(voiceData, path),
+    dictionarySoundAlike: booleanValue(voiceData, "dictionary_sound_alike", defaults.voice.dictionarySoundAlike, path, "voice."),
   };
   const models = Object.fromEntries(
     Object.entries(table(data, "models", path)).map(([name, model]) => {
@@ -242,6 +253,27 @@ function stringList(data: Table, key: string, path: string, prefix = ""): string
     throw new AvanzelError(`${path}: \`${prefix}${key}\` must be a list of strings`);
   }
   return [...value];
+}
+
+const MAX_DICTIONARY_LINE_LENGTH = 200;
+
+/** The `voice.dictionary` lines, refusing a list or a line longer than the dictionary can use. */
+function dictionaryLines(data: Table, path: string): string[] {
+  const lines = stringList(data, "dictionary", path, "voice.");
+  if (lines.length > MAX_DICTIONARY_ENTRIES) {
+    throw new AvanzelError(
+      `${path}: \`voice.dictionary\` has ${lines.length} lines, and ${MAX_DICTIONARY_ENTRIES} is the most it can hold. ` +
+        "Remove the lines you use least.",
+    );
+  }
+  const long = lines.findIndex((line) => line.length > MAX_DICTIONARY_LINE_LENGTH);
+  if (long >= 0) {
+    throw new AvanzelError(
+      `${path}: \`voice.dictionary\` line ${long + 1} is ${lines[long]?.length} characters, and ${MAX_DICTIONARY_LINE_LENGTH} is the most. ` +
+        "Shorten it, or put some of its heard-as words on a second line for the same term.",
+    );
+  }
+  return lines;
 }
 
 // --- paths ---------------------------------------------------------------------------------------

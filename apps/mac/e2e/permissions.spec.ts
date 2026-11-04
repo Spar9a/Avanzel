@@ -131,7 +131,7 @@ test("Settings → Privacy says what each permission is for, and Open System Set
 
 test("Settings → Privacy says the voice goes to the library's command, for a library whose voice is one", async () => {
   const library = await makeLibrary();
-  const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600 };
+  const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600, dictionary: [], dictionarySoundAlike: true };
   saveSettings(library, { ...loadSettings(library), voice });
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Privacy");

@@ -6,6 +6,8 @@ export interface Transcript {
   engine: string;
   /** Duration of the audio in seconds, when known. */
   seconds: number | null;
+  /** What the speech model recognised, set only when the personal dictionary changed `text`. */
+  heard?: string;
 }
 
 /** A stretch of speech with its place in the audio; `start` and `end` are seconds from the start. */
@@ -38,6 +40,10 @@ export interface VoiceOptions {
   model: string;
   quantization: string;
   command: string[];
+  /** The owner's dictionary lines ("Term" or "Term = heard as, other"); none or empty leaves the speech untouched. */
+  dictionary?: string[];
+  /** Whether the dictionary also corrects near misses by sound; false keeps only the exact heard-as entries. */
+  dictionarySoundAlike?: boolean;
 }
 
 /** A problem the owner can fix (missing agent, bad config, …); apps show the message as-is. */

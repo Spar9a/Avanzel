@@ -416,7 +416,7 @@ test("the words are made on this Mac, the step says, unless the library's speech
       // A library brought from another Mac is there already, and its speech-to-text is the command in its settings.
       const library = path.join(home, "Avanzel");
       await Vault.init(library, { git: true });
-      const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600 };
+      const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600, dictionary: [], dictionarySoundAlike: true };
       saveSettings(library, { ...loadSettings(library), voice });
     }
     const app = await launch(env);
