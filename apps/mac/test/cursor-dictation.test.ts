@@ -25,6 +25,10 @@ function stubHost(
     historyFails?: boolean;
     logFails?: boolean;
     readFails?: boolean;
+    waitFails?: boolean;
+    promptFails?: boolean;
+    skipFails?: boolean;
+    newIdFails?: boolean;
   } = {},
 ) {
   const calls: string[] = [];
@@ -34,7 +38,7 @@ function stubHost(
   const prompts: Array<{ text: string; app: string; reason: string }> = [];
   const said: string[] = [];
   const pasted: Array<string | null> = [];
-  const state = { clip: { ...BEFORE } as ClipboardSnapshot };
+  const state = { clip: { ...BEFORE } as ClipboardSnapshot, now: SAID_AT };
   let ids = 0;
 
   const host: CursorHost = {
@@ -88,6 +92,7 @@ function stubHost(
       return browser;
     },
     skip() {
+      if (over.skipFails) throw new Error("settings unreadable");
       return over.skip ?? { apps: [], sites: [] };
     },
     logTo() {
@@ -103,6 +108,7 @@ function stubHost(
     showCopyPrompt(p) {
       calls.push("showCopyPrompt");
       prompts.push(p);
+      if (over.promptFails) throw new Error("capsule window gone");
     },
     say(line) {
       calls.push(`say:${line}`);
@@ -115,10 +121,14 @@ function stubHost(
         added.push(entry);
       },
     } as unknown as DictationHistory,
-    now: () => SAID_AT,
-    newId: () => `id-${++ids}`,
+    now: () => state.now,
+    newId: () => {
+      if (over.newIdFails) throw new Error("no ids left");
+      return `id-${++ids}`;
+    },
     async wait(ms: number) {
       calls.push(`wait:${ms}`);
+      if (over.waitFails) throw new Error("timer gone");
     },
   };
   return { host, calls, added, written, prompts, said, pasted, state };
@@ -447,7 +457,7 @@ describe("taps, cancels and empty words", () => {
     expect(stub.calls.at(-1)).toBe("startListening");
   });
 
-  it("cancels while the words are being recognised, so they are never pasted", async () => {
+  it("cancels while the words are being recognised: the host drops the recognition, and late words are never pasted", async () => {
     const stub = stubHost({ targets: [target(), target(), target()] });
     const dictation = new CursorDictation(stub.host);
     await dictation.tap();
@@ -455,10 +465,54 @@ describe("taps, cancels and empty words", () => {
     dictation.cancel();
     await dictation.heard({ text: "milk and eggs", seconds: 1 });
 
-    expect(stub.calls).toEqual(["startListening", "inspect", "browser", "stopListening", "say:cancelled"]);
+    expect(stub.calls).toEqual(["startListening", "inspect", "browser", "stopListening", "cancelListening", "say:cancelled"]);
+    expect(stub.pasted).toEqual([]);
     expect(stub.added).toEqual([]);
+    expect(stub.state.clip).toEqual(BEFORE);
+    // The late words drained the cancelled dictation: the next tap starts a new one.
     await dictation.tap();
     expect(stub.calls.at(-1)).toBe("startListening");
+  });
+
+  it("ignores taps after a cancel while recognising until the late words come, then dictates normally", async () => {
+    const slack = target({ pid: 200, name: "Slack", bundleId: "com.tinyspeck.slackmacgap", window: { title: "general" } });
+    const stub = stubHost({ targets: [target(), slack, slack] });
+    const dictation = new CursorDictation(stub.host);
+    await dictation.tap();
+    await dictation.tap();
+    dictation.cancel();
+    const before = stub.calls.length;
+    await dictation.tap();
+    await dictation.tap();
+    expect(stub.calls.length).toBe(before);
+
+    // The cancelled dictation's words are dropped: nothing pasted, nothing kept, the clipboard untouched.
+    await dictation.heard({ text: "old words", seconds: 1 });
+    expect(stub.pasted).toEqual([]);
+    expect(stub.added).toEqual([]);
+    expect(stub.prompts).toEqual([]);
+    expect(stub.state.clip).toEqual(BEFORE);
+
+    await dictate(dictation, { text: "new words", seconds: 2 });
+    expect(stub.pasted).toEqual(["new words"]);
+    expect(stub.added).toHaveLength(1);
+    expect(stub.added[0]).toMatchObject({ text: "new words", app: "Slack", title: "general", inserted: true });
+  });
+
+  it("lets a new dictation start ten seconds after a cancel while recognising, when no late words came", async () => {
+    const stub = stubHost();
+    const dictation = new CursorDictation(stub.host);
+    await dictation.tap();
+    await dictation.tap();
+    dictation.cancel();
+
+    stub.state.now = new Date(SAID_AT.getTime() + 9_999);
+    await dictation.tap();
+    expect(stub.calls.filter((call) => call === "startListening")).toHaveLength(1);
+
+    stub.state.now = new Date(SAID_AT.getTime() + 10_000);
+    await dictation.tap();
+    expect(stub.calls.filter((call) => call === "startListening")).toHaveLength(2);
   });
 
   it("counts a paste as inserted even when the old clipboard can't be given back", async () => {
@@ -471,6 +525,63 @@ describe("taps, cancels and empty words", () => {
     expect(stub.pasted).toEqual(["milk and eggs"]);
     expect(stub.prompts).toEqual([]);
     expect(stub.added[0]).toMatchObject({ inserted: true });
+  });
+
+  it("gives the clipboard back after a successful paste even when the pause fails", async () => {
+    const stub = stubHost({ waitFails: true });
+    await dictate(new CursorDictation(stub.host));
+
+    expect(stub.calls.slice(stub.calls.indexOf("paste"))).toEqual(["paste", "wait:150", "clipboard.restore", "history.add", "log.write"]);
+    expect(stub.state.clip).toEqual(BEFORE);
+    expect(stub.prompts).toEqual([]);
+    expect(stub.added[0]).toMatchObject({ inserted: true });
+  });
+
+  it("keeps the history entry when the copy prompt can't be shown", async () => {
+    const moved = stubHost({ promptFails: true, targets: [target(), target({ pid: 200 })] });
+    await dictate(new CursorDictation(moved.host));
+    expect(moved.state.clip.text).toBe("milk and eggs");
+    expect(moved.added).toHaveLength(1);
+    expect(moved.added[0]).toMatchObject({ app: "Notes", inserted: false });
+    expect(moved.written).toHaveLength(1);
+
+    const pasteFailed = stubHost({ promptFails: true, pasteFails: true });
+    await dictate(new CursorDictation(pasteFailed.host));
+    expect(pasteFailed.prompts).toHaveLength(1);
+    expect(pasteFailed.added[0]).toMatchObject({ inserted: false });
+
+    const unknown = stubHost({ promptFails: true, targets: [new Error("no app in front")] });
+    await dictate(new CursorDictation(unknown.host));
+    expect(unknown.added[0]).toMatchObject({ app: "", inserted: false });
+    expect(unknown.written).toEqual([]);
+  });
+
+  it("still applies the privacy rule when the prompt fails: a password field's words are kept nowhere", async () => {
+    const secure = { role: "AXSecureTextField", secure: true, takesText: "yes" as const };
+    const stub = stubHost({ promptFails: true, targets: [target({ element: secure }), target({ element: secure, pid: 200 })] });
+    await dictate(new CursorDictation(stub.host));
+
+    expect(stub.prompts).toHaveLength(1);
+    expect(stub.added).toEqual([]);
+    expect(stub.written).toEqual([]);
+  });
+
+  it("keeps the entry with an id of its own when the host can't give one", async () => {
+    const stub = stubHost({ newIdFails: true });
+    await dictate(new CursorDictation(stub.host));
+
+    expect(stub.added).toHaveLength(1);
+    expect(stub.added[0]!.id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("keeps nothing when the skip list can't be read, but still pastes", async () => {
+    const stub = stubHost({ skipFails: true });
+    await dictate(new CursorDictation(stub.host));
+
+    expect(stub.pasted).toEqual(["milk and eggs"]);
+    expect(stub.state.clip).toEqual(BEFORE);
+    expect(stub.added).toEqual([]);
+    expect(stub.written).toEqual([]);
   });
 
   it("does nothing when cancelled while idle", () => {
