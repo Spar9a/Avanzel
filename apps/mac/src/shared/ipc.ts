@@ -54,9 +54,9 @@ export type CardAction =
 
 /**
  * What main tells the capsule page's microphone: a recording's start, stop (its samples go back by `sendAudio`) and cancel; and a call's
- * start and stop, between which its blocks go back by `sendCallAudio`.
+ * start and stop, between which its blocks go back by `sendCallAudio` with the call's id (`call`).
  */
-export type CapsuleCommand = "start" | "stop" | "cancel" | "call-start" | "call-stop";
+export type CapsuleCommand = "start" | "stop" | "cancel" | { kind: "call-start" | "call-stop"; call: number };
 
 export type CapsuleState =
   | { kind: "hidden" }
@@ -727,8 +727,11 @@ export interface AvanzelBridge {
     ready(): void;
     onCommand(callback: (command: CapsuleCommand) => void): () => void;
     sendAudio(samples: Float32Array): Promise<void>;
-    /** A block of a call's microphone, about every 5 s while the call runs; `last` once its microphone has stopped. */
-    sendCallAudio(samples: Float32Array, last: boolean): Promise<void>;
+    /**
+     * A block of the microphone of the call `call` (the id its call-start command gave), about every 5 s while the call runs; `last` once
+     * its microphone has stopped.
+     */
+    sendCallAudio(call: number, samples: Float32Array, last: boolean): Promise<void>;
     /** Stop, on the listening card of a call: the call ends and becomes its notes. */
     stopCall(): void;
     reportMicError(message: string): void;

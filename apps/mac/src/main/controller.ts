@@ -1429,8 +1429,8 @@ export class Controller {
       return;
     }
     if (mode === "dictate" && !(await this.readyToListen())) return;
-    if (this.recording) {
-      // Another tap started one while this one waited (say, on the microphone prompt).
+    if (this.recording || this.calls.refuse()) {
+      // Another tap started one, or a call, while this one waited (say, on the microphone prompt).
       if (shot) rmSync(shot.path, { force: true });
       return;
     }
@@ -1539,9 +1539,11 @@ export class Controller {
 
   /**
    * The capsule's page couldn't start the microphone, and says why in the words the browser gave (`message`). Nothing was
-   * recorded, and the card sends the person to Settings → Voice, where the microphone is chosen.
+   * recorded, and the card sends the person to Settings → Voice, where the microphone is chosen. For a call, the call ends
+   * (`CallNotes.cancel`). Only the capsule's own page is heard (`sender`).
    */
-  micError(message: string): void {
+  micError(sender: WebContents, message: string): void {
+    if (!isPageOf(sender, this.capsule)) return;
     const recording = this.recording;
     if (!recording) return void this.calls.cancel(microphoneProblem(message), "open-settings:voice", "Open Settings");
     this.abandonRecording(recording);
@@ -1836,10 +1838,10 @@ export class Controller {
    * A block of the call's microphone from the capsule page (only its own page is heard). With AVANZEL_FAKE_AUDIO the page records
    * nothing, and the fake recording stands in for the call's microphone at its end.
    */
-  async onCallAudio(sender: WebContents, samples: Float32Array, last: boolean): Promise<void> {
+  async onCallAudio(sender: WebContents, call: number, samples: Float32Array, last: boolean): Promise<void> {
     if (!isPageOf(sender, this.capsule)) return;
     const fake = process.env.AVANZEL_FAKE_AUDIO;
-    this.calls.audio(fake && last ? await this.fakeAudio(fake) : samples, last);
+    this.calls.audio(call, fake && last ? await this.fakeAudio(fake) : samples, last);
   }
 
   private callHost(callsDir: string): CallHost {
@@ -1874,9 +1876,10 @@ export class Controller {
         this.wake();
         this.setCapsule(this.callCard);
       },
-      microphone: (on) => {
+      recording: () => this.recording !== null,
+      microphone: (on, call) => {
         if (!on) this.callCard = null;
-        this.capsuleCommand(on ? "call-start" : "call-stop");
+        this.capsuleCommand({ kind: on ? "call-start" : "call-stop", call });
       },
       refused: () => this.setCapsule({ kind: "call-running" }, NOTHING_TO_UNDO_MS),
       finishing: () => this.setCapsule({ kind: "transcribing", mode: "call", onThisMac: this.transcribesOnThisMac() }),

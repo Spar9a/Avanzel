@@ -230,21 +230,23 @@ function App() {
       await api.sendAudio(samples);
     } else if (command === "cancel") {
       await recorder.current.cancel();
-    } else if (command === "call-start" && current.kind === "listening" && !fake) {
-      // Set before the microphone opens: a stop that comes while it opens finds it, and clears it.
+    } else if (typeof command === "string") {
+      // a recording's start on a card that doesn't listen, or with the fake microphone: nothing to open
+    } else if (command.kind === "call-start" && current.kind === "listening" && !fake) {
+      // Set before the microphone opens: a stop that comes while it opens finds it, and clears it. Each block carries the call's id.
       callBlocks.current = setInterval(() => {
         const block = recorder.current.drain();
-        if (block.length > 0) void api.sendCallAudio(block, false);
+        if (block.length > 0) void api.sendCallAudio(command.call, block, false);
       }, CALL_BLOCK_MS);
       try {
         await recorder.current.start(current.microphoneId);
       } catch (error) {
         api.reportMicError(error instanceof Error ? error.message : String(error));
       }
-    } else if (command === "call-stop") {
+    } else if (command.kind === "call-stop") {
       if (callBlocks.current) clearInterval(callBlocks.current);
       callBlocks.current = null;
-      await api.sendCallAudio(await recorder.current.stop(), true);
+      await api.sendCallAudio(command.call, await recorder.current.stop(), true);
     }
   }), []);
 

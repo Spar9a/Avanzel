@@ -2,7 +2,7 @@
 // in <userData>/calls/<id>/ (`CallSession`), until Stop, the helper's own end or four hours; then the two become one transcript, one
 // capture in the inbox, filed as a thought is. The controller is the host: it owns the capsule, the dialogs and the library, and this
 // owns the call. A call is not a recording (`Controller.recording`): while one runs no thought starts (`refuse`).
-import { rmSync } from "node:fs";
+import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { AvanzelError, idStamp, type CallCapture, type Transcriber } from "@avanzel/engine";
 import type { CardAction } from "../shared/ipc.ts";
@@ -38,7 +38,24 @@ const NOT_MADE: Problem = {
   title: "The call's notes couldn't be made.",
   body: "The recording is safe on this Mac and nothing was changed in your library.",
 };
-const NO_SPEECH: Problem = { title: "No speech was heard on this call.", body: "Nothing was saved." };
+const NO_SPEECH: Problem = { title: "No speech was heard on this call.", body: "The recording is safe on this Mac." };
+
+/** The empty file in a call's folder that says its finish found no speech in it (`isNoSpeechFolder`). */
+const NO_SPEECH_MARKER = "no-speech";
+
+/** Whether the call in `dir` was finished and no speech was found in it: its folder stays, marked, for the person to try again. */
+export function isNoSpeechFolder(dir: string): boolean {
+  return existsSync(path.join(dir, NO_SPEECH_MARKER));
+}
+
+/** Whether `file` is there and holds anything. */
+const holdsSound = (file: string): boolean => {
+  try {
+    return statSync(file).size > 0;
+  } catch {
+    return false;
+  }
+};
 
 /** What CallNotes needs of avanzel-calltap (`CallTap`); tests stand one in. */
 export interface Tap {
@@ -61,14 +78,19 @@ export interface CallHost {
   askConsent(): Promise<boolean>;
   /** Library, speech model and microphone are ready, as for a thought; it says what is missing otherwise. */
   readyToListen(): Promise<boolean>;
+  /** A thought (a recording) is being recorded: a call can't take the microphone then. */
+  recording(): boolean;
   newTap(opts: { pids: number[]; outFile: string; onEvent(e: TapEvent): void }): Tap;
   transcriber(): Promise<Transcriber>;
   /** Writes the call's capture in the inbox (`Librarian.captureCall`) and gives its path. */
   captureCall(call: CallCapture): Promise<string>;
   /** The capsule's listening card for the call, which began at `startedAt` (Date.now()). */
   listening(startedAt: number): void;
-  /** Starts or stops the capsule page's microphone for the call; once stopped, the page sends its last block (`audio`). */
-  microphone(on: boolean): void;
+  /**
+   * Starts or stops the capsule page's microphone for the call `call` (its id); once stopped, the page sends its last block (`audio`).
+   * The page sends each block with that id, so that a late one from an ended call never lands in a newer one.
+   */
+  microphone(on: boolean, call: number): void;
   /** A thought, a screen comment or a question was asked for while the call runs: the capsule's notice says so (CALL_RUNNING_LINE). */
   refused(): void;
   /** The call's words are being made: the capsule's transcribing card. */
@@ -82,6 +104,8 @@ export interface CallHost {
 }
 
 interface ActiveCall {
+  /** Tags the microphone's blocks of this call (`audio`). */
+  id: number;
   dir: string;
   session: CallSession;
   tap: Tap;
@@ -101,7 +125,11 @@ export class CallNotes {
   private starting = false;
   /** The folder of a call whose notes weren't made, which Try again (or Finish the notes) finishes (`finishKept`). */
   private kept: string | null = null;
+  /** The folder being finished: a new call waits until it is, so that its cards don't replace the new call's. */
   private finishingDir: string | null = null;
+  /** Ends under way (`end`), from Stop until the call is finished, kept or left. */
+  private ending = 0;
+  private lastId = 0;
   private work: Promise<void> = Promise.resolve();
 
   constructor(private readonly host: CallHost) {}
@@ -112,11 +140,12 @@ export class CallNotes {
   }
 
   /**
-   * Starts notes on a call in `app` (its pids are tapped) or in everything the Mac plays. Refused (false) while a call runs or one is
-   * starting, when the Mac can't tap a call, on Not now, and when the microphone or the speech model isn't ready.
+   * Starts notes on a call in `app` (its pids are tapped) or in everything the Mac plays. Refused (false) while a call runs, starts, or
+   * is still being finished, when the Mac can't tap a call, on Not now, when the microphone or the speech model isn't ready, and when
+   * a thought began recording while the questions were asked.
    */
   async start(app: CallApp | "everything"): Promise<boolean> {
-    if (this.running || this.starting) return false;
+    if (this.running || this.starting || this.ending > 0 || this.finishingDir !== null) return false;
     this.starting = true;
     try {
       const { host } = this;
@@ -126,10 +155,12 @@ export class CallNotes {
       }
       if (!host.consented() && !(await host.askConsent())) return false;
       if (!(await host.readyToListen())) return false;
+      if (host.recording()) return false; // a thought took the microphone while the questions were up
       const startedAt = new Date();
       const dir = path.join(host.callsDir, idStamp(startedAt));
       const session = new CallSession({ dir, app: app === "everything" ? null : app.name, startedAt });
       const call: ActiveCall = {
+        id: ++this.lastId,
         dir,
         session,
         tap: { start: () => undefined, stop: async () => undefined },
@@ -142,7 +173,7 @@ export class CallNotes {
       this.active = call;
       this.mic = call;
       host.listening(startedAt.getTime());
-      host.microphone(true);
+      host.microphone(true, call.id);
       call.tap.start();
       host.changed();
       return true;
@@ -161,19 +192,22 @@ export class CallNotes {
     if (this.active) await this.end(this.active, "leave");
   }
 
-  /** The call's microphone couldn't start: the call ends, nothing of it is kept, and `problem` says so. */
+  /**
+   * The call's microphone couldn't start: the call ends and `problem` says so. Its folder stays, for the next start to finish, unless
+   * it holds no sound at all.
+   */
   async cancel(problem: Problem, action?: CardAction, actionLabel?: string): Promise<void> {
     const call = this.active;
     if (!call) return;
     await this.end(call, "leave");
-    rmSync(call.dir, { recursive: true, force: true });
+    if (!holdsSound(call.session.youFile) && !holdsSound(call.session.themFile)) rmSync(call.dir, { recursive: true, force: true });
     this.host.failed(problem, action, actionLabel);
   }
 
-  /** A block of the call's microphone from the capsule page; `last` once its microphone has stopped. */
-  audio(samples: Float32Array, last: boolean): void {
+  /** A block of the microphone of the call `id` from the capsule page; `last` once its microphone has stopped. */
+  audio(id: number, samples: Float32Array, last: boolean): void {
     const call = this.mic;
-    if (!call) return; // a late block of a call that ended without it
+    if (call?.id !== id) return; // a late block of a call that ended without it
     if (samples.length > 0) call.session.appendYou(samples);
     if (last) {
       this.mic = null;
@@ -181,8 +215,12 @@ export class CallNotes {
     }
   }
 
-  /** The guard of a thought's start: true (and the notice shows) while a call runs, so that the thought doesn't start. */
+  /**
+   * The guard of a thought's start: true while a call runs (and the notice says so), or starts (quietly: none runs yet, and the person
+   * may answer Not now), so that the thought doesn't start.
+   */
   refuse(): boolean {
+    if (this.starting && !this.running) return true;
     if (!this.running) return false;
     this.host.refused();
     return true;
@@ -201,13 +239,14 @@ export class CallNotes {
   /**
    * The call in `dir` as its capture: both files transcribed and merged (`CallSession.finish`), the capture written, the folder removed,
    * and the capture on as a thought's goes (`filed`). When the other side was silent the capture says so first (THEM_NOT_HEARD). When
-   * it fails the folder stays, and the card's Try again finishes it again (`finishKept`); a call with no speech in it is removed, as a
-   * silent thought is. Stop, Finish the notes and Try again use it, and so can the finish of a call left over from a quit.
+   * it fails the folder stays, and the card's Try again finishes it again (`finishKept`); a call with no speech in it stays too, marked
+   * (`isNoSpeechFolder`). Stop, Finish the notes and Try again use it, and so can the finish of a call left over from a quit.
    */
   async finishCallFolder(dir: string): Promise<void> {
     const { host } = this;
     this.finishingDir = dir;
     host.finishing();
+    rmSync(path.join(dir, NO_SPEECH_MARKER), { force: true }); // a try that fails otherwise isn't one with no speech
     try {
       const meta = CallSession.read(dir);
       if (!meta) throw new Error(`${dir} has no call.json`);
@@ -220,13 +259,12 @@ export class CallNotes {
       if (this.kept === dir) this.kept = null;
       host.filed(capturePath, text, (performance.now() - started) / 1000);
     } catch (error) {
+      this.kept = dir;
       if (error instanceof AvanzelError && error.message === NO_SPEECH.title) {
-        rmSync(dir, { recursive: true, force: true });
-        if (this.kept === dir) this.kept = null;
-        return host.failed(NO_SPEECH);
+        writeFileSync(path.join(dir, NO_SPEECH_MARKER), "");
+        return host.failed(NO_SPEECH, "finish-call", "Try again");
       }
       console.error("call notes", error);
-      this.kept = dir;
       host.failed(NOT_MADE, "finish-call", "Try again");
     } finally {
       this.finishingDir = null;
@@ -251,12 +289,13 @@ export class CallNotes {
     const { host } = this;
     clearTimeout(call.maxTimer);
     if (this.active === call) this.active = null;
+    this.ending++;
     call.ending = (async () => {
       const lastBlock = new Promise<void>((resolve) => {
         call.lastBlock = resolve;
         setTimeout(resolve, host.audioTimeoutMs).unref?.();
       });
-      host.microphone(false);
+      host.microphone(false, call.id);
       await Promise.all([lastBlock, call.tap.stop()]);
       if (this.mic === call) this.mic = null; // its last block never came
       host.changed();
@@ -266,7 +305,7 @@ export class CallNotes {
         return host.failed(TAP_LOST, "finish-call", "Finish the notes");
       }
       await this.finishCallFolder(call.dir);
-    })();
+    })().finally(() => this.ending--);
     this.work = call.ending;
     return call.ending;
   }
