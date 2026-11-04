@@ -10,6 +10,25 @@
 
 **Spec:** the study that chose this design is in `/tmp/dict-test` (60 spoken sentences with 30 terms through the real Parakeet model: 16 sound-alike misses; a cautious sound-alike rule fixed 10 of 16 and rewrote 2 of 120 ordinary sentences wrongly, so it is conservative and the alias is the sure path). Prototype: `/tmp/dict-test/matcher2.py` (Python; port the logic, do not call it). FluidVoice's custom dictionary (replace "heard as" with a term) is the model for aliases.
 
+## What was built
+
+Branch `dictionary` (seven commits from main dc58821, not pushed). The review copy is `apps/mac/release/review-dictionary/mac-arm64/Avanzel.app`; the by-hand checks are in the flight pack's "Dictionary checks".
+
+- **Task 1 (24008c6, 35b4c6f):** `parseDictionary` and `applyDictionary` in the engine: heard-as aliases (exact, longest first) and a cautious sound-alike match. Fixed 6 of 16 mis-hearings in the study, none wrongly.
+- **Task 2 (050b5d4, b855677):** `[voice] dictionary` in `config.toml`, a transcriber decorator (`withDictionary`) for thoughts, questions and calls, `Transcript.heard`, and the spelled terms as a bounded hint in the filing prompt.
+- **Task 3 (d375b13, b3cedc8):** Settings → Voice has a Dictionary (one text area), saved when the field is left; a corrected thought keeps `heard:` in its capture.
+- **Task 4:** the checks, the README line and this section.
+
+Rulings that changed the plan:
+1. The sound-alike default stays at 0.85. "Clawed code" is no longer a must-fix; it needs an alias line.
+2. Two guards were added (the raw letters at least 0.6 alike, a sound key of at least 4 characters), and a window may span only single horizontal spaces. Ordinary words near a term (election, Electron) remain a known limit.
+3. The fix round took the discriminating tests, the stop-word test and a length pre-filter for speed.
+4. `[voice] dictionary_sound_alike` (default true) was added as the per-library switch.
+5. Terms and aliases are cleaned to one line at the source, and the hint to the agent is capped at 100 terms and 2,000 characters.
+6. The pane replaces its draft after a save only if the field still holds what was sent, so text typed while a save waits is kept.
+
+Known limits: a term split across two call segments is not corrected; Edit of a thought drops `heard`; questions, screen comments and calls leave no `heard` record; lines of one term are merged when used, not in the field.
+
 ## Global Constraints
 
 - The owner's words are the source of truth (`templates/AGENTS.md` rule 1). A correction changes spelling of a listed term only; the text recognised is kept in the capture as `heard:` when it differs.

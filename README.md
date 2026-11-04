@@ -63,6 +63,9 @@ doesn't yet notice a call by itself, read calendar titles or tell the other side
 
 Good to know:
 
+- **A dictionary** in Settings → Voice lists the names and terms you use, one per line. What the speech model
+  hears is corrected to them (`Ollama = Alema` fixes a word it keeps getting wrong), your agent is told how to
+  spell them, and a thought that was corrected keeps what was heard in its `heard:` line.
 - **Esc** cancels a dictation from any app while Avanzel is listening (it is a global shortcut
   for that moment only), and the recording is dropped.
 - **A shortcut another app holds** does nothing when pressed (⌥Space is also the default of
