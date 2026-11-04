@@ -1,6 +1,6 @@
 // The engine core: the Markdown library, agent harness adapters and the filing contract.
 export * from "./config.ts";
-export { idStamp, localDate, localMinute } from "./dates.ts";
+export { idStamp, isoLocal, localDate, localMinute } from "./dates.ts";
 export * from "./vault.ts";
 export * from "./changes.ts";
 export * from "./steps.ts";
@@ -14,5 +14,6 @@ export * from "./librarian.ts";
 export * from "./tasks.ts";
 export * from "./calls.ts";
 export * from "./dictionary.ts";
+export * from "./dictation-log.ts";
 export * from "./skills.ts";
 export { templatesDir } from "./templates.ts";

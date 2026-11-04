@@ -32,6 +32,33 @@ export interface VoiceSettings extends VoiceOptions {
   dictionarySoundAlike: boolean;
 }
 
+/**
+ * The apps dictation never pastes into by default: the password managers on a Mac, by bundle id. The app keeps the same list
+ * (`DEFAULT_SKIP_APPS` in apps/mac/src/main/cursor-policy.ts) because it can't import from here and the engine can't import from it;
+ * a test pins this one, and the two must stay equal.
+ */
+export const DEFAULT_DICTATION_SKIP_APPS: readonly string[] = [
+  "com.1password.1password",
+  "com.agilebits.onepassword7",
+  "com.bitwarden.desktop",
+  "com.apple.keychainaccess",
+  "com.apple.Passwords",
+  "org.keepassxc.keepassxc",
+  "com.lastpass.LastPass",
+  "com.dashlane.Dashlane",
+  "com.enpass.Enpass",
+];
+
+/** The `[dictation]` table: dictating into any app, and whether the library keeps a day file of it. */
+export interface DictationSettings {
+  /** Also append every dictation to `raw/dictations/YYYY-MM-DD.md` in the library. The app's own history is kept either way. */
+  log: boolean;
+  /** Bundle ids of apps that are never dictated into. Entries are trimmed; blanks and repeats are dropped. */
+  skipApps: string[];
+  /** Websites that are never dictated into, as the owner wrote them (the app turns them into hosts). */
+  skipSites: string[];
+}
+
 export interface Settings {
   harness: string;
   timeoutSeconds: number;
@@ -39,6 +66,7 @@ export interface Settings {
   models: Record<string, string>;
   harnesses: Record<string, CustomHarness>;
   voice: VoiceSettings;
+  dictation: DictationSettings;
 }
 
 export function defaultSettings(): Settings {
@@ -57,6 +85,7 @@ export function defaultSettings(): Settings {
       dictionary: [],
       dictionarySoundAlike: true,
     },
+    dictation: { log: false, skipApps: [...DEFAULT_DICTATION_SKIP_APPS], skipSites: [] },
   };
 }
 
@@ -128,6 +157,9 @@ function renderConfig(settings: Settings): string {
       ? `dictionary = [\n${voice.dictionary.map((line) => `  ${tomlString(line)},\n`).join("")}]\n`
       : "dictionary = []\n",
     voice_dictionary_sound_alike: String(voice.dictionarySoundAlike),
+    dictation_log: String(settings.dictation.log),
+    dictation_skip_apps: tomlLines("skip_apps", settings.dictation.skipApps),
+    dictation_skip_sites: tomlLines("skip_sites", settings.dictation.skipSites),
     harnesses: Object.entries(settings.harnesses)
       .map(
         ([name, spec]) =>
@@ -152,6 +184,11 @@ function tomlKey(key: string): string {
 
 function tomlArray(values: readonly string[]): string {
   return `[${values.map(tomlString).join(", ")}]`;
+}
+
+/** `key = [...]` with one entry to a line, so a long list stays readable and a hand edit is one line; `key = []` when empty. */
+function tomlLines(key: string, values: readonly string[]): string {
+  return values.length ? `${key} = [\n${values.map((value) => `  ${tomlString(value)},\n`).join("")}]\n` : `${key} = []\n`;
 }
 
 function readToml(path: string): Table {
@@ -189,6 +226,14 @@ function parseSettings(data: Table, path: string): Settings {
     dictionary: dictionaryLines(voiceData, path),
     dictionarySoundAlike: booleanValue(voiceData, "dictionary_sound_alike", defaults.voice.dictionarySoundAlike, path, "voice."),
   };
+  const dictationData = table(data, "dictation", path);
+  const dictation: DictationSettings = {
+    log: booleanValue(dictationData, "log", defaults.dictation.log, path, "dictation."),
+    skipApps: Object.hasOwn(dictationData, "skip_apps")
+      ? dictationList(dictationData, "skip_apps", path)
+      : defaults.dictation.skipApps,
+    skipSites: dictationList(dictationData, "skip_sites", path),
+  };
   const models = Object.fromEntries(
     Object.entries(table(data, "models", path)).map(([name, model]) => {
       if (typeof model !== "string") throw new AvanzelError(`${path}: \`models.${name}\` must be a string`);
@@ -212,6 +257,7 @@ function parseSettings(data: Table, path: string): Settings {
     models,
     harnesses,
     voice,
+    dictation,
   };
 }
 
@@ -274,6 +320,28 @@ function dictionaryLines(data: Table, path: string): string[] {
     );
   }
   return lines.map(plainLine);
+}
+
+/**
+ * A `dictation` list (apps or sites), refusing a list or an entry longer than the dictionary's limits, as the dictionary is refused.
+ * Entries are trimmed; blanks and repeats are dropped. Websites are not normalised here: the app does that.
+ */
+function dictationList(data: Table, key: string, path: string): string[] {
+  const entries = stringList(data, key, path, "dictation.");
+  if (entries.length > MAX_DICTIONARY_ENTRIES) {
+    throw new AvanzelError(
+      `${path}: \`dictation.${key}\` has ${entries.length} entries, and ${MAX_DICTIONARY_ENTRIES} is the most it can hold. ` +
+        "Remove the ones you use least.",
+    );
+  }
+  const long = entries.findIndex((entry) => entry.length > MAX_DICTIONARY_LINE_LENGTH);
+  if (long >= 0) {
+    throw new AvanzelError(
+      `${path}: \`dictation.${key}\` entry ${long + 1} is ${entries[long]?.length} characters, and ${MAX_DICTIONARY_LINE_LENGTH} is the most. ` +
+        "Shorten it, or check that it is a single name.",
+    );
+  }
+  return [...new Set(entries.map((entry) => entry.trim()).filter((entry) => entry !== ""))];
 }
 
 // --- paths ---------------------------------------------------------------------------------------

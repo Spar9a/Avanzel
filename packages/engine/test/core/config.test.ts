@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_DICTATION_SKIP_APPS,
   defaultSettings,
   loadSettings,
   rememberVault,
@@ -84,7 +85,78 @@ describe("loadSettings", () => {
         dictionary: [],
         dictionarySoundAlike: true,
       },
+      dictation: { log: false, skipApps: [...DEFAULT_DICTATION_SKIP_APPS], skipSites: [] },
     });
+  });
+
+  // The app keeps the same list in apps/mac/src/main/cursor-policy.ts (DEFAULT_SKIP_APPS); the engine can't import from the app,
+  // so the two are kept equal by hand and this pins the engine's side.
+  it("skips the nine password managers by default", () => {
+    expect(DEFAULT_DICTATION_SKIP_APPS).toEqual([
+      "com.1password.1password",
+      "com.agilebits.onepassword7",
+      "com.bitwarden.desktop",
+      "com.apple.keychainaccess",
+      "com.apple.Passwords",
+      "org.keepassxc.keepassxc",
+      "com.lastpass.LastPass",
+      "com.dashlane.Dashlane",
+      "com.enpass.Enpass",
+    ]);
+    expect(defaultSettings().dictation.skipApps).not.toBe(DEFAULT_DICTATION_SKIP_APPS); // a copy: changing one library's never changes the next
+  });
+
+  it("reads the dictation table, and a config without it reads as the defaults", () => {
+    write(
+      tmp(),
+      ".avanzel/config.toml",
+      '[dictation]\nlog = true\nskip_apps = ["com.example.Secret"]\nskip_sites = ["bank.example.com", "mail.example.org"]\n',
+    );
+    expect(loadSettings(tmp()).dictation).toEqual({
+      log: true,
+      skipApps: ["com.example.Secret"],
+      skipSites: ["bank.example.com", "mail.example.org"],
+    });
+    write(tmp(), ".avanzel/config.toml", '[voice]\nbackend = "onnx-asr"\n');
+    expect(loadSettings(tmp()).dictation).toEqual(defaultSettings().dictation);
+    write(tmp(), ".avanzel/config.toml", "[dictation]\nlog = true\n"); // each key falls back on its own
+    expect(loadSettings(tmp()).dictation).toEqual({ log: true, skipApps: [...DEFAULT_DICTATION_SKIP_APPS], skipSites: [] });
+    write(tmp(), ".avanzel/config.toml", "[dictation]\nskip_apps = []\n"); // an empty list is the owner's choice, not a missing one
+    expect(loadSettings(tmp()).dictation.skipApps).toEqual([]);
+  });
+
+  it("trims dictation list entries and drops blanks and repeats, keeping the first of each", () => {
+    write(
+      tmp(),
+      ".avanzel/config.toml",
+      '[dictation]\nskip_apps = ["  com.a  ", "", "   ", "com.b", "com.a"]\nskip_sites = ["x.example", " x.example", "Y.example"]\n',
+    );
+    expect(loadSettings(tmp()).dictation).toMatchObject({ skipApps: ["com.a", "com.b"], skipSites: ["x.example", "Y.example"] });
+  });
+
+  it.each(["skip_apps", "skip_sites"])("refuses more than 500 entries, or an entry over 200 characters, in dictation.%s", (key) => {
+    const entries = (count: number) => Array.from({ length: count }, (_, i) => `"entry ${i}"`).join(", ");
+    write(tmp(), ".avanzel/config.toml", `[dictation]\n${key} = [${entries(501)}]\n`);
+    const tooMany = thrownBy(() => loadSettings(tmp()));
+    expect(tooMany).toBeInstanceOf(AvanzelError);
+    expect(tooMany.message).toContain(`\`dictation.${key}\``);
+    expect(tooMany.message).toContain("501");
+    expect(tooMany.message).toContain("500");
+    expect(tooMany.message).toContain("Remove");
+    expect(tooMany.message).not.toContain("!");
+    write(tmp(), ".avanzel/config.toml", `[dictation]\n${key} = [${entries(500)}]\n`);
+    expect(loadSettings(tmp()).dictation[key === "skip_apps" ? "skipApps" : "skipSites"]).toHaveLength(500);
+
+    write(tmp(), ".avanzel/config.toml", `[dictation]\n${key} = ["fine", "${"x".repeat(201)}"]\n`);
+    const tooLong = thrownBy(() => loadSettings(tmp()));
+    expect(tooLong).toBeInstanceOf(AvanzelError);
+    expect(tooLong.message).toContain(`\`dictation.${key}\``);
+    expect(tooLong.message).toContain("entry 2");
+    expect(tooLong.message).toContain("201 characters");
+    expect(tooLong.message).toContain("200");
+    expect(tooLong.message).not.toContain("!");
+    write(tmp(), ".avanzel/config.toml", `[dictation]\n${key} = ["${"x".repeat(200)}"]\n`);
+    expect(loadSettings(tmp()).dictation[key === "skip_apps" ? "skipApps" : "skipSites"]).toHaveLength(1);
   });
 
   it("reads the dictionary and its sound-alike switch, and an old config without them reads as empty and on", () => {
@@ -168,6 +240,13 @@ interactive = ["python", "agent.py"]
     ["[voice]\ndictionary = [1]", "voice.dictionary"],
     ['[voice]\ndictionary_sound_alike = "no"', "voice.dictionary_sound_alike"],
     ["[voice]\nmax_record_seconds = -5", "voice.max_record_seconds"],
+    ['dictation = "on"', "dictation"],
+    ['[dictation]\nlog = "yes"', "dictation.log"],
+    ["[dictation]\nlog = 1", "dictation.log"],
+    ['[dictation]\nskip_apps = "com.a"', "dictation.skip_apps"],
+    ["[dictation]\nskip_apps = [1]", "dictation.skip_apps"],
+    ['[dictation]\nskip_sites = "example.com"', "dictation.skip_sites"],
+    ["[dictation]\nskip_sites = [true]", "dictation.skip_sites"],
     ["harness = [", "config.toml"],
   ])("rejects %j naming %s", (body, needle) => {
     write(tmp(), ".avanzel/config.toml", body);
@@ -195,9 +274,14 @@ describe("saveSettings", () => {
       "max_record_seconds = 600\n",
       "dictionary = []\n",
       "dictionary_sound_alike = true\n",
+      "[dictation]\n",
+      "log = false\n",
+      "skip_sites = []\n",
     ]) {
       expect(text).toContain(line);
     }
+    expect(text).toContain('skip_apps = [\n  "com.1password.1password",\n');
+    expect(text).toContain('  "com.enpass.Enpass",\n]\n');
     expect(text).not.toContain("$");
     expect(text).not.toMatch(/^command = /m);
     expect(text).not.toMatch(/^\[harnesses/m);
@@ -245,9 +329,17 @@ describe("saveSettings", () => {
         ],
         dictionarySoundAlike: false,
       },
+      dictation: {
+        log: true,
+        skipApps: ["com.example.Secret", 'com.odd."quote" \\ дом'],
+        skipSites: ["bank.example.com", "mail.example.org"],
+      },
     };
     saveSettings(tmp(), settings);
     expect(loadSettings(tmp())).toEqual(settings);
+    const emptied = { ...settings, dictation: { log: false, skipApps: [], skipSites: [] } };
+    saveSettings(tmp(), emptied);
+    expect(loadSettings(tmp())).toEqual(emptied); // an owner who emptied the list does not get the nine back
     expect(readFileSync(configPath(), "utf8")).toContain('[models]\nclaude = "sonnet"\ncursor-agent = "gpt-5"\n');
     expect(readFileSync(configPath(), "utf8")).toContain('\n\n[voice]\n');
   });

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as git from "../../src/core/git.ts";
 import { which } from "../../src/core/proc.ts";
+import { template } from "../../src/core/templates.ts";
 import { AUDIO_EXTS, Vault } from "../../src/core/vault.ts";
 import { binScripts, envHome, gitIdentity, useTmp, write } from "./helpers.ts";
 
@@ -473,6 +474,77 @@ describe.skipIf(!git.available())("git", () => {
         expect(await git.keepInboxAudioOut(root)).toMatch(/^the exclude file can't be read or written: EACCES: permission denied/);
         expect(readFileSync(excludeFile(root), "utf8")).toBe("# mine\n");
       });
+    });
+  });
+
+  // The day files of dictations (raw/dictations/) are for the evening review, not for history: they stay on this machine. The library's
+  // .gitignore lists them for a new library; the repository's own exclude file covers one made before the rule, and the owner's own git.
+  describe("the day files of dictations", () => {
+    const excludeFile = (root: string) => join(root, ".git", "info", "exclude");
+    const tracked = (root: string) => gitOut(root, "ls-files").split("\n").filter(Boolean);
+    const inHistory = (root: string) => gitOut(root, "log", "--all", "--name-only", "--format=").split("\n").filter(Boolean);
+    const DAY = "raw/dictations/2026-11-05.md";
+
+    it("are listed in the exclude file of a repository Avanzel makes, and in the library's .gitignore template", async () => {
+      const root = repo();
+      await git.initRepo(root);
+      expect(readFileSync(excludeFile(root), "utf8").split("\n")).toContain("raw/dictations/");
+      expect(template("gitignore").split("\n")).toContain("raw/dictations/");
+    });
+
+    it("are left out of a commit in a library made before the rule, new or changed, and the notes beside them are not", async () => {
+      gitIdentity();
+      const root = repo();
+      gitOut(root, "init", "-q"); // a library from before: its exclude file knows nothing of dictations
+      expect(existsSync(excludeFile(root)) ? readFileSync(excludeFile(root), "utf8") : "").not.toContain("raw/dictations/");
+      write(root, "a.md", "a");
+      write(root, DAY, "# Dictations 2026-11-05\n");
+      expect(await git.commitAll(root, "first")).toMatch(/^[0-9a-f]{40}$/);
+      expect(tracked(root)).toEqual(["a.md"]);
+      write(root, DAY, "# Dictations 2026-11-05\n\nmore words\n"); // changed
+      write(root, "raw/dictations/2026-11-06.md", "another day"); // and a new one
+      write(root, "b.md", "b");
+      expect(await git.commitAll(root, "second")).toMatch(/^[0-9a-f]{40}$/);
+      expect(await git.commitAll(root, "nothing to commit but the day files")).toBeNull();
+      expect(tracked(root)).toEqual(["a.md", "b.md"]);
+      expect(inHistory(root).filter((path) => path.startsWith("raw/"))).toEqual([]);
+      expect(readFileSync(join(root, DAY), "utf8")).toBe("# Dictations 2026-11-05\n\nmore words\n"); // and they are where they were
+    });
+
+    it("are excluded by keepInboxAudioOut as a library opens; a second call changes nothing, and the owner's .gitignore is untouched", async () => {
+      const root = repo();
+      gitOut(root, "init", "-q");
+      const ignore = "# mine\nscratch/\n";
+      writeFileSync(join(root, ".gitignore"), ignore);
+      writeFileSync(excludeFile(root), "# mine\n*.tmp");
+      expect(await git.keepInboxAudioOut(root)).toBeNull();
+      const once = readFileSync(excludeFile(root), "utf8");
+      const lines = once.split("\n");
+      expect(lines.slice(0, 2)).toEqual(["# mine", "*.tmp"]); // the owner's lines stay, the last not run into ours
+      expect(lines.filter((line) => line === "raw/dictations/")).toHaveLength(1);
+      expect(lines).toContain("inbox/*.[wW][aA][vV]"); // and the recordings' lines are there as before
+      expect(readFileSync(join(root, ".gitignore"), "utf8")).toBe(ignore);
+      expect(await git.keepInboxAudioOut(root)).toBeNull();
+      expect(readFileSync(excludeFile(root), "utf8")).toBe(once);
+      write(root, DAY, "words");
+      write(root, "note.md", "note");
+      gitOut(root, "add", "-A");
+      expect(tracked(root)).toEqual([".gitignore", "note.md"]);
+    });
+
+    it("are added to an exclude file that has the recordings' lines already, without touching any other line", async () => {
+      const root = repo();
+      gitOut(root, "init", "-q");
+      await git.keepInboxAudioOut(root);
+      const lines = readFileSync(excludeFile(root), "utf8").split("\n");
+      // What an earlier Avanzel wrote: everything but the new line.
+      const before = lines.filter((line) => line !== "raw/dictations/" && !/dictations kept/.test(line)).join("\n");
+      writeFileSync(excludeFile(root), before);
+      expect(await git.keepInboxAudioOut(root)).toBeNull();
+      const after = readFileSync(excludeFile(root), "utf8");
+      expect(after.startsWith(before.endsWith("\n") ? before : `${before}\n`)).toBe(true);
+      expect(after.split("\n").filter((line) => line === "raw/dictations/")).toHaveLength(1);
+      expect(after.split("\n").filter((line) => line.startsWith("# Avanzel"))).toHaveLength(1); // the recordings' note, not repeated
     });
   });
 });

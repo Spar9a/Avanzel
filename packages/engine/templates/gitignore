@@ -7,3 +7,5 @@
 .obsidian/workspace*.json
 # Recordings stay on this machine; their transcripts are the captures in raw/
 raw/audio/
+# Dictations said into other apps are kept for the evening review, on this machine only
+raw/dictations/
