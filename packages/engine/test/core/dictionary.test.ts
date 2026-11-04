@@ -81,6 +81,11 @@ describe("heard-as aliases", () => {
     expect(fix("price (net) is low", ["Net price = (net)"])).toBe("price Net price is low");
   });
 
+  it("replaces an alias beside punctuation but not inside a longer word", () => {
+    expect(fix("Alema's, re-Alema and (Alema).", lines)).toBe("Ollama's, re-Ollama and (Ollama).");
+    expect(fix("Alema2 and Alema_x stay", lines)).toBe("Alema2 and Alema_x stay");
+  });
+
   it("prefers the longest alias", () => {
     expect(fix("open claude code now", ["Claude Code = claude, claude code"])).toBe("open Claude Code now");
   });
@@ -114,10 +119,14 @@ describe("sound-alike matching", () => {
     ["I wrote to Nanda about the export script.", "Nandha", "I wrote to Nandha about the export script."],
     ["Dimitri will cover the weekly sync", "Dmitri", "Dmitri will cover the weekly sync"],
     ["signed by Mr Kowalkzik on Tuesday", "Kowalczyk", "signed by Mr Kowalczyk on Tuesday"],
-    ["Please spell Kowalsic correctly", "Kowalczyk", "Please spell Kowalczyk correctly"],
   ])("corrects %s", (heard, term, expected) => {
     expect(fix(heard, [term])).toBe(expected);
     expect(fix(heard, STUDY_TERMS)).toBe(expected);
+  });
+
+  it("leaves a recognition whose spelling is too far from the term to an alias", () => {
+    expect(fix("Please spell Kowalsic correctly", ["Kowalczyk"])).toBe("Please spell Kowalsic correctly");
+    expect(fix("Please spell Kowalsic correctly", ["Kowalczyk = Kowalsic"])).toBe("Please spell Kowalczyk correctly");
   });
 
   it("leaves 'Clawed code' alone without an alias (it scores 0.80)", () => {
@@ -152,11 +161,11 @@ describe("sound-alike matching", () => {
   });
 
   it("protects a span an alias has just written from the sound-alike pass", () => {
-    expect(fix("heard Kowalski there", ["Kowalczyk = Kowalski", "Kowalski"])).toBe("heard Kowalczyk there");
+    expect(fix("heard Alema there", ["Olama", "Ollama = Alema"])).toBe("heard Ollama there");
   });
 
   it("is deterministic", () => {
-    const text = "I wrote to Nanda and Dimitri about onks runtime for Kowalsic.";
+    const text = "I wrote to Nanda and Dimitri about onks runtime for Kowalkzik.";
     const entries = parseDictionary(STUDY_TERMS);
     const first = applyDictionary(text, entries);
     expect(applyDictionary(text, entries)).toEqual(first);
@@ -193,8 +202,64 @@ describe("non-Latin terms", () => {
     expect(fix("ჩვენ თბილისში ვართ", ["თბილისი"])).toBe("ჩვენ თბილისში ვართ");
   });
 
-  it("does not match a Latin word spelt with accents against a Latin term", () => {
-    expect(fix("Zürich is far", ["Zurich"])).toBe("Zürich is far");
+  it("does not read a word with accents as its bare letters", () => {
+    expect(fix("Zürich is far", ["Zrich"])).toBe("Zürich is far");
+  });
+});
+
+describe("sound-alike guards", () => {
+  it.each(["pro", "pre", "pray", "prey", "pry", "gradually", "granite", "granary", "miracle", "retarded", "childish", "clothe", "parachute", "cubical", "oxen"])(
+    "leaves the ordinary word %s alone",
+    (word) => {
+      const sentence = `see ${word} now`;
+      expect(applyDictionary(sentence, parseDictionary(STUDY_TERMS))).toEqual({ text: sentence, changed: false });
+    },
+  );
+
+  it("needs letters that look alike, not only a similar sound", () => {
+    expect(fix("see miracle now", ["Mark Lee"])).toBe("see miracle now");
+    expect(fix("the childish ones", ["Codex"])).toBe("the childish ones");
+  });
+
+  it("needs a sound of at least four characters on both sides", () => {
+    expect(fix("see pray now", ["Priya"])).toBe("see pray now");
+    expect(fix("see Naoh now", ["Noah"])).toBe("see Naoh now");
+  });
+
+  it("never starts or ends a match on a common word", () => {
+    expect(fix("ballyhoo hugging scale the Nanda", STUDY_TERMS)).toBe("ballyhoo hugging scale the Nandha");
+    expect(fix("buy the scale today", STUDY_TERMS)).toBe("buy the scale today");
+    expect(fix("ask Dmitr a question", ["Dmitri"])).toBe("ask Dmitr a question");
+  });
+});
+
+describe("where a match may stand", () => {
+  const term = ["Mark Lee"];
+
+  it.each(["I met Mark, Lee at noon", "I met Mark.\n\nLee went home", "I met Mark-Lee at noon", "I met Mark\nLee at noon"])(
+    "does not join words across punctuation or a line: %j",
+    (text) => {
+      expect(fix(text, term)).toBe(text);
+    },
+  );
+
+  it("does not join hugging, face", () => {
+    expect(fix("a hugging, face is nice", ["Hugging Face"])).toBe("a hugging, face is nice");
+  });
+
+  it("joins words that a run of spaces or tabs separates", () => {
+    expect(fix("I met mark  lee today", term)).toBe("I met Mark Lee today");
+    expect(fix("I met mark\tlee today", term)).toBe("I met Mark Lee today");
+  });
+
+  it.each([
+    ["He said 'Nanda' quietly", "He said 'Nandha' quietly"],
+    ["He said \u2018Nanda\u2019 quietly", "He said \u2018Nandha\u2019 quietly"],
+    ["That is Nanda's book", "That is Nandha's book"],
+    ["That is Nanda\u2019s book", "That is Nandha\u2019s book"],
+    ["\"Nanda\", she said", "\"Nandha\", she said"],
+  ])("keeps quote marks and a possessive: %s", (text, expected) => {
+    expect(fix(text, ["Nandha"])).toBe(expected);
   });
 });
 
@@ -212,5 +277,16 @@ describe("speed", () => {
     applyDictionary(text, entries);
     const elapsed = performance.now() - started;
     expect(elapsed).toBeLessThan(200);
+  });
+
+  it("stays fast when 500 terms share a first sound and a length", () => {
+    const parts = ["sa", "se", "si", "so", "su", "sar", "sel", "sin", "sol", "sum", "stra", "skri"];
+    const make = (i: number) => `s${parts[i % 12]}${parts[(i * 5 + 1) % 12]}${parts[(i * 7 + 2) % 12]}${parts[(i >> 3) % 12]}${i}`;
+    const entries = parseDictionary(Array.from({ length: 500 }, (_, i) => make(i)));
+    const text = Array.from({ length: 2000 }, (_, i) => make(i * 3 + 1000)).join(" ");
+    applyDictionary(text, entries);
+    const started = performance.now();
+    applyDictionary(text, entries);
+    expect(performance.now() - started).toBeLessThan(200);
   });
 });
