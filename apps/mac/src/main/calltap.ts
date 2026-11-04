@@ -2,7 +2,7 @@
 // 16 kHz mono s16le samples, and says what it is doing as JSON lines on stderr. CallTap runs it, streams its sound to a
 // file (a call is never held in memory) and passes the lines on as events.
 import { spawn, type ChildProcess } from "node:child_process";
-import { createReadStream, createWriteStream, existsSync, statSync, type WriteStream } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, type WriteStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,7 +36,6 @@ export function macSupportsCallTap(platform: string, release: string): boolean {
 }
 
 const KILL_AFTER_MS = 3_000;
-const BYTES_PER_SECOND = 16_000 * 2;
 
 export class CallTap {
   /** Where the helper is; tests set it. */
@@ -50,6 +49,8 @@ export class CallTap {
   private done: Promise<void> | null = null;
   private stopping = false;
   private child: ChildProcess | null = null;
+  /** Ends the fake helper's wait for stop() (`runFake`). */
+  private releaseFake: (() => void) | null = null;
 
   constructor(private readonly opts: { pids: number[]; outFile: string; onEvent(e: TapEvent): void }) {}
 
@@ -64,6 +65,7 @@ export class CallTap {
   async stop(): Promise<void> {
     this.stopping = true;
     this.terminate();
+    this.releaseFake?.();
     await this.done;
   }
 
@@ -164,9 +166,13 @@ export class CallTap {
     });
   }
 
-  /** `AVANZEL_FAKE_CALLTAP`: a raw file stands in for the helper's sound. */
+  /**
+   * `AVANZEL_FAKE_CALLTAP`: a raw file stands in for the helper's sound. It says started, writes the file, and holds, as a call runs,
+   * until stop(); then it ends quietly, as the helper does on SIGTERM. A file that can't be written ends it with an error, as the helper.
+   */
   private runFake(source: string): Promise<void> {
     const { outFile, onEvent } = this.opts;
+    const stopped = new Promise<void>((resolve) => (this.releaseFake = resolve));
     return new Promise((resolve) => {
       const out: WriteStream = createWriteStream(outFile);
       process.nextTick(() => onEvent({ event: "started" }));
@@ -183,9 +189,7 @@ export class CallTap {
       input.on("error", fail);
       out.on("error", fail);
       out.on("finish", () => {
-        if (failed) return;
-        onEvent({ event: "stopped", seconds: statSync(outFile).size / BYTES_PER_SECOND });
-        resolve();
+        if (!failed) void stopped.then(resolve);
       });
       input.pipe(out);
     });

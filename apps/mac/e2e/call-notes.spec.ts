@@ -1,0 +1,203 @@
+// Notes on a call, from the menu: the picker under the menu bar icon, the consent question, the call's card, what a call refuses
+// meanwhile, Stop, and a call cut short by a quit that the next launch offers to finish. The call app's side is AVANZEL_FAKE_CALLTAP
+// (raw 16 kHz mono s16le, made here from a spoken WAV), which holds until Stop as the helper does; the microphone's is
+// AVANZEL_FAKE_AUDIO, and both are heard as AVANZEL_FAKE_TRANSCRIPT. No test opens a real menu or alert: `answerTrayMenus` and
+// `answerDialogs` stand in for them.
+import { expect, test, type ElectronApplication } from "@playwright/test";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { readWav } from "../../../packages/engine/src/index.ts";
+import type { MenuItemModel } from "../src/main/menu-model.ts";
+import { askIsKey, filedInto, onDay } from "./capsule-helpers.ts";
+import { answerDialogs, call, capsuleKind, dialogsAsked, filesUnder, launch, letDialogsGo, makeLibrary, read, speechWav, windowFor } from "./helpers.ts";
+import { pressShortcut } from "./setup-helpers.ts";
+
+const RUNNING = "Notes on the call are running. Stop them to record a thought.";
+const CUT_SHORT = "Finish notes for a call that was cut short";
+
+/** The call app's side of a call: a spoken WAV as raw 16 kHz mono s16le. */
+function themPcm(): string {
+  const { samples } = readWav(speechWav("Yes, the budget is ready."));
+  const pcm = Buffer.alloc(samples.length * 2);
+  samples.forEach((x, i) => pcm.writeInt16LE(Math.round(Math.max(-1, Math.min(1, x)) * 32767), i * 2));
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-call-")), "them.pcm");
+  writeFileSync(file, pcm);
+  return file;
+}
+
+/**
+ * Avanzel on a new library whose captures wait in the inbox (the evening file mode), with `callConsent` as given. `userData` may be
+ * one an earlier launch used.
+ */
+async function launchForCalls({ consent, userData, library }: { consent: boolean; userData?: string; library?: string }) {
+  const lib = library ?? (await makeLibrary());
+  const data = userData ?? mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  if (!userData) writeFileSync(path.join(data, "settings.json"), JSON.stringify({ version: 1, callConsent: consent, fileMode: "evening" }));
+  const app = await launch({
+    AVANZEL_LIBRARY: lib,
+    AVANZEL_USER_DATA: data,
+    AVANZEL_FAKE_CALLTAP: themPcm(),
+    AVANZEL_FAKE_AUDIO: speechWav("Shall we start with the budget?"),
+    AVANZEL_FAKE_TRANSCRIPT: "Shall we start with the budget?",
+  });
+  return { app, library: lib, userData: data, capsule: await windowFor(app, "capsule") };
+}
+
+/**
+ * From now on, the menus the menu bar icon pops up (`trayChoice`) open nothing: each records its items' labels and picks the one
+ * labelled `choice`. Each call starts a new record (`trayMenus`).
+ */
+async function answerTrayMenus(app: ElectronApplication, choice: string): Promise<void> {
+  await app.evaluate(({ Tray }, pick) => {
+    const shown: string[][] = [];
+    (globalThis as { trayMenus?: string[][] }).trayMenus = shown;
+    Tray.prototype.popUpContextMenu = function (menu?: Electron.Menu) {
+      shown.push(menu?.items.map((item) => item.label) ?? []);
+      menu?.items.find((item) => item.label === pick)?.click();
+    };
+  }, choice);
+}
+
+const trayMenus = (app: ElectronApplication) => app.evaluate(() => (globalThis as { trayMenus?: string[][] }).trayMenus ?? []);
+
+const menuLabels = async (app: ElectronApplication) =>
+  ((await call(app, "menuForTests")) as MenuItemModel[]).flatMap((item) => (item.type === "item" ? [item.label] : []));
+
+/** The captures in the inbox whose source is a call. */
+const callCaptures = (library: string) =>
+  filesUnder(library, "inbox").filter((name) => name.endsWith(".md") && read(library, path.join("inbox", name)).includes("source: call"));
+
+const callFolders = (userData: string) => (existsSync(path.join(userData, "calls")) ? readdirSync(path.join(userData, "calls")) : []);
+
+/** Take notes on a call… in the menu, then Everything this Mac plays in the picker. */
+async function takeNotes(app: ElectronApplication): Promise<void> {
+  await answerTrayMenus(app, "Everything this Mac plays");
+  await call(app, "menuAction", "call-notes");
+}
+
+/** The call's card is up: its line, its time, and Stop. */
+async function expectCallCard(app: ElectronApplication, capsule: Awaited<ReturnType<typeof windowFor>>): Promise<void> {
+  await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 15_000 }).toMatchObject({ kind: "listening", mode: "call" });
+  await expect(capsule.getByText("Taking notes on the call", { exact: true })).toBeVisible();
+  await expect(capsule.getByText(/^\d+:\d\d$/)).toBeVisible();
+  await expect(capsule.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+}
+
+test("Take notes on a call… with Everything this Mac plays: the call's card, what it refuses meanwhile, and Stop files one call capture", async () => {
+  const { app, library, userData, capsule } = await launchForCalls({ consent: true });
+  filedInto(library, "ideas", "tulips", "Plant tulips in October", onDay(0)); // a page, so ⌥Space in Ask records a question
+  await answerDialogs(app, 1);
+  // The item sits right under Capture screen with a comment; nothing offers Stop yet.
+  const before = await menuLabels(app);
+  expect(before[before.indexOf("Capture screen with a comment") + 1]).toBe("Take notes on a call…");
+  expect(before).not.toContain("Stop taking notes");
+
+  await takeNotes(app);
+  const [picker] = await trayMenus(app);
+  expect(picker!.at(-1)).toBe("Everything this Mac plays"); // after any call app that runs on this Mac
+  await expectCallCard(app, capsule);
+  expect(await dialogsAsked(app)).toEqual([]); // consent was given before
+  const during = await menuLabels(app);
+  expect(during[during.indexOf("Capture screen with a comment") + 1]).toBe("Stop taking notes");
+  expect(during).not.toContain("Take notes on a call…");
+  expect(callFolders(userData)).toHaveLength(1);
+
+  // Record a thought, Capture screen with a comment and Ask's ⌥Space each show the notice, and the call's card comes back.
+  for (const press of [
+    () => call(app, "toggleDictate"),
+    () => call(app, "toggleCapture"),
+    async () => {
+      await call(app, "openAsk");
+      await windowFor(app, "ask");
+      await askIsKey(app, true);
+      await pressShortcut(app);
+    },
+  ]) {
+    await press();
+    await expect.poll(() => capsuleKind(app)).toBe("call-running");
+    await expect(capsule.getByText(RUNNING, { exact: true })).toBeVisible();
+    await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 10_000 }).toMatchObject({ kind: "listening", mode: "call" });
+  }
+  // Esc and Hide (the capsule's dismiss) don't end the call: its card stays.
+  await call(app, "dismiss");
+  expect(await call(app, "pressShortcutForTests", "Escape")).toBe(false); // no Esc is registered for a call
+  await expectCallCard(app, capsule);
+  expect(callFolders(userData)).toHaveLength(1);
+  expect(callCaptures(library)).toEqual([]);
+
+  // Stop taking notes: one capture of source call in the inbox, and the call's folder is gone.
+  await call(app, "menuAction", "call-notes-stop");
+  await expect.poll(() => callCaptures(library), { timeout: 60_000 }).toHaveLength(1);
+  expect(read(library, path.join("inbox", callCaptures(library)[0]!))).toContain("Shall we start with the budget?");
+  await expect.poll(() => callFolders(userData)).toEqual([]);
+  await expect.poll(async () => (await menuLabels(app)).includes("Take notes on a call…")).toBe(true);
+  expect(await menuLabels(app)).not.toContain("Stop taking notes");
+  await app.close();
+});
+
+test("the first call asks for consent: Not now writes nothing, Take notes starts the call and is remembered", async () => {
+  const { app, library, userData, capsule } = await launchForCalls({ consent: false });
+  await answerDialogs(app, 1); // Not now
+  await takeNotes(app);
+  await expect.poll(async () => (await dialogsAsked(app)).length).toBe(1);
+  const [asked] = await dialogsAsked(app);
+  expect(asked!.options).toMatchObject({ message: "Take notes on a call?", buttons: ["Take notes", "Not now"], defaultId: 1, cancelId: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect(await capsuleKind(app)).not.toBe("listening");
+  expect(callFolders(userData)).toEqual([]);
+  expect(JSON.parse(readFileSync(path.join(userData, "settings.json"), "utf8")).callConsent).toBe(false);
+  expect(await menuLabels(app)).toContain("Take notes on a call…");
+
+  await answerDialogs(app, 0); // Take notes
+  await takeNotes(app);
+  await expectCallCard(app, capsule);
+  expect(JSON.parse(readFileSync(path.join(userData, "settings.json"), "utf8")).callConsent).toBe(true);
+  await call(app, "stopCallNotes");
+  await expect.poll(() => callCaptures(library), { timeout: 60_000 }).toHaveLength(1);
+  // Asked once: the next call starts without the question.
+  await answerDialogs(app, 1);
+  await takeNotes(app);
+  await expectCallCard(app, capsule);
+  expect(await dialogsAsked(app)).toEqual([]);
+  await call(app, "stopCallNotes");
+  await expect.poll(() => callCaptures(library), { timeout: 60_000 }).toHaveLength(2);
+  await app.close();
+});
+
+test("a thought pressed while the consent question is up starts nothing, and neither does the call on Not now", async () => {
+  const { app, userData } = await launchForCalls({ consent: false });
+  await answerDialogs(app, 1, { hold: true });
+  await takeNotes(app);
+  await expect.poll(async () => (await dialogsAsked(app)).length).toBe(1);
+  expect(await menuLabels(app)).not.toContain("Take notes on a call…"); // the call is starting
+  await call(app, "toggleDictate");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect(await capsuleKind(app)).not.toBe("listening");
+  await letDialogsGo(app);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect(await capsuleKind(app)).not.toBe("listening");
+  expect(callFolders(userData)).toEqual([]);
+  expect(await menuLabels(app)).toContain("Take notes on a call…");
+  await app.close();
+});
+
+test("quitting mid-call keeps its folder, and the next launch offers to finish it, once, which files its notes", async () => {
+  const first = await launchForCalls({ consent: true });
+  await answerDialogs(first.app, 1);
+  await takeNotes(first.app);
+  await expectCallCard(first.app, first.capsule);
+  await first.app.close(); // a quit mid-call: both sides end, and the folder stays
+  expect(callFolders(first.userData)).toHaveLength(1);
+  expect(callCaptures(first.library)).toEqual([]);
+
+  const { app, library, userData } = await launchForCalls({ consent: true, userData: first.userData, library: first.library });
+  const offers = async () => ((await call(app, "notificationsForTests")) as { title: string; body: string }[]).filter((n) => n.title === CUT_SHORT);
+  await expect.poll(offers).toEqual([{ title: CUT_SHORT, body: expect.stringMatching(/^The call from .+ is safe on this Mac\.$/) }]);
+  expect(callCaptures(library)).toEqual([]); // nothing is filed until the person chooses it
+  expect(await call(app, "clickNotificationForTests", CUT_SHORT)).toBe(true);
+  await expect.poll(() => callCaptures(library), { timeout: 60_000 }).toHaveLength(1);
+  await expect.poll(() => callFolders(userData)).toEqual([]);
+  expect(await offers()).toHaveLength(1);
+  await app.close();
+});

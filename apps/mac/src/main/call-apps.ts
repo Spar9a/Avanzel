@@ -37,6 +37,11 @@ export function callAppsIn(processes: readonly RunningProcess[]): CallApp[] {
   return apps;
 }
 
+/** A call app's name as the picker offers it: Zoom's process is "zoom.us"; the others are named as people know them. */
+export function callAppLabel(name: string): string {
+  return name === "zoom.us" ? "Zoom" : name;
+}
+
 /** The call apps running now. */
 export async function runningCallApps(): Promise<CallApp[]> {
   return callAppsIn(await runningProcesses());

@@ -39,6 +39,11 @@ export interface MenuInput {
   /** The second line under `speechProblem`: what is safe meanwhile and where the fix is (`speechProblemOf`). Nothing without a problem. */
   speechSublabel?: string;
   recording: boolean;
+  /**
+   * Notes on a call: "ready" offers "Take notes on a call…", "running" offers "Stop taking notes", and "off" offers neither: the Mac
+   * can't tap a call, no library is open, or a call is starting or being finished (`Controller.menuInput`).
+   */
+  callNotes: "off" | "ready" | "running";
   shortcuts: Shortcuts;
   /**
    * The actions whose shortcut didn't register: another app holds it, an earlier action has it, or macOS doesn't
@@ -170,6 +175,8 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     SEP,
     { type: "item", label: input.recording ? "Stop recording" : "Record a thought", action: "dictate", ...shortcut("dictate") },
     { type: "item", label: "Capture screen with a comment", action: "capture", ...shortcut("capture") },
+    ...(input.callNotes === "ready" ? [{ type: "item" as const, label: "Take notes on a call…", action: "call-notes" }] : []),
+    ...(input.callNotes === "running" ? [{ type: "item" as const, label: "Stop taking notes", action: "call-notes-stop" }] : []),
     { type: "item", label: "Type a thought…", action: "type", ...shortcut("type") },
     { type: "item", label: "Ask your library…", action: "ask", ...shortcut("ask") },
     SEP,

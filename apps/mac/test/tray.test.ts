@@ -227,6 +227,7 @@ describe("MenuBar's menu", () => {
   const page = (shelf: string): FiledPage => ({ title: `A page in ${shelf}`, shelf, path: `${shelf}/a.md` });
   const menuInput = (recent: FiledPage[]): MenuInput => ({
     libraryReady: true,
+    callNotes: "off",
     inbox: 2,
     recent,
     tasks: [],

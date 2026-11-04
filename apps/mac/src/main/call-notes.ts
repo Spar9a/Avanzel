@@ -2,7 +2,7 @@
 // in <userData>/calls/<id>/ (`CallSession`), until Stop, the helper's own end or four hours; then the two become one transcript, one
 // capture in the inbox, filed as a thought is. The controller is the host: it owns the capsule, the dialogs and the library, and this
 // owns the call. A call is not a recording (`Controller.recording`): while one runs no thought starts (`refuse`).
-import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { AvanzelError, idStamp, type CallCapture, type Transcriber } from "@avanzel/engine";
 import type { CardAction } from "../shared/ipc.ts";
@@ -46,6 +46,23 @@ const NO_SPEECH_MARKER = "no-speech";
 /** Whether the call in `dir` was finished and no speech was found in it: its folder stays, marked, for the person to try again. */
 export function isNoSpeechFolder(dir: string): boolean {
   return existsSync(path.join(dir, NO_SPEECH_MARKER));
+}
+
+/** A no-speech folder this old is removed at the next launch rather than offered again (`CallNotes.recover`). */
+const NO_SPEECH_KEPT_MS = 24 * 60 * 60 * 1000;
+
+/** A call left in calls/ by a quit or a crash (`CallNotes.recover`): its folder's name, the folder, its app and when it began. */
+export interface CutShortCall {
+  id: string;
+  dir: string;
+  /** The call app's name, or null: everything the Mac played, or a folder whose call.json is gone. */
+  app: string | null;
+  startedAt: Date;
+}
+
+/** What call.json in `dir` says; without one, no app, and the folder's own time as the start. */
+function callMeta(dir: string): { app: string | null; startedAt: Date } {
+  return CallSession.read(dir) ?? { app: null, startedAt: statSync(dir).mtime };
 }
 
 /** Whether `file` is there and holds anything. */
@@ -99,8 +116,10 @@ export interface CallHost {
   filed(capturePath: string, text: string, transcribedIn: number): void;
   /** The capsule's problem card, with its one fix. */
   failed(problem: Problem, action?: CardAction, actionLabel?: string): void;
-  /** A call started or ended: the menu and the tray follow. */
+  /** A call started, ended, or began or ended being finished: the menu and the tray follow. */
   changed(): void;
+  /** Offers to finish `call`, cut short at an earlier launch (a notification); `finish` makes its notes when the person chooses it. */
+  offerCutShort(call: CutShortCall, finish: () => Promise<void>): void;
 }
 
 interface ActiveCall {
@@ -140,6 +159,15 @@ export class CallNotes {
   }
 
   /**
+   * What the menu offers: "running" while Stop can be asked, "busy" while a call starts (its questions are up), ends or is being
+   * finished, and "idle" otherwise, when a call can start.
+   */
+  get phase(): "idle" | "running" | "busy" {
+    if (this.active) return "running";
+    return this.starting || this.mic !== null || this.ending > 0 || this.finishingDir !== null ? "busy" : "idle";
+  }
+
+  /**
    * Starts notes on a call in `app` (its pids are tapped) or in everything the Mac plays. Refused (false) while a call runs, starts, or
    * is still being finished, when the Mac can't tap a call, on Not now, when the microphone or the speech model isn't ready, and when
    * a thought began recording while the questions were asked.
@@ -147,6 +175,7 @@ export class CallNotes {
   async start(app: CallApp | "everything"): Promise<boolean> {
     if (this.running || this.starting || this.ending > 0 || this.finishingDir !== null) return false;
     this.starting = true;
+    this.host.changed();
     try {
       const { host } = this;
       if (!host.tapAvailable()) {
@@ -175,10 +204,10 @@ export class CallNotes {
       host.listening(startedAt.getTime());
       host.microphone(true, call.id);
       call.tap.start();
-      host.changed();
       return true;
     } finally {
       this.starting = false;
+      this.host.changed();
     }
   }
 
@@ -245,11 +274,11 @@ export class CallNotes {
   async finishCallFolder(dir: string): Promise<void> {
     const { host } = this;
     this.finishingDir = dir;
+    host.changed();
     host.finishing();
     rmSync(path.join(dir, NO_SPEECH_MARKER), { force: true }); // a try that fails otherwise isn't one with no speech
     try {
-      const meta = CallSession.read(dir);
-      if (!meta) throw new Error(`${dir} has no call.json`);
+      const meta = callMeta(dir);
       const started = performance.now();
       const session = new CallSession({ dir, ...meta });
       const { transcript, seconds, themHeard } = await session.finish(await host.transcriber(), new Date());
@@ -268,7 +297,50 @@ export class CallNotes {
       host.failed(NOT_MADE, "finish-call", "Try again");
     } finally {
       this.finishingDir = null;
+      host.changed();
     }
+  }
+
+  /**
+   * At launch: the calls a quit or a crash left in calls/. A folder with no sound in it, and one whose finish found no speech a day ago
+   * or more, is removed quietly; each other one is offered (`offerCutShort`), and choosing it finishes it (`finishCallFolder`). The
+   * folder of the call that runs, or of one being finished, is never offered. Gives the calls offered.
+   */
+  recover(now = Date.now()): CutShortCall[] {
+    let names: string[];
+    try {
+      names = readdirSync(this.host.callsDir);
+    } catch {
+      return []; // no call was ever taken here
+    }
+    const offered: CutShortCall[] = [];
+    for (const id of names.sort()) {
+      const dir = path.join(this.host.callsDir, id);
+      try {
+        if (!statSync(dir).isDirectory() || dir === this.active?.dir || dir === this.mic?.dir || dir === this.finishingDir) continue;
+        const noSpeechSince = isNoSpeechFolder(dir) ? statSync(path.join(dir, NO_SPEECH_MARKER)).mtimeMs : null;
+        const sound = holdsSound(path.join(dir, "you.pcm")) || holdsSound(path.join(dir, "them.pcm"));
+        if (!sound || (noSpeechSince !== null && now - noSpeechSince >= NO_SPEECH_KEPT_MS)) {
+          rmSync(dir, { recursive: true, force: true });
+          continue;
+        }
+        const call: CutShortCall = { id, dir, ...callMeta(dir) };
+        offered.push(call);
+        this.host.offerCutShort(call, () => this.finishCutShort(dir));
+      } catch (error) {
+        console.error("call left over", dir, error); // one folder that can't be read doesn't keep the others from being offered
+      }
+    }
+    return offered;
+  }
+
+  /**
+   * The person chose a call that was cut short: it is finished, unless a call or a thought runs, starts or is being finished now, whose
+   * cards its own would replace; it then waits in its folder for the next launch. Nothing once the folder is gone.
+   */
+  private async finishCutShort(dir: string): Promise<void> {
+    if (this.phase !== "idle" || this.host.recording() || !existsSync(dir)) return;
+    await this.finishCallFolder(dir);
   }
 
   private tapSaid(call: ActiveCall, e: TapEvent): void {

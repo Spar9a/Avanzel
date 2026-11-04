@@ -1,7 +1,7 @@
 // Choose…, in Settings: a native pop-up menu, which macOS draws and a page can't. The page sends the options and a
 // point; main checks them (pickRequest), pops the menu up over the window (popupChoice), and sends back the value
-// picked.
-import { Menu, type BrowserWindow } from "electron";
+// picked. The menu bar's own choices (which call to take notes on) pop up under its icon (trayChoice).
+import { Menu, type BrowserWindow, type Tray } from "electron";
 import type { PickOption } from "../shared/ipc.ts";
 
 /** The most items a menu is given: more than a person scrolls through, and a bound on what a page can ask for. */
@@ -46,4 +46,12 @@ export function popupChoice(win: BrowserWindow, options: readonly PickOption[], 
     );
     menu.popup({ window: win, ...(at ?? {}), callback: () => resolve(null) });
   });
+}
+
+/**
+ * A native menu of `labels` pops up under the menu bar icon, as the icon's own menu does; `onPick` gets the index of the item chosen.
+ * Nothing when the menu closes without one.
+ */
+export function trayChoice(tray: Tray, labels: readonly string[], onPick: (index: number) => void): void {
+  tray.popUpContextMenu(Menu.buildFromTemplate(labels.map((label, index) => ({ label, click: () => onPick(index) }))));
 }

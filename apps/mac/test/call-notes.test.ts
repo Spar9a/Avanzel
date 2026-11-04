@@ -4,7 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultSettings, Librarian, Vault, type TimedText, type Transcriber } from "@avanzel/engine";
 import { CALL_RUNNING_LINE } from "../src/shared/transcribing.ts";
-import { CALL_CONSENT_DIALOG, CallNotes, isNoSpeechFolder, THEM_NOT_HEARD, type CallHost, type Tap } from "../src/main/call-notes.ts";
+import { CALL_CONSENT_DIALOG, CallNotes, isNoSpeechFolder, THEM_NOT_HEARD, type CallHost, type CutShortCall, type Tap } from "../src/main/call-notes.ts";
+import { CallSession } from "../src/main/call-session.ts";
 import type { TapEvent } from "../src/main/calltap.ts";
 
 const RATE = 16_000;
@@ -62,6 +63,8 @@ async function setup({ consent = true, answer = true, them = pcm(4, 0.1), maxCal
   const taps: FakeTap[] = [];
   const filed: { path: string; text: string }[] = [];
   const failed: { title: string; body: string; action?: string; actionLabel?: string }[] = [];
+  /** The calls cut short that were offered (`recover`), and what choosing each does. */
+  const offers: { call: CutShortCall; finish: () => Promise<void> }[] = [];
   let consented = consent;
   let calls!: CallNotes;
   /** The ids the call-start commands carried, in order. */
@@ -99,6 +102,7 @@ async function setup({ consent = true, answer = true, them = pcm(4, 0.1), maxCal
     filed: (capturePath, text) => filed.push({ path: capturePath, text }),
     failed: (problem, action, actionLabel) => failed.push({ ...problem, ...(action ? { action } : {}), ...(actionLabel ? { actionLabel } : {}) }),
     changed: () => undefined,
+    offerCutShort: (call, finish) => offers.push({ call, finish }),
   };
   calls = new CallNotes(host);
   const inbox = () => readdirSync(vault.inbox).filter((name) => name.endsWith(".md"));
@@ -106,7 +110,7 @@ async function setup({ consent = true, answer = true, them = pcm(4, 0.1), maxCal
   const mic = (samples: Float32Array, last = false) => calls.audio(micIds.at(-1)!, samples, last);
   /** The folder of the only call on disk. */
   const callDir = () => path.join(host.callsDir, readdirSync(host.callsDir)[0]!);
-  return { calls, host, log, taps, filed, failed, vault, inbox, callsDir: host.callsDir, consented: () => consented, micIds, mic, callDir, state };
+  return { calls, host, log, taps, filed, failed, offers, vault, inbox, callsDir: host.callsDir, consented: () => consented, micIds, mic, callDir, state };
 }
 
 const zoom = { name: "zoom.us", pids: [101, 102] };
@@ -399,5 +403,119 @@ describe("call notes", () => {
     t.mic(floats(1, 0.5));
     t.mic(floats(1, 0.5));
     expect(statSync(you).size).toBe(2 * RATE * 2);
+  });
+});
+
+describe("a call that was cut short", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  /** A folder a quit (or a crash) left in calls/: call.json, and the two files with what they hold. */
+  interface Leftover {
+    /** What each file holds; null: the file isn't there. */
+    you?: Buffer | null;
+    them?: Buffer | null;
+    app?: string | null;
+    /** Whether call.json is there. */
+    meta?: boolean;
+  }
+  function leftover(callsDir: string, id: string, { you = pcm(2, 0.5), them = pcm(2, 0.1), app = "zoom.us", meta = true }: Leftover = {}) {
+    const dir = path.join(callsDir, id);
+    if (meta) new CallSession({ dir, app, startedAt: new Date(2026, 10, 3, 14, 3) });
+    else mkdirSync(dir, { recursive: true });
+    if (you) writeFileSync(path.join(dir, "you.pcm"), you);
+    if (them) writeFileSync(path.join(dir, "them.pcm"), them);
+    return dir;
+  }
+
+  it("offers a leftover call once, with its id and app, and choosing it writes the capture and removes the folder", async () => {
+    const t = await setup();
+    const dir = leftover(t.callsDir, "2026-11-03-140300");
+    const found = t.calls.recover();
+    expect(found.map(({ id, app, dir }) => ({ id, app, dir }))).toEqual([{ id: "2026-11-03-140300", app: "zoom.us", dir }]);
+    expect(t.offers.map((o) => o.call.id)).toEqual(["2026-11-03-140300"]);
+    expect(t.inbox()).toHaveLength(0); // nothing is filed until the person chooses it
+    await t.offers[0]!.finish();
+    expect(t.inbox()).toHaveLength(1);
+    const note = readFileSync(path.join(t.vault.inbox, t.inbox()[0]!), "utf8");
+    expect(note).toContain("source: call");
+    expect(note).toContain("Shall we start with the budget?");
+    expect(note).toContain("Yes, the budget is ready.");
+    expect(existsSync(dir)).toBe(false);
+    expect(t.filed).toHaveLength(1);
+  });
+
+  it("removes folders with no sound in them quietly", async () => {
+    const t = await setup();
+    const none = leftover(t.callsDir, "2026-11-03-140300", { you: null, them: null });
+    const empty = leftover(t.callsDir, "2026-11-03-150000", { you: Buffer.alloc(0), them: Buffer.alloc(0) });
+    expect(t.calls.recover()).toEqual([]);
+    expect(t.offers).toEqual([]);
+    expect(existsSync(none)).toBe(false);
+    expect(existsSync(empty)).toBe(false);
+  });
+
+  it("removes a call with no speech in it once it is a day old, and offers a younger one", async () => {
+    const t = await setup();
+    const old = leftover(t.callsDir, "2026-11-01-090000");
+    writeFileSync(path.join(old, "no-speech"), "");
+    expect(isNoSpeechFolder(old)).toBe(true);
+    expect(t.calls.recover(Date.now() + DAY + 60_000)).toEqual([]);
+    expect(existsSync(old)).toBe(false);
+
+    const t2 = await setup();
+    const young = leftover(t2.callsDir, "2026-11-03-090000");
+    writeFileSync(path.join(young, "no-speech"), "");
+    expect(t2.calls.recover().map((c) => c.id)).toEqual(["2026-11-03-090000"]);
+  });
+
+  it("a folder without call.json is offered with no app and the folder's time, and is finished all the same", async () => {
+    const t = await setup();
+    const dir = leftover(t.callsDir, "2026-11-03-140300", { meta: false });
+    const [found] = t.calls.recover();
+    expect(found).toMatchObject({ id: "2026-11-03-140300", app: null });
+    expect(found!.startedAt.getTime()).toBe(statSync(dir).mtime.getTime());
+    await t.offers[0]!.finish();
+    expect(t.inbox()).toHaveLength(1);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it("never offers the folder of the call that runs", async () => {
+    const t = await setup();
+    await t.calls.start(zoom);
+    t.mic(floats(1, 0.5));
+    expect(t.calls.recover()).toEqual([]);
+    expect(readdirSync(t.callsDir)).toHaveLength(1);
+  });
+
+  it("choosing it while a call runs does nothing: the folder waits for the next launch", async () => {
+    const t = await setup();
+    const dir = leftover(t.callsDir, "2026-11-03-140300");
+    t.calls.recover();
+    await t.calls.start("everything");
+    await t.offers[0]!.finish();
+    expect(t.inbox()).toHaveLength(0);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  it("with no calls folder at all there is nothing to offer", async () => {
+    const t = await setup();
+    expect(t.calls.recover()).toEqual([]);
+  });
+});
+
+describe("what the menu offers", () => {
+  it("is idle with no call, busy while a start asks its questions, running until Stop, and busy while the call is finished", async () => {
+    const t = await setup({ consent: false });
+    expect(t.calls.phase).toBe("idle");
+    let answer!: (yes: boolean) => void;
+    t.host.askConsent = () => new Promise((resolve) => (answer = resolve));
+    const starting = t.calls.start(zoom);
+    expect(t.calls.phase).toBe("busy");
+    answer(true);
+    await starting;
+    expect(t.calls.phase).toBe("running");
+    const stopping = t.calls.stop();
+    expect(t.calls.phase).toBe("busy");
+    await stopping;
+    expect(t.calls.phase).toBe("idle");
   });
 });

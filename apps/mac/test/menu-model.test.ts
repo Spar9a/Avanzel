@@ -20,6 +20,7 @@ function input(overrides: Partial<MenuInput> = {}): MenuInput {
     filedToday: 3,
     speechProblem: null,
     recording: false,
+    callNotes: "off",
     shortcuts: DEFAULT_SETTINGS.shortcuts,
     unregisteredShortcuts: [],
     undoableReview: false,
@@ -548,6 +549,32 @@ describe("tray menu", () => {
   it("turns the first item into Stop while recording", () => {
     const items = buildMenuModel(input({ recording: true }), now);
     expect(items.find((i) => i.type === "item" && i.action === "dictate")).toMatchObject({ label: "Stop recording" });
+  });
+
+  it("offers notes on a call right under Capture screen with a comment, and Stop taking notes while a call runs", () => {
+    const ready = labels(buildMenuModel(input({ callNotes: "ready" }), now));
+    expect(ready.slice(ready.indexOf("Capture screen with a comment"), ready.indexOf("Capture screen with a comment") + 2)).toEqual([
+      "Capture screen with a comment",
+      "Take notes on a call…",
+    ]);
+    expect(ready).not.toContain("Stop taking notes");
+    const item = (callNotes: MenuInput["callNotes"], action: string) =>
+      buildMenuModel(input({ callNotes }), now).find((i) => i.type === "item" && i.action === action);
+    expect(item("ready", "call-notes")).toEqual({ type: "item", label: "Take notes on a call…", action: "call-notes" });
+
+    const running = labels(buildMenuModel(input({ callNotes: "running" }), now));
+    expect(running.slice(running.indexOf("Capture screen with a comment"), running.indexOf("Capture screen with a comment") + 2)).toEqual([
+      "Capture screen with a comment",
+      "Stop taking notes",
+    ]);
+    expect(running).not.toContain("Take notes on a call…");
+    expect(item("running", "call-notes-stop")).toEqual({ type: "item", label: "Stop taking notes", action: "call-notes-stop" });
+
+    const off = labels(buildMenuModel(input({ callNotes: "off" }), now));
+    expect(off).not.toContain("Take notes on a call…");
+    expect(off).not.toContain("Stop taking notes");
+    // Without a library the menu only sets one up, whatever the call says.
+    expect(labels(buildMenuModel(input({ libraryReady: false, callNotes: "ready" }), now))).toEqual(["Set up Avanzel…", "--", "Quit Avanzel"]);
   });
 
   it("says nothing of an empty inbox, and offers undo after an evening review", () => {

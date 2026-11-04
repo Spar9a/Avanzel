@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CALL_APPS, callAppsIn } from "../src/main/call-apps.ts";
+import { CALL_APPS, callAppLabel, callAppsIn } from "../src/main/call-apps.ts";
 import { parseProcesses } from "../src/main/running-apps.ts";
 
 const PS = `  PID  PPID COMMAND
@@ -51,5 +51,13 @@ describe("call apps", () => {
       "zoom.us", "Microsoft Teams", "Slack", "FaceTime", "Discord", "Webex",
       "Google Chrome", "Safari", "Arc", "Microsoft Edge", "Firefox",
     ]);
+  });
+});
+
+describe("call app labels", () => {
+  it("names Zoom as people know it, and every other app by its process name", () => {
+    expect(callAppLabel("zoom.us")).toBe("Zoom");
+    expect(callAppLabel("Microsoft Teams")).toBe("Microsoft Teams");
+    expect(callAppLabel("Google Chrome")).toBe("Google Chrome");
   });
 });

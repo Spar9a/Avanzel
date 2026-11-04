@@ -35,33 +35,37 @@ function script(body: string): string {
 }
 
 describe("CallTap with the fake helper", () => {
-  it("copies the raw file to outFile and says started, then stopped", async () => {
+  // The fake stands in for a call that runs until Stop, as the real helper does: it says started, writes the raw file to outFile, and
+  // holds until stop(), after which it says nothing more (the real helper's SIGTERM ends it quietly too).
+  it("copies the raw file to outFile, says started, and holds until stop()", async () => {
     const dir = tmp();
     const pcm = path.join(dir, "fixture.pcm");
     const bytes = Buffer.alloc(32_000, 7);
     writeFileSync(pcm, bytes);
     process.env.AVANZEL_FAKE_CALLTAP = pcm;
     const outFile = path.join(dir, "them.pcm");
-    const seen = collect("stopped");
-
-    new CallTap({ pids: [1], outFile, onEvent: seen.onEvent }).start();
-    await seen.done;
-
-    expect(seen.events.map((e) => e.event)).toEqual(["started", "stopped"]);
-    expect(seen.events[1]?.seconds).toBe(1);
+    const events: TapEvent[] = [];
+    const tap = new CallTap({ pids: [1], outFile, onEvent: (e) => events.push(e) });
+    tap.start();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(events.map((e) => e.event)).toEqual(["started"]); // still "in the call"
+    expect(readFileSync(outFile).equals(bytes)).toBe(true);
+    await tap.stop();
+    expect(events.map((e) => e.event)).toEqual(["started"]);
     expect(readFileSync(outFile).equals(bytes)).toBe(true);
   });
 
-  it("resolves stop after it has stopped by itself", async () => {
+  it("a stop right after the start resolves once the file is complete", async () => {
     const dir = tmp();
     const pcm = path.join(dir, "fixture.pcm");
-    writeFileSync(pcm, Buffer.alloc(64));
+    const bytes = Buffer.alloc(320_000, 3);
+    writeFileSync(pcm, bytes);
     process.env.AVANZEL_FAKE_CALLTAP = pcm;
-    const seen = collect("stopped");
-    const tap = new CallTap({ pids: [], outFile: path.join(dir, "them.pcm"), onEvent: seen.onEvent });
+    const outFile = path.join(dir, "them.pcm");
+    const tap = new CallTap({ pids: [], outFile, onEvent: () => undefined });
     tap.start();
-    await seen.done;
-    await expect(tap.stop()).resolves.toBeUndefined();
+    await tap.stop();
+    expect(readFileSync(outFile).equals(bytes)).toBe(true);
   });
 });
 

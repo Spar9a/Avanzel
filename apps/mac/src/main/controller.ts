@@ -116,7 +116,7 @@ import type {
   Shortcuts,
   TaskInfo,
 } from "../shared/ipc.ts";
-import type { CallApp } from "./call-apps.ts";
+import { callAppLabel, runningCallApps, type CallApp } from "./call-apps.ts";
 import { CALL_CONSENT_DIALOG, CallNotes, MAX_CALL_MS, type CallHost } from "./call-notes.ts";
 import { CallTap } from "./calltap.ts";
 import { frontContext } from "./front-app.ts";
@@ -126,7 +126,7 @@ import { answeredFrom, askLinks, captureMeta, captureWords, filedPages, filedTod
 import { buildMenuModel, reviewProgress, speechProblemOf, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
-import { pickRequest, popupChoice } from "./popup.ts";
+import { pickRequest, popupChoice, trayChoice } from "./popup.ts";
 import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import {
@@ -378,6 +378,8 @@ export class Controller {
   private readonly calls: CallNotes;
   /** The listening card of the call that runs, which the capsule goes back to instead of hiding (`setCapsule`); null with no call. */
   private callCard: CapsuleState | null = null;
+  /** The calls left over from an earlier launch were looked for (`recoverCalls`). */
+  private callsRecovered = false;
   /**
    * The transcription whose recording Stop can keep while it runs, as long as the capsule's card is its card (`transcribeWithStop`,
    * and `stopRecording`, which takes the card for a newer recording).
@@ -511,6 +513,8 @@ export class Controller {
   private heldCommands: CapsuleCommand[] = [];
   /** Notifications posted, kept for the e2e tests only. `silent`: posted without macOS's sound, and only then present. */
   private readonly notified: { title: string; body: string; silent?: true }[] = [];
+  /** What clicking each of `notified` does, by its index (none: nothing): for the e2e tests only (`clickNotificationForTests`). */
+  private readonly notifiedClicks: ((() => void) | undefined)[] = [];
   /**
    * What Open Terminal and Open System Settings would have opened, and text Copy would have copied: with AVANZEL_TEST=1,
    * for the e2e tests only.
@@ -603,6 +607,7 @@ export class Controller {
     } finally {
       this.askChanged();
     }
+    this.recoverCalls();
   }
 
   /** `openLibrary`'s work: the library that is open closes, and the one at `libraryPath`, if any, opens in its place. */
@@ -824,6 +829,8 @@ export class Controller {
   private async menuAction(action: string): Promise<void> {
     if (action === "dictate") return this.toggleDictate();
     if (action === "capture") return this.toggleCapture();
+    if (action === "call-notes") return this.pickCall();
+    if (action === "call-notes-stop") return this.stopCallNotes();
     if (action === "type") return this.openQuick();
     if (action === "ask") return this.openAsk();
     if (action === "settings") return this.showSettings();
@@ -873,6 +880,7 @@ export class Controller {
       speechProblem: speech?.title ?? null,
       ...(speech ? { speechSublabel: speech.sublabel } : {}),
       recording: !!this.recording,
+      callNotes: this.callNotesOffer(),
       shortcuts: this.store.get().shortcuts,
       unregisteredShortcuts: Object.keys(this.shortcutProblems) as (keyof Shortcuts)[],
       undoableReview: this.lastEveningCommits.length > 0 && this.undoChecked(),
@@ -1889,7 +1897,47 @@ export class Controller {
       },
       failed: (problem, action, actionLabel) => this.fail(problem, action, actionLabel),
       changed: () => this.refreshMenu(),
+      offerCutShort: (call, finish) => {
+        const when = call.startedAt.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+        const where = call.app ? ` in ${callAppLabel(call.app)}` : "";
+        this.notify("Finish notes for a call that was cut short", `The call${where} from ${when} is safe on this Mac.`, () => void finish());
+      },
     };
+  }
+
+  /**
+   * What the menu offers for calls (`MenuInput.callNotes`): Stop while one runs; Take notes when the Mac can tap a call, a library is
+   * open, and no call starts or is being finished and no thought records; else nothing.
+   */
+  private callNotesOffer(): MenuInput["callNotes"] {
+    const phase = this.calls.phase;
+    if (phase === "running") return "running";
+    const tappable = !!process.env.AVANZEL_FAKE_CALLTAP || CallTap.available();
+    return tappable && this.vault && phase === "idle" && !this.recording ? "ready" : "off";
+  }
+
+  /**
+   * Take notes on a call…: a native menu under the menu bar icon offers each call app that runs (`runningCallApps`), then everything this
+   * Mac plays, the only row when none runs; the one chosen starts the call (`startCallNotes`).
+   */
+  private async pickCall(): Promise<void> {
+    const apps = await runningCallApps().catch((error: unknown) => {
+      console.warn("call apps", error);
+      return [];
+    });
+    trayChoice(this.menuBar.tray, [...apps.map((app) => callAppLabel(app.name)), "Everything this Mac plays"], (index) => {
+      void this.startCallNotes(apps[index] ?? "everything");
+    });
+  }
+
+  /**
+   * The calls a quit or a crash left in <userData>/calls (`CallNotes.recover`), once a launch, as the first library opens: each with sound
+   * in it is offered in a notification, and choosing it files its notes in the library that is open then.
+   */
+  private recoverCalls(): void {
+    if (this.callsRecovered || !this.vault) return;
+    this.callsRecovered = true;
+    this.calls.recover();
   }
 
   /** The library's transcriber, or, with AVANZEL_FAKE_TRANSCRIPT, one that hears those words in each side of a call. */
@@ -3598,6 +3646,7 @@ export class Controller {
     if (process.env.AVANZEL_TEST === "1") {
       // The tests read `notified`, not the screen: no banner and no sound reach this Mac's Notification Centre.
       this.notified.push({ title, body, ...(quiet ? { silent: true as const } : {}) });
+      this.notifiedClicks.push(onClick);
       return;
     }
     if (!Notification.isSupported()) return;
@@ -4501,6 +4550,14 @@ export class Controller {
 
   notificationsForTests(): { title: string; body: string; silent?: true }[] {
     return this.notified;
+  }
+
+  /** Clicks the newest notification titled `title`, as the person would in Notification Centre. False with none, or none clickable. */
+  clickNotificationForTests(title: string): boolean {
+    const index = this.notified.map((note) => note.title).lastIndexOf(title);
+    const click = this.notifiedClicks[index];
+    click?.();
+    return click !== undefined;
   }
 
   draftForTests(): string | null {
