@@ -3,7 +3,7 @@
 // ticking time inside the region, which VoiceOver may read each second (owner item 5).
 import { Button, Hud, Kbd, Text } from "@avanzel/ui";
 import { prettyAccelerator } from "../../main/shortcuts.ts";
-import { CALL_LISTENING_LINE, fileModeLabel } from "../../shared/transcribing.ts";
+import { CALL_LISTENING_LINE, dictationListeningLine, fileModeLabel } from "../../shared/transcribing.ts";
 import { api, type StateOf } from "./api.ts";
 import { ScreenshotCard } from "./screenshot.tsx";
 import type { Scene } from "./scene.tsx";
@@ -19,7 +19,15 @@ export function listeningScene(state: StateOf<"listening">, levels: readonly num
   if (state.mode === "call") return callScene(state, levels);
   return {
     card: state.mode === "comment" && state.thumbnail ? <ScreenshotCard thumbnail={state.thumbnail} context={state.context} /> : undefined,
-    hint: state.hint ? (
+    // A dictation into another app says so on the same small card of glass, every time: its words go to the app the person is in,
+    // not to the library, and only its own key ends it.
+    hint: state.dictation ? (
+      <div className="hint">
+        <Hud>
+          <Text variant="footnote">{dictationListeningLine(state.dictation.key)}</Text>
+        </Hud>
+      </div>
+    ) : state.hint ? (
       <div className="hint">
         <Hud>
           <Text variant="footnote">

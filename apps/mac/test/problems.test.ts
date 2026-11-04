@@ -5,7 +5,9 @@ import {
   ANOTHER_LIBRARY,
   askProblem,
   avanzelFailure,
+  browserUnaskedProblem,
   cancelledLine,
+  CURSOR_HELPER_STOPPED,
   commentNotStartedProblem,
   copyPromptProblem,
   correctedWordsProblem,
@@ -1223,6 +1225,27 @@ describe("duration", () => {
 describe("ownLine", () => {
   it("is the clip module's, which the windows and the main process keep importing from here (its cases are clip.test.ts's)", () => {
     expect(ownLine).toBe(clipOwnLine);
+  });
+});
+
+describe("the cursor dictation's notices", () => {
+  it("says a browser couldn't be asked which page it shows, what that meant for the dictation, and where to allow it", () => {
+    expect(browserUnaskedProblem("Arc")).toEqual({
+      title: "Avanzel couldn't ask Arc which page this is.",
+      body: "Nothing was kept of that dictation. It was still typed in. Allow it under Automation in System Settings.",
+    });
+    expect(browserUnaskedProblem("  ").title).toBe("Avanzel couldn't ask the browser which page this is.");
+  });
+
+  it("says dictating into any app stopped working, and how to start it again", () => {
+    expect(CURSOR_HELPER_STOPPED).toEqual({ title: "Dictating into any app stopped working.", body: "Turn it off and on again in Settings." });
+  });
+
+  it("follow the copy rules: no “!”, no apology", () => {
+    for (const { title, body } of [browserUnaskedProblem("Google Chrome"), CURSOR_HELPER_STOPPED]) {
+      expect(`${title} ${body}`).not.toMatch(/!|sorry|oops/i);
+      expect(title.endsWith(".")).toBe(true);
+    }
   });
 });
 

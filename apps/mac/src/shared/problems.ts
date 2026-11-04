@@ -505,6 +505,21 @@ export function linkedPageNotice(rel: string): Problem {
  */
 export const NO_GIT_LINE = "This Mac has no git yet, so changes can't be undone.";
 
+/**
+ * A dictation into a browser that couldn't be asked which page its window shows (macOS hasn't allowed Avanzel to ask it under
+ * Automation, or it didn't answer): its window might have been a private one, so nothing of the dictation was kept, though its words
+ * went in. Shown once per browser per run, and only for words that went in; its one fix opens System Settings at Automation.
+ */
+export function browserUnaskedProblem(browser: string): Problem {
+  return {
+    title: `Avanzel couldn't ask ${browser.trim() || "the browser"} which page this is.`,
+    body: "Nothing was kept of that dictation. It was still typed in. Allow it under Automation in System Settings.",
+  };
+}
+
+/** The helper that hears the dictation key kept stopping and is no longer started again, so taps do nothing until the setting is turned on again. */
+export const CURSOR_HELPER_STOPPED: Problem = { title: "Dictating into any app stopped working.", body: "Turn it off and on again in Settings." };
+
 /** How many characters of a dictation the copy prompt shows: the card is a notice in a small panel, and the whole words are on the clipboard. */
 const COPY_PROMPT_WORDS_MAX = 300;
 

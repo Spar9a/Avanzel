@@ -7,6 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Target } from "../src/main/cursor-helper.ts";
+import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import { call, capsuleKind, capturesKept, filesUnder, launch, makeLibrary, speechWav, windowFor } from "./helpers.ts";
 import { expectProblem } from "./capsule-helpers.ts";
 
@@ -19,13 +20,22 @@ const slack = (pid = 501, title = "#general"): Target => ({
 });
 
 /** A fake helper's script: who is in front at each inspect, and when the key is tapped. Returns it with the file its pastes go to. */
-function fakeCursor({ targets = [slack()], taps = [] as number[] } = {}): { script: string; pasteOut: string } {
+function fakeCursor({ targets = [slack()], taps = [] as number[], gaveUpAt }: { targets?: Target[]; taps?: number[]; gaveUpAt?: number } = {}): {
+  script: string;
+  pasteOut: string;
+} {
   const dir = mkdtempSync(path.join(tmpdir(), "avz-e2e-cursor-"));
   const pasteOut = path.join(dir, "pasted.txt");
   const script = path.join(dir, "cursor.json");
-  writeFileSync(script, JSON.stringify({ targets, taps, pasteOut }));
+  writeFileSync(script, JSON.stringify({ targets, taps, pasteOut, ...(gaveUpAt !== undefined ? { gaveUpAt } : {}) }));
   return { script, pasteOut };
 }
+
+const chrome = (pid = 601): Target => ({
+  app: { name: "Google Chrome", bundleId: "com.google.Chrome", pid },
+  window: { title: "Inbox" },
+  element: { role: "AXTextArea", secure: false, takesText: "yes" },
+});
 
 const pasted = (pasteOut: string): string => (existsSync(pasteOut) ? readFileSync(pasteOut, "utf8") : "");
 
@@ -54,6 +64,7 @@ async function history(app: ElectronApplication): Promise<{ text: string; app: s
 }
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const cursorIdle = (app: ElectronApplication) => call(app, "cursorIdleForTests") as Promise<boolean>;
 
 // These tests use the Mac's real clipboard (the fake helper's paste reads it): its text is put back when they are done.
 let ownersClipboard = "";
@@ -70,7 +81,9 @@ test("two taps paste the words at the cursor, give the clipboard back, and keep 
   await setClipboard(app, "what was on the clipboard");
   await call(app, "setCursorDictation", { enabled: true });
   await expect.poll(() => pasted(pasteOut), { timeout: 30_000 }).toBe(WORDS);
-  await expect.poll(() => clipboardText(app)).toBe("what was on the clipboard");
+  // The helper pastes the words through its own pasteboard and gives it back (the fake's paste only writes them to its file): the app
+  // never puts them on the clipboard, so the person's clipboard is as it was throughout.
+  expect(await clipboardText(app)).toBe("what was on the clipboard");
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await expect.poll(() => history(app)).toEqual([expect.objectContaining({ text: WORDS, app: "Slack", inserted: true })]);
   // A dictation is no thought: nothing in the inbox, no recording kept, nothing counted.
@@ -168,9 +181,12 @@ test("with dictating into any app off, taps do nothing; turning it off stops the
 test("Esc while listening drops the dictation and pastes nothing, and the next tap starts a new one at once", async () => {
   const { script, pasteOut } = fakeCursor();
   const { app } = await launchWith(script);
-  await call(app, "setCursorDictation", { enabled: true });
+  await call(app, "setCursorDictation", { enabled: true, key: "right-command" });
   await call(app, "pressCursorDictation");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
+  // The listening card says it is dictating into another app, and how it ends, with the key the setting chose.
+  const capsule = await windowFor(app, "capsule");
+  await expect(capsule.getByText("Dictating into another app. Tap Right Command again to finish, or press Esc.", { exact: true })).toBeVisible();
   expect(await call(app, "pressShortcutForTests", "Escape")).toBe(true);
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await wait(1_000);
@@ -240,5 +256,94 @@ test("a dictation dropped while its words are made never pastes them, and a tap 
   await expect.poll(() => pasted(pasteOut), { timeout: 30_000 }).toBe(WORDS);
   await wait(1_000);
   expect(pasted(pasteOut)).toBe(WORDS); // once
+  await app.close();
+});
+
+test("the time limit ends a dictation without pasting: its words are offered on the copy card and kept in the history only", async () => {
+  const { script, pasteOut } = fakeCursor();
+  const library = await makeLibrary();
+  const settings = loadSettings(library);
+  saveSettings(library, { ...settings, voice: { ...settings.voice, maxRecordSeconds: 2 } });
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_CURSOR: script, AVANZEL_FAKE_AUDIO: speechWav(WORDS), AVANZEL_FAKE_TRANSCRIPT: WORDS });
+  const capsule = await windowFor(app, "capsule");
+  await setClipboard(app, "what was on the clipboard");
+  await call(app, "setCursorDictation", { enabled: true });
+  await call(app, "pressCursorDictation");
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
+  await expectProblem(capsule, { title: "The words didn't go in.", lines: [`“${WORDS}” They are on your clipboard.`], fix: "Copy" });
+  expect(pasted(pasteOut)).toBe("");
+  expect(await clipboardText(app)).toBe(WORDS);
+  expect(await history(app)).toEqual([expect.objectContaining({ text: WORDS, app: "", inserted: false })]);
+  expect(filesUnder(library, "raw")).toEqual([]);
+  await app.close();
+});
+
+test("a dictation's card waits while a thought listens, and shows once the thought is done", async () => {
+  const { script, pasteOut } = fakeCursor({ targets: [slack(501), slack(777)] });
+  const { app } = await launchWith(script, { AVANZEL_FAKE_TRANSCRIPT_DELAY_MS: "3000" });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "setCursorDictation", { enabled: true });
+  await call(app, "pressCursorDictation");
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await call(app, "pressCursorDictation");
+  await expect.poll(() => capsuleKind(app)).toBe("transcribing");
+  await wait(800); // the dictation's audio is in; its words are being made
+  await call(app, "toggleDictate"); // a thought starts meanwhile
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  // The dictation's words come (focus moved: they are offered, not pasted), and its card is held: the thought keeps its card.
+  await expect.poll(() => cursorIdle(app), { timeout: 15_000 }).toBe(true);
+  await wait(500);
+  expect(await capsuleKind(app)).toBe("listening");
+  expect(pasted(pasteOut)).toBe("");
+  expect(await clipboardText(app)).toBe(WORDS);
+  // The thought is given up: the capsule is free, and the dictation's card shows, its five seconds counted from then.
+  expect(await call(app, "pressShortcutForTests", "Escape")).toBe(true);
+  await expect.poll(() => capsuleKind(app)).toBe("error");
+  await expectProblem(capsule, {
+    title: "You moved to another window.",
+    lines: [`The words were meant for Slack. “${WORDS}” They are on your clipboard.`],
+    fix: "Copy",
+  });
+  await wait(3_500);
+  expect(await capsuleKind(app)).toBe("error");
+  await expect.poll(() => capsuleKind(app), { timeout: 5_000 }).toBe("hidden");
+  await app.close();
+});
+
+test("a browser that can't be asked which page it shows is said once, with Open System Settings at Automation", async () => {
+  const { script, pasteOut } = fakeCursor({ targets: [chrome()], taps: [500, 1500] });
+  const { app } = await launchWith(script, { AVANZEL_FAKE_BROWSER: "unanswered" });
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "setCursorDictation", { enabled: true });
+  await expect.poll(() => pasted(pasteOut), { timeout: 30_000 }).toBe(WORDS);
+  await expect.poll(() => capsuleKind(app)).toBe("error");
+  await expectProblem(capsule, {
+    title: "Avanzel couldn't ask Google Chrome which page this is.",
+    lines: ["Nothing was kept of that dictation. It was still typed in. Allow it under Automation in System Settings."],
+    fix: "Open System Settings",
+  });
+  expect(await history(app)).toEqual([]);
+  await capsule.getByRole("button", { name: "Open System Settings", exact: true }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Automation"]);
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  // Said once per browser: the next dictation there goes in without the card.
+  await call(app, "pressCursorDictation");
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await call(app, "pressCursorDictation");
+  await expect.poll(() => pasted(pasteOut), { timeout: 30_000 }).toBe(WORDS + WORDS);
+  await expect.poll(() => cursorIdle(app)).toBe(true);
+  await wait(500);
+  expect(await capsuleKind(app)).toBe("hidden");
+  await app.close();
+});
+
+test("when the helper keeps stopping and is given up, one card says so and sends the person to Settings → Voice", async () => {
+  const { script } = fakeCursor({ gaveUpAt: 500 });
+  const { app } = await launchWith(script);
+  const capsule = await windowFor(app, "capsule");
+  await call(app, "setCursorDictation", { enabled: true });
+  await expect.poll(() => capsuleKind(app), { timeout: 10_000 }).toBe("error");
+  await expectProblem(capsule, { title: "Dictating into any app stopped working.", lines: ["Turn it off and on again in Settings."], fix: "Open Settings" });
   await app.close();
 });

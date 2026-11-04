@@ -5,6 +5,7 @@
 import { SHELVES } from "@avanzel/ui";
 import { DICTATION_PAGE, noSuchReview, type CursorKey, type CursorPermissionState, type PickOption, type SettingsPane, type SettingsSnapshot, type TaskInfo } from "../../shared/ipc.ts";
 import { NO_GIT_LINE, ownLine } from "../../shared/problems.ts";
+import { CURSOR_KEYS, cursorKeyName } from "../../shared/transcribing.ts";
 
 /** Each pane's name on the toolbar, which is also its heading. The scheduled reviews' pane keeps its id, "tasks". */
 export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
@@ -72,15 +73,8 @@ export function microphoneOptions(id: string | null, devices: readonly InputDevi
   ];
 }
 
-/** The keys dictating into any app can listen to, in the order the menu lists them, named as the keyboard names them. */
-const CURSOR_KEYS: readonly { key: CursorKey; name: string }[] = [
-  { key: "right-option", name: "Right Option" },
-  { key: "left-option", name: "Left Option" },
-  { key: "right-command", name: "Right Command" },
-  { key: "right-control", name: "Right Control" },
-];
-
-export const cursorKeyName = (key: CursorKey): string => CURSOR_KEYS.find((entry) => entry.key === key)!.name;
+// The keys and their names are shared with the capsule, whose listening card names the key too.
+export { cursorKeyName };
 
 /** Choose…'s menu for the dictation key, with the key in use checked. */
 export function cursorKeyOptions(chosen: CursorKey): PickOption[] {

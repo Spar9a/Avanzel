@@ -43,6 +43,7 @@ function stubHost(
   const prompts: Array<{ text: string; app: string; reason: string }> = [];
   const said: string[] = [];
   const pasted: Array<string | undefined> = [];
+  const unasked: Array<{ app: { name: string; bundleId: string }; inserted: boolean }> = [];
   const state = { clip: BEFORE, now: SAID_AT };
   let ids = 0;
 
@@ -95,6 +96,10 @@ function stubHost(
       if (browser instanceof Error) throw browser;
       return browser;
     },
+    browserUnanswered(app, inserted) {
+      calls.push("browserUnanswered");
+      unasked.push({ app, inserted });
+    },
     skip() {
       if (over.skipFails) throw new Error("settings unreadable");
       return over.skip ?? { apps: [], sites: [] };
@@ -133,7 +138,7 @@ function stubHost(
       return `id-${++ids}`;
     },
   };
-  return { host, calls, added, written, prompts, said, pasted, state };
+  return { host, calls, added, written, prompts, said, pasted, unasked, state };
 }
 
 /** Two taps then the words: one whole dictation. */
@@ -476,7 +481,7 @@ describe("what is stored", () => {
     expect(bank.calls).not.toContain("log.write");
   });
 
-  it("keeps nothing from a browser whose window can't be asked about, since it might be private", async () => {
+  it("keeps nothing from a browser whose window can't be asked about, since it might be private, and tells the host", async () => {
     const chrome = target({ name: "Google Chrome", bundleId: "com.google.Chrome" });
     const stub = stubHost({ targets: [chrome, chrome], browser: new Error("AppleScript timed out") });
     await dictate(new CursorDictation(stub.host));
@@ -484,6 +489,29 @@ describe("what is stored", () => {
     expect(stub.pasted).toEqual(["milk and eggs"]);
     expect(stub.calls).not.toContain("history.add");
     expect(stub.calls).not.toContain("log.write");
+    expect(stub.unasked).toEqual([{ app: { name: "Google Chrome", bundleId: "com.google.Chrome" }, inserted: true }]);
+  });
+
+  it("tells the host the browser couldn't be asked also when the words didn't go in, and not when it answered", async () => {
+    const chrome = target({ name: "Google Chrome", bundleId: "com.google.Chrome" });
+    const moved = stubHost({ targets: [chrome, target({ pid: 200 })], browser: new Error("Automation denied") });
+    await dictate(new CursorDictation(moved.host));
+    expect(moved.unasked).toEqual([{ app: { name: "Google Chrome", bundleId: "com.google.Chrome" }, inserted: false }]);
+
+    const answered = stubHost({ targets: [chrome, chrome], browser: { address: "https://example.com" } });
+    await dictate(new CursorDictation(answered.host));
+    expect(answered.unasked).toEqual([]);
+  });
+
+  it("keeps going when telling the host fails", async () => {
+    const chrome = target({ name: "Google Chrome", bundleId: "com.google.Chrome" });
+    const stub = stubHost({ targets: [chrome, chrome, chrome], browser: new Error("Automation denied") });
+    stub.host.browserUnanswered = () => {
+      throw new Error("capsule gone");
+    };
+    const dictation = new CursorDictation(stub.host);
+    await expect(dictate(dictation)).resolves.toBeUndefined();
+    expect(dictation.idle()).toBe(true);
   });
 
   it("writes nothing to the library when the log is off, but keeps the history", async () => {

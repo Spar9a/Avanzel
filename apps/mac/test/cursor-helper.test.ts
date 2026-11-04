@@ -584,6 +584,15 @@ describe("CursorHelper with the fake helper", () => {
     expect((await helper.inspect(true)).app.name).toBe("Notes");
   });
 
+  it("says it gave up when the script says so, once", async () => {
+    const script = path.join(tmp(), "fake.json");
+    writeFileSync(script, JSON.stringify({ gaveUpAt: 5 }));
+    process.env.AVANZEL_FAKE_CURSOR = script;
+    const { helper, problems } = make();
+    helper.start("right-option");
+    await expect.poll(() => problems).toEqual([CURSOR_HELPER_GAVE_UP]);
+  });
+
   it("says it can't tell whether the window is the same when the script doesn't say", async () => {
     const script = path.join(tmp(), "fake.json");
     writeFileSync(script, JSON.stringify({ targets: [front("Notes")] }));

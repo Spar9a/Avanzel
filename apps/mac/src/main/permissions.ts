@@ -47,6 +47,7 @@ const PRIVACY_ANCHORS = {
   screen: "Privacy_ScreenCapture",
   "input-monitoring": "Privacy_ListenEvent",
   accessibility: "Privacy_Accessibility",
+  automation: "Privacy_Automation",
 } as const;
 
 export function openPrivacyPane(kind: keyof typeof PRIVACY_ANCHORS): void {

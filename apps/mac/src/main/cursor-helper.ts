@@ -80,6 +80,8 @@ interface FakeScript {
   pasteOut?: string;
   /** What `sameWindow()` answers; null (can't tell) when left out. */
   sameWindow?: boolean | null;
+  /** Milliseconds after start() at which the helper is taken to have kept stopping: onProblem hears CURSOR_HELPER_GAVE_UP. */
+  gaveUpAt?: number;
 }
 
 const text = (value: unknown, fallback: string): string => (typeof value === "string" ? value : fallback);
@@ -416,6 +418,8 @@ export class CursorHelper {
     if (fake.tapsScheduled) return;
     fake.tapsScheduled = true;
     for (const at of fake.script.taps ?? []) fake.timers.push(setTimeout(() => this.opts.onTap(), at));
+    const { gaveUpAt } = fake.script;
+    if (typeof gaveUpAt === "number") fake.timers.push(setTimeout(() => this.opts.onProblem(CURSOR_HELPER_GAVE_UP), gaveUpAt));
   }
 }
 

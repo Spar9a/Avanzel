@@ -3,7 +3,25 @@
 // [voice] settings can run anywhere, so for it the words don't say where. Main sends the capsule which it is (`onThisMac`), and the
 // capsule says no more than that. The filing card's line of what the agent is doing is with the rows' words (`filingLine`, in
 // renderer/common/narration.ts): nothing in shared/ imports from the renderer.
-import type { FileMode } from "./ipc.ts";
+import type { CursorKey, FileMode } from "./ipc.ts";
+
+/** The keys dictating into any app can listen to, in the order Settings' menu lists them, named as the keyboard names them. */
+export const CURSOR_KEYS: readonly { key: CursorKey; name: string }[] = [
+  { key: "right-option", name: "Right Option" },
+  { key: "left-option", name: "Left Option" },
+  { key: "right-command", name: "Right Command" },
+  { key: "right-control", name: "Right Control" },
+];
+
+export const cursorKeyName = (key: CursorKey): string => CURSOR_KEYS.find((entry) => entry.key === key)?.name ?? "the key";
+
+/**
+ * The listening card of a dictation into another app: what it is doing, and how it ends, with the key the person chose (`key`, from the
+ * setting). Esc gives it up.
+ */
+export function dictationListeningLine(key: CursorKey): string {
+  return `Dictating into another app. Tap ${cursorKeyName(key)} again to finish, or press Esc.`;
+}
 
 /**
  * The file-mode button of a recording: what its words will do, in words that promise only what the app keeps. "Files now" when

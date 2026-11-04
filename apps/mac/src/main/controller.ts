@@ -72,8 +72,10 @@ import { DAY_FILE_NOT_UPDATED, isSettingsPane, noSuchReview, type DeleteDictatio
 import {
   ANOTHER_LIBRARY,
   avanzelFailure,
+  browserUnaskedProblem,
   commentNotStartedProblem,
   copyPromptProblem,
+  CURSOR_HELPER_STOPPED,
   correctedWordsProblem,
   filingProblem,
   linkedPageNotice,
@@ -128,7 +130,7 @@ import { TranscriberCache } from "./transcriber-cache.ts";
 import { browserWindow, frontContext } from "./front-app.ts";
 import { electronClipboard } from "./cursor-clipboard.ts";
 import { COPY_PROMPT_MS, CursorDictation, type CursorHost } from "./cursor-dictation.ts";
-import { CursorHelper, cursorPermissionsOf, type CursorPermissionState } from "./cursor-helper.ts";
+import { CURSOR_HELPER_GAVE_UP, CursorHelper, cursorPermissionsOf, type CursorPermissionState } from "./cursor-helper.ts";
 import { DEFAULT_SKIP_APPS } from "./cursor-policy.ts";
 import { DictationHistory, type DictationEntry } from "./dictation-history.ts";
 import { deleteDictationResult, forgetDictation, pageOf, type ForgetHook, type Forgotten } from "./dictation-rows.ts";
@@ -438,6 +440,16 @@ export class Controller {
   private cursorRecognising = false;
   /** The words of the last copy prompt, which its Copy button copies (`copy-dictation`). */
   private copyPromptText: string | null = null;
+  /**
+   * A dictation's cards held back while a thought's recording or transcribing card has the capsule (`showCursorCard`): a dictation's
+   * card never covers it (Ruling F4). Each shows, in turn, when the capsule next goes hidden with no thought holding it. One of each
+   * `kind`: a later card of the same kind replaces the one held (a failure's card replaces the "nothing heard" said just before it).
+   */
+  private pendingCursorCards: { kind: "outcome" | "browser" | "helper"; show: () => void }[] = [];
+  /** The browsers whose Automation card (`browserUnaskedProblem`) was shown in this run: once each. */
+  private readonly browsersUnaskedTold = new Set<string>();
+  /** The card that dictating into any app stopped working (`CURSOR_HELPER_STOPPED`) was shown in this run: once. */
+  private cursorHelperStoppedTold = false;
   /** Notes on a call: a call is not a recording, and while one runs no recording starts (`CallNotes.refuse`). */
   private readonly calls: CallNotes;
   /** The listening card of the call that runs, which the capsule goes back to instead of hiding (`setCapsule`); null with no call. */
@@ -1315,6 +1327,34 @@ export class Controller {
     if (autoHideMs) this.scheduleHide(autoHideMs);
     if (state.kind === "saved" && !state.undone) this.markFiled(); // words saved, for the evening review or as a screen comment: stamped
     this.refreshMenu();
+    // A dictation's card held back for a thought's (`showCursorCard`) shows once the capsule is free, after whoever hid it has finished.
+    if (state.kind === "hidden" && this.pendingCursorCards.length > 0) setTimeout(() => this.showPendingCursorCard(), 0);
+  }
+
+  /**
+   * A thought (any recording that isn't a dictation into another app: a thought, a screen comment, a question, setup's first thought) is
+   * listening, or the capsule shows the card of one whose words are being made.
+   */
+  private thoughtHoldsCapsule(): boolean {
+    if (this.recording && !this.recording.forCursor) return true;
+    return this.capsuleState.kind === "transcribing" && this.transcribingCardOf !== null && !this.transcribingCardOf.forCursor;
+  }
+
+  /**
+   * Shows a dictation's card now, or, while a thought's recording or transcribing card has the capsule, holds it until the capsule is
+   * next hidden with no thought holding it (Ruling F4): the card must not take the thought's place, and its hide would hide the
+   * capsule while the microphone is on. A card's own timer (the copy card's five seconds) starts when it shows.
+   */
+  private showCursorCard(kind: "outcome" | "browser" | "helper", show: () => void): void {
+    if (!this.thoughtHoldsCapsule()) return show();
+    this.pendingCursorCards = this.pendingCursorCards.filter((card) => card.kind !== kind);
+    this.pendingCursorCards.push({ kind, show });
+  }
+
+  /** The next held dictation card, if the capsule is still free; the rest wait for the capsule to be hidden again. */
+  private showPendingCursorCard(): void {
+    if (this.capsuleState.kind !== "hidden" || this.thoughtHoldsCapsule()) return;
+    this.pendingCursorCards.shift()?.show();
   }
 
   /** The capsule page is listening: it may have missed the state sent while it loaded, and gets the commands held for it. */
@@ -1540,6 +1580,7 @@ export class Controller {
       fileMode: recording.fileMode,
       review: reviewTime(this.openReview()),
       hint: forCursor ? null : this.hintFor(mode),
+      ...(forCursor ? { dictation: { key: this.store.get().cursorDictation.key } } : {}),
       ...(shot ? { thumbnail: shot.thumbnail, context: shot.context } : {}),
     });
     this.capsuleCommand("start");
@@ -1799,8 +1840,9 @@ export class Controller {
       console.error("cursor dictation", error);
       if (dropped()) return;
       this.cursorRecognising = false;
-      void this.cursor.heard(NO_WORDS); // says nothing was heard, which the card below replaces at once
-      return this.recordingFailed(recording, { problem: "unheard" }, unheardProblem(errorMessage(error), null, reasonMax(error)));
+      void this.cursor.heard(NO_WORDS); // says nothing was heard, which the card below replaces at once (or, held back, in its place)
+      const problem = unheardProblem(errorMessage(error), null, reasonMax(error));
+      return this.showCursorCard("outcome", () => this.recordingFailed(recording, { problem: "unheard" }, problem));
     }
     if (dropped()) return;
     this.cursorRecognising = false;
@@ -2046,9 +2088,9 @@ export class Controller {
   }
 
   /** Opens System Settings at a privacy pane. With AVANZEL_TEST=1 it stays shut, and openedForTests says which pane it would have opened. */
-  private openPane(kind: "input-monitoring" | "accessibility"): void {
+  private openPane(kind: "input-monitoring" | "accessibility" | "automation"): void {
     if (process.env.AVANZEL_TEST === "1") {
-      this.opened.push(`System Settings → ${kind === "accessibility" ? "Accessibility" : "Input Monitoring"}`);
+      this.opened.push(`System Settings → ${{ accessibility: "Accessibility", "input-monitoring": "Input Monitoring", automation: "Automation" }[kind]}`);
       return;
     }
     openPrivacyPane(kind);
@@ -2064,8 +2106,9 @@ export class Controller {
     if (!this.cursorHelper) {
       this.cursorHelper = new CursorHelper({
         onTap: () => this.pressCursorDictation(),
-        // Settings asks for the permissions itself (cursorPermissions), so a helper that can't watch the key is only logged here.
-        onProblem: (message) => console.error("cursor helper", message),
+        // Settings asks for the permissions itself (cursorPermissions), so a helper that can't watch the key is only logged here; one
+        // that kept stopping and is no longer started again is said on a card (`cursorHelperProblem`).
+        onProblem: (message) => this.cursorHelperProblem(message),
       });
       this.cursorHelper.start(key);
     } else if (key !== this.cursorKey) {
@@ -2100,7 +2143,7 @@ export class Controller {
       cancelListening: () => this.cancelCursorRecording(),
       // One microphone: a thought recording or a call refuses a dictation. A thought being transcribed or filed holds no microphone.
       busy: () => (this.recording !== null && !this.recording.forCursor) || this.calls.running,
-      browser: (target) => browserWindow(target.app.bundleId),
+      browser: (target) => this.browserOf(target.app.bundleId),
       // The open library's skip list (config.toml's [dictation]); without a library, the password managers. Settings that can't be
       // read throw, and the session then keeps nothing, as it can't tell what is to be skipped.
       skip: () => {
@@ -2116,11 +2159,13 @@ export class Controller {
         if (!vault) return { enabled: false, write: () => undefined };
         return { enabled: loadSettings(vault.root).dictation.log, library: vault.root, write: (entry) => void logDictation(vault, entry) };
       },
-      showCopyPrompt: (prompt) => {
-        this.copyPromptText = prompt.text;
-        this.fail(copyPromptProblem(prompt), "copy-dictation", "Copy");
-        this.scheduleHide(COPY_PROMPT_MS); // after `fail`, whose `setCapsule` clears any hide that was set
-      },
+      showCopyPrompt: (prompt) =>
+        this.showCursorCard("outcome", () => {
+          this.copyPromptText = prompt.text;
+          this.fail(copyPromptProblem(prompt), "copy-dictation", "Copy");
+          this.scheduleHide(COPY_PROMPT_MS); // after `fail`, whose `setCapsule` clears any hide that was set
+        }),
+      browserUnanswered: (app, inserted) => this.browserUnanswered(app, inserted),
       say: (line) => this.sayForCursor(line),
       history: this.dictations,
       now: () => new Date(),
@@ -2135,6 +2180,17 @@ export class Controller {
       return false;
     }
     return this.startRecording("dictate", undefined, { forCursor: true });
+  }
+
+  /**
+   * The front window of the browser `bundleId` (front-app.ts's `browserWindow`). In tests (AVANZEL_TEST=1) AVANZEL_FAKE_BROWSER stands in
+   * for the browsers, which are never asked: "unanswered" rejects as a browser that can't be asked does, and JSON is the answer.
+   */
+  private browserOf(bundleId: string): Promise<{ address?: string; privateWindow?: boolean } | null> {
+    const fake = process.env.AVANZEL_TEST === "1" ? process.env.AVANZEL_FAKE_BROWSER : undefined;
+    if (fake === undefined) return browserWindow(bundleId);
+    if (fake === "unanswered") return Promise.reject(new Error("The fake browser doesn't answer."));
+    return Promise.resolve(JSON.parse(fake) as { address?: string; privateWindow?: boolean } | null);
   }
 
   /** The dictation's second tap: its audio is asked for, and arrives at `heardForCursor`. */
@@ -2163,7 +2219,7 @@ export class Controller {
 
   /** The session's one-line answers: refused while something else records, nothing heard, or (Esc) the capsule goes. */
   private sayForCursor(line: "refused" | "nothing-heard" | "cancelled"): void {
-    if (line === "nothing-heard") return this.fail(NOTHING_HEARD, "open-settings:voice", "Choose microphone");
+    if (line === "nothing-heard") return this.showCursorCard("outcome", () => this.fail(NOTHING_HEARD, "open-settings:voice", "Choose microphone"));
     if (line === "cancelled") {
       // Only the dictation's own card: a thought that records has the capsule otherwise.
       const own = !this.recording || this.recording.forCursor;
@@ -2171,6 +2227,31 @@ export class Controller {
       return;
     }
     // The refusal is a bar for a moment. A thought that listens gets its card back after it, a call its own (`setCapsule`).
+    this.sayRefused();
+  }
+
+  /**
+   * The browser a dictation went to couldn't be asked which page it shows, so nothing of the dictation was kept. Said once per browser
+   * per run, on a calm card whose fix opens System Settings at Automation; only for words that went in (the card says they did): words
+   * that didn't have their copy card, and the browser is told about with a later dictation.
+   */
+  private browserUnanswered(app: { name: string; bundleId: string }, inserted: boolean): void {
+    const browser = app.bundleId || app.name;
+    if (!inserted || this.browsersUnaskedTold.has(browser)) return;
+    this.browsersUnaskedTold.add(browser);
+    this.showCursorCard("browser", () => this.fail(browserUnaskedProblem(app.name), "open-automation-settings", "Open System Settings"));
+  }
+
+  /** The helper's problems are logged; the one that it gave up after it kept stopping is also said, once per run (`CURSOR_HELPER_STOPPED`). */
+  private cursorHelperProblem(message: string): void {
+    console.error("cursor helper", message);
+    if (message !== CURSOR_HELPER_GAVE_UP || this.cursorHelperStoppedTold) return;
+    this.cursorHelperStoppedTold = true;
+    this.showCursorCard("helper", () => this.fail(CURSOR_HELPER_STOPPED, "open-settings:voice", "Open Settings"));
+  }
+
+  /** The refusal's bar, for a moment. */
+  private sayRefused(): void {
     const back = this.capsuleState;
     const thought = this.recording;
     this.setCapsule({ kind: "dictation-refused" });
@@ -3635,6 +3716,7 @@ export class Controller {
     }
     if (action === "open-microphone-settings") void this.openPrivacy("microphone");
     else if (action === "open-screen-settings") void this.openPrivacy("screen");
+    else if (action === "open-automation-settings") this.openPane("automation");
     else if (action === "open-terminal") openTerminal(this.opened);
     else {
       // The capsule's page sends `action`: a pane Settings doesn't have means General.

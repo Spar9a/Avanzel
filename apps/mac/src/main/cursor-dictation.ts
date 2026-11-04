@@ -30,6 +30,11 @@ export interface CursorHost {
   /** A thought or a call is running. */
   busy(): boolean;
   browser(target: Target): Promise<{ address?: string; privateWindow?: boolean } | null>;
+  /**
+   * The browser the words went to couldn't be asked about its window (`browser` rejected), so nothing of the dictation was kept;
+   * `inserted`: whether its words went in all the same. The host may tell the person why.
+   */
+  browserUnanswered(app: { name: string; bundleId: string }, inserted: boolean): void;
   skip(): { apps: string[]; sites: string[] };
   /** The library log; `library` is the root of the library it writes to, which the entry then carries (`DictationEntry.library`). */
   logTo(): { enabled: boolean; library?: string; write(entry: DictationEntry): void };
@@ -326,7 +331,14 @@ export class CursorDictation {
   ): Promise<void> {
     const look = await browserLook;
     // A browser that couldn't be asked might have had a private window in front, so nothing is kept.
-    if (!look.ok) return;
+    if (!look.ok) {
+      try {
+        this.host.browserUnanswered({ name: fixed.app.name, bundleId: fixed.app.bundleId }, inserted);
+      } catch (error) {
+        console.error("cursor dictation", error);
+      }
+      return;
+    }
     let skip: { apps: string[]; sites: string[] };
     try {
       skip = this.host.skip();

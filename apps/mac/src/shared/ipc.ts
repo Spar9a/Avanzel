@@ -107,11 +107,13 @@ export type LibraryFolder = "missing" | "empty" | "has-files" | "library";
  * that fixes the problem; opens Terminal, where an agent signs in; opens Type a thought, where the words of a thought that couldn't
  * be saved still are (`type-a-thought`); or (`refile:<agent>`, the agent's harness name) files the note the card is about again
  * with that agent; or (`finish-call`) makes the notes of the call whose notes weren't made, from what it kept (`CallNotes.finishKept`);
- * or (`copy-dictation`) copies the words of a dictation that couldn't go in at the cursor, the ones its card shows.
+ * or (`copy-dictation`) copies the words of a dictation that couldn't go in at the cursor, the ones its card shows; or
+ * (`open-automation-settings`) opens System Settings at Automation, where Avanzel is allowed to ask a browser which page it shows.
  */
 export type CardAction =
   | "open-microphone-settings"
   | "open-screen-settings"
+  | "open-automation-settings"
   | `open-settings:${SettingsPane}`
   | "open-terminal"
   | "type-a-thought"
@@ -151,6 +153,11 @@ export type CapsuleState =
        * have been kept, and while that shortcut is registered; null otherwise.
        */
       hint: string | null;
+      /**
+       * Set only for a dictation into another app (the controller's `startCursorRecording`): the key that ends it, as the setting
+       * chose it, which the card names (`dictationListeningLine`).
+       */
+      dictation?: { key: CursorKey };
     }
   /**
    * `onThisMac`: the library's speech-to-text runs on this Mac, which the card then says; a command can run anywhere. `slow`: it has run
