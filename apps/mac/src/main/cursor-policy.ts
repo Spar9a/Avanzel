@@ -32,18 +32,23 @@ export function siteOf(address: string | undefined): string | null {
   return host || null;
 }
 
-/** A site as the person listed it: they may type it with `www.`, capitals, spaces, or paste a whole address. Empty entries are dropped so they match nothing. */
-function listedSite(entry: string): string | null {
-  const text = entry.trim();
+/**
+ * A site as the person listed it, as the host `siteOf` gives for a browser's address, so the two can be compared: they may type it
+ * with `www.`, capitals, spaces, a path or a port, a leading `*.`, letters beyond ASCII (made punycode, as browsers report them), or
+ * paste a whole address. Null for an entry that can't be read as a website, which then matches nothing. Settings saves entries through
+ * this (`cleanSkipList`); it is read here again for entries written into config.toml by hand.
+ */
+export function skipSiteOf(entry: string): string | null {
+  const text = entry.trim().replace(/^\*\./, "");
   if (!text) return null;
-  if (text.includes("://")) return siteOf(text);
-  return text.toLowerCase().replace(/^www\./, "").replace(/\.$/, "") || null;
+  // Without a scheme, "example.com:8080" would parse as the scheme "example.com:", so a bare entry is read as a web address.
+  return siteOf(text.includes("://") ? text : `http://${text}`);
 }
 
 /** The site is a listed one, or a subdomain of it; `notexample.com` is not a subdomain of `example.com`, so the dot is part of the match. */
 function onList(site: string, sites: readonly string[]): boolean {
   return sites.some((entry) => {
-    const listed = listedSite(entry);
+    const listed = skipSiteOf(entry);
     return listed !== null && (site === listed || site.endsWith(`.${listed}`));
   });
 }

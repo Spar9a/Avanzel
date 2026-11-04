@@ -19,7 +19,11 @@ import {
   DICTATIONS_EMPTY,
   DICTATIONS_START,
   dictationWhen,
+  DICTATION_LOG_DESCRIPTION,
+  DICTATION_LOG_LABEL,
   DICTIONARY_DESCRIPTION,
+  SKIP_APPS_DESCRIPTION,
+  SKIP_SITES_DESCRIPTION,
   DOWNLOAD_NOT_STARTED,
   failedSaveLine,
   fileModeLine,
@@ -494,6 +498,23 @@ describe("a scheduled review's copy", () => {
 
   it("the dictation switch says in one calm sentence how it works", () => {
     expect(CURSOR_DICTATION_DESCRIPTION).toBe("Tap the key once to start and once to finish. The words go where the cursor is.");
+  });
+
+  it("the library log's switch says where the words go, that they stay out of git, and that sync tools' copies are outside it", () => {
+    expect(DICTATION_LOG_LABEL).toBe("Keep what I dictate in the library");
+    expect(DICTATION_LOG_DESCRIPTION).toBe(
+      "Each dictation is also written to raw/dictations/ in the library, one file a day, kept out of git, where your agent can read it. " +
+        "Copies made by sync tools such as Obsidian Sync or iCloud are outside this: a dictation you forget may stay in them.",
+    );
+  });
+
+  it("the skip lists say what a line holds, and that what is said there still goes in but is never kept", () => {
+    expect(SKIP_APPS_DESCRIPTION).toBe("One bundle id per line, such as com.apple.Passwords. What you dictate there still goes in, but is never kept.");
+    expect(SKIP_SITES_DESCRIPTION).toBe("One website per line, such as example.com. What you dictate there still goes in, but is never kept.");
+    for (const line of [DICTATION_LOG_DESCRIPTION, SKIP_APPS_DESCRIPTION, SKIP_SITES_DESCRIPTION]) {
+      expect(line).toMatch(/^[A-Z][^!]*\.$/);
+      expect(line).not.toMatch(/Oops|Sorry/);
+    }
   });
 
   describe("cursorStatus", () => {

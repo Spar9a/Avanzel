@@ -39,6 +39,14 @@ describe("the browser window a dictation went to", () => {
     expect(browserScript("com.apple.finder", { mode: true })).toBeNull();
   });
 
+  it("asks Chrome Canary and Chrome Dev as the Chrome they are, so their private windows are told apart too", async () => {
+    for (const id of ["com.google.Chrome.canary", "com.google.Chrome.dev"]) {
+      expect(browserScript(id, { mode: true })).toContain("mode of front window");
+      expect(await browserWindow(id, async () => "incognito\nhttps://a.example/\nA\n")).toEqual({ address: "https://a.example/", privateWindow: true });
+      await expect(browserWindow(id, async () => "")).rejects.toThrow();
+    }
+  });
+
   it("reads a Chromium window's mode: incognito is private, normal is not, and anything else can't be told", () => {
     expect(parseBrowserWindow("incognito\nhttps://mail.example.com/inbox\nInbox\n", "chromium")).toEqual({
       address: "https://mail.example.com/inbox",

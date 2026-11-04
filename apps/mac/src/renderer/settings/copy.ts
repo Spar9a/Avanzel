@@ -90,6 +90,20 @@ export function cursorKeyOptions(chosen: CursorKey): PickOption[] {
 /** The "Dictate into any app" switch's description: how it works, in one sentence. */
 export const CURSOR_DICTATION_DESCRIPTION = "Tap the key once to start and once to finish. The words go where the cursor is.";
 
+/**
+ * The library log's switch: the person speaking ("I"), and where the words go. It says what the app does today: the agent can read
+ * raw/ (the evening review's own reading of the day file is a later step, so it isn't promised). Forgetting and the git rule can't
+ * reach what a sync tool has copied, which it says plainly.
+ */
+export const DICTATION_LOG_LABEL = "Keep what I dictate in the library";
+export const DICTATION_LOG_DESCRIPTION =
+  "Each dictation is also written to raw/dictations/ in the library, one file a day, kept out of git, where your agent can read it. " +
+  "Copies made by sync tools such as Obsidian Sync or iCloud are outside this: a dictation you forget may stay in them.";
+
+/** The skip lists' rows: what a line holds, and that a skipped app or site still gets the words but keeps none of them. */
+export const SKIP_APPS_DESCRIPTION = "One bundle id per line, such as com.apple.Passwords. What you dictate there still goes in, but is never kept.";
+export const SKIP_SITES_DESCRIPTION = "One website per line, such as example.com. What you dictate there still goes in, but is never kept.";
+
 /** The Dictations pane when the history is empty: the one line, and how to start. */
 export const DICTATIONS_EMPTY = "Nothing dictated yet.";
 export const DICTATIONS_START = "Turn on Dictate into any app in Voice, then tap its key and speak. What you say shows here.";

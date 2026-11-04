@@ -1,6 +1,6 @@
 // What the Dictations pane is told about the history, and how an entry is forgotten. Kept apart from the controller, which needs
 // Electron, so that the cut of a long text and the way a failed delete is told can be tested on their own.
-import { DELETE_FAILED_BODY, DICTATION_PAGE, type DeleteDictationResult, type DictationList, type DictationRow } from "../shared/ipc.ts";
+import { DAY_FILE_NOT_UPDATED, DELETE_FAILED_BODY, DICTATION_PAGE, type DeleteDictationResult, type DictationList, type DictationRow } from "../shared/ipc.ts";
 import type { DictationEntry, DictationHistory } from "./dictation-history.ts";
 
 /** How many characters of a dictation a row shows; Copy still copies all of it. */
@@ -32,31 +32,47 @@ export function pageOf(entries: readonly DictationEntry[], limit?: number): Dict
 }
 
 /**
- * Forgets entry `id` and tells `onForget` about it, the entry that went. Returns it, or null when there was none. It throws when the
- * history can't be rewritten, and then the hook hears nothing: the entry is still there. The hook exists so that whatever else keeps a
- * copy of a dictation (the library's day file) can drop it too. If the hook fails the entry is gone all the same, and the person's
- * delete has worked, so that failure is only logged.
+ * What forgetting calls once an entry has left the history, so that whatever else keeps a copy of it (the library's day file) drops it
+ * too. It throws, or its promise rejects, when it couldn't: the words may then still be there, and the person is told.
  */
-export function forgetDictation(history: Pick<DictationHistory, "remove">, id: string, onForget: ((entry: DictationEntry) => void) | undefined): DictationEntry | null {
-  const entry = history.remove(id);
-  if (entry && onForget) {
-    try {
-      onForget(entry);
-    } catch (error) {
-      console.error("forget dictation", (error as NodeJS.ErrnoException).code ?? "failed");
-    }
-  }
-  return entry;
+export type ForgetHook = (entry: DictationEntry) => void | Promise<void>;
+
+/** What a forget did: the entry that left the history (null when there was none), and whether every other copy went too. */
+export interface Forgotten {
+  entry: DictationEntry | null;
+  elsewhere: boolean;
 }
 
-/** What Delete answers: ok once the dictation is gone (also when it already was), else a calm sentence and nothing removed. */
-export function deleteDictationResult(forget: () => DictationEntry | null): DeleteDictationResult {
+/**
+ * Forgets entry `id`, then has `onForget` drop it elsewhere, and waits for that. It rejects when the history can't be rewritten, and
+ * then the hook hears nothing: the entry is still there. If the hook fails the entry has left the history all the same, so that is
+ * no failed delete: `elsewhere` is false, for the caller to say where the words may still be.
+ */
+export async function forgetDictation(history: Pick<DictationHistory, "remove">, id: string, onForget: ForgetHook | undefined): Promise<Forgotten> {
+  const entry = history.remove(id);
+  if (!entry || !onForget) return { entry, elsewhere: true };
   try {
-    forget();
-    return { ok: true };
+    await onForget(entry);
+    return { entry, elsewhere: true };
+  } catch (error) {
+    // Only the code: the message can name a path, and the words are what people said.
+    console.error("forget dictation", (error as NodeJS.ErrnoException).code ?? "failed");
+    return { entry, elsewhere: false };
+  }
+}
+
+/**
+ * What Delete answers: ok once the dictation is gone (also when it already was); a calm sentence and nothing removed when the history
+ * couldn't be rewritten; and when it left the history but not the library's day file, where its words may still be, and the fix.
+ */
+export async function deleteDictationResult(forget: () => Promise<Forgotten>): Promise<DeleteDictationResult> {
+  let forgotten: Forgotten;
+  try {
+    forgotten = await forget();
   } catch (error) {
     // The cause is not shown, and not logged whole: it can name a path, and the history holds what people said.
     console.error("delete dictation", (error as NodeJS.ErrnoException).code ?? "failed");
     return { ok: false, message: DELETE_FAILED_BODY };
   }
+  return forgotten.elsewhere ? { ok: true } : { ok: false, title: DAY_FILE_NOT_UPDATED.title, message: DAY_FILE_NOT_UPDATED.body };
 }

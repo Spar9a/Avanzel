@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DictationEntry } from "../src/main/dictation-history.ts";
 import { deleteDictationResult, forgetDictation, pageOf, PREVIEW_CHARACTERS, previewOf, rowOf } from "../src/main/dictation-rows.ts";
-import { DELETE_FAILED_BODY, DICTATION_PAGE } from "../src/shared/ipc.ts";
+import { DAY_FILE_NOT_UPDATED, DELETE_FAILED_BODY, DICTATION_PAGE } from "../src/shared/ipc.ts";
 
 const entry = (over: Partial<DictationEntry> = {}): DictationEntry => ({
   id: "a",
@@ -105,62 +105,85 @@ describe("pageOf", () => {
 });
 
 describe("forgetDictation", () => {
-  it("removes the entry, then tells the hook about it", () => {
+  it("removes the entry, then has the hook drop it elsewhere, and waits for it", async () => {
     const removed = entry();
     const history = { remove: vi.fn(() => removed) };
-    const onForget = vi.fn();
-    expect(forgetDictation(history, "a", onForget)).toBe(removed);
+    let done = false;
+    const onForget = vi.fn(async () => {
+      await Promise.resolve();
+      done = true;
+    });
+    expect(await forgetDictation(history, "a", onForget)).toEqual({ entry: removed, elsewhere: true });
     expect(history.remove).toHaveBeenCalledWith("a");
     expect(onForget).toHaveBeenCalledWith(removed);
+    expect(done).toBe(true);
   });
 
-  it("does not call the hook when there was no such entry", () => {
+  it("does not call the hook when there was no such entry", async () => {
     const onForget = vi.fn();
-    expect(forgetDictation({ remove: () => null }, "gone", onForget)).toBeNull();
+    expect(await forgetDictation({ remove: () => null }, "gone", onForget)).toEqual({ entry: null, elsewhere: true });
     expect(onForget).not.toHaveBeenCalled();
   });
 
-  it("does not call the hook when the history could not be rewritten, and lets the error out", () => {
+  it("does not call the hook when the history could not be rewritten, and lets the error out", async () => {
     const onForget = vi.fn();
     const history = {
       remove: () => {
         throw new Error("EACCES");
       },
     };
-    expect(() => forgetDictation(history, "a", onForget)).toThrow("EACCES");
+    await expect(forgetDictation(history, "a", onForget)).rejects.toThrow("EACCES");
     expect(onForget).not.toHaveBeenCalled();
   });
 
-  it("keeps the entry gone when the hook fails: the person's delete worked", () => {
+  it("keeps the entry gone when the hook fails, at once or later, and says the words may still be elsewhere", async () => {
     const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const removed = entry();
-    const onForget = vi.fn(() => {
+    const throwing = vi.fn(() => {
       throw new Error("day file locked");
     });
-    expect(forgetDictation({ remove: () => removed }, "a", onForget)).toBe(removed);
+    expect(await forgetDictation({ remove: () => removed }, "a", throwing)).toEqual({ entry: removed, elsewhere: false });
+    const rejecting = vi.fn(async () => {
+      throw new Error("day file locked");
+    });
+    expect(await forgetDictation({ remove: () => removed }, "a", rejecting)).toEqual({ entry: removed, elsewhere: false });
+    // Logged without the words, or the system's message, which can name a path.
+    expect(JSON.stringify(quiet.mock.calls)).not.toContain(removed.text);
+    expect(JSON.stringify(quiet.mock.calls)).not.toContain("day file locked");
     quiet.mockRestore();
   });
 
-  it("works with no hook", () => {
+  it("works with no hook", async () => {
     const removed = entry();
-    expect(forgetDictation({ remove: () => removed }, "a", undefined)).toBe(removed);
+    expect(await forgetDictation({ remove: () => removed }, "a", undefined)).toEqual({ entry: removed, elsewhere: true });
   });
 });
 
 describe("deleteDictationResult", () => {
-  it("is ok when the dictation went, and when it was already gone", () => {
-    expect(deleteDictationResult(() => entry())).toEqual({ ok: true });
-    expect(deleteDictationResult(() => null)).toEqual({ ok: true });
+  it("is ok when the dictation went, and when it was already gone", async () => {
+    expect(await deleteDictationResult(async () => ({ entry: entry(), elsewhere: true }))).toEqual({ ok: true });
+    expect(await deleteDictationResult(async () => ({ entry: null, elsewhere: true }))).toEqual({ ok: true });
   });
 
-  it("says what is safe and offers one fix when the history could not be rewritten, without the system's own words", () => {
+  it("says what is safe and offers one fix when the history could not be rewritten, without the system's own words", async () => {
     const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const result = deleteDictationResult(() => {
+    const result = await deleteDictationResult(async () => {
       throw new Error("EACCES: permission denied, open '/Users/x/dictations.jsonl.tmp'");
     });
     expect(result).toEqual({ ok: false, message: DELETE_FAILED_BODY });
     expect(DELETE_FAILED_BODY).toBe("It is still in the history. Try deleting it again.");
     expect(JSON.stringify(result)).not.toContain("EACCES");
     quiet.mockRestore();
+  });
+
+  it("tells the person when the words left the history but the library's day file couldn't be updated", async () => {
+    const result = await deleteDictationResult(async () => ({ entry: entry(), elsewhere: false }));
+    expect(result).toEqual({ ok: false, title: DAY_FILE_NOT_UPDATED.title, message: DAY_FILE_NOT_UPDATED.body });
+    expect(DAY_FILE_NOT_UPDATED).toEqual({
+      title: "That dictation may still be in the library.",
+      body:
+        "The words are deleted from the history, but the day file in the library couldn't be updated. They may still be in " +
+        "raw/dictations. Open that day's file in the library and remove them.",
+    });
   });
 });

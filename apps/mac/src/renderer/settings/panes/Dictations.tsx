@@ -117,15 +117,16 @@ export function Dictations(): ReactNode {
     }
   };
 
+  // A failure brings its own title when the pane's would be wrong: words that left the history but may still be in the library.
   const remove = async (id: string) => {
-    let body: string | null;
+    let told: Told | null;
     try {
       const result = await api.deleteDictation(id);
-      body = result.ok ? null : result.message;
+      told = result.ok ? null : { title: result.title ?? DICTATION_NOT_DELETED, body: result.message };
     } catch {
-      body = DELETE_FAILED_BODY;
+      told = { title: DICTATION_NOT_DELETED, body: DELETE_FAILED_BODY };
     }
-    setTold(body === null ? null : { title: DICTATION_NOT_DELETED, body });
+    setTold(told);
     await load();
   };
 

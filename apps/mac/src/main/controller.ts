@@ -68,7 +68,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { isSettingsPane, noSuchReview, type DeleteDictationResult, type DictationList } from "../shared/ipc.ts";
+import { DAY_FILE_NOT_UPDATED, isSettingsPane, noSuchReview, type DeleteDictationResult, type DictationList } from "../shared/ipc.ts";
 import {
   ANOTHER_LIBRARY,
   avanzelFailure,
@@ -131,10 +131,25 @@ import { COPY_PROMPT_MS, CursorDictation, type CursorHost } from "./cursor-dicta
 import { CursorHelper, cursorPermissionsOf, type CursorPermissionState } from "./cursor-helper.ts";
 import { DEFAULT_SKIP_APPS } from "./cursor-policy.ts";
 import { DictationHistory, type DictationEntry } from "./dictation-history.ts";
-import { deleteDictationResult, forgetDictation, pageOf } from "./dictation-rows.ts";
+import { deleteDictationResult, forgetDictation, pageOf, type ForgetHook, type Forgotten } from "./dictation-rows.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
-import { answeredFrom, askLinks, captureMeta, captureWords, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog, savedPage } from "./library-info.ts";
+import {
+  answeredFrom,
+  askLinks,
+  captureMeta,
+  captureWords,
+  dictationInfo,
+  filedPages,
+  filedToday,
+  findPage,
+  obsidianUrl,
+  pageAt,
+  pageInfo,
+  recentFromLog,
+  savedPage,
+} from "./library-info.ts";
+import { forgetLogged, logDictation } from "./library-log.ts";
 import { buildMenuModel, reviewProgress, speechProblemOf, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
@@ -410,10 +425,10 @@ export class Controller {
   private hasDictation: boolean | null = null;
   /**
    * Called with the entry that "Forget the last dictation" or a pane's Delete has just taken out of the history (`forgetDictation`).
-   * It exists so that whatever else keeps a copy of a dictation can drop it too: the library's day file, once dictations are logged
-   * there. Nothing is set yet, so only the history forgets.
+   * It exists so that whatever else keeps a copy of a dictation can drop it too: the open library's day file (`forgetFromLibrary`).
+   * The forget waits for it, and a hook that throws or rejects is told to the person, as the words may still be there.
    */
-  onForget: ((entry: DictationEntry) => void) | undefined = undefined;
+  onForget: ForgetHook | undefined = (entry) => this.forgetFromLibrary(entry);
   /**
    * Bumped when a dictation is dropped (`cancelCursorRecording`): a recognition that started before reads it again when it ends, and
    * its words are thrown away if it has moved on, so they can't be pasted into the next dictation.
@@ -1973,25 +1988,43 @@ export class Controller {
   }
 
   /**
-   * Takes dictation `id` out of the history, and tells `onForget`. The one way a dictation is forgotten: Delete in the pane
-   * (`deleteDictation`) and the menu's "Forget the last dictation" both come here. Throws when the history can't be rewritten, and
-   * then the dictation is still in it. Returns the entry, or null when there was none.
+   * Takes dictation `id` out of the history, then has `onForget` take it out of the library's day file. The one way a dictation is
+   * forgotten: Delete in the pane (`deleteDictation`) and the menu's "Forget the last dictation" both come here. Rejects when the
+   * history can't be rewritten, and then the dictation is still in it. Resolves to the entry (null when there was none), and whether
+   * the day file was updated too (`elsewhere`).
    */
-  forgetDictation(id: string): DictationEntry | null {
-    return forgetDictation(this.dictations, id, (entry) => this.onForget?.(entry));
+  forgetDictation(id: string): Promise<Forgotten> {
+    return forgetDictation(this.dictations, id, this.onForget);
   }
 
-  /** Delete, in the Dictations pane: ok once the dictation is gone, else a calm sentence for the pane's Notice, with the dictation kept. */
-  deleteDictation(id: string): DeleteDictationResult {
+  /**
+   * Delete, in the Dictations pane: ok once the dictation is gone; else a calm sentence for the pane's Notice, with the dictation kept,
+   * or, when it left the history but the day file couldn't be updated, where its words may still be (`DAY_FILE_NOT_UPDATED`).
+   */
+  deleteDictation(id: string): Promise<DeleteDictationResult> {
     return deleteDictationResult(() => this.forgetDictation(id));
   }
 
-  /** "Forget the last dictation", in the menu: the newest dictation goes. A history that can't be rewritten says so in a notification. */
-  private forgetLastDictation(): void {
+  /**
+   * "Forget the last dictation", in the menu: the newest dictation goes. A history that can't be rewritten says so in a notification;
+   * a day file that couldn't be updated is told on the capsule's card, as the person must act on it.
+   */
+  private async forgetLastDictation(): Promise<void> {
     const last = this.dictations.last();
     if (!last) return;
-    const forgotten = deleteDictationResult(() => this.forgetDictation(last.id));
-    if (!forgotten.ok) this.notify("That dictation couldn't be forgotten.", forgotten.message);
+    const forgotten = await deleteDictationResult(() => this.forgetDictation(last.id));
+    if (forgotten.ok) return;
+    if (forgotten.title === DAY_FILE_NOT_UPDATED.title) this.fail(DAY_FILE_NOT_UPDATED);
+    else this.notify("That dictation couldn't be forgotten.", forgotten.message);
+  }
+
+  /**
+   * The hook of `onForget`: the dictation leaves the open library's day file. With no library open there is no day file to reach, and
+   * nothing is said. Rejects when its words may still be there (`forgetLogged`).
+   */
+  private async forgetFromLibrary(entry: DictationEntry): Promise<void> {
+    const vault = this.vault;
+    if (vault) await forgetLogged(vault, entry);
   }
 
   /**
@@ -2067,9 +2100,21 @@ export class Controller {
       // One microphone: a thought recording or a call refuses a dictation. A thought being transcribed or filed holds no microphone.
       busy: () => (this.recording !== null && !this.recording.forCursor) || this.calls.running,
       browser: (target) => browserWindow(target.app.bundleId),
-      // The library's own skip list and log come with Task 10; until then the password managers are skipped and nothing is logged.
-      skip: () => ({ apps: DEFAULT_SKIP_APPS, sites: [] }),
-      logTo: () => ({ enabled: false, write: () => undefined }),
+      // The open library's skip list (config.toml's [dictation]); without a library, the password managers. Settings that can't be
+      // read throw, and the session then keeps nothing, as it can't tell what is to be skipped.
+      skip: () => {
+        const vault = this.vault;
+        if (!vault) return { apps: DEFAULT_SKIP_APPS, sites: [] };
+        const { skipApps, skipSites } = loadSettings(vault.root).dictation;
+        return { apps: skipApps, sites: skipSites };
+      },
+      // The open library's day file, when its log is on. The writer keeps the library that was open when the words were kept, so one
+      // opened while they are written doesn't receive them. The write is queued in the engine and never rejects (`logDictation`).
+      logTo: () => {
+        const vault = this.vault;
+        if (!vault) return { enabled: false, write: () => undefined };
+        return { enabled: loadSettings(vault.root).dictation.log, write: (entry) => void logDictation(vault, entry) };
+      },
       showCopyPrompt: (prompt) => {
         this.copyPromptText = prompt.text;
         this.fail(copyPromptProblem(prompt), "copy-dictation", "Copy");
@@ -4131,9 +4176,24 @@ export class Controller {
             models: settings?.models ?? {},
             timeoutSeconds: settings?.timeoutSeconds ?? 900,
             dictionary: settings?.voice.dictionary ?? [],
+            ...dictationInfo(settings),
           }
         : kept
-          ? { path: kept, label: tildePath(kept, home), exists: false, isGit: false, gitUsable: git.gitUsable(), autoCommit: true, inbox: 0, shelves: {}, harness: "auto", models: {}, timeoutSeconds: 900, dictionary: [] }
+          ? {
+              path: kept,
+              label: tildePath(kept, home),
+              exists: false,
+              isGit: false,
+              gitUsable: git.gitUsable(),
+              autoCommit: true,
+              inbox: 0,
+              shelves: {},
+              harness: "auto",
+              models: {},
+              timeoutSeconds: 900,
+              dictionary: [],
+              ...dictationInfo(null),
+            }
           : null,
       harnesses: Object.values(all).map((h) => ({
         name: h.name,

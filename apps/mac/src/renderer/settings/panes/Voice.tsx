@@ -1,10 +1,10 @@
-// Settings → Voice: the shortcuts, with a Notice for each one that has a problem; dictating into any app, its key and the
-// permission it lacks; the microphone Avanzel listens with; the speech model that turns what it hears into text; and the library's
-// dictionary of names and terms. Each control applies at once, the dictionary when the focus leaves its field.
+// Settings → Voice: the shortcuts, with a Notice for each one that has a problem; dictating into any app, its key, the permission it
+// lacks, and the library's log of it and skip lists; the microphone Avanzel listens with; the speech model that turns what it hears
+// into text; and the library's dictionary of names and terms. Each control applies at once, a field of lines when the focus leaves it.
 import { Actions, Button, Group, GroupRow, Kbd, Notice, Progress, Row, Stack, Switch, Text, TextArea } from "@avanzel/ui";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, inMenuLine, prettyAccelerator } from "../../../main/shortcuts.ts";
-import type { CursorKey, CursorPermissionState, ModelStatus, SettingsSnapshot, Shortcuts } from "../../../shared/ipc.ts";
+import type { CursorKey, CursorPermissionState, LibraryPatch, ModelStatus, SettingsSnapshot, Shortcuts } from "../../../shared/ipc.ts";
 import { downloadFailedProblem, voiceSettingsProblem } from "../../../shared/problems.ts";
 import { passesThrough, toAccelerator } from "../accelerator.ts";
 import {
@@ -13,14 +13,18 @@ import {
   cursorKeyName,
   cursorKeyOptions,
   cursorStatus,
+  DICTATION_LOG_DESCRIPTION,
+  DICTATION_LOG_LABEL,
   DICTIONARY_DESCRIPTION,
   DOWNLOAD_NOT_STARTED,
   microphoneName,
   microphoneOptions,
+  SKIP_APPS_DESCRIPTION,
+  SKIP_SITES_DESCRIPTION,
   speechModelLine,
   type InputDevice,
 } from "../copy.ts";
-import { failed, followSnapshot, saved, sent, startDraft, toSend, typed, type DictionaryDraft } from "../dictionary-draft.ts";
+import { failed, followSnapshot, saved, sent, startDraft, toSend, typed, type TextDraft } from "../dictionary-draft.ts";
 import { attemptChange, ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -84,9 +88,12 @@ function useCursorPermissions(enabled: boolean): { state: CursorPermissionState 
  * Voice's "Dictate into any app" group: the switch, the key, and a line on what macOS has granted, with the button that asks for the
  * rest. The line shows while the switch is off too, so the person can grant before turning it on; turning it on with a permission
  * missing still turns it on, and the line says what to do. A Mac without the helper gets one line and controls that are off.
+ * With a library open, the library's own settings follow: whether it keeps a day file of what is dictated, which applies at once,
+ * and the skip lists, saved when the focus leaves each (their drafts are the window's, `useVoiceDrafts`).
  */
-function CursorDictationGroup(props: PaneProps): ReactNode {
+function CursorDictationGroup({ drafts, ...props }: PaneProps & { drafts: VoiceDrafts }): ReactNode {
   const { enabled, key } = props.snap.app.cursorDictation;
+  const library = props.snap.library?.exists ? props.snap.library : null;
   const { state, ask } = useCursorPermissions(enabled);
   const status = state && cursorStatus(state);
   const off = state !== null && !state.available;
@@ -117,43 +124,87 @@ function CursorDictationGroup(props: PaneProps): ReactNode {
           )}
         </GroupRow>
       )}
+      {library && (
+        <>
+          <Switch
+            label={DICTATION_LOG_LABEL}
+            description={DICTATION_LOG_DESCRIPTION}
+            checked={library.dictationLog}
+            onChange={(on) => attemptChange(props, () => api.setLibrary({ dictationLog: on }))}
+          />
+          <GroupRow label="Apps to skip" description={SKIP_APPS_DESCRIPTION}>
+            <LinesField label="Apps to skip" edit={drafts.skipApps} rows={4} />
+          </GroupRow>
+          <GroupRow label="Sites to skip" description={SKIP_SITES_DESCRIPTION}>
+            <LinesField label="Sites to skip" edit={drafts.skipSites} rows={3} />
+          </GroupRow>
+        </>
+      )}
     </Group>
   );
 }
 
-/** The Dictionary field's text: the library's lines, one per line. */
-const dictionaryText = (snap: SettingsSnapshot) => (snap.library?.dictionary ?? []).join("\n");
+/** A field of the library's lines in Voice: how its text is read from a snapshot, and the patch that saves the lines typed. */
+interface LibraryTextField {
+  text(snap: SettingsSnapshot): string;
+  patch(lines: string[]): LibraryPatch;
+}
 
-/** The Dictionary field's draft and its save, which the Settings window keeps (useDictionaryEdit), so they outlast the pane. */
-export interface DictionaryEdit {
+/** The Dictionary field: the library's lines, one per line. */
+const DICTIONARY_FIELD: LibraryTextField = {
+  text: (snap) => (snap.library?.dictionary ?? []).join("\n"),
+  patch: (lines) => ({ dictionary: lines }),
+};
+
+/** The skip lists of dictating into any app: bundle ids, and websites, one per line. */
+const SKIP_APPS_FIELD: LibraryTextField = {
+  text: (snap) => (snap.library?.dictationSkipApps ?? []).join("\n"),
+  patch: (lines) => ({ dictationSkipApps: lines }),
+};
+const SKIP_SITES_FIELD: LibraryTextField = {
+  text: (snap) => (snap.library?.dictationSkipSites ?? []).join("\n"),
+  patch: (lines) => ({ dictationSkipSites: lines }),
+};
+
+/** A field's draft and its save, which the Settings window keeps (useLibraryTextEdit), so they outlast the pane. */
+export interface TextEdit {
   draft: string;
   setDraft(text: string): void;
   /** Saves the draft, unless it is what the library holds or what a save on its way holds. */
   save(): Promise<void>;
 }
 
+/** Every draft of the Voice pane, kept by the Settings window (`useVoiceDrafts`). */
+export interface VoiceDrafts {
+  dictionary: TextEdit;
+  skipApps: TextEdit;
+  skipSites: TextEdit;
+}
+
 /**
- * The Dictionary field's draft, for the Settings shell to keep: a save waits its turn behind filing runs, and the person may
- * leave the pane and come back meanwhile, which must find the draft as it was, not the older lines of the snapshot before the
- * save. Once saved, the draft is the lines main kept (blank and repeated ones dropped, spaces tidied), unless more was typed while
- * the save waited. A draft not edited since the last snapshot follows the next one (`followSnapshot`). A save main refuses (too
- * many lines, one too long) leaves the draft as typed, and the window says why: leaving the field again tries again. Another
- * library's draft starts from its own lines.
+ * The draft of a field of the library's lines, for the Settings shell to keep: a save waits its turn behind filing runs, and the
+ * person may leave the pane and come back meanwhile, which must find the draft as it was, not the older lines of the snapshot before
+ * the save. Once saved, the draft is the lines main kept (blank and repeated ones dropped, spaces tidied, a site made its host),
+ * unless more was typed while the save waited. A draft not edited since the last snapshot follows the next one (`followSnapshot`),
+ * so a save of another field, whose snapshot has this field's lines too, leaves an edit here alone. A save main refuses (too many
+ * lines, one too long, one it can't read) leaves the draft as typed, and the window says why: leaving the field again tries again.
+ * Another library's draft starts from its own lines.
  */
-export function useDictionaryEdit(
+function useLibraryTextEdit(
   snap: SettingsSnapshot | null,
   onChange: PaneProps["onChange"],
   attempt: PaneProps["attempt"],
-): DictionaryEdit {
+  field: LibraryTextField,
+): TextEdit {
   const library = snap?.library?.exists ? snap.library.path : null;
-  const text = snap ? dictionaryText(snap) : "";
+  const text = snap ? field.text(snap) : "";
   const [state, setState] = useState(() => startDraft(library, text));
   const followed = followSnapshot(state, library, text);
   if (followed !== state) setState(followed);
   // The state as last drawn or changed here, so two blurs before the next draw send one save.
   const latest = useRef(followed);
   latest.current = followed;
-  const change = (step: (now: DictionaryDraft) => DictionaryDraft) => {
+  const change = (step: (now: TextDraft) => TextDraft) => {
     latest.current = step(latest.current);
     setState(step);
   };
@@ -161,26 +212,44 @@ export function useDictionaryEdit(
     const sending = toSend(latest.current);
     if (sending === null) return;
     change((now) => sent(now, sending));
-    const next = await attempt(() => api.setLibrary({ dictionary: sending.split("\n") }));
+    const next = await attempt(() => api.setLibrary(field.patch(sending.split("\n"))));
     if (!next) return change((now) => failed(now, sending));
     onChange(next);
-    change((now) => saved(now, sending, dictionaryText(next)));
+    change((now) => saved(now, sending, field.text(next)));
   };
   return { draft: followed.draft, setDraft: (typedText) => change((now) => typed(now, typedText)), save };
 }
 
+/** The Voice pane's drafts (the Dictionary and the two skip lists), for the Settings window to keep (`useLibraryTextEdit`). */
+export function useVoiceDrafts(snap: SettingsSnapshot | null, onChange: PaneProps["onChange"], attempt: PaneProps["attempt"]): VoiceDrafts {
+  return {
+    dictionary: useLibraryTextEdit(snap, onChange, attempt, DICTIONARY_FIELD),
+    skipApps: useLibraryTextEdit(snap, onChange, attempt, SKIP_APPS_FIELD),
+    skipSites: useLibraryTextEdit(snap, onChange, attempt, SKIP_SITES_FIELD),
+  };
+}
+
+/**
+ * A field of lines in a row of a Group, saved when the focus leaves it. TextArea takes no onBlur, so the box around it hears the focus
+ * leave (React's onBlur bubbles).
+ */
+function LinesField({ label, edit, rows }: { label: string; edit: TextEdit; rows: number }): ReactNode {
+  return (
+    <div className="settings-lines" onBlur={() => void edit.save()}>
+      <TextArea label={label} labelHidden rows={rows} value={edit.draft} onChange={edit.setDraft} />
+    </div>
+  );
+}
+
 /**
  * Voice's "Dictionary" group: the names and terms the speech is corrected to, one per line, saved when the focus leaves the
- * field. The draft is the window's (`useDictionaryEdit`).
+ * field. The draft is the window's (`useVoiceDrafts`).
  */
-function DictionaryGroup({ dictionary }: { dictionary: DictionaryEdit }): ReactNode {
+function DictionaryGroup({ dictionary }: { dictionary: TextEdit }): ReactNode {
   return (
     <Group label="Dictionary">
       <GroupRow label="Names and terms" description={DICTIONARY_DESCRIPTION}>
-        {/* TextArea takes no onBlur, so the box around it hears the focus leave (React's onBlur bubbles). */}
-        <div className="settings-dictionary" onBlur={() => void dictionary.save()}>
-          <TextArea label="Dictionary" labelHidden rows={5} value={dictionary.draft} onChange={dictionary.setDraft} />
-        </div>
+        <LinesField label="Dictionary" edit={dictionary} rows={5} />
       </GroupRow>
     </Group>
   );
@@ -248,8 +317,8 @@ function SpeechProblem({ model, primary, onDownload }: { model: ModelStatus; pri
   );
 }
 
-/** The Voice pane: the shortcuts and their problems, MicrophoneGroup, the speech model, and the window's dictionary draft. */
-export function Voice({ dictionary, ...props }: PaneProps & { dictionary: DictionaryEdit }): ReactNode {
+/** The Voice pane: the shortcuts and their problems, dictating into any app, MicrophoneGroup, the speech model, and the dictionary. */
+export function Voice({ drafts, ...props }: PaneProps & { drafts: VoiceDrafts }): ReactNode {
   const { snap, onChange, attempt } = props;
   // The shortcut being recorded, if any: one at a time.
   const [recording, setRecording] = useState<keyof Shortcuts | null>(null);
@@ -351,7 +420,7 @@ export function Voice({ dictionary, ...props }: PaneProps & { dictionary: Dictio
           {snap.library?.exists ? inMenuLine(key) : undefined}
         </Notice>
       ))}
-      <CursorDictationGroup {...props} />
+      <CursorDictationGroup {...props} drafts={drafts} />
       <MicrophoneGroup {...props} />
       <Group label="Speech">
         <GroupRow label="Speech model" description={speechModelLine(snap.voice)}>
@@ -360,7 +429,7 @@ export function Voice({ dictionary, ...props }: PaneProps & { dictionary: Dictio
       </Group>
       <SpeechProblem model={snap.model} primary={primaryKey === undefined} onDownload={download} />
       {/* The dictionary is the library's: with none open, or one Avanzel can't find, there is nowhere to keep it. */}
-      {snap.library?.exists && <DictionaryGroup dictionary={dictionary} />}
+      {snap.library?.exists && <DictionaryGroup dictionary={drafts.dictionary} />}
     </Stack>
   );
 }

@@ -2,7 +2,7 @@
 // and the pane under its heading. Each pane applies a change at once and draws the snapshot main sends back; a call main
 // refuses is told in a Notice in a row of its own above the pane (`attempt`), which stays in view however far the pane is
 // scrolled, and which keeps the control that has the focus in view. The window keeps the reviews' open editor, their saves on
-// the way and the failure of the last one, and the Dictionary field's draft and its save on the way, which outlast the pane.
+// the way and the failure of the last one, and the drafts of Voice's fields of lines and their saves on the way, which outlast the pane.
 import "@avanzel/ui/base.css";
 import { Notice, Segmented, Stack, Text } from "@avanzel/ui";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
@@ -14,7 +14,7 @@ import { Dictations } from "./panes/Dictations.tsx";
 import { General } from "./panes/General.tsx";
 import { Privacy } from "./panes/Privacy.tsx";
 import { Reviews, useReviewEdits, type ReviewEdits } from "./panes/Reviews.tsx";
-import { useDictionaryEdit, Voice, type DictionaryEdit } from "./panes/Voice.tsx";
+import { useVoiceDrafts, Voice, type VoiceDrafts } from "./panes/Voice.tsx";
 import { NoLibrary, type PaneProps } from "./parts.tsx";
 import "./styles.css";
 
@@ -42,12 +42,12 @@ const FOCUS_ROOM = 16;
  * its own hooks. Voice, Dictations (the history is the app's own) and Privacy need none, and General shows the Notice itself, among its other groups. Reviews, and
  * General, which can turn the evening review on, are given the window's `edits`.
  */
-function paneContent(pane: SettingsPane, props: PaneProps, edits: ReviewEdits, dictionary: DictionaryEdit): ReactNode {
+function paneContent(pane: SettingsPane, props: PaneProps, edits: ReviewEdits, drafts: VoiceDrafts): ReactNode {
   switch (pane) {
     case "general":
       return <General {...props} edits={edits} />;
     case "voice":
-      return <Voice {...props} dictionary={dictionary} />;
+      return <Voice {...props} drafts={drafts} />;
     case "dictations":
       return <Dictations />;
     case "agents":
@@ -109,8 +109,9 @@ function App() {
   // Kept here, not in the Reviews pane, which goes as another pane shows: what a review's editor holds, the saves on their
   // way, which nothing else may write over until they are written, and why the last one failed.
   const edits = useReviewEdits(snap?.library?.path ?? null, draw);
-  // Kept here too: the Dictionary field's draft and its save on the way, which a return to Voice must find as they were.
-  const dictionary = useDictionaryEdit(snap, draw, attempt);
+  // Kept here too: the drafts of Voice's fields of lines (the Dictionary and the skip lists) and their saves on the way, which a
+  // return to Voice must find as they were.
+  const drafts = useVoiceDrafts(snap, draw, attempt);
   // Whether a press of the pointer on the toolbar is under way: from its pointer-down to just after its release, which is where
   // the click that shows a pane comes. The press took the problem the person had seen away as it began (below); a refusal that
   // comes in during it, as a field's save does when the press takes the focus out of it, they haven't seen.
@@ -174,11 +175,11 @@ function App() {
         )}
       </div>
       {/* Keyed by its pane: a pane starts at its top, and the one left is unmounted, which ends whatever it had going,
-          but for the reviews' edits and the dictionary's draft, which the window keeps. */}
+          but for the reviews' edits and Voice's drafts, which the window keeps. */}
       <main key={pane} ref={scrolls} className="settings-pane">
         <Stack gap={20}>
           <Text variant="heading">{PANE_LABELS[pane]}</Text>
-          <div>{paneContent(pane, { snap, onChange: draw, attempt }, edits, dictionary)}</div>
+          <div>{paneContent(pane, { snap, onChange: draw, attempt }, edits, drafts)}</div>
         </Stack>
       </main>
     </div>

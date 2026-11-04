@@ -2,6 +2,8 @@
 // orchestrates: the microphone, the clipboard, the native helper and the capsule are all behind CursorHost, which the
 // controller implements, so the whole flow can be tested without Electron or a Mac.
 import { randomUUID } from "node:crypto";
+// "2026-11-05T14:03:12+04:00": local time with its UTC offset, as the history keeps `at`.
+import { isoLocal } from "@avanzel/engine";
 import type { CursorHelper, Target } from "./cursor-helper.ts";
 import { storagePolicy } from "./cursor-policy.ts";
 import type { DictationEntry, DictationHistory } from "./dictation-history.ts";
@@ -57,21 +59,6 @@ type State = "idle" | "listening" | "transcribing";
 
 /** What a browser said about its front window, or that it could not be asked. */
 type BrowserLook = { ok: true; value: { address?: string; privateWindow?: boolean } | null } | { ok: false };
-
-const pad = (value: number): string => String(value).padStart(2, "0");
-
-/**
- * "2026-11-05T14:03:12+04:00": local time with its UTC offset, as the history keeps `at`. The engine's `isoLocal` writes
- * the same thing but is not exported from `@avanzel/engine`, and this task may not change the engine.
- */
-function isoLocal(date: Date): string {
-  const offset = -date.getTimezoneOffset();
-  const sign = offset < 0 ? "-" : "+";
-  const minutes = Math.abs(offset);
-  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-  return `${day}T${time}${sign}${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
-}
 
 const sameTarget = (fixed: Target, fresh: Target): boolean =>
   fixed.app.pid === fresh.app.pid && (fixed.window?.title ?? null) === (fresh.window?.title ?? null);

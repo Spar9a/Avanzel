@@ -6,6 +6,9 @@ import type { ScreenContext } from "../shared/ipc.ts";
 const CHROMIUM = new Set([
   "com.google.Chrome",
   "com.google.Chrome.beta",
+  // Chrome's Canary and Dev builds answer AppleScript as Chrome does, so a dictation in their private windows is not kept either.
+  "com.google.Chrome.canary",
+  "com.google.Chrome.dev",
   "company.thebrowser.Browser",
   "com.brave.Browser",
   "com.microsoft.edgemac",

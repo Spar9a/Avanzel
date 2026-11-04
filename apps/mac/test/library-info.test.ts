@@ -1,9 +1,25 @@
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Vault } from "@avanzel/engine";
+import { loadSettings, saveSettings, Vault } from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
-import { answeredFrom, askLinks, captureMeta, captureWords, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog, savedPage } from "../src/main/library-info.ts";
+import { DEFAULT_SKIP_APPS } from "../src/main/cursor-policy.ts";
+import { patchedSettings } from "../src/main/dictionary-settings.ts";
+import {
+  answeredFrom,
+  askLinks,
+  captureMeta,
+  captureWords,
+  dictationInfo,
+  filedPages,
+  filedToday,
+  findPage,
+  obsidianUrl,
+  pageAt,
+  pageInfo,
+  recentFromLog,
+  savedPage,
+} from "../src/main/library-info.ts";
 import type { FiledPage } from "../src/shared/ipc.ts";
 
 function library() {
@@ -106,6 +122,16 @@ describe("library info", () => {
     expect(findPage(root, "mark")).toBe("people/mark.md");
     expect(findPage(root, "2026-10-20-140312")).toBe("raw/2026/10/2026-10-20-140312.md");
     expect(findPage(root, "nope")).toBeNull();
+  });
+
+  it("finds a review before the day file of dictations with the same name, which is a source in raw/", () => {
+    const root = library();
+    mkdirSync(path.join(root, "raw", "dictations"), { recursive: true });
+    writeFileSync(path.join(root, "raw", "dictations", "2026-10-20.md"), "# Dictations 2026-10-20\n");
+    mkdirSync(path.join(root, "reviews"), { recursive: true });
+    writeFileSync(path.join(root, "reviews", "2026-10-20.md"), "# Review\n");
+    expect(findPage(root, "2026-10-20")).toBe("reviews/2026-10-20.md");
+    expect(filedPages(root, { created: ["raw/dictations/2026-10-20.md"], modified: [] })).toEqual([]);
   });
 
   it("answeredFrom reads an answer's lines and the pages its links name, and leaves out a name with no page", () => {
@@ -330,5 +356,51 @@ describe("a page Avanzel opens or reads", () => {
     symlinkSync(outside("private.md", "---\ntitle: Something private\n---\n# Something private\n"), path.join(root, "ideas", "linked.md"));
     expect(pageInfo(root, "ideas/linked.md")).toEqual({ title: "linked", shelf: "ideas", path: "ideas/linked.md" });
     expect(filedPages(root, { created: ["ideas/linked.md"], modified: [] })).toEqual([{ title: "linked", shelf: "ideas", path: "ideas/linked.md", created: true }]);
+  });
+});
+
+describe("the library's dictation settings, as Settings shows and saves them", () => {
+  const vault = async () => (await Vault.init(mkdtempSync(path.join(tmpdir(), "avz-dictation-")), { git: false })).root;
+
+  it("are off, with the password managers skipped and no site, in a new library and without one", async () => {
+    const off = { dictationLog: false, dictationSkipApps: DEFAULT_SKIP_APPS, dictationSkipSites: [] };
+    expect(dictationInfo(loadSettings(await vault()))).toEqual(off);
+    expect(dictationInfo(null)).toEqual(off);
+  });
+
+  it("are written to [dictation] in config.toml by a patch, cleaned, and read back by the snapshot", async () => {
+    const root = await vault();
+    saveSettings(
+      root,
+      patchedSettings(loadSettings(root), {
+        dictationLog: true,
+        dictationSkipApps: ["com.apple.Passwords", "", " com.tinyspeck.slackmacgap "],
+        dictationSkipSites: ["https://Bank.example.com/login", "www.mail.test", "mail.test:8080"],
+      }),
+    );
+    const text = readFileSync(path.join(root, ".avanzel", "config.toml"), "utf8");
+    expect(text).toMatch(/\[dictation\][\s\S]*^log = true$/m);
+    expect(text).toContain('skip_apps = [\n  "com.apple.Passwords",\n  "com.tinyspeck.slackmacgap",\n]');
+    expect(text).toContain('skip_sites = [\n  "bank.example.com",\n  "mail.test",\n]');
+    expect(dictationInfo(loadSettings(root))).toEqual({
+      dictationLog: true,
+      dictationSkipApps: ["com.apple.Passwords", "com.tinyspeck.slackmacgap"],
+      dictationSkipSites: ["bank.example.com", "mail.test"],
+    });
+  });
+
+  it("keep what a patch leaves out, and an emptied list of apps stays empty rather than going back to the defaults", async () => {
+    const root = await vault();
+    saveSettings(root, patchedSettings(loadSettings(root), { dictationLog: true, dictationSkipSites: ["a.test"] }));
+    saveSettings(root, patchedSettings(loadSettings(root), { dictationSkipApps: [] }));
+    saveSettings(root, patchedSettings(loadSettings(root), { harness: "claude" }));
+    expect(dictationInfo(loadSettings(root))).toEqual({ dictationLog: true, dictationSkipApps: [], dictationSkipSites: ["a.test"] });
+  });
+
+  it("are not saved when a line is refused, and the settings stay as they were", async () => {
+    const root = await vault();
+    expect(() => patchedSettings(loadSettings(root), { dictationLog: true, dictationSkipApps: ["1Password"] })).toThrow(/Line 1 of the apps to skip/);
+    expect(() => patchedSettings(loadSettings(root), { dictationSkipSites: ["not a site"] })).toThrow(/Line 1 of the sites to skip/);
+    expect(dictationInfo(loadSettings(root)).dictationLog).toBe(false);
   });
 });

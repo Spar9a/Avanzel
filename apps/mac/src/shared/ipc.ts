@@ -51,8 +51,23 @@ export interface DictationRow {
   inserted: boolean;
 }
 
-/** What Delete answers. A failure carries what is safe and the one fix, in plain words, for the Notice's body. */
-export type DeleteDictationResult = { ok: true } | { ok: false; message: string };
+/**
+ * What Delete answers. A failure carries what is safe and the one fix, in plain words, for the Notice's body, and its own title when
+ * the pane's "That dictation couldn't be deleted." would be wrong (`DAY_FILE_NOT_UPDATED`: it left the history all the same).
+ */
+export type DeleteDictationResult = { ok: true } | { ok: false; message: string; title?: string };
+
+/**
+ * A forgotten dictation left the history, but the library's day file of dictations (`raw/dictations/`) couldn't be updated: what
+ * happened, what remains, and the one fix. Told by the Dictations pane after a Delete and by the capsule after the menu's "Forget the
+ * last dictation".
+ */
+export const DAY_FILE_NOT_UPDATED = {
+  title: "That dictation may still be in the library.",
+  body:
+    "The words are deleted from the history, but the day file in the library couldn't be updated. They may still be in " +
+    "raw/dictations. Open that day's file in the library and remove them.",
+} as const;
 
 /**
  * What the pane says under "That dictation couldn't be deleted.": what is safe, and the one fix. Main sends it as a failed Delete's
@@ -389,6 +404,12 @@ export interface LibraryInfo {
   timeoutSeconds: number;
   /** config.toml's `[voice] dictionary`: the owner's lines, "Term" or "Term = heard as, other", as saved (cleaned). */
   dictionary: string[];
+  /** config.toml's `[dictation] log`: each dictation is also kept in the library's day file, `raw/dictations/YYYY-MM-DD.md`. */
+  dictationLog: boolean;
+  /** `[dictation] skip_apps`: bundle ids whose dictations are pasted but kept nowhere. */
+  dictationSkipApps: string[];
+  /** `[dictation] skip_sites`: websites (hosts) whose dictations are pasted but kept nowhere. */
+  dictationSkipSites: string[];
 }
 
 /** What Settings changes in the library's config.toml (`setLibrary`); a key left out keeps its value. */
@@ -398,6 +419,10 @@ export interface LibraryPatch {
   timeoutSeconds?: number;
   /** The Dictionary field's lines as typed: main stores them cleaned (`cleanDictionary`). */
   dictionary?: string[];
+  dictationLog?: boolean;
+  /** The skip-list fields' lines as typed: main stores them cleaned (`cleanSkipList`). */
+  dictationSkipApps?: string[];
+  dictationSkipSites?: string[];
 }
 
 /** Everything the settings window shows, in one snapshot. */

@@ -12,6 +12,7 @@ import {
   withDictionary,
 } from "@avanzel/engine";
 import type { LibraryPatch } from "../shared/ipc.ts";
+import { cleanSkipList } from "./skip-list.ts";
 
 /**
  * The lines as typed, as the library keeps them: each one plain line (runs of whitespace become one space), blank lines, lines
@@ -41,14 +42,24 @@ export function cleanDictionary(typed: readonly string[]): string[] {
   return kept;
 }
 
-/** `settings` with what Settings changed (`setLibrary`); a dictionary is cleaned first (`cleanDictionary`). */
+/**
+ * `settings` with what Settings changed (`setLibrary`); a dictionary is cleaned first (`cleanDictionary`), and so are the skip lists
+ * (`cleanSkipList`). A line either refuses throws, and nothing of the patch is kept.
+ */
 export function patchedSettings(settings: Settings, patch: LibraryPatch): Settings {
+  const dictation = {
+    ...settings.dictation,
+    ...(patch.dictationLog !== undefined ? { log: patch.dictationLog } : {}),
+    ...(patch.dictationSkipApps !== undefined ? { skipApps: cleanSkipList(patch.dictationSkipApps, "apps") } : {}),
+    ...(patch.dictationSkipSites !== undefined ? { skipSites: cleanSkipList(patch.dictationSkipSites, "sites") } : {}),
+  };
   return {
     ...settings,
     ...(patch.harness !== undefined ? { harness: patch.harness } : {}),
     ...(patch.models !== undefined ? { models: patch.models } : {}),
     ...(patch.timeoutSeconds !== undefined ? { timeoutSeconds: patch.timeoutSeconds } : {}),
     ...(patch.dictionary !== undefined ? { voice: { ...settings.voice, dictionary: cleanDictionary(patch.dictionary) } } : {}),
+    dictation,
   };
 }
 

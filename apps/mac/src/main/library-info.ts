@@ -1,8 +1,8 @@
 // Read-only views of the library for the UI: page titles, recent filings, wikilink lookup.
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, type Stats } from "node:fs";
 import path from "node:path";
-import { localDate } from "@avanzel/engine";
-import type { FiledPage } from "../shared/ipc.ts";
+import { defaultSettings, localDate, type Settings } from "@avanzel/engine";
+import type { FiledPage, LibraryInfo } from "../shared/ipc.ts";
 import { pageName, WIKILINK } from "../shared/wikilinks.ts";
 import { answerSources } from "./setup-model.ts";
 
@@ -33,6 +33,15 @@ export function pageAt(root: string, rel: string): "page" | "link" | "none" {
   } catch {
     return "none";
   }
+}
+
+/**
+ * The `[dictation]` settings as Settings shows them: whether the library keeps a day file of dictations, and the skip list. Without
+ * settings (no library, or a config.toml that can't be read) they are the defaults, which are what a new library starts with.
+ */
+export function dictationInfo(settings: Settings | null): Pick<LibraryInfo, "dictationLog" | "dictationSkipApps" | "dictationSkipSites"> {
+  const { log, skipApps, skipSites } = (settings ?? defaultSettings()).dictation;
+  return { dictationLog: log, dictationSkipApps: [...skipApps], dictationSkipSites: [...skipSites] };
 }
 
 /**
@@ -123,11 +132,20 @@ export function obsidianUrl(root: string, rel: string): string | null {
   return `obsidian://open?path=${encodeURIComponent(rel ? path.join(root, rel) : root)}`;
 }
 
-/** `[[name]]` → library-relative path; shelf pages win over sources in raw/ and inbox/. */
+/** The folders that hold the owner's words as sources, which a link finds last. */
+const SOURCES = new Set(["inbox", "raw"]);
+
+/**
+ * `[[name]]` → library-relative path; shelf pages win, then reviews and tasks, then sources in raw/ and inbox/. A day file of
+ * dictations (`raw/dictations/2026-11-05.md`) has the name of that day's review (`reviews/2026-11-05.md`), which a link means.
+ */
 export function findPage(root: string, name: string): string | null {
   const target = `${name}.md`;
   const matches = walk(root).filter((rel) => rel.includes("/") && path.basename(rel) === target);
-  const rank = (rel: string) => (NOT_PAGES.has(rel.split("/")[0] ?? "") ? 1 : 0);
+  const rank = (rel: string) => {
+    const top = rel.split("/")[0] ?? "";
+    return SOURCES.has(top) ? 2 : NOT_PAGES.has(top) ? 1 : 0;
+  };
   return matches.sort((a, b) => rank(a) - rank(b))[0] ?? null;
 }
 
