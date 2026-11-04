@@ -71,8 +71,9 @@ export async function makeTranscriber(options: VoiceOptions, modelsDir: string):
 
 /**
  * Loads on first use, and tries again after a failed load (say, once the models are downloaded). `release()` lets the
- * transcriptions in progress finish, then frees what was loaded; the next `transcribe` loads again, once that is done,
- * so there is never more than one copy of the model. Exported for tests; apps get theirs from `makeTranscriber`.
+ * transcriptions in progress (`transcribe` and `transcribeSegments` alike) finish, then frees what was loaded; the next
+ * `transcribe` or `transcribeSegments` loads again, once that is done, so there is never more than one copy of the model.
+ * Exported for tests; apps get theirs from `makeTranscriber`.
  */
 export function lazily(engine: string, load: () => Promise<Transcriber>): Required<Transcriber> {
   let loading: Promise<Transcriber> | null = null;
@@ -100,7 +101,7 @@ export function lazily(engine: string, load: () => Promise<Transcriber>): Requir
   }
 
   async function freeModel(): Promise<void> {
-    await Promise.allSettled(running); // those started so far; later ones wait for the release in `loadAndTranscribe`
+    await Promise.allSettled(running); // those started so far; later ones wait for the release in `loadAndUse`
     const model = loading;
     loading = null;
     await (await model)?.release?.();
