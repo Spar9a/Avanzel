@@ -79,9 +79,11 @@ function sign(app) {
         "Run `node scripts/signing.mjs setup` once to keep them.\n",
     );
   }
-  // The call-notes helper goes first, so the app's seal covers the signed file. It is absent when swiftc was missing at build.
-  const calltap = join(app, "Contents/Resources/calltap/avanzel-calltap");
-  if (existsSync(calltap)) run("codesign", ["--force", "--sign", identity ?? "-", calltap]);
+  // The helpers go first, so the app's seal covers the signed files. Each is absent when swiftc was missing at build.
+  for (const helper of ["calltap/avanzel-calltap", "cursor/avanzel-cursor"]) {
+    const path = join(app, "Contents/Resources", helper);
+    if (existsSync(path)) run("codesign", ["--force", "--sign", identity ?? "-", path]);
+  }
   run("codesign", ["--force", "--deep", "--sign", identity ?? "-", app]);
   const shown = spawnSync("codesign", ["-d", "-r-", app], { encoding: "utf8" });
   const requirement = `${shown.stdout}${shown.stderr}`.split("\n").find((line) => line.startsWith("designated"));

@@ -16,6 +16,9 @@ extraResources:
   - from: native/calltap/build
     to: calltap
     filter: ["avanzel-calltap"]
+  - from: native/cursor/build
+    to: cursor
+    filter: ["avanzel-cursor"]
 npmRebuild: false
 mac:
   target: dir

@@ -14,7 +14,7 @@
     "e2e": "node scripts/build.mjs && playwright test --project quiet",
     "e2e:desktop": "node scripts/build.mjs && playwright test --project desktop",
     "e2e:quiet": "node scripts/e2e-quiet.mjs",
-    "dist": "node scripts/build.mjs && node scripts/build-calltap.mjs && electron-builder --mac dir && node scripts/signing.mjs sign release/mac-arm64/Avanzel.app",
+    "dist": "node scripts/build.mjs && node scripts/build-calltap.mjs && node scripts/build-cursor.mjs && electron-builder --mac dir && node scripts/signing.mjs sign release/mac-arm64/Avanzel.app",
     "signing:setup": "node scripts/signing.mjs setup",
     "icon": "node scripts/make-icon.mjs"
   },
