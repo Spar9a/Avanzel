@@ -79,8 +79,10 @@ function sign(app) {
         "Run `node scripts/signing.mjs setup` once to keep them.\n",
     );
   }
-  const args = ["--force", "--deep", "--sign", identity ?? "-", app];
-  run("codesign", args);
+  // The call-notes helper goes first, so the app's seal covers the signed file. It is absent when swiftc was missing at build.
+  const calltap = join(app, "Contents/Resources/calltap/avanzel-calltap");
+  if (existsSync(calltap)) run("codesign", ["--force", "--sign", identity ?? "-", calltap]);
+  run("codesign", ["--force", "--deep", "--sign", identity ?? "-", app]);
   const shown = spawnSync("codesign", ["-d", "-r-", app], { encoding: "utf8" });
   const requirement = `${shown.stdout}${shown.stderr}`.split("\n").find((line) => line.startsWith("designated"));
   console.log(`Signed ${app}\n${requirement ?? ""}`);

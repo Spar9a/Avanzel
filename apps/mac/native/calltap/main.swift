@@ -1,13 +1,18 @@
 // avanzel-calltap: listens to what a Mac plays, the "them" side of a call, and writes it to stdout as raw 16 kHz mono
-// signed 16-bit little-endian samples, the format the speech model reads. It taps the sound a chosen app plays (--pid), or
-// everything the Mac plays when no app is named. The tap is silent to everyone else: the call app keeps playing as usual.
+// signed 16-bit little-endian samples, the format the speech model reads. It taps the sound the chosen apps play (--pid,
+// which may repeat: a call app and its sound-playing helpers), or everything the Mac plays when no app is named. The tap is silent to everyone else: the call app keeps playing as usual.
 //
 // Needs macOS 14.2 and the System Audio Recording permission. Status lines go to stderr as one JSON object each:
+//   {"event":"waiting"}                                    none of the named pids has an audio object yet; it retries
+//                                                          once a second for up to 10 s (said once)
 //   {"event":"started","sampleRate":48000,"channels":2}   the tap is running
 //   {"event":"error","message":"..."}                      it could not start; the exit code is 1
 //   {"event":"stopped","seconds":12.3}                     it ended on SIGINT, SIGTERM or --seconds
 //
-// Usage: avanzel-calltap [--pid <pid>] [--seconds <n>]
+// A pid that never gets an audio object is skipped. Only when none of them does it fail with
+// "no app you named is playing sound".
+//
+// Usage: avanzel-calltap [--pid <pid>]... [--seconds <n>]
 import AVFoundation
 import AudioToolbox
 import CoreAudio
@@ -27,12 +32,14 @@ func check(_ status: OSStatus, _ what: String) {
     if status != noErr { fail("\(what) failed (OSStatus \(status))") }
 }
 
-var pid: pid_t? = nil
+var pids: [pid_t] = []
 var limit: Double? = nil
 var args = CommandLine.arguments.dropFirst()
 while let arg = args.popFirst() {
     switch arg {
-    case "--pid": pid = args.popFirst().flatMap { pid_t($0) }
+    case "--pid":
+        guard let value = args.popFirst().flatMap({ pid_t($0) }) else { fail("--pid needs a process id") }
+        pids.append(value)
     case "--seconds": limit = args.popFirst().flatMap { Double($0) }
     default: fail("unknown argument \(arg)")
     }
@@ -49,14 +56,28 @@ func property<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelecto
     return value.pointee
 }
 
-// The tap: one app's output, or everything.
-let description: CATapDescription
-if let pid {
-    var processPid = pid
-    guard let process = property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyTranslatePIDToProcessObject, as: AudioObjectID.self, qualifier: &processPid, qualifierSize: UInt32(MemoryLayout<pid_t>.size)), process != kAudioObjectUnknown else {
-        fail("no app with process id \(pid) is playing sound")
+// The audio process object of each named pid; a pid that is not playing sound has none.
+func audioProcesses(_ pids: [pid_t]) -> [AudioObjectID] {
+    pids.compactMap { pid in
+        var processPid = pid
+        let process = property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyTranslatePIDToProcessObject, as: AudioObjectID.self, qualifier: &processPid, qualifierSize: UInt32(MemoryLayout<pid_t>.size))
+        return process == kAudioObjectUnknown ? nil : process
     }
-    description = CATapDescription(stereoMixdownOfProcesses: [process])
+}
+
+// The tap: the named apps' output, or everything.
+let description: CATapDescription
+if !pids.isEmpty {
+    var processes = audioProcesses(pids)
+    if processes.isEmpty {
+        say(["event": "waiting"])
+        for _ in 0..<10 where processes.isEmpty {
+            Thread.sleep(forTimeInterval: 1)
+            processes = audioProcesses(pids)
+        }
+    }
+    if processes.isEmpty { fail("no app you named is playing sound") }
+    description = CATapDescription(stereoMixdownOfProcesses: processes)
 } else {
     description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
 }
