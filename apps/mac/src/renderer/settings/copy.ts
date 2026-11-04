@@ -81,7 +81,8 @@ export const SPEECH_MODEL_DESCRIPTION =
  */
 export const DICTIONARY_DESCRIPTION =
   "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an " +
-  "equals sign: Ollama = Alema, Polymer. Short names such as Priya need that equals entry to be corrected.";
+  "equals sign: Ollama = Alema, Polymer. Short names such as Priya, and names with accents, are corrected only with an equals " +
+  "entry. The names are also given to your filing agent.";
 
 /**
  * The speech models the engine runs that hear English alone (Parakeet v2); the others, the default among them, hear 25 languages.

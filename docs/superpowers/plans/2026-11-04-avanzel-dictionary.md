@@ -26,8 +26,9 @@ Rulings that changed the plan:
 4. `[voice] dictionary_sound_alike` (default true) was added as the per-library switch.
 5. Terms and aliases are cleaned to one line at the source, and the hint to the agent is capped at 100 terms and 2,000 characters.
 6. The pane replaces its draft after a save only if the field still holds what was sent, so text typed while a save waits is kept.
+7. Final-review fix wave: a window spelt as any listed term keeps that term (Catherine and Katherine both listed stay apart); `compileDictionary` builds the aliases and candidates once per transcriber (3,000 call segments with 500 entries in about 230 ms, was 3.4 s); the app keeps the speech model loaded across dictionary edits and applies the dictionary per use; calls are corrected by heard-as entries only (they keep no `heard` record); inbox recordings and spoken screen comments keep `heard:`; the Settings window keeps the field's draft, so a pane switch while a save waits cannot revert it; term-less lines are dropped on save; alias words join across spaces and tabs only.
 
-Known limits: a term split across two call segments is not corrected; Edit of a thought drops `heard`; questions, screen comments and calls leave no `heard` record; lines of one term are merged when used, not in the field.
+Known limits: a term split across two call segments is not corrected; Edit of a thought drops `heard`; questions and calls leave no `heard` record (calls use heard-as entries only for that reason); lines of one term are merged when used, not in the field.
 
 ## Global Constraints
 

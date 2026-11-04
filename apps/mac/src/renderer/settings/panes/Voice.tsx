@@ -8,6 +8,7 @@ import type { ModelStatus, SettingsSnapshot, Shortcuts } from "../../../shared/i
 import { downloadFailedProblem, voiceSettingsProblem } from "../../../shared/problems.ts";
 import { passesThrough, toAccelerator } from "../accelerator.ts";
 import { DICTIONARY_DESCRIPTION, DOWNLOAD_NOT_STARTED, microphoneName, microphoneOptions, speechModelLine, type InputDevice } from "../copy.ts";
+import { failed, followSnapshot, saved, sent, startDraft, toSend, typed, type DictionaryDraft } from "../dictionary-draft.ts";
 import { attemptChange, ChooseButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -43,39 +44,62 @@ export function MicrophoneGroup(props: PaneProps): ReactNode {
 /** The Dictionary field's text: the library's lines, one per line. */
 const dictionaryText = (snap: SettingsSnapshot) => (snap.library?.dictionary ?? []).join("\n");
 
+/** The Dictionary field's draft and its save, which the Settings window keeps (useDictionaryEdit), so they outlast the pane. */
+export interface DictionaryEdit {
+  draft: string;
+  setDraft(text: string): void;
+  /** Saves the draft, unless it is what the library holds or what a save on its way holds. */
+  save(): Promise<void>;
+}
+
+/**
+ * The Dictionary field's draft, for the Settings shell to keep: a save waits its turn behind filing runs, and the person may
+ * leave the pane and come back meanwhile, which must find the draft as it was, not the older lines of the snapshot before the
+ * save. Once saved, the draft is the lines main kept (blank and repeated ones dropped, spaces tidied), unless more was typed while
+ * the save waited. A draft not edited since the last snapshot follows the next one (`followSnapshot`). A save main refuses (too
+ * many lines, one too long) leaves the draft as typed, and the window says why: leaving the field again tries again. Another
+ * library's draft starts from its own lines.
+ */
+export function useDictionaryEdit(
+  snap: SettingsSnapshot | null,
+  onChange: PaneProps["onChange"],
+  attempt: PaneProps["attempt"],
+): DictionaryEdit {
+  const library = snap?.library?.exists ? snap.library.path : null;
+  const text = snap ? dictionaryText(snap) : "";
+  const [state, setState] = useState(() => startDraft(library, text));
+  const followed = followSnapshot(state, library, text);
+  if (followed !== state) setState(followed);
+  // The state as last drawn or changed here, so two blurs before the next draw send one save.
+  const latest = useRef(followed);
+  latest.current = followed;
+  const change = (step: (now: DictionaryDraft) => DictionaryDraft) => {
+    latest.current = step(latest.current);
+    setState(step);
+  };
+  const save = async () => {
+    const sending = toSend(latest.current);
+    if (sending === null) return;
+    change((now) => sent(now, sending));
+    const next = await attempt(() => api.setLibrary({ dictionary: sending.split("\n") }));
+    if (!next) return change((now) => failed(now, sending));
+    onChange(next);
+    change((now) => saved(now, sending, dictionaryText(next)));
+  };
+  return { draft: followed.draft, setDraft: (typedText) => change((now) => typed(now, typedText)), save };
+}
+
 /**
  * Voice's "Dictionary" group: the names and terms the speech is corrected to, one per line, saved when the focus leaves the
- * field. The draft is the field's text until then; once saved, it is the lines main kept (blank and repeated ones dropped,
- * spaces tidied), unless more was typed while the save waited. A draft that is what the library holds, or what a save on its
- * way holds, saves nothing. A save main refuses (too many lines, one too long)
- * leaves the draft as typed, and the window says why: leaving the field again tries again. The pane keys this by its library,
- * so another library's group starts from its own lines.
+ * field. The draft is the window's (`useDictionaryEdit`).
  */
-function DictionaryGroup(props: PaneProps): ReactNode {
-  const { snap, onChange, attempt } = props;
-  const [draft, setDraft] = useState(() => dictionaryText(snap));
-  // The text of the save on its way, if any: a save waits its turn behind filing runs, and leaving the field again with the
-  // same text meanwhile sends no second one.
-  const sending = useRef<string | null>(null);
-  const save = async () => {
-    const sent = draft;
-    if (sent === dictionaryText(snap) || sent === sending.current) return;
-    sending.current = sent;
-    // The field shows the lines main kept only if it still holds what was sent: lines typed since stay, and leaving the
-    // field saves them in turn.
-    const saved = (next: SettingsSnapshot) => {
-      onChange(next);
-      setDraft((current) => (current === sent ? dictionaryText(next) : current));
-    };
-    await attemptChange({ onChange: saved, attempt }, () => api.setLibrary({ dictionary: sent.split("\n") }));
-    if (sending.current === sent) sending.current = null;
-  };
+function DictionaryGroup({ dictionary }: { dictionary: DictionaryEdit }): ReactNode {
   return (
     <Group label="Dictionary">
       <GroupRow label="Names and terms" description={DICTIONARY_DESCRIPTION}>
         {/* TextArea takes no onBlur, so the box around it hears the focus leave (React's onBlur bubbles). */}
-        <div className="settings-dictionary" onBlur={() => void save()}>
-          <TextArea label="Dictionary" labelHidden rows={5} value={draft} onChange={setDraft} />
+        <div className="settings-dictionary" onBlur={() => void dictionary.save()}>
+          <TextArea label="Dictionary" labelHidden rows={5} value={dictionary.draft} onChange={dictionary.setDraft} />
         </div>
       </GroupRow>
     </Group>
@@ -144,8 +168,8 @@ function SpeechProblem({ model, primary, onDownload }: { model: ModelStatus; pri
   );
 }
 
-/** The Voice pane: the shortcuts and their problems, MicrophoneGroup, and the speech model. */
-export function Voice(props: PaneProps): ReactNode {
+/** The Voice pane: the shortcuts and their problems, MicrophoneGroup, the speech model, and the window's dictionary draft. */
+export function Voice({ dictionary, ...props }: PaneProps & { dictionary: DictionaryEdit }): ReactNode {
   const { snap, onChange, attempt } = props;
   // The shortcut being recorded, if any: one at a time.
   const [recording, setRecording] = useState<keyof Shortcuts | null>(null);
@@ -255,7 +279,7 @@ export function Voice(props: PaneProps): ReactNode {
       </Group>
       <SpeechProblem model={snap.model} primary={primaryKey === undefined} onDownload={download} />
       {/* The dictionary is the library's: with none open, or one Avanzel can't find, there is nowhere to keep it. */}
-      {snap.library?.exists && <DictionaryGroup key={snap.library.path} {...props} />}
+      {snap.library?.exists && <DictionaryGroup dictionary={dictionary} />}
     </Stack>
   );
 }

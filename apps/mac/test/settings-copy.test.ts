@@ -195,7 +195,7 @@ describe("settings copy", () => {
       ),
     ).toBe("The dictionary has 501 lines, and 500 is the most it can hold. Remove the lines you use least. The setting keeps its old value.");
     expect(DICTIONARY_DESCRIPTION).toBe(
-      "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya need that equals entry to be corrected.",
+      "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya, and names with accents, are corrected only with an equals entry. The names are also given to your filing agent.",
     );
   });
 

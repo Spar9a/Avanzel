@@ -13,6 +13,17 @@ const configOf = (library: string) => readFileSync(path.join(library, ".avanzel"
 const dictionaryGroup = (settings: Page) =>
   settings.locator("section", { has: settings.getByRole("heading", { name: "Dictionary", exact: true }) });
 
+/**
+ * Every reply main has sent the Settings window by now has been drawn: a round trip to main from the page comes back after any reply
+ * main sent before it (one channel, in order), and a frame later React has drawn what those replies set.
+ */
+async function repliesDrawn(settings: Page): Promise<void> {
+  await settings.evaluate(async () => {
+    await (window as unknown as { avanzel: { settings: { get(): Promise<unknown> } } }).avanzel.settings.get();
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  });
+}
+
 test("the Dictionary saves its lines when the field is left, and a spoken thought is corrected to them, keeping what was heard", async () => {
   const library = await makeLibrary();
   const app = await launch({
@@ -25,7 +36,7 @@ test("the Dictionary saves its lines when the field is left, and a spoken though
   await expect(group.getByText("Names and terms", { exact: true })).toBeVisible();
   await expect(
     group.getByText(
-      "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya need that equals entry to be corrected.",
+      "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya, and names with accents, are corrected only with an equals entry. The names are also given to your filing agent.",
       { exact: true },
     ),
   ).toBeVisible();
@@ -71,10 +82,36 @@ test("lines typed while an earlier save still waits its turn stay in the field, 
   await letTheQueueGo(app);
   await call(app, "idleForTests"); // the first save is done in main ...
   await expect.poll(() => loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema"]);
-  await settings.waitForTimeout(300); // ... and its reply has reached the window, which must not put the field back to it
+  await repliesDrawn(settings); // ... and its reply has reached the window, which must not put the field back to it
   await expect(field).toHaveValue("Ollama = Alema\nKowalczyk");
   await field.press("Tab");
   await expect.poll(() => loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema", "Kowalczyk"]);
+  await app.close();
+});
+
+test("a save that waits while the person goes to another pane and back lands in the field, and leaving it does not undo it", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Voice");
+  const section = settings.getByRole("radiogroup", { name: "Section" });
+  await holdTheQueue(app); // as a filing run would: the save waits its turn
+  const field = dictionaryGroup(settings).getByRole("textbox", { name: "Dictionary" });
+  await field.fill("Ollama = Alema\n\n  Kowalczyk ");
+  await field.press("Tab"); // the save is sent, and waits
+  await section.getByRole("radio", { name: "General", exact: true }).click();
+  await section.getByRole("radio", { name: "Voice", exact: true }).click();
+  const again = dictionaryGroup(settings).getByRole("textbox", { name: "Dictionary" });
+  await letTheQueueGo(app);
+  await call(app, "idleForTests");
+  await expect.poll(() => loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema", "Kowalczyk"]);
+  await repliesDrawn(settings);
+  await expect(again).toHaveValue("Ollama = Alema\nKowalczyk"); // the lines main kept
+  await again.focus();
+  await again.press("Tab"); // leaving the field again saves nothing older over them
+  await call(app, "idleForTests");
+  await repliesDrawn(settings);
+  expect(loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema", "Kowalczyk"]);
+  expect(configOf(library)).toContain('dictionary = [\n  "Ollama = Alema",\n  "Kowalczyk",\n]');
   await app.close();
 });
 
