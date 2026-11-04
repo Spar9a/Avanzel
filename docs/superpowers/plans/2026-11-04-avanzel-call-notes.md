@@ -12,6 +12,34 @@
 
 **Not in this plan (later, §6.8):** detecting a call by itself, calendar titles and names, telling several voices on "Them" apart, the Meetings pane in Settings, marking a moment with ⌥Space, a red dot beside Zel, keeping the audio, a local-model option. Those wait; the owner polishes the window and the card afterwards.
 
+## What was built
+
+Branch `call-notes`, from 37d3b54 to 4b7c410, one task per block below. The ledger with every ruling is `.superpowers/sdd/2026-11-04-avanzel-call-notes/progress.md`.
+
+- **Task 1 (engine):** timed speech segments from the transcriber, `dropEcho`, `mergeCall` and `callTranscript`. Two streams, "You" and "Them", become one transcript.
+- **Task 2 (engine):** `captureCall` writes a capture of source `call`, and the filing prompt says how to file one (a meeting page, decisions, `- [ ]` lines with owners).
+- **Task 3:** `avanzel-calltap`, the Swift helper (Core Audio process tap), built as one universal binary, bundled at `Resources/calltap/`, signed with the app, with `NSAudioCaptureUsageDescription` in `Info.plist`.
+- **Task 4a:** the helper's process wrapper, the list of call apps, and `CallSession`, which keeps the call's two streams in `calls/<id>/`.
+- **Task 4b:** `main/call-notes.ts` with the consent dialog, the call card in the capsule, failure copy, and the controller's `calls` state.
+- **Task 5:** "Take notes on a call…" in the menu bar menu with a picker of running call apps, and "Finish notes for a call that was cut short" at the next launch.
+- **Task 6:** the whole-branch run, a signed review build, and the by-hand checks in the flight pack's doc 2 ("Call notes checks").
+
+Rulings that changed the plan:
+1. The helper is found at `process.resourcesPath/calltap/avanzel-calltap` when packaged and at `apps/mac/native/calltap/build/avanzel-calltap` otherwise.
+2. The helper waits up to 10 s for a named app's audio object (6: only while no named pid has one, so one idle pid cannot add 10 s to every start).
+3. `CallSession` writes `call.json` (app, start time) so a cut-short call can be recovered.
+4. While a call runs, a thought, a screen capture and a question's dictation do not start; the capsule says "Notes on the call are running. Stop them to record a thought."
+5. Task 4 was split into 4a (pieces, unit tests) and 4b (controller, renderer).
+7, 9. Review fixes taken with their round: a helper that dies mid-call is told, and late sound blocks stay with their own call.
+8. A call with no speech keeps its folder, marked `no-speech`, and says so; the next launch deletes marked folders older than 24 h.
+10. The call menu settles after a call ends, and the spec polls conditions, not fixed waits.
+11. The review build goes to `release/review-call-notes`, never into `release/mac-arm64` while the owner's Avanzel runs from it.
+12. Task 6 ran only the quiet e2e specs for the areas touched, so the owner's Mac stayed usable.
+
+Build: from `apps/mac`, `env -u ELECTRON_RUN_AS_NODE sh -c 'node scripts/build.mjs && node scripts/build-calltap.mjs && npx electron-builder --mac dir -c.directories.output=release/review-call-notes && node scripts/signing.mjs sign release/review-call-notes/mac-arm64/Avanzel.app'`. It gives `apps/mac/release/review-call-notes/mac-arm64/Avanzel.app`, signed with the local identity "Avanzel Local".
+
+Left for later, as the header says: call detection, calendar names, speaker names, the Meetings pane, and keeping the audio. Known limits: the two sides can be about 10 s out of step; a named app is tapped only for sound that starts within 10 s of Start; the capture names the app by its process name ("zoom.us"); a call is capped at 4 hours.
+
 ## Global Constraints
 
 - macOS only. The helper needs macOS 14.2; on an older Mac the menu item is absent and nothing else changes.
