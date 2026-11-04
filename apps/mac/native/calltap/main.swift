@@ -7,7 +7,8 @@
 //                                                          once a second for up to 10 s (said once)
 //   {"event":"started","sampleRate":48000,"channels":2}   the tap is running
 //   {"event":"error","message":"..."}                      it could not start; the exit code is 1
-//   {"event":"stopped","seconds":12.3}                     it ended on SIGINT, SIGTERM or --seconds
+//   {"event":"stopped","seconds":12.3}                     it ended on SIGINT, SIGTERM or --seconds, or, with --pid, once
+//                                                          every named pid has exited (the call app quit)
 //
 // A pid that never gets an audio object is skipped. Only when none of them does it fail with
 // "no app you named is playing sound".
@@ -156,5 +157,24 @@ for signalNumber in [SIGINT, SIGTERM] {
 }
 if let limit {
     DispatchQueue.main.asyncAfter(deadline: .now() + limit) { finish() }
+}
+
+// With named apps, the tap ends by itself once every one of their pids has exited: the call app quit, and its call with it. The
+// sources are kept here, or they would be released and never fire. Everything the Mac plays has no pid to watch.
+var exitWatches: [DispatchSourceProcess] = []
+if !pids.isEmpty {
+    var alive = Set(pids)
+    let exited = { (pid: pid_t) in
+        alive.remove(pid)
+        if alive.isEmpty { finish() }
+    }
+    for pid in Set(pids) {
+        let watch = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
+        watch.setEventHandler { exited(pid) }
+        watch.resume()
+        exitWatches.append(watch)
+        // One that exited before its watch began would never say so: ask the system whether it is still there.
+        if kill(pid, 0) != 0 && errno == ESRCH { DispatchQueue.main.async { exited(pid) } }
+    }
 }
 dispatchMain()
