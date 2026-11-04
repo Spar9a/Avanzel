@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CursorHelper, cursorPermissionsOf } from "../src/main/cursor-helper.ts";
+import { CURSOR_HELPER_GAVE_UP, CursorHelper, cursorPermissionsOf } from "../src/main/cursor-helper.ts";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "avz-cursor-"));
 const realBinaryPath = CursorHelper.binaryPath;
@@ -195,7 +195,53 @@ handle = (command) => {
     stub(`handle = (command) => reply(command, {});`);
     const { helper } = make();
     helper.start("right-option");
-    await expect(helper.paste()).resolves.toBeUndefined();
+    await expect(helper.paste()).resolves.toEqual({ restored: false });
+  });
+
+  it("hands the text to the helper's paste, with the hold, and says whether the clipboard was given back", async () => {
+    const log = path.join(tmp(), "log.txt");
+    stub(`
+const fs = require("node:fs");
+handle = (command) => {
+  fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(command) + "\\n");
+  reply(command, command.cmd === "paste" ? { restored: true } : {});
+};`);
+    const { helper } = make();
+    helper.start("right-option");
+    await expect(helper.paste("milk and eggs")).resolves.toEqual({ restored: true });
+    const commands = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(commands.find((command) => command.cmd === "paste")).toMatchObject({ cmd: "paste", text: "milk and eggs", holdMs: 400 });
+  });
+
+  it("asks inspect to keep the window when told to, and asks the helper whether it is still the same one", async () => {
+    const log = path.join(tmp(), "log.txt");
+    stub(`
+const fs = require("node:fs");
+let answers = [true, false, null];
+handle = (command) => {
+  fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(command) + "\\n");
+  if (command.cmd === "inspect") reply(command, ${JSON.stringify(front("Notes"))});
+  else if (command.cmd === "same") reply(command, { same: answers.shift() });
+  else reply(command, {});
+};`);
+    const { helper } = make();
+    helper.start("right-option");
+    await helper.inspect(true);
+    await helper.inspect();
+    expect(await helper.sameWindow()).toBe(true);
+    expect(await helper.sameWindow()).toBe(false);
+    expect(await helper.sameWindow()).toBeNull();
+    const commands = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const inspects = commands.filter((command) => command.cmd === "inspect");
+    expect(inspects[0]).toMatchObject({ keep: true });
+    expect("keep" in inspects[1]).toBe(false);
+  });
+
+  it("counts a same reply that is not a boolean as don't know", async () => {
+    stub(`handle = (command) => reply(command, command.cmd === "same" ? { same: "yes" } : {});`);
+    const { helper } = make();
+    helper.start("right-option");
+    expect(await helper.sameWindow()).toBeNull();
   });
 
   it("reports a watch it cannot do as a problem, keeps running, and watches again on the next setKey", async () => {
@@ -346,6 +392,85 @@ handle = (command) => {
       await expect(helper.permissions(false)).rejects.toThrow(/stopped/i);
       expect(problems).toHaveLength(round);
     }
+    // Never started, so never started again by itself (Settings' short-lived helper is one of these).
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(problems).toHaveLength(3);
+  });
+});
+
+describe("CursorHelper starting again after an unexpected exit", () => {
+  const realDelays = CursorHelper.respawnDelaysMs;
+  afterEach(() => {
+    CursorHelper.respawnDelaysMs = realDelays;
+  });
+
+  it("waits 1 s, 2 s, then 5 s, three times in a minute at most", () => {
+    expect(realDelays).toEqual([1_000, 2_000, 5_000]);
+  });
+
+  it("starts the helper again when it exits by itself, watches the key again, and its taps work", async () => {
+    CursorHelper.respawnDelaysMs = [20, 40, 100];
+    const marker = path.join(tmp(), "crashed");
+    const pidFile = path.join(tmp(), "pid.txt");
+    stub(`
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(pidFile)}, process.pid + "\\n");
+const first = !fs.existsSync(${JSON.stringify(marker)});
+handle = (command) => {
+  if (command.cmd === "watch" && first) {
+    // Half a tap, then the crash: the next helper's whole tap must still count once.
+    send({ event: "modifier", key: command.key, down: true });
+    fs.writeFileSync(${JSON.stringify(marker)}, "x");
+    process.exit(3);
+  }
+  reply(command, {});
+  if (command.cmd === "watch") {
+    fs.appendFileSync(${JSON.stringify(pidFile)}, "watch " + command.key + "\\n");
+    send({ event: "modifier", key: command.key, down: false });
+    send({ event: "modifier", key: command.key, down: true });
+    send({ event: "modifier", key: command.key, down: false });
+  }
+};`);
+    const { helper, taps, problems, tapped } = make();
+    helper.start("right-command");
+    await tapped;
+    await helper.permissions(false); // answered after everything the new helper said before
+    expect(taps()).toBe(1);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/stopped/i);
+    const lines = readFileSync(pidFile, "utf8").trim().split("\n");
+    expect(lines.filter((line) => /^\d+$/.test(line))).toHaveLength(2);
+    expect(lines).toContain("watch right-command");
+  });
+
+  it("gives up after three restarts in a minute, and says so once", async () => {
+    CursorHelper.respawnDelaysMs = [10, 20, 30];
+    const pidFile = path.join(tmp(), "pid.txt");
+    stub(`
+require("node:fs").appendFileSync(${JSON.stringify(pidFile)}, process.pid + "\\n");
+process.exit(1);`);
+    const { helper, problems } = make();
+    helper.start("right-option");
+    await expect.poll(() => problems.includes(CURSOR_HELPER_GAVE_UP), { timeout: 5_000 }).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(readFileSync(pidFile, "utf8").trim().split("\n")).toHaveLength(4); // the first, and three more
+    expect(problems.filter((problem) => problem === CURSOR_HELPER_GAVE_UP)).toHaveLength(1);
+    expect(problems).toHaveLength(5); // four exits, then giving up
+  });
+
+  it("is not started again after stop(), nor when stop() comes while a restart waits", async () => {
+    CursorHelper.respawnDelaysMs = [100, 100, 100];
+    const pidFile = path.join(tmp(), "pid.txt");
+    stub(`
+require("node:fs").appendFileSync(${JSON.stringify(pidFile)}, process.pid + "\\n");
+handle = (command) => { if (command.cmd === "watch") process.exit(2); };`);
+    const { helper } = make();
+    helper.start("right-option");
+    await expect.poll(() => (existsSync(pidFile) ? readFileSync(pidFile, "utf8").trim().split("\n").length : 0)).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 30)); // it has exited; its restart waits
+    await helper.stop();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(readFileSync(pidFile, "utf8").trim().split("\n")).toHaveLength(1);
   });
 });
 
@@ -440,6 +565,31 @@ describe("CursorHelper with the fake helper", () => {
     await helper.paste();
     expect(readFileSync(pasteOut, "utf8")).toBe("hellohello");
     expect(taps).toBe(2);
+  });
+
+  it("appends the text it is handed on paste, without reading the clipboard, and gives the scripted same-window answer", async () => {
+    const dir = tmp();
+    const pasteOut = path.join(dir, "pasted.txt");
+    const script = path.join(dir, "fake.json");
+    writeFileSync(script, JSON.stringify({ targets: [front("Notes")], pasteOut, sameWindow: false }));
+    process.env.AVANZEL_FAKE_CURSOR = script;
+    CursorHelper.fakeClipboardText = () => {
+      throw new Error("the clipboard is not read for a paste with text");
+    };
+    const { helper } = make();
+    await expect(helper.paste("milk")).resolves.toEqual({ restored: true });
+    await helper.paste(" and eggs");
+    expect(readFileSync(pasteOut, "utf8")).toBe("milk and eggs");
+    expect(await helper.sameWindow()).toBe(false);
+    expect((await helper.inspect(true)).app.name).toBe("Notes");
+  });
+
+  it("says it can't tell whether the window is the same when the script doesn't say", async () => {
+    const script = path.join(tmp(), "fake.json");
+    writeFileSync(script, JSON.stringify({ targets: [front("Notes")] }));
+    process.env.AVANZEL_FAKE_CURSOR = script;
+    const { helper } = make();
+    expect(await helper.sameWindow()).toBeNull();
   });
 });
 

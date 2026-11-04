@@ -1523,8 +1523,9 @@ export class Controller {
       stopping: false,
       maxTimer: setTimeout(() => {
         if (this.recording !== recording) return;
-        // A dictation's session must see its end as a tap, or it would wait for a stop it never asked for.
-        if (forCursor) void this.cursor.tap();
+        // A dictation ends through its session, which pastes nothing without the person's own second tap: its words are offered on the
+        // copy card instead (`CursorDictation.timeUp`).
+        if (forCursor) this.cursor.timeUp();
         else void this.stopRecording();
       }, maxSeconds * 1000),
     };
@@ -2092,7 +2093,7 @@ export class Controller {
       return this.cursorHelper;
     };
     return {
-      helper: { inspect: () => helper().inspect(), paste: () => helper().paste() },
+      helper: { inspect: (keep) => helper().inspect(keep), sameWindow: () => helper().sameWindow(), paste: (text) => helper().paste(text) },
       clipboard: electronClipboard,
       startListening: () => this.startCursorRecording(),
       stopListening: () => this.stopCursorRecording(),
@@ -2124,7 +2125,6 @@ export class Controller {
       history: this.dictations,
       now: () => new Date(),
       newId: () => randomUUID(),
-      wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     };
   }
 

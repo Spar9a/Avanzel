@@ -8,20 +8,15 @@ import type { CursorHelper, Target } from "./cursor-helper.ts";
 import { storagePolicy } from "./cursor-policy.ts";
 import type { DictationEntry, DictationHistory } from "./dictation-history.ts";
 
-export interface ClipboardSnapshot {
-  text: string | null;
-  html: string | null;
-  rtf: string | null;
-  image: Buffer | null;
-}
-
 export interface CursorHost {
-  helper: Pick<CursorHelper, "inspect" | "paste">;
-  /** Electron's clipboard is asynchronous (from Electron 44 it has only promises), so each call may return one, and is awaited. */
+  /** The helper pastes through the clipboard itself, and gives the person's clipboard back (`CursorHelper.paste`). */
+  helper: Pick<CursorHelper, "inspect" | "sameWindow" | "paste">;
+  /**
+   * The clipboard, for words that were NOT pasted: they are left on it, so the person can paste them by hand. Electron's clipboard is
+   * asynchronous (from Electron 44 it has only promises), so the call may return one, and is awaited.
+   */
   clipboard: {
-    read(): ClipboardSnapshot | Promise<ClipboardSnapshot>;
     writeText(text: string): void | Promise<void>;
-    restore(s: ClipboardSnapshot): void | Promise<void>;
   };
   /** Starts the capsule's microphone as a cursor recording; false when something else holds it (it has said why). */
   startListening(): Promise<boolean>;
@@ -43,15 +38,10 @@ export interface CursorHost {
   history: DictationHistory;
   now(): Date;
   newId(): string;
-  /** Resolves after `ms`; the pause between the paste and giving the clipboard back. */
-  wait(ms: number): Promise<void>;
 }
 
 /** How long the copy prompt stays up when the words could not be pasted. */
 export const COPY_PROMPT_MS = 5000;
-
-/** The paste keystroke is read by the app in front some time after it is sent, so the clipboard is given back only after this. */
-const RESTORE_AFTER_MS = 150;
 
 /** How long taps are refused after a cancel while recognising, waiting for that recognition's late words to drain. */
 const DRAIN_MS = 10_000;
@@ -61,8 +51,16 @@ type State = "idle" | "listening" | "transcribing";
 /** What a browser said about its front window, or that it could not be asked. */
 type BrowserLook = { ok: true; value: { address?: string; privateWindow?: boolean } | null } | { ok: false };
 
-const sameTarget = (fixed: Target, fresh: Target): boolean =>
-  fixed.app.pid === fresh.app.pid && (fixed.window?.title ?? null) === (fresh.window?.title ?? null);
+/**
+ * Whether the words may go where focus is now: the same app, and the very window kept at the second tap. The helper decides the window
+ * by its identity (`sameWindow`: two windows with one title differ, a title that changed by itself doesn't); only when it can't tell
+ * (null) are the titles compared.
+ */
+const sameTarget = (fixed: Target, fresh: Target, sameWindow: boolean | null): boolean => {
+  if (fixed.app.pid !== fresh.app.pid) return false;
+  if (sameWindow !== null) return sameWindow;
+  return (fixed.window?.title ?? null) === (fresh.window?.title ?? null);
+};
 
 export class CursorDictation {
   private state: State = "idle";
@@ -103,6 +101,24 @@ export class CursorDictation {
     if (this.state === "idle") return this.begin();
     if (this.state === "listening") return this.fix();
     // While transcribing the words are on their way; a tap now must not start a recording that would compete for the clipboard.
+  }
+
+  /**
+   * The recording ran into its time limit. Nothing is pasted without the person's own second tap (they may be typing somewhere else by
+   * now), so the recording stops with no target, as one whose target couldn't be read: its words are offered on the copy card, with no
+   * app, and kept in the app's history only. Nothing when no dictation listens, or when a second tap is already reading its target.
+   */
+  timeUp(): void {
+    if (this.state !== "listening" || this.fixing) return;
+    this.target = null;
+    this.browserLook = Promise.resolve({ ok: true, value: null });
+    this.state = "transcribing";
+    try {
+      this.host.stopListening();
+    } catch (error) {
+      console.error("cursor dictation", error);
+      this.state = "idle";
+    }
   }
 
   /** Esc: drops the recording and inserts nothing. Words already being pasted are not taken back. */
@@ -206,7 +222,8 @@ export class CursorDictation {
     const session = this.session;
     let target: Target | null = null;
     try {
-      target = await this.host.helper.inspect();
+      // The helper keeps this window, so that when the words are ready it can tell whether focus is still in this very one.
+      target = await this.host.helper.inspect(true);
     } catch (error) {
       // An unknown target still ends the recording; the words will be offered, not pasted.
       console.error("cursor dictation", error);
@@ -237,7 +254,10 @@ export class CursorDictation {
     }
   }
 
-  /** Pastes the words if the target fixed at the second tap still has focus and may take text; true when the paste went. */
+  /**
+   * Pastes the words if the target fixed at the second tap still has focus and may take text; true when the paste went. The helper
+   * borrows the clipboard for the paste and gives it back itself; only words that were not pasted are left on the clipboard.
+   */
   private async deliver(text: string, fixed: Target): Promise<boolean> {
     let fresh: Target;
     try {
@@ -247,7 +267,16 @@ export class CursorDictation {
       await this.offer(text, fixed.app.name);
       return false;
     }
-    if (!sameTarget(fixed, fresh)) {
+    let sameWindow: boolean | null = null;
+    if (fixed.app.pid === fresh.app.pid) {
+      try {
+        sameWindow = await this.host.helper.sameWindow();
+      } catch (error) {
+        // The helper can't tell: the titles decide, as they would for an answer of null.
+        console.error("cursor dictation", error);
+      }
+    }
+    if (!sameTarget(fixed, fresh, sameWindow)) {
       await this.offer(text, fixed.app.name, "focus-moved");
       return false;
     }
@@ -256,28 +285,13 @@ export class CursorDictation {
       await this.offer(text, fixed.app.name);
       return false;
     }
-    const snapshot = await this.host.clipboard.read();
-    // Awaited: a paste sent before the words are on the clipboard would paste what was there before.
-    await this.host.clipboard.writeText(text);
     try {
-      await this.host.helper.paste();
+      await this.host.helper.paste(text);
     } catch (error) {
-      // The clipboard is not given back: the words stay on it so a manual paste still works.
+      // The helper has given the clipboard back; the words go on it now, so a manual paste still works.
       console.error("cursor dictation", error);
-      this.prompt(text, fixed.app.name, "failed");
+      await this.offer(text, fixed.app.name);
       return false;
-    }
-    // The words are already in the app, so whatever fails from here the clipboard is given back and the paste counts.
-    try {
-      await this.host.wait(RESTORE_AFTER_MS);
-    } catch (error) {
-      console.error("cursor dictation", error);
-    } finally {
-      try {
-        await this.host.clipboard.restore(snapshot);
-      } catch (error) {
-        console.error("cursor dictation", error);
-      }
     }
     return true;
   }
