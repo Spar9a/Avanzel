@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
 import type { CapsuleState } from "../../shared/ipc.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
-import { CALL_RUNNING_LINE } from "../../shared/transcribing.ts";
+import { CALL_RUNNING_LINE, DICTATION_REFUSED_LINE } from "../../shared/transcribing.ts";
 import { api, type StateOf } from "./api.ts";
 import { stillInMenuLine } from "./copy.ts";
 import { editorScene } from "./editor.tsx";
@@ -72,6 +72,11 @@ function callRunningScene(): Scene {
   return { bar: { mood: "filed", line: CALL_RUNNING_LINE } };
 }
 
+/** A dictation into any app was asked for while something else records: a bar says so, drawn as the call's is. */
+function dictationRefusedScene(): Scene {
+  return { bar: { mood: "filed", line: DICTATION_REFUSED_LINE } };
+}
+
 /**
  * What each stacked state draws, from the top of its stack: its card, the hint, and its bar. Every kind of state is here: a kind added
  * without a scene is a type error, not a blank panel, as `cancelled` and `recorded` were for two tasks.
@@ -100,6 +105,8 @@ function sceneOf(state: Stacked, levels: readonly number[]): Scene {
       return nothingToUndoScene();
     case "call-running":
       return callRunningScene();
+    case "dictation-refused":
+      return dictationRefusedScene();
     default: {
       const unhandled: never = state;
       return unhandled;

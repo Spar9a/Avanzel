@@ -31,6 +31,11 @@ export interface Recording {
    * then, they are dropped quietly, even when another Ask window has opened since.
    */
   askPage: number | null;
+  /**
+   * A dictation into any app (`CursorDictation`, the controller's `startCursorRecording`): its words are pasted at the cursor and
+   * never reach the library (`heardForCursor`), it has no file mode and no shortcut hint, and only the dictation's own key stops it.
+   */
+  forCursor: boolean;
   startedAt: number;
   shot?: { path: string; thumbnail: string; context: ScreenContext };
   maxTimer: NodeJS.Timeout;

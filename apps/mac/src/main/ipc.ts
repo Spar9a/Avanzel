@@ -39,6 +39,7 @@ export function registerIpc(controller: Controller): void {
   // settings
   handle("settings:get", () => controller.snapshot());
   handle("settings:set-app", (_e, patch: Partial<AppSettings>) => controller.setApp(patch));
+  handle("settings:set-cursor-dictation", (_e, patch: Partial<AppSettings["cursorDictation"]>) => controller.setCursorDictation(patch));
   handle("settings:set-library", (_e, patch: LibraryPatch) => controller.setLibrarySettings(patch));
   handle("settings:choose-library", () => controller.chooseLibrary());
   handle("settings:download-model", () => controller.downloadModel());

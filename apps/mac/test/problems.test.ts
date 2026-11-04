@@ -7,6 +7,7 @@ import {
   avanzelFailure,
   cancelledLine,
   commentNotStartedProblem,
+  copyPromptProblem,
   correctedWordsProblem,
   downloadFailedProblem,
   duration,
@@ -32,6 +33,7 @@ import {
   type FailureKind,
   type Problem,
 } from "../src/shared/problems.ts";
+import { DICTATION_REFUSED_LINE } from "../src/shared/transcribing.ts";
 
 /** Sunday 25 October 2026, 10:00 in this zone: the "now" of every case. */
 const now = new Date(2026, 9, 25, 10, 0);
@@ -1221,5 +1223,54 @@ describe("duration", () => {
 describe("ownLine", () => {
   it("is the clip module's, which the windows and the main process keep importing from here (its cases are clip.test.ts's)", () => {
     expect(ownLine).toBe(clipOwnLine);
+  });
+});
+
+describe("the cursor dictation's copy prompt, for words that couldn't go in at the cursor", () => {
+  it("says the words didn't go in, names the app they were meant for, shows them and says they are on the clipboard", () => {
+    expect(copyPromptProblem({ text: "hello Kowalczyk", app: "Slack", reason: "failed" })).toEqual({
+      title: "The words didn't go in.",
+      body: "They were meant for Slack. “hello Kowalczyk” They are on your clipboard.",
+    });
+  });
+
+  it("says the person moved to another window when focus moved, still naming the app", () => {
+    expect(copyPromptProblem({ text: "hello Kowalczyk", app: "Slack", reason: "focus-moved" })).toEqual({
+      title: "You moved to another window.",
+      body: "The words were meant for Slack. “hello Kowalczyk” They are on your clipboard.",
+    });
+  });
+
+  it("names no app when it isn't known", () => {
+    expect(copyPromptProblem({ text: "hello", app: "", reason: "failed" }).body).toBe("“hello” They are on your clipboard.");
+    expect(copyPromptProblem({ text: "hello", app: "  ", reason: "focus-moved" }).body).toBe("“hello” They are on your clipboard.");
+  });
+
+  it("cuts words longer than 300 characters with an ellipsis, and keeps them on one line", () => {
+    const long = `${"word ".repeat(100)}end`;
+    const { body } = copyPromptProblem({ text: long, app: "Notes", reason: "failed" });
+    const shown = /“(.*)”/.exec(body)![1]!;
+    expect(Array.from(shown).length).toBeLessThanOrEqual(300);
+    expect(shown.endsWith("…")).toBe(true);
+    expect(copyPromptProblem({ text: "one\ntwo\n\tthree", app: "Notes", reason: "failed" }).body).toBe(
+      "They were meant for Notes. “one two three” They are on your clipboard.",
+    );
+  });
+
+  it("follows the copy rules: sentence-case titles ending in a stop, no “!”, no apology, no gendered pronoun", () => {
+    for (const reason of ["failed", "focus-moved"] as const) {
+      for (const app of ["Slack", ""]) {
+        const { title, body } = copyPromptProblem({ text: "hello", app, reason });
+        expect(title).toMatch(/^\p{Lu}[^.]*\.$/u);
+        for (const text of [title, body]) {
+          expect(text).not.toContain("!");
+          expect(text).not.toMatch(/\b(oops|sorry|he|she|him|his|her)\b/i);
+        }
+      }
+    }
+  });
+
+  it("refuses a dictation while something else records in one calm line", () => {
+    expect(DICTATION_REFUSED_LINE).toBe("Something else is recording. Try again when it stops.");
   });
 });

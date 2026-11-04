@@ -15,7 +15,12 @@ export interface ClipboardSnapshot {
 
 export interface CursorHost {
   helper: Pick<CursorHelper, "inspect" | "paste">;
-  clipboard: { read(): ClipboardSnapshot; writeText(text: string): void; restore(s: ClipboardSnapshot): void };
+  /** Electron's clipboard is asynchronous (from Electron 44 it has only promises), so each call may return one, and is awaited. */
+  clipboard: {
+    read(): ClipboardSnapshot | Promise<ClipboardSnapshot>;
+    writeText(text: string): void | Promise<void>;
+    restore(s: ClipboardSnapshot): void | Promise<void>;
+  };
   /** Starts the capsule's microphone as a cursor recording; false when something else holds it (it has said why). */
   startListening(): Promise<boolean>;
   /** Asks for the audio; it arrives at `heard`. */
@@ -155,7 +160,7 @@ export class CursorDictation {
       }
       if (!fixed) {
         // Nothing says where the words were meant to go, so they are offered rather than pasted into whatever is in front.
-        this.offer(words.text, "");
+        await this.offer(words.text, "");
         this.keepUnknown(words, at);
         return;
       }
@@ -164,7 +169,7 @@ export class CursorDictation {
         inserted = await this.deliver(words.text, fixed);
       } catch (error) {
         console.error("cursor dictation", error);
-        this.offer(words.text, fixed.app.name);
+        await this.offer(words.text, fixed.app.name);
       }
       await this.keep(words, at, fixed, browserLook, inserted);
     } catch (error) {
@@ -246,20 +251,21 @@ export class CursorDictation {
       fresh = await this.host.helper.inspect();
     } catch (error) {
       console.error("cursor dictation", error);
-      this.offer(text, fixed.app.name);
+      await this.offer(text, fixed.app.name);
       return false;
     }
     if (!sameTarget(fixed, fresh)) {
-      this.offer(text, fixed.app.name, "focus-moved");
+      await this.offer(text, fixed.app.name, "focus-moved");
       return false;
     }
     // Accessibility is trusted to refuse, never to approve: only a positive "no" stops the paste.
     if (fresh.element?.takesText === "no") {
-      this.offer(text, fixed.app.name);
+      await this.offer(text, fixed.app.name);
       return false;
     }
-    const snapshot = this.host.clipboard.read();
-    this.host.clipboard.writeText(text);
+    const snapshot = await this.host.clipboard.read();
+    // Awaited: a paste sent before the words are on the clipboard would paste what was there before.
+    await this.host.clipboard.writeText(text);
     try {
       await this.host.helper.paste();
     } catch (error) {
@@ -275,7 +281,7 @@ export class CursorDictation {
       console.error("cursor dictation", error);
     } finally {
       try {
-        this.host.clipboard.restore(snapshot);
+        await this.host.clipboard.restore(snapshot);
       } catch (error) {
         console.error("cursor dictation", error);
       }
@@ -293,9 +299,9 @@ export class CursorDictation {
   }
 
   /** Puts the words on the clipboard and shows the copy prompt, so either a manual paste or the Copy button works. */
-  private offer(text: string, app: string, reason: "failed" | "focus-moved" = "failed"): void {
+  private async offer(text: string, app: string, reason: "failed" | "focus-moved" = "failed"): Promise<void> {
     try {
-      this.host.clipboard.writeText(text);
+      await this.host.clipboard.writeText(text);
     } catch (error) {
       // The prompt's Copy button is still there when the clipboard refused the words.
       console.error("cursor dictation", error);

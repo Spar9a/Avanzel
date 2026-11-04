@@ -12,6 +12,7 @@ import {
   type WebContents,
 } from "electron";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -72,6 +73,7 @@ import {
   ANOTHER_LIBRARY,
   avanzelFailure,
   commentNotStartedProblem,
+  copyPromptProblem,
   correctedWordsProblem,
   filingProblem,
   linkedPageNotice,
@@ -123,7 +125,12 @@ import { CALL_CONSENT_DIALOG, CALL_KEPT_LINE, CallNotes, MAX_CALL_MS, type CallH
 import { CallTap } from "./calltap.ts";
 import { fakeCallTranscriber, fakeTranscript, patchedSettings } from "./dictionary-settings.ts";
 import { TranscriberCache } from "./transcriber-cache.ts";
-import { frontContext } from "./front-app.ts";
+import { browserWindow, frontContext } from "./front-app.ts";
+import { electronClipboard } from "./cursor-clipboard.ts";
+import { COPY_PROMPT_MS, CursorDictation, type CursorHost } from "./cursor-dictation.ts";
+import { CursorHelper } from "./cursor-helper.ts";
+import { DEFAULT_SKIP_APPS } from "./cursor-policy.ts";
+import { DictationHistory } from "./dictation-history.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import { answeredFrom, askLinks, captureMeta, captureWords, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog, savedPage } from "./library-info.ts";
@@ -228,6 +235,9 @@ const NOTHING_HEARD: Problem = { title: "Nothing was heard.", body: "Is the righ
 
 /** Fewer samples than this (0.3 s at 16 kHz) are too short to hold speech: a recording of them, a thought's or a question's, has no words. */
 const MIN_SPEECH_SAMPLES = 16000 * 0.3;
+
+/** What a dictation into any app hears when there are no words: too little sound, a recognition that failed, or one that was dropped. */
+const NO_WORDS = { text: "", seconds: 0 };
 
 /** How long quitting waits for stopped agent runs: QUIT_WAIT_MS, or in tests the positive number of ms in AVANZEL_QUIT_WAIT_MS. */
 function quitWaitMs(): number {
@@ -384,6 +394,23 @@ export class Controller {
    */
   private cardUnkept: Problem | null = null;
   private recording: Recording | null = null;
+  /** Dictating into any app: the session from tap to paste (cursor-dictation.ts), with this controller as its host (`cursorHost`). */
+  private readonly cursor: CursorDictation;
+  /** The native helper that sees the key and pastes, while the setting is on and a library is open (`applyCursorDictation`). */
+  private cursorHelper: CursorHelper | null = null;
+  /** The key the running helper was last told to watch. */
+  private cursorKey: AppSettings["cursorDictation"]["key"] | null = null;
+  /** The history of dictations, in the app's own data (`<userData>/dictations.jsonl`), never in the library. */
+  private readonly dictations: DictationHistory;
+  /**
+   * Bumped when a dictation is dropped (`cancelCursorRecording`): a recognition that started before reads it again when it ends, and
+   * its words are thrown away if it has moved on, so they can't be pasted into the next dictation.
+   */
+  private cursorGeneration = 0;
+  /** A dictation's words are being made (`heardForCursor`), so dropping it must tell the session that they won't come. */
+  private cursorRecognising = false;
+  /** The words of the last copy prompt, which its Copy button copies (`copy-dictation`). */
+  private copyPromptText: string | null = null;
   /** Notes on a call: a call is not a recording, and while one runs no recording starts (`CallNotes.refuse`). */
   private readonly calls: CallNotes;
   /** The listening card of the call that runs, which the capsule goes back to instead of hiding (`setCapsule`); null with no call. */
@@ -556,6 +583,8 @@ export class Controller {
     this.firstRun = new FirstRunLog(path.join(userData, "first-run.json"));
     this.captureCount = new CaptureCount(path.join(userData, "captures.json"));
     this.calls = new CallNotes(this.callHost(path.join(userData, "calls")));
+    this.dictations = new DictationHistory(path.join(userData, "dictations.jsonl"));
+    this.cursor = new CursorDictation(this.cursorHost()); // after the history, which the host hands it
     this.setup = new Setup(this.setupHost()); // last: the host hands setup the stores made above
   }
 
@@ -627,6 +656,7 @@ export class Controller {
       this.askChanged();
     }
     this.recoverCalls();
+    this.applyCursorDictation(); // dictating into any app needs a library, whose dictionary its words go through
   }
 
   /** `openLibrary`'s work: the library that is open closes, and the one at `libraryPath`, if any, opens in its place. */
@@ -1326,11 +1356,13 @@ export class Controller {
   /** Record a thought, from its shortcut or the menu. On setup's first-thought step, the press is setup's (`setup.press`). */
   async toggleDictate(): Promise<void> {
     if (this.setup.takesPress()) return this.setup.press();
+    if (this.recording?.forCursor) return; // only the dictation's own key stops it
     if (this.recording) return this.stopRecording();
-    return this.startRecording("dictate");
+    await this.startRecording("dictate");
   }
 
   async toggleCapture(): Promise<void> {
+    if (this.recording?.forCursor) return; // only the dictation's own key stops it
     if (this.recording) return this.stopRecording();
     if (this.calls.refuse()) return;
     if (!(await this.readyToListen())) return;
@@ -1430,36 +1462,41 @@ export class Controller {
    * `forSetup`: setup's first spoken thought (`Setup.recordThought`), which has no file mode to switch (`toggleFileMode` tells why)
    * and is offered no Stop while its words are made (`transcribeWithStop` tells why). `askPage`: the Ask window's `webContents.id`,
    * for a question that window is to hear (`pressDictate`): it has no file mode either, and its words go to that window alone
-   * (`heardQuestion`).
+   * (`heardQuestion`). `forCursor`: a dictation into any app (`startCursorRecording`), which has neither, and which its time limit and
+   * Esc end through the dictation's session, as its key would. True once it listens.
    */
   private async startRecording(
     mode: CapsuleMode,
     shot?: Recording["shot"],
-    { forSetup = false, askPage = null }: { forSetup?: boolean; askPage?: number | null } = {},
-  ): Promise<void> {
+    { forSetup = false, askPage = null, forCursor = false }: { forSetup?: boolean; askPage?: number | null; forCursor?: boolean } = {},
+  ): Promise<boolean> {
     if (this.calls.refuse()) {
       if (shot) rmSync(shot.path, { force: true });
-      return;
+      return false;
     }
-    if (mode === "dictate" && !(await this.readyToListen())) return;
+    if (mode === "dictate" && !(await this.readyToListen())) return false;
     if (this.recording || this.calls.refuse()) {
       // Another tap started one, or a call, while this one waited (say, on the microphone prompt).
       if (shot) rmSync(shot.path, { force: true });
-      return;
+      return false;
     }
     this.clearAudioTimeout();
     const maxSeconds = this.vault ? loadSettings(this.vault.root).voice.maxRecordSeconds : 600;
     const recording: Recording = {
       mode,
-      fileMode: mode === "dictate" && !forSetup && askPage === null ? this.store.get().fileMode : null,
+      fileMode: mode === "dictate" && !forSetup && askPage === null && !forCursor ? this.store.get().fileMode : null,
       forSetup,
       forAsk: askPage !== null,
       askPage,
+      forCursor,
       startedAt: Date.now(),
       shot,
       stopping: false,
       maxTimer: setTimeout(() => {
-        if (this.recording === recording) void this.stopRecording();
+        if (this.recording !== recording) return;
+        // A dictation's session must see its end as a tap, or it would wait for a stop it never asked for.
+        if (forCursor) void this.cursor.tap();
+        else void this.stopRecording();
       }, maxSeconds * 1000),
     };
     this.recording = recording;
@@ -1472,7 +1509,7 @@ export class Controller {
       microphoneId: this.store.get().microphoneId,
       fileMode: recording.fileMode,
       review: reviewTime(this.openReview()),
-      hint: this.hintFor(mode),
+      hint: forCursor ? null : this.hintFor(mode),
       ...(shot ? { thumbnail: shot.thumbnail, context: shot.context } : {}),
     });
     this.capsuleCommand("start");
@@ -1481,6 +1518,7 @@ export class Controller {
     } catch {
       // Esc is a convenience; the menu and the shortcut still stop the recording.
     }
+    return true;
   }
 
   /**
@@ -1533,6 +1571,8 @@ export class Controller {
       this.audioTimeout = null;
       if (this.recording !== recording) return; // only ever this recording, never a newer one
       this.abandonRecording(recording);
+      // A dictation's session waits for its words: it hears none (its line is replaced by the card below at once), so the next tap works.
+      if (recording.forCursor) void this.cursor.heard(NO_WORDS);
       this.recordingFailed(recording, { problem: "lost" }, recordingLost, "open-settings:voice", "Choose microphone");
     }, AUDIO_TIMEOUT_MS);
   }
@@ -1545,6 +1585,10 @@ export class Controller {
   cancelRecording(): void {
     const recording = this.recording;
     if (!recording) return;
+    if (recording.forCursor) {
+      this.cursor.cancel(); // its session drops it (`cancelCursorRecording`), and knows it did
+      if (this.recording !== recording) return;
+    }
     this.abandonRecording(recording);
     this.setCapsule({ kind: "hidden" });
     this.setup.moveThought(recording, { kind: "waiting" });
@@ -1558,7 +1602,9 @@ export class Controller {
   micError(message: string): void {
     const recording = this.recording;
     if (!recording) return void this.calls.cancel((kept) => microphoneProblem(message, kept), "open-settings:voice", "Open Settings");
-    this.abandonRecording(recording);
+    // A dictation is dropped through its session, which would otherwise go on listening for a recording that has gone.
+    if (recording.forCursor) this.cursor.cancel();
+    if (this.recording === recording) this.abandonRecording(recording);
     this.recordingFailed(
       recording,
       { problem: "microphone" },
@@ -1594,6 +1640,7 @@ export class Controller {
     this.clearAudioTimeout();
     this.recording = null;
     if (recording.forAsk) return this.heardQuestion(recording, received);
+    if (recording.forCursor) return this.heardForCursor(recording, received);
     const vault = this.requireVault();
     const now = new Date();
     // What a failure can say is safe: the recording, once written to the library, whether its words were made, and, for a screen
@@ -1697,6 +1744,39 @@ export class Controller {
       console.error("question", error);
       this.recordingFailed(recording, { problem: "unheard" }, unheardProblem(errorMessage(error), null, reasonMax(error)));
     }
+  }
+
+  /**
+   * `recording`, a dictation into any app, has its audio. As for a question (`heardQuestion`), its words go nowhere in the library: no
+   * capture, no kept recording, no count and no filing; the audio is dropped once its words are made. They go to the dictation's session
+   * (`CursorDictation.heard`), which pastes them or offers them. A dictation dropped meanwhile (`cancelCursorRecording`) has moved
+   * `cursorGeneration` on, and its words, or its failure, are thrown away: the session has already been told. A failure tells the
+   * session there are no words, so the next tap works, then puts up the card of a recording that couldn't be turned into words.
+   */
+  private async heardForCursor(recording: Recording, received: Float32Array): Promise<void> {
+    const generation = this.cursorGeneration;
+    const dropped = () => generation !== this.cursorGeneration;
+    this.cursorRecognising = true;
+    let words: { text: string; heard?: string; seconds: number } = NO_WORDS;
+    try {
+      const samples = await this.samplesOf(received);
+      if (samples.length >= MIN_SPEECH_SAMPLES) {
+        const transcript = await this.transcribe(samples);
+        const heard = transcript.heard?.trim();
+        words = { text: transcript.text.trim(), ...(heard ? { heard } : {}), seconds: samples.length / 16000 };
+      }
+    } catch (error) {
+      console.error("cursor dictation", error);
+      if (dropped()) return;
+      this.cursorRecognising = false;
+      void this.cursor.heard(NO_WORDS); // says nothing was heard, which the card below replaces at once
+      return this.recordingFailed(recording, { problem: "unheard" }, unheardProblem(errorMessage(error), null, reasonMax(error)));
+    }
+    if (dropped()) return;
+    this.cursorRecognising = false;
+    // Only the dictation's own card: a recording started since has the capsule.
+    if (this.capsuleState.kind === "transcribing" && this.transcribingCardOf === recording) this.setCapsule({ kind: "hidden" });
+    await this.cursor.heard(words);
   }
 
   /**
@@ -1826,6 +1906,134 @@ export class Controller {
   private keepInInbox({ vault, audioPath, now, samples }: Transcribing): void {
     if (audioPath) moveInto(vault.inbox, audioPath);
     else writeInto(vault.inbox, `${idStamp(now)}.wav`, (file) => writeWav(file, samples, 16000));
+  }
+
+  // ---------------------------------------------------------------- dictating into any app
+
+  /** A tap of the dictation's key, from the helper: it starts a dictation, or ends the one that listens. Nothing while the setting is off. */
+  pressCursorDictation(): void {
+    if (this.cursorHelper) void this.cursor.tap();
+  }
+
+  /** Turns dictating into any app on or off, or chooses its key, as Settings asks; what `patch` leaves out stays as it was. */
+  async setCursorDictation(patch: Partial<AppSettings["cursorDictation"]>): Promise<SettingsSnapshot> {
+    return this.changeApp({ cursorDictation: { ...this.store.get().cursorDictation, ...patch } });
+  }
+
+  /**
+   * Runs the helper while the setting is on and a library is open, and has it watch the chosen key; stops it otherwise. Called at
+   * launch (a library opens), whenever a library opens or closes, and when the setting changes.
+   */
+  private applyCursorDictation(): void {
+    const { enabled, key } = this.store.get().cursorDictation;
+    if (!enabled || !this.vault || this.quitting) return void this.stopCursorHelper();
+    if (!this.cursorHelper) {
+      this.cursorHelper = new CursorHelper({
+        onTap: () => this.pressCursorDictation(),
+        // Settings shows the permissions (Task 7); until then a problem is only logged.
+        onProblem: (message) => console.error("cursor helper", message),
+      });
+      this.cursorHelper.start(key);
+    } else if (key !== this.cursorKey) {
+      this.cursorHelper.setKey(key);
+    }
+    this.cursorKey = key;
+  }
+
+  /**
+   * Stops the helper, and drops a dictation under way (nothing when there is none): one that listens would have no key to end it, and
+   * one whose words are being made would paste them with the dictation turned off. Also for quitting.
+   */
+  async stopCursorHelper(): Promise<void> {
+    const helper = this.cursorHelper;
+    this.cursorHelper = null;
+    this.cursorKey = null;
+    this.cursor.cancel();
+    await helper?.stop();
+  }
+
+  /** What a dictation's session (cursor-dictation.ts) uses of the app: the microphone, the clipboard, the helper and the capsule. */
+  private cursorHost(): CursorHost {
+    const helper = (): CursorHelper => {
+      if (!this.cursorHelper) throw new Error("Dictating into any app is off.");
+      return this.cursorHelper;
+    };
+    return {
+      helper: { inspect: () => helper().inspect(), paste: () => helper().paste() },
+      clipboard: electronClipboard,
+      startListening: () => this.startCursorRecording(),
+      stopListening: () => this.stopCursorRecording(),
+      cancelListening: () => this.cancelCursorRecording(),
+      // One microphone: a thought recording or a call refuses a dictation. A thought being transcribed or filed holds no microphone.
+      busy: () => (this.recording !== null && !this.recording.forCursor) || this.calls.running,
+      browser: (target) => browserWindow(target.app.bundleId),
+      // The library's own skip list and log come with Task 10; until then the password managers are skipped and nothing is logged.
+      skip: () => ({ apps: DEFAULT_SKIP_APPS, sites: [] }),
+      logTo: () => ({ enabled: false, write: () => undefined }),
+      showCopyPrompt: (prompt) => {
+        this.copyPromptText = prompt.text;
+        this.fail(copyPromptProblem(prompt), "copy-dictation", "Copy");
+        this.scheduleHide(COPY_PROMPT_MS); // after `fail`, whose `setCapsule` clears any hide that was set
+      },
+      say: (line) => this.sayForCursor(line),
+      history: this.dictations,
+      now: () => new Date(),
+      newId: () => randomUUID(),
+      wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    };
+  }
+
+  /** The capsule listens for a dictation: as a thought would, without a file mode or hint. A thought already recording refuses it. */
+  private async startCursorRecording(): Promise<boolean> {
+    if (this.recording && !this.recording.forCursor) {
+      this.sayForCursor("refused");
+      return false;
+    }
+    return this.startRecording("dictate", undefined, { forCursor: true });
+  }
+
+  /** The dictation's second tap: its audio is asked for, and arrives at `heardForCursor`. */
+  private stopCursorRecording(): void {
+    if (this.recording?.forCursor) return void this.stopRecording();
+    // The recording has gone already (a microphone that failed): the session would wait for words that never come.
+    void this.cursor.heard(NO_WORDS);
+  }
+
+  /**
+   * Drops the dictation: the recording, if it still listens or its audio is on the way, and the recognition of its words, whose result
+   * is then thrown away (`heardForCursor`). When words were still to come, the session is told now that there are none, so that it
+   * stops waiting for them and the next tap starts a dictation at once.
+   */
+  private cancelCursorRecording(): void {
+    const recording = this.recording;
+    let wordsToCome = this.cursorRecognising;
+    if (recording?.forCursor) {
+      wordsToCome ||= recording.stopping;
+      this.abandonRecording(recording);
+    }
+    this.cursorGeneration += 1;
+    this.cursorRecognising = false;
+    if (wordsToCome) void this.cursor.heard(NO_WORDS);
+  }
+
+  /** The session's one-line answers: refused while something else records, nothing heard, or (Esc) the capsule goes. */
+  private sayForCursor(line: "refused" | "nothing-heard" | "cancelled"): void {
+    if (line === "nothing-heard") return this.fail(NOTHING_HEARD, "open-settings:voice", "Choose microphone");
+    if (line === "cancelled") {
+      // Only the dictation's own card: a thought that records has the capsule otherwise.
+      const own = !this.recording || this.recording.forCursor;
+      if (own && (this.capsuleState.kind === "listening" || this.capsuleState.kind === "transcribing")) this.setCapsule({ kind: "hidden" });
+      return;
+    }
+    // The refusal is a bar for a moment. A thought that listens gets its card back after it, a call its own (`setCapsule`).
+    const back = this.capsuleState;
+    const thought = this.recording;
+    this.setCapsule({ kind: "dictation-refused" });
+    setTimeout(() => {
+      if (this.capsuleState.kind !== "dictation-refused") return;
+      const listening = back.kind === "listening" && thought !== null && this.recording === thought && !thought.stopping;
+      this.setCapsule(listening ? back : { kind: "hidden" });
+    }, NOTHING_TO_UNDO_MS);
   }
 
   // ---------------------------------------------------------------- calls
@@ -3265,6 +3473,14 @@ export class Controller {
       if (this.capsuleState.kind === "error") void this.calls.finishKept(); // its card is replaced by the transcribing one
       return;
     }
+    if (action === "copy-dictation") {
+      // The copy prompt's Copy: the words it shows, whole, go on the clipboard again (the person may have copied something since).
+      if (this.capsuleState.kind === "error" && this.copyPromptText !== null) {
+        void Promise.resolve(electronClipboard.writeText(this.copyPromptText)).catch((error: unknown) => console.error("copy dictation", error));
+      }
+      if (this.capsuleState.kind === "error") this.setCapsule({ kind: "hidden" });
+      return;
+    }
     if (action === "type-a-thought") {
       if (this.capsuleState.kind === "error") {
         this.setCapsule({ kind: "hidden" });
@@ -3319,6 +3535,8 @@ export class Controller {
   // ---------------------------------------------------------------- quick type & ask
 
   openQuick(): void {
+    // Type a thought would take the focus from the app a dictation is meant for, and its words would then be offered, not pasted.
+    if (this.recording?.forCursor) return;
     if (!this.vault) return this.showHome();
     if (!this.quickWindow || this.quickWindow.isDestroyed()) {
       const created = createQuickWindow();
@@ -3880,6 +4098,7 @@ export class Controller {
     if (patch.launchAtLogin !== undefined && process.env.AVANZEL_TEST !== "1" && app.isPackaged) {
       app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
     }
+    if (JSON.stringify(before.cursorDictation) !== JSON.stringify(after.cursorDictation)) this.applyCursorDictation();
     this.broadcast();
     return this.snapshot();
   }
@@ -4031,7 +4250,7 @@ export class Controller {
       setLibrarySettings: (patch) => this.setLibrarySettings(patch),
       changeApp: (patch, picked) => this.changeApp(patch, picked),
       useShortcut: (key, accelerator) => this.useShortcut(key, accelerator),
-      startRecording: (mode, shot) => this.startRecording(mode, shot, { forSetup: true }), // only setup's first spoken thought
+      startRecording: async (mode, shot) => void (await this.startRecording(mode, shot, { forSetup: true })), // only setup's first spoken thought
       hideCapsule: () => this.setCapsule({ kind: "hidden" }),
       openPrivacy: (kind) => this.openPrivacy(kind),
       relaunch: () => this.relaunch(),

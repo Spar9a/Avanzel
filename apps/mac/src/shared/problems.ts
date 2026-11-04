@@ -4,7 +4,7 @@
 // person needs to know, and the window offers one fix. What a Stop says of how it ended is here too (`stoppedLine`): the
 // capsule's Stopped card says it, and a notification says the same when that card is gone. How a line of an error becomes a
 // sentence, and is cut to a card's room, is clip.ts's.
-import { ownLine, shortReason } from "./clip.ts";
+import { ownLine, shortened, shortReason } from "./clip.ts";
 
 // An agent's own line as a sentence is clip.ts's (its clippers need it); the windows and the main process keep importing it from here.
 export { ownLine };
@@ -504,6 +504,25 @@ export function linkedPageNotice(rel: string): Problem {
  * (the engine's gitUsable) until Apple's Command Line Tools are installed.
  */
 export const NO_GIT_LINE = "This Mac has no git yet, so changes can't be undone.";
+
+/** How many characters of a dictation the copy prompt shows: the card is a notice in a small panel, and the whole words are on the clipboard. */
+const COPY_PROMPT_WORDS_MAX = 300;
+
+/**
+ * A dictation into any app whose words didn't go in at the cursor (`CursorHost.showCopyPrompt`): the paste couldn't be sent or the
+ * cursor doesn't take text (`failed`), or the person moved to another window while the words were made (`focus-moved`). It names
+ * the app they were meant for when that is known, shows the words on one line (cut with an ellipsis past 300 characters), and says
+ * what is safe: they are on the clipboard, so a paste puts them in. The card's one fix copies them again.
+ */
+export function copyPromptProblem({ text, app, reason }: { text: string; app: string; reason: "failed" | "focus-moved" }): Problem {
+  const words = shortened(text.replace(/\s+/g, " ").trim(), COPY_PROMPT_WORDS_MAX);
+  const name = app.trim();
+  const meant = name ? `${reason === "focus-moved" ? "The words" : "They"} were meant for ${name}.` : "";
+  return {
+    title: reason === "focus-moved" ? "You moved to another window." : "The words didn't go in.",
+    body: sentences(meant, `“${words}”`, "They are on your clipboard."),
+  };
+}
 
 /**
  * Why a place is too broad for a library (setup-model's tooBroad): it is one of the folders macOS keeps for itself (`system`:

@@ -35,6 +35,8 @@ if (!app.requestSingleInstanceLock()) {
   // An agent check is stopped too, but never waited for; stopForQuit stops them when it runs.
   // Every quit asked while that stop waits (the menu's Quit, ⌘Q, Quit and reopen) waits with it: the first quit's choice stands,
   // and the quit the stop ends with is the one that goes through.
+  // The cursor helper is a process of its own: it is ended with Avanzel, whichever way the quit went.
+  app.on("will-quit", () => void controller?.stopCursorHelper());
   app.on("before-quit", (event) => {
     if (stopped || !controller) return;
     if (stopping) return event.preventDefault();

@@ -1,5 +1,8 @@
 // The contract between the main process and the renderers (capsule, settings, quick-type, ask, setup).
+import type { CursorKey } from "../main/tap-detector.ts";
 import type { AgentFailure, PartialEdits, TooBroad } from "./problems.ts";
+
+export type { CursorKey } from "../main/tap-detector.ts";
 
 export interface FiledPage {
   title: string;
@@ -41,7 +44,8 @@ export type LibraryFolder = "missing" | "empty" | "has-files" | "library";
  * What the one button of the capsule's problem card does: opens a pane of System Settings, or Avanzel's Settings on the pane
  * that fixes the problem; opens Terminal, where an agent signs in; opens Type a thought, where the words of a thought that couldn't
  * be saved still are (`type-a-thought`); or (`refile:<agent>`, the agent's harness name) files the note the card is about again
- * with that agent; or (`finish-call`) makes the notes of the call whose notes weren't made, from what it kept (`CallNotes.finishKept`).
+ * with that agent; or (`finish-call`) makes the notes of the call whose notes weren't made, from what it kept (`CallNotes.finishKept`);
+ * or (`copy-dictation`) copies the words of a dictation that couldn't go in at the cursor, the ones its card shows.
  */
 export type CardAction =
   | "open-microphone-settings"
@@ -50,6 +54,7 @@ export type CardAction =
   | "open-terminal"
   | "type-a-thought"
   | "finish-call"
+  | "copy-dictation"
   | `refile:${string}`;
 
 /**
@@ -219,7 +224,9 @@ export type CapsuleState =
   /** The Undo shortcut was pressed with no filing to take back: a bar says so. It hides by itself. */
   | { kind: "nothing-to-undo" }
   /** A thought, a screen comment or a question was asked for while notes on a call run: a bar says so. It hides by itself. */
-  | { kind: "call-running" };
+  | { kind: "call-running" }
+  /** A dictation into any app was asked for while a thought records or notes on a call run: a bar says so. It hides by itself. */
+  | { kind: "dictation-refused" };
 
 export interface Shortcuts {
   dictate: string;
@@ -241,6 +248,8 @@ export interface AppSettings {
   launchAtLogin: boolean;
   /** The person has agreed, once, to Avanzel hearing a call app's sound for call notes. */
   callConsent: boolean;
+  /** Dictating into any app: a tap of `key` starts and ends a dictation whose words go in at the cursor. Off until the person turns it on. */
+  cursorDictation: { enabled: boolean; key: CursorKey };
 }
 
 export type PermissionStatus = "granted" | "denied" | "not-determined" | "restricted" | "unknown";
@@ -791,6 +800,8 @@ export interface AvanzelBridge {
     /** Settings is open and something else (an error card's Open Settings) asks for another pane. */
     onShowPane(callback: (pane: SettingsPane) => void): () => void;
     setApp(patch: Partial<AppSettings>): Promise<SettingsSnapshot>;
+    /** Turns dictating into any app on or off, or chooses its key; what isn't in `patch` stays. The helper starts, stops or watches the new key at once. */
+    setCursorDictation(patch: Partial<AppSettings["cursorDictation"]>): Promise<SettingsSnapshot>;
     setLibrary(patch: LibraryPatch): Promise<SettingsSnapshot>;
     chooseLibrary(): Promise<SettingsSnapshot>;
     downloadModel(): Promise<SettingsSnapshot>;

@@ -174,6 +174,30 @@ describe("a dictation that pastes", () => {
     expect(stub.prompts).toEqual([]);
   });
 
+  it("waits for a clipboard that answers later (Electron's is asynchronous): the paste sees the words, and the old clipboard comes back", async () => {
+    const stub = stubHost();
+    const later = <T>(value: () => T) => new Promise<T>((resolve) => setTimeout(() => resolve(value()), 5));
+    const { clipboard } = stub.host;
+    stub.host.clipboard = {
+      read: () => later(() => clipboard.read() as ClipboardSnapshot),
+      writeText: (text) => later(() => clipboard.writeText(text) as void),
+      restore: (snapshot) => later(() => clipboard.restore(snapshot) as void),
+    };
+    await dictate(new CursorDictation(stub.host));
+    expect(stub.pasted).toEqual(["milk and eggs"]);
+    expect(stub.state.clip).toEqual(BEFORE);
+    expect(stub.calls.indexOf("clipboard.writeText")).toBeLessThan(stub.calls.indexOf("paste"));
+  });
+
+  it("puts the words on an asynchronous clipboard before showing the copy prompt", async () => {
+    const stub = stubHost({ targets: [target({ pid: 100 }), target({ pid: 200 })] });
+    const { clipboard } = stub.host;
+    stub.host.clipboard = { ...clipboard, writeText: (text) => new Promise<void>((resolve) => setTimeout(() => resolve(clipboard.writeText(text) as void), 5)) };
+    await dictate(new CursorDictation(stub.host));
+    expect(stub.state.clip.text).toBe("milk and eggs");
+    expect(stub.calls.indexOf("clipboard.writeText")).toBeLessThan(stub.calls.indexOf("showCopyPrompt"));
+  });
+
   it("keeps a whole entry: inserted, the app, its window title, and how long it was", async () => {
     const stub = stubHost();
     await dictate(new CursorDictation(stub.host));

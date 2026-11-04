@@ -44,3 +44,6 @@ export const CALL_LISTENING_LINE = "Taking notes on the call";
 
 /** The capsule's bar when a thought, a screen comment or a question is asked for while notes on a call are taken. */
 export const CALL_RUNNING_LINE = "Notes on the call are running. Stop them to record a thought.";
+
+/** The capsule's bar when a dictation into any app is asked for while a thought records or notes on a call are taken. */
+export const DICTATION_REFUSED_LINE = "Something else is recording. Try again when it stops.";

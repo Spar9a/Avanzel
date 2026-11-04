@@ -3,7 +3,7 @@
 // recordings the library has kept.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { isSetupStep, SETUP_STEPS, type AppSettings, type SetupStep, type Shortcuts } from "../shared/ipc.ts";
+import { isSetupStep, SETUP_STEPS, type AppSettings, type CursorKey, type SetupStep, type Shortcuts } from "../shared/ipc.ts";
 
 export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
   version: 1,
@@ -19,7 +19,17 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
   microphoneId: null,
   launchAtLogin: false,
   callConsent: false,
+  cursorDictation: Object.freeze({ enabled: false, key: "right-option" }),
 }) as AppSettings;
+
+const CURSOR_KEYS: readonly CursorKey[] = ["right-option", "left-option", "right-command", "right-control"];
+
+/** The dictation setting as far as it makes sense: a switch that isn't true is off, and a key Avanzel doesn't know is Right Option. */
+function cursorDictationOf(raw: unknown): AppSettings["cursorDictation"] {
+  const given = isRecord(raw) ? raw : {};
+  const key = CURSOR_KEYS.find((known) => known === given.key) ?? "right-option";
+  return { enabled: given.enabled === true, key };
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -51,6 +61,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
     microphoneId: typeof r.microphoneId === "string" && r.microphoneId ? r.microphoneId : null,
     launchAtLogin: r.launchAtLogin === true,
     callConsent: r.callConsent === true,
+    cursorDictation: cursorDictationOf(r.cursorDictation),
   };
 }
 

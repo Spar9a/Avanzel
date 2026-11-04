@@ -98,6 +98,24 @@ describe("settings store", () => {
     store.update({ launchAtLogin: true });
     expect(new SettingsStore(file).get()).toMatchObject({ fileMode: "evening", launchAtLogin: true });
   });
+
+  it("has dictating into any app off, on Right Option, until the person turns it on", () => {
+    expect(DEFAULT_SETTINGS.cursorDictation).toEqual({ enabled: false, key: "right-option" });
+    expect(normalizeSettings({}).cursorDictation).toEqual({ enabled: false, key: "right-option" });
+  });
+
+  it("keeps the dictation switch and a known key, and falls back to Right Option for a key it doesn't know", () => {
+    expect(normalizeSettings({ cursorDictation: { enabled: true, key: "nonsense" } }).cursorDictation).toEqual({ enabled: true, key: "right-option" });
+    expect(normalizeSettings({ cursorDictation: { enabled: true, key: "right-command" } }).cursorDictation).toEqual({ enabled: true, key: "right-command" });
+    expect(normalizeSettings({ cursorDictation: { enabled: "yes", key: 4 } }).cursorDictation).toEqual({ enabled: false, key: "right-option" });
+    expect(normalizeSettings({ cursorDictation: "on" }).cursorDictation).toEqual({ enabled: false, key: "right-option" });
+  });
+
+  it("keeps the dictation setting across an update and a new launch", () => {
+    const file = path.join(tmp(), "settings.json");
+    new SettingsStore(file).update({ cursorDictation: { enabled: true, key: "left-option" } });
+    expect(new SettingsStore(file).get().cursorDictation).toEqual({ enabled: true, key: "left-option" });
+  });
 });
 
 describe("noticed shortcuts", () => {
