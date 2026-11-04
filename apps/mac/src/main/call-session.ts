@@ -157,7 +157,7 @@ export class CallSession {
    * The call as a transcript: each file read once as 16-bit samples and transcribed in turn ("you" first, its floats let go of
    * before "them" is read: the model is big, and so is a long call), the "them" side shifted by its offset, the microphone's
    * pick-up of the call app's sound dropped (`echoSegments`: a "you" segment whose sound is the "them" stream's, late and quieter,
-   * goes; one that only says the same words stays), and the two sides merged by time. `seconds` is the longer stream's length,
+   * goes; one that only says the same words stays; nothing goes with a transcriber without segments), and the two sides merged by time. `seconds` is the longer stream's length,
    * `themHeard` whether the call app's side was ever loud enough to be heard. Throws a NoSpeechError when neither side has any
    * speech. The files stay. `_now` is the controller's clock; the transcript has no use for it.
    */
@@ -167,7 +167,11 @@ export class CallSession {
     const youSegments = await segmentsOf(t, floats(youPcm)); // its floats go once they are transcribed
     const themPcm = readPcm(this.themFile);
     const themSegments = (await segmentsOf(t, floats(themPcm))).map((s) => ({ ...s, start: s.start + offset, end: s.end + offset }));
-    const you = echoSegments(youSegments, youPcm, themPcm, { sampleRate: SAMPLE_RATE, themOffsetSeconds: offset });
+    // A transcriber without segments gives each side as one whole-stream segment: scored whole, a call without headphones could
+    // lose all the person said, so its "you" side is kept as it is (Ruling 18).
+    const you = t.transcribeSegments
+      ? echoSegments(youSegments, youPcm, themPcm, { sampleRate: SAMPLE_RATE, themOffsetSeconds: offset })
+      : youSegments;
     const lines = mergeCall(you, themSegments);
     if (lines.length === 0) throw new NoSpeechError();
     const themSeconds = themPcm.length > 0 ? themPcm.length / SAMPLE_RATE + offset : 0;

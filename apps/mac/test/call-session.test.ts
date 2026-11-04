@@ -239,6 +239,24 @@ describe("CallSession", () => {
     expect((await session.finish(t, new Date())).transcript).toBe("[00:04] Them: Yes, the budget is ready.\n");
   });
 
+  it("never scores a whole stream: with a transcriber without segments, the microphone's side stays even when it is echo", async () => {
+    // Such a transcriber gives each stream as one segment. Scored whole, a call without headphones could pass the threshold and
+    // lose everything the person said, so the echo check is skipped (Ruling 18).
+    const session = new CallSession({ dir: tmp(), app: "zoom.us", startedAt });
+    const them = bursts(6, 1);
+    writeFileSync(session.youFile, s16(echoOf(them)));
+    writeFileSync(session.themFile, s16(them));
+    let calls = 0;
+    const t: Transcriber = {
+      engine: "fake",
+      async transcribe(audio) {
+        const samples = audio as Float32Array;
+        return { text: calls++ === 0 ? "the deadline Friday" : "So the deadline is Friday.", engine: "fake", seconds: samples.length / RATE };
+      },
+    };
+    expect((await session.finish(t, new Date())).transcript).toBe("[00:00] Them: So the deadline is Friday.\n\n[00:00] You: the deadline Friday\n");
+  });
+
   it("keeps a read-back: the other side's words said again in the person's own voice", async () => {
     // The text rule this replaced dropped these: the same words at the same time on both sides.
     const session = new CallSession({ dir: tmp(), app: "zoom.us", startedAt });

@@ -25,6 +25,12 @@ const ECHO_MAX_LAG_SECONDS = 0.4;
 const ECHO_THRESHOLD = 0.2;
 /** A segment shorter than this is never taken for an echo: too little sound to tell. */
 const ECHO_MIN_SECONDS = 0.5;
+/**
+ * A segment longer than this is never taken for an echo. The speech model's segments run a sentence or a few, well under it, so
+ * a longer one is most likely a whole stream or a long part of one. Scored whole, a call without headphones could drop everything
+ * the person said in it.
+ */
+const ECHO_MAX_SECONDS = 30;
 /** A stretch of sound whose energy (the sum of its squared samples in [-1, 1]) is under this is silent: nothing to compare. */
 const ECHO_SILENT = 1e-9;
 /** The largest FFT the correlation is done in: a longer segment is correlated block by block, so its memory stays small. */
@@ -107,13 +113,16 @@ export function echoScore(segment: { start: number; end: number }, youPcm: Int16
 
 /**
  * The "you" segments without those that are the call app's sound picked up again by the microphone: a segment goes when its
- * `echoScore` against the "them" stream reaches the threshold. A segment shorter than half a second stays, and so does every
- * segment when the "them" stream is empty. `youPcm` and `themPcm` are the two streams as recorded (16-bit samples).
+ * `echoScore` against the "them" stream reaches the threshold. A segment shorter than half a second or longer than 30 s stays, and
+ * so does every segment when the "them" stream is empty. `youPcm` and `themPcm` are the two streams as recorded (16-bit samples).
  */
 export function echoSegments(you: readonly TimedText[], youPcm: Int16Array, themPcm: Int16Array, opts: EchoOptions = {}): TimedText[] {
   if (themPcm.length === 0) return [...you];
   const threshold = opts.threshold ?? ECHO_THRESHOLD;
-  return you.filter((segment) => segment.end - segment.start < ECHO_MIN_SECONDS || echoScore(segment, youPcm, themPcm, opts) < threshold);
+  return you.filter((segment) => {
+    const length = segment.end - segment.start;
+    return length < ECHO_MIN_SECONDS || length > ECHO_MAX_SECONDS || echoScore(segment, youPcm, themPcm, opts) < threshold;
+  });
 }
 
 /** Both sides in one list ordered by start; when two begin together, "them" comes first. */

@@ -145,6 +145,15 @@ describe("echoSegments", () => {
     expect(echoSegments([echo], youPcm, themPcm)).toEqual([echo]);
   });
 
+  it("keeps a segment longer than 30 s untouched, echo or not", () => {
+    const longThem = bursts(31, 6);
+    const youPcm = int16(echoOf(longThem));
+    const long = seg(0, 30.5);
+    expect(echoScore(long, youPcm, int16(longThem))).toBeGreaterThan(0.5);
+    expect(echoSegments([long], youPcm, int16(longThem))).toEqual([long]);
+    expect(echoSegments([seg(0, 30)], youPcm, int16(longThem))).toEqual([]); // 30 s itself is still checked
+  });
+
   it("looks no further back than maxLagSeconds", () => {
     const youPcm = int16(echoOf(them, { delay: 0.6 }));
     const echo = seg(0, 4.6);
