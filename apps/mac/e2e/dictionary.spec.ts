@@ -4,6 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { loadSettings } from "../../../packages/engine/src/index.ts";
+import { holdTheQueue, letTheQueueGo } from "./capsule-helpers.ts";
 import { call, capsuleKind, filesUnder, launch, makeLibrary, openSettings, read, snap, speechWav, windowFor } from "./helpers.ts";
 
 const configOf = (library: string) => readFileSync(path.join(library, ".avanzel", "config.toml"), "utf8");
@@ -55,6 +56,25 @@ test("the Dictionary saves its lines when the field is left, and a spoken though
   const text = read(library, path.join("inbox", capture!));
   expect(text).toMatch(/^heard: We tried a local model through Alema$/m);
   expect(text).toContain("---\n\nWe tried a local model through Ollama\n");
+  await app.close();
+});
+
+test("lines typed while an earlier save still waits its turn stay in the field, and leaving it saves them too", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Voice");
+  const field = dictionaryGroup(settings).getByRole("textbox", { name: "Dictionary" });
+  await holdTheQueue(app); // as a filing run would: the save waits its turn
+  await field.fill("Ollama = Alema");
+  await field.press("Tab"); // the save of the first line is sent, and waits
+  await field.fill("Ollama = Alema\nKowalczyk"); // the field again, with a second line, while it waits
+  await letTheQueueGo(app);
+  await call(app, "idleForTests"); // the first save is done in main ...
+  await expect.poll(() => loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema"]);
+  await settings.waitForTimeout(300); // ... and its reply has reached the window, which must not put the field back to it
+  await expect(field).toHaveValue("Ollama = Alema\nKowalczyk");
+  await field.press("Tab");
+  await expect.poll(() => loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema", "Kowalczyk"]);
   await app.close();
 });
 

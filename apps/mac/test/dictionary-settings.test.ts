@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, Vault } from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
+import { frontmatterFields, splitFrontmatter } from "../../../packages/engine/src/core/frontmatter.ts";
 import { cleanDictionary, fakeTranscript, patchedSettings } from "../src/main/dictionary-settings.ts";
 
 const library = async () => (await Vault.init(mkdtempSync(path.join(tmpdir(), "avz-dict-")), { git: false })).root;
@@ -93,5 +94,16 @@ describe("the stand-in for the speech model (AVANZEL_FAKE_TRANSCRIPT)", () => {
     const plain = fakeTranscript("A plain thought", voice);
     const unchanged = vault.newCapture(plain.text, { source: "voice", transcriber: plain.engine, context: { heard: plain.heard } });
     expect(readFileSync(unchanged.path, "utf8")).not.toContain("heard:");
+  });
+
+  it("keeps a `heard:` with quotes, a colon, a leading quote and a line break as one front-matter line that reads back the same", async () => {
+    const vault = new Vault(await library());
+    const heard = `"Alema" said: it's 'fine'\nand # then more`;
+    const capture = vault.newCapture("We tried Ollama", { source: "voice", context: { heard } });
+    const [block, body] = splitFrontmatter(readFileSync(capture.path, "utf8"));
+    expect(block.split("\n").filter((line) => line.startsWith("heard:"))).toHaveLength(1);
+    expect(frontmatterFields(block).get("heard")).toBe(heard);
+    expect(frontmatterFields(block).get("source")).toBe("voice"); // the fields after it are intact
+    expect(body.trim()).toBe("We tried Ollama");
   });
 });

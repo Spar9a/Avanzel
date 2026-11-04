@@ -46,20 +46,29 @@ const dictionaryText = (snap: SettingsSnapshot) => (snap.library?.dictionary ?? 
 /**
  * Voice's "Dictionary" group: the names and terms the speech is corrected to, one per line, saved when the focus leaves the
  * field. The draft is the field's text until then; once saved, it is the lines main kept (blank and repeated ones dropped,
- * spaces tidied). A draft that is what the library holds saves nothing. A save main refuses (too many lines, one too long)
+ * spaces tidied), unless more was typed while the save waited. A draft that is what the library holds, or what a save on its
+ * way holds, saves nothing. A save main refuses (too many lines, one too long)
  * leaves the draft as typed, and the window says why: leaving the field again tries again. The pane keys this by its library,
  * so another library's group starts from its own lines.
  */
 function DictionaryGroup(props: PaneProps): ReactNode {
   const { snap, onChange, attempt } = props;
   const [draft, setDraft] = useState(() => dictionaryText(snap));
+  // The text of the save on its way, if any: a save waits its turn behind filing runs, and leaving the field again with the
+  // same text meanwhile sends no second one.
+  const sending = useRef<string | null>(null);
   const save = async () => {
-    if (draft === dictionaryText(snap)) return;
+    const sent = draft;
+    if (sent === dictionaryText(snap) || sent === sending.current) return;
+    sending.current = sent;
+    // The field shows the lines main kept only if it still holds what was sent: lines typed since stay, and leaving the
+    // field saves them in turn.
     const saved = (next: SettingsSnapshot) => {
       onChange(next);
-      setDraft(dictionaryText(next));
+      setDraft((current) => (current === sent ? dictionaryText(next) : current));
     };
-    await attemptChange({ onChange: saved, attempt }, () => api.setLibrary({ dictionary: draft.split("\n") }));
+    await attemptChange({ onChange: saved, attempt }, () => api.setLibrary({ dictionary: sent.split("\n") }));
+    if (sending.current === sent) sending.current = null;
   };
   return (
     <Group label="Dictionary">
