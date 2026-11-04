@@ -121,7 +121,8 @@ import type {
 import { callAppLabel, runningCallApps, type CallApp } from "./call-apps.ts";
 import { CALL_CONSENT_DIALOG, CALL_KEPT_LINE, CallNotes, MAX_CALL_MS, type CallHost } from "./call-notes.ts";
 import { CallTap } from "./calltap.ts";
-import { fakeTranscript, patchedSettings } from "./dictionary-settings.ts";
+import { fakeCallTranscriber, fakeTranscript, patchedSettings } from "./dictionary-settings.ts";
+import { TranscriberCache } from "./transcriber-cache.ts";
 import { frontContext } from "./front-app.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
@@ -422,8 +423,17 @@ export class Controller {
   /** Corrections no capture holds yet: their refile writes them, or quitting does when its wait runs out first. */
   private readonly unwritten = new Set<Correction>();
   private quitting = false;
-  private transcriber: Transcriber | null = null;
-  private transcriberKey = "";
+  /**
+   * The speech-to-text engine the library's [voice] settings ask for, made again only when they change, the dictionary aside: that
+   * is applied on each use, so editing it never reloads the model. Making one costs nothing (the model loads on first use); one the
+   * settings can't make reports why on use.
+   */
+  private readonly speech = new TranscriberCache((voice) =>
+    makeTranscriber(voice, this.modelsDir).catch((error: unknown): Transcriber => ({
+      engine: "none",
+      transcribe: () => Promise.reject(error),
+    })),
+  );
   private model: ModelStatus = { kind: "missing", bytes: 0 };
   private libraryProblem: string | null = null;
   /**
@@ -701,30 +711,14 @@ export class Controller {
     });
   }
 
-  /**
-   * The engine the library's [voice] settings ask for, made again only when they change. Making one
-   * costs nothing (the model loads on first use); one the settings can't make reports why on use.
-   */
+  /** The engine the library's [voice] settings ask for, with its dictionary (`speech`). */
   private async transcriberFor(voice: VoiceSettings): Promise<Transcriber> {
-    const key = JSON.stringify(voice);
-    if (!this.transcriber || key !== this.transcriberKey) {
-      const made = await makeTranscriber(voice, this.modelsDir).catch((error: unknown): Transcriber => ({
-        engine: "none",
-        transcribe: () => Promise.reject(error),
-      }));
-      this.dropTranscriber(); // the one these settings replace
-      this.transcriber = made;
-      this.transcriberKey = key;
-    }
-    return this.transcriber;
+    return this.speech.for(voice);
   }
 
   /** Lets the speech-to-text engine go: it frees its model (Parakeet's is ~700 MB) once the transcriptions in progress end. */
   private dropTranscriber(): void {
-    const old = this.transcriber;
-    this.transcriber = null;
-    // Not awaited: release() waits for the transcriptions in progress, and `librarian()` would stall behind a long one.
-    old?.release?.().catch((error: unknown) => console.error("speech model", error));
+    this.speech.drop();
   }
 
   /**
@@ -1634,7 +1628,7 @@ export class Controller {
           image: recording.shot.path,
           comment: text,
           ...(text ? { audio: audioPath, transcriber: engine } : {}),
-          context: recording.shot.context,
+          context: { ...recording.shot.context, heard: text ? heard : undefined },
         });
         captured = true;
         this.captureCount.add(); // the screenshot is kept, with or without a comment
@@ -1973,11 +1967,16 @@ export class Controller {
     this.calls.recover();
   }
 
-  /** The library's transcriber, or, with AVANZEL_FAKE_TRANSCRIPT, one that hears those words in each side of a call. */
+  /**
+   * The library's transcriber for a call, or, with AVANZEL_FAKE_TRANSCRIPT, one that hears those words in each side of it. Either
+   * corrects with the dictionary's heard-as entries only: a call keeps no record of what was heard (its audio goes once it is
+   * written), so only the owner's own entries may change its words, never a sound-alike guess.
+   */
   private async callTranscriber(): Promise<Transcriber> {
     const fake = process.env.AVANZEL_FAKE_TRANSCRIPT;
-    if (fake === undefined) return this.transcriberFor(loadSettings(this.requireVault().root).voice);
-    return { engine: "fake", transcribe: async (audio) => ({ text: fake, engine: "fake", seconds: typeof audio === "string" ? 0 : audio.length / 16000 }) };
+    const voice = loadSettings(this.requireVault().root).voice;
+    if (fake === undefined) return this.speech.for(voice, { aliasesOnly: true });
+    return fakeCallTranscriber(fake, voice);
   }
 
   // ---------------------------------------------------------------- filing

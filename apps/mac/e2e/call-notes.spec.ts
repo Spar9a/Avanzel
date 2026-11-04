@@ -7,7 +7,7 @@ import { expect, test, type ElectronApplication } from "@playwright/test";
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { readWav } from "../../../packages/engine/src/index.ts";
+import { loadSettings, readWav, saveSettings } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import { askIsKey, filedInto, onDay } from "./capsule-helpers.ts";
 import { answerDialogs, call, capsuleKind, dialogsAsked, filesUnder, launch, letDialogsGo, makeLibrary, read, speechWav, windowFor } from "./helpers.ts";
@@ -106,7 +106,11 @@ async function expectCallCard(app: ElectronApplication, capsule: Awaited<ReturnT
 }
 
 test("Take notes on a call… with Everything this Mac plays: the call's card, what it refuses meanwhile, and Stop files one call capture", async () => {
-  const { app, library, userData, capsule } = await launchForCalls({ consent: true });
+  // A dictionary whose heard-as entry corrects the call's words, and a term that only sounds like one of them, which a call leaves.
+  const dictionaryLibrary = await makeLibrary();
+  const settings = loadSettings(dictionaryLibrary);
+  saveSettings(dictionaryLibrary, { ...settings, voice: { ...settings.voice, dictionary: ["Budget Plan = budget", "Stahrt"] } });
+  const { app, library, userData, capsule } = await launchForCalls({ consent: true, library: dictionaryLibrary });
   filedInto(library, "ideas", "tulips", "Plant tulips in October", onDay(0)); // a page, so ⌥Space in Ask records a question
   await answerDialogs(app, 1);
   // The item sits right under Capture screen with a comment; nothing offers Stop yet.
@@ -150,7 +154,10 @@ test("Take notes on a call… with Everything this Mac plays: the call's card, w
   // Stop taking notes: one capture of source call in the inbox, and the call's folder is gone.
   await call(app, "menuAction", "call-notes-stop");
   await expect.poll(() => callCaptures(library), { timeout: 60_000 }).toHaveLength(1);
-  expect(read(library, path.join("inbox", callCaptures(library)[0]!))).toContain("Shall we start with the budget?");
+  // Both sides went through the heard-as entry, and not the sound-alike match ("start" sounds like Stahrt).
+  const transcript = read(library, path.join("inbox", callCaptures(library)[0]!));
+  expect(transcript).toContain("Shall we start with the Budget Plan?");
+  expect(transcript).not.toContain("budget?");
   await expect.poll(() => callFolders(userData)).toEqual([]);
   await expectReadyMenu(app);
   await app.close();

@@ -4,7 +4,7 @@ import path from "node:path";
 import { loadSettings, saveSettings, Vault } from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
 import { frontmatterFields, splitFrontmatter } from "../../../packages/engine/src/core/frontmatter.ts";
-import { cleanDictionary, fakeTranscript, patchedSettings } from "../src/main/dictionary-settings.ts";
+import { cleanDictionary, fakeCallTranscriber, fakeTranscript, patchedSettings } from "../src/main/dictionary-settings.ts";
 
 const library = async () => (await Vault.init(mkdtempSync(path.join(tmpdir(), "avz-dict-")), { git: false })).root;
 const configText = (root: string) => readFileSync(path.join(root, ".avanzel", "config.toml"), "utf8");
@@ -45,6 +45,10 @@ describe("saving the dictionary (setLibrarySettings)", () => {
 describe("cleanDictionary", () => {
   it("keeps two lines for one term apart: each is short enough, and both are used", () => {
     expect(cleanDictionary(["Ollama = Alema", "Ollama = Polymer"])).toEqual(["Ollama = Alema", "Ollama = Polymer"]);
+  });
+
+  it("drops a line with no term, which the dictionary could not use", () => {
+    expect(cleanDictionary(["= foo", "Ollama = Alema", "  =  bar, baz", "=", "Kowalczyk"])).toEqual(["Ollama = Alema", "Kowalczyk"]);
   });
 
   it("refuses more lines than the dictionary holds, in plain words", () => {
@@ -94,6 +98,16 @@ describe("the stand-in for the speech model (AVANZEL_FAKE_TRANSCRIPT)", () => {
     const plain = fakeTranscript("A plain thought", voice);
     const unchanged = vault.newCapture(plain.text, { source: "voice", transcriber: plain.engine, context: { heard: plain.heard } });
     expect(readFileSync(unchanged.path, "utf8")).not.toContain("heard:");
+  });
+
+  it("hears each side of a call through the heard-as entries only, as the real call transcriber does", async () => {
+    const both = { dictionary: ["Dmitri", "Ollama = Alema"], dictionarySoundAlike: true };
+    const calls = fakeCallTranscriber("Dimitri will cover Alema", both);
+    expect(calls.engine).toBe("fake");
+    expect(await calls.transcribe(new Float32Array(32000))).toMatchObject({ text: "Dimitri will cover Ollama", engine: "fake", seconds: 2 });
+    expect((await fakeCallTranscriber("Dimitri will cover", both).transcribe("call.wav")).text).toBe("Dimitri will cover");
+    const named = fakeCallTranscriber("Dimitri will cover", { dictionary: ["Dmitri = Dimitri"], dictionarySoundAlike: true });
+    expect((await named.transcribe("call.wav")).text).toBe("Dmitri will cover");
   });
 
   it("keeps a `heard:` with quotes, a colon, a leading quote and a line break as one front-matter line that reads back the same", async () => {
