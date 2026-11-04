@@ -277,6 +277,7 @@ export class CallNotes {
     if (!call) return;
     await this.end(call, "leave");
     const kept = this.keepIfHeard(call);
+    this.host.changed(); // the end's last change came before the folder was kept: the menu now offers to finish it
     this.host.failed(problem(kept), action, actionLabel);
   }
 

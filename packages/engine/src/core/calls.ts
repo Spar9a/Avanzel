@@ -1,6 +1,7 @@
 // A call is two streams of speech: the microphone ("you") and the call app's sound ("them"). Merged by time they read
 // as the transcript of the conversation.
 import type { TimedText } from "../types.ts";
+import { fft, nextPow2 } from "./fft.ts";
 
 export type Speaker = "you" | "them";
 
@@ -8,49 +9,111 @@ export interface CallLine extends TimedText {
   speaker: Speaker;
 }
 
-/** How much of a "you" segment another side's segment must cover for it to count as the same sound. */
-const ECHO_OVERLAP = 0.5;
-/** The covering segment may be at most this many times as long as the "you" one: a short reply inside a long speech is not its echo. */
-const ECHO_LENGTH = 1.5;
-/** The share of a "you" segment's words that must occur, in the same order, in the covering segment. */
-const ECHO_WORDS = 0.6;
-/** A "you" segment of fewer words is never taken for an echo: "Okay, sure." is said on both sides of every call. */
-const ECHO_MIN_WORDS = 3;
+// Without headphones the microphone also hears the call app's sound: the "you" stream holds an echo of the "them" one, late (the
+// speakers, the room), quieter and smeared. The echo is found in the sound, not the words: the tap's "them" stream is the clean
+// original, and a "you" segment that correlates with it closely enough is its echo. (Words fail here: the recognised echo is
+// garbled, and a read-back such as "Friday for the copy, got it" says the other side's words in the person's own voice.)
 
-function words(text: string): string[] {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
-}
+/** The sample rate of both streams, unless told otherwise. */
+const ECHO_SAMPLE_RATE = 16_000;
+/** How late the echo may come after the other side's sound: speakers, the room and the microphone's buffers. */
+const ECHO_MAX_LAG_SECONDS = 0.4;
+/**
+ * A "you" segment whose score (`echoScore`) reaches this is an echo. From a study of 160 clips through the speech model: 12 of 20
+ * echoes caught and none of 99 honest segments dropped (0.15 caught 13 and dropped 1).
+ */
+const ECHO_THRESHOLD = 0.2;
+/** A segment shorter than this is never taken for an echo: too little sound to tell. */
+const ECHO_MIN_SECONDS = 0.5;
+/** A stretch of sound whose energy (the sum of its squared samples in [-1, 1]) is under this is silent: nothing to compare. */
+const ECHO_SILENT = 1e-9;
+/** The largest FFT the correlation is done in: a longer segment is correlated block by block, so its memory stays small. */
+const ECHO_FFT_MAX = 1 << 16;
 
-/** How many words of `a` occur in `b` in the same order (the longest common subsequence). */
-function inOrder(a: readonly string[], b: readonly string[]): number {
-  let row = new Array<number>(b.length + 1).fill(0);
-  for (const word of a) {
-    const next = new Array<number>(b.length + 1).fill(0);
-    for (let j = 1; j <= b.length; j++) next[j] = word === b[j - 1] ? row[j - 1]! + 1 : Math.max(row[j]!, next[j - 1]!);
-    row = next;
-  }
-  return row[b.length]!;
+export interface EchoOptions {
+  /** Both streams' samples per second. Default 16 000. */
+  sampleRate?: number;
+  /** How many seconds after the "you" stream's first sample the "them" stream's first one came. Default 0. */
+  themOffsetSeconds?: number;
+  /** How late an echo may come. Default 0.4 s. */
+  maxLagSeconds?: number;
+  /** The score (`echoScore`) at which a segment is an echo. Default 0.2. */
+  threshold?: number;
 }
 
 /**
- * The "you" segments without those that are the call app's sound picked up again by the microphone (without headphones
- * the same sentence would otherwise be in both streams). A segment of three words or more goes when a "them" segment
- * covers at least half its length, is no more than 1.5 times as long, and says at least 60 % of its words in their order.
- * When either side is a single segment (a transcriber that gives the whole stream as one, or a short call) times say
- * nothing about which sentence is which, and every segment stays.
+ * How much the "you" segment [start, end] (seconds on the "you" stream) sounds like the "them" stream heard up to `maxLagSeconds`
+ * later, from 0 to 1: the largest correlation over those lags, normalised by the segment's own energy and that of the "them" sound
+ * over the same stretch (with no lag). Samples outside either stream count as silence; 0 when either side is silent there.
  */
-export function dropEcho(you: readonly TimedText[], them: readonly TimedText[]): TimedText[] {
-  if (you.length <= 1 || them.length <= 1) return [...you];
-  return you.filter((segment) => {
-    const length = segment.end - segment.start;
-    const spoken = words(segment.text);
-    if (length <= 0 || spoken.length < ECHO_MIN_WORDS) return true;
-    return !them.some((other) => {
-      const overlap = Math.min(segment.end, other.end) - Math.max(segment.start, other.start);
-      if (overlap < length * ECHO_OVERLAP || other.end - other.start > length * ECHO_LENGTH) return false;
-      return inOrder(spoken, words(other.text)) >= spoken.length * ECHO_WORDS;
-    });
-  });
+export function echoScore(segment: { start: number; end: number }, youPcm: Int16Array, themPcm: Int16Array, opts: EchoOptions = {}): number {
+  const rate = opts.sampleRate ?? ECHO_SAMPLE_RATE;
+  const lag = Math.max(0, Math.round((opts.maxLagSeconds ?? ECHO_MAX_LAG_SECONDS) * rate));
+  const shift = Math.round((opts.themOffsetSeconds ?? 0) * rate);
+  const from = Math.max(0, Math.round(segment.start * rate));
+  const to = Math.min(youPcm.length, Math.round(segment.end * rate));
+  const n = to - from;
+  if (n <= 0 || themPcm.length === 0) return 0;
+  const you = (t: number): number => youPcm[from + t]! / 32768;
+  /** The "them" sample heard at "you" sample `from - lag + j`: the reference starts `lag` samples before the segment. */
+  const ref = (j: number): number => {
+    const i = from - lag + j - shift;
+    return i >= 0 && i < themPcm.length ? themPcm[i]! / 32768 : 0;
+  };
+  let youEnergy = 0;
+  let themEnergy = 0;
+  for (let t = 0; t < n; t++) {
+    youEnergy += you(t) ** 2;
+    themEnergy += ref(lag + t) ** 2;
+  }
+  if (youEnergy < ECHO_SILENT || themEnergy < ECHO_SILENT) return 0;
+
+  // corr[m] = sum over t of you(t) * ref(t + m), for m in 0..lag (the echo `lag - m` samples late), block by block: each block's
+  // correlation is one FFT of you + i·ref and one inverse, in a size where nothing wraps round (size >= block + lag).
+  const size = Math.max(nextPow2(Math.min(n + lag, ECHO_FFT_MAX)), nextPow2(2 * lag + 1));
+  const block = size - lag;
+  const re = new Float64Array(size);
+  const im = new Float64Array(size);
+  const outRe = new Float64Array(size);
+  const outIm = new Float64Array(size);
+  const corr = new Float64Array(lag + 1);
+  for (let t0 = 0; t0 < n; t0 += block) {
+    const length = Math.min(block, n - t0);
+    re.fill(0);
+    im.fill(0);
+    for (let t = 0; t < length; t++) re[t] = you(t0 + t);
+    for (let j = 0; j < length + lag; j++) im[j] = ref(t0 + j);
+    fft(re, im);
+    // With Z the transform of a + i·b: A = (Z[k] + conj Z[-k]) / 2, B = (Z[k] - conj Z[-k]) / 2i; the correlation's is conj(A)·B.
+    for (let k = 0; k < size; k++) {
+      const zr = re[k]!;
+      const zi = im[k]!;
+      const wr = re[(size - k) & (size - 1)]!;
+      const wi = im[(size - k) & (size - 1)]!;
+      const ar = (zr + wr) / 2;
+      const ai = (zi - wi) / 2;
+      const br = (zi + wi) / 2;
+      const bi = (wr - zr) / 2;
+      outRe[k] = ar * br + ai * bi;
+      outIm[k] = ar * bi - ai * br;
+    }
+    fft(outRe, outIm, true);
+    for (let m = 0; m <= lag; m++) corr[m]! += outRe[m]!;
+  }
+  let best = 0;
+  for (let m = 0; m <= lag; m++) best = Math.max(best, Math.abs(corr[m]!));
+  return best / Math.sqrt(youEnergy * themEnergy);
+}
+
+/**
+ * The "you" segments without those that are the call app's sound picked up again by the microphone: a segment goes when its
+ * `echoScore` against the "them" stream reaches the threshold. A segment shorter than half a second stays, and so does every
+ * segment when the "them" stream is empty. `youPcm` and `themPcm` are the two streams as recorded (16-bit samples).
+ */
+export function echoSegments(you: readonly TimedText[], youPcm: Int16Array, themPcm: Int16Array, opts: EchoOptions = {}): TimedText[] {
+  if (themPcm.length === 0) return [...you];
+  const threshold = opts.threshold ?? ECHO_THRESHOLD;
+  return you.filter((segment) => segment.end - segment.start < ECHO_MIN_SECONDS || echoScore(segment, youPcm, themPcm, opts) < threshold);
 }
 
 /** Both sides in one list ordered by start; when two begin together, "them" comes first. */

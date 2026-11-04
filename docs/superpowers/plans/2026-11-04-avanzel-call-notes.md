@@ -16,7 +16,7 @@
 
 Branch `call-notes`, from 37d3b54 to 4b7c410, one task per block below. The ledger with every ruling is `.superpowers/sdd/2026-11-04-avanzel-call-notes/progress.md`.
 
-- **Task 1 (engine):** timed speech segments from the transcriber, `dropEcho`, `mergeCall` and `callTranscript`. Two streams, "You" and "Them", become one transcript.
+- **Task 1 (engine):** timed speech segments from the transcriber, `dropEcho` (later replaced by `echoSegments`), `mergeCall` and `callTranscript`. Two streams, "You" and "Them", become one transcript.
 - **Task 2 (engine):** `captureCall` writes a capture of source `call`, and the filing prompt says how to file one (a meeting page, decisions, `- [ ]` lines with owners).
 - **Task 3:** `avanzel-calltap`, the Swift helper (Core Audio process tap), built as one universal binary, bundled at `Resources/calltap/`, signed with the app, with `NSAudioCaptureUsageDescription` in `Info.plist`.
 - **Task 4a:** the helper's process wrapper, the list of call apps, and `CallSession`, which keeps the call's two streams in `calls/<id>/`.
@@ -39,7 +39,7 @@ Rulings that changed the plan:
 
 Final review wave (Task 7, Ruling 13):
 - The helper ends by itself once every tapped pid has exited, and the call then finishes with what was heard and a short notice. A helper that fails before it started says the app wasn't playing sound yet.
-- `dropEcho` leaves a whole-stream side alone, and otherwise drops a "You" segment of 3 words or more only under a "Them" segment no more than 1.5 times as long that says 60 % of its words in order. This replaces Task 1's set rule.
+- Echo is found by sound, not words (Ruling 17, replacing `dropEcho`): `echoSegments` drops a "You" segment of 0.5 s or more whose normalised cross-correlation with the clean "Them" stream, over lags of 0-400 ms, reaches 0.2. In the echo study that caught 12 of 20 echoes and dropped none of 99 honest segments, read-backs among them.
 - `call.json` keeps `themOffsetSeconds`, and every finish (also after a launch) shifts "Them" by it. The consent text names the agent's provider. A call cut short is also offered by a menu row, its notification is held until it is finished, and an unfinished folder expires after 7 days.
 - Also: no Safari, collision-free call ids, a full disk ends the call with its own problem, `NoSpeechError`, the capture's app as people know it ("Zoom"), and truer kept-folder and not-heard copy.
 

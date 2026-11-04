@@ -21,9 +21,14 @@ import type { TapEvent } from "../src/main/calltap.ts";
 const RATE = 16_000;
 const tmp = () => mkdtempSync(path.join(tmpdir(), "avz-notes-"));
 
-/** `seconds` of a constant `level`, as floats (the microphone's blocks) or as s16le bytes (the tap's file). */
-const floats = (seconds: number, level: number) => new Float32Array(Math.round(seconds * RATE)).fill(level);
+/**
+ * `seconds` at `level`: the microphone's blocks as floats whose sign flips every sample, and the tap's file as s16le bytes of a
+ * constant level (`micPcm`: the microphone's sound as a file). The two sides sound nothing alike, so neither is taken for the
+ * other's echo (`echoSegments`).
+ */
+const floats = (seconds: number, level: number) => Float32Array.from({ length: Math.round(seconds * RATE) }, (_, i) => (i % 2 ? -level : level));
 const pcm = (seconds: number, level: number) => Buffer.from(new Int16Array(Math.round(seconds * RATE)).fill(Math.round(level * 32767)).buffer);
+const micPcm = (seconds: number, level: number) => Buffer.from(Int16Array.from(floats(seconds, level), (x) => Math.round(x * 32767)).buffer);
 
 /** Tells the streams apart by their level: the microphone is the louder one here. */
 const transcriber: Transcriber = {
@@ -585,7 +590,7 @@ describe("a call that was cut short", () => {
     /** Whether call.json is there. */
     meta?: boolean;
   }
-  function leftover(callsDir: string, id: string, { you = pcm(2, 0.5), them = pcm(2, 0.1), app = "zoom.us", meta = true }: Leftover = {}) {
+  function leftover(callsDir: string, id: string, { you = micPcm(2, 0.5), them = pcm(2, 0.1), app = "zoom.us", meta = true }: Leftover = {}) {
     const dir = path.join(callsDir, id);
     if (meta) new CallSession({ dir, app, startedAt: new Date(2026, 10, 3, 14, 3) });
     else mkdirSync(dir, { recursive: true });
@@ -784,6 +789,21 @@ describe("the menu settles after a call ends", () => {
     t.taps[0]!.emit({ event: "error", message: "gone" });
     await t.calls.settled();
     expect(t.failed.map((f) => f.title)).toEqual(["The other side of the call stopped being heard."]);
+    expect(t.phases.at(-1)).toBe("idle");
+  });
+
+  it("the last change after a cancel that keeps the folder offers to finish it", async () => {
+    const t = await setup({ answerStop: false, audioTimeoutMs: 20 });
+    await t.calls.start(zoom); // the tap wrote the other side's first seconds
+    const seen: number[] = [];
+    const changed = t.host.changed;
+    t.host.changed = () => {
+      seen.push(t.calls.cutShortCalls); // what the menu's "Finish notes for a call that was cut short" is built from
+      changed();
+    };
+    await t.calls.cancel(() => ({ title: "The microphone didn't start.", body: CALL_KEPT_LINE }));
+    expect(readdirSync(t.callsDir)).toHaveLength(1);
+    expect(seen.at(-1)).toBe(1);
     expect(t.phases.at(-1)).toBe("idle");
   });
 

@@ -3,7 +3,7 @@
 // `finish`, and `finish` deletes nothing: a failed one is tried again on the same files.
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { AvanzelError, callTranscript, dropEcho, mergeCall, type TimedText, type Transcriber } from "@avanzel/engine";
+import { AvanzelError, callTranscript, echoSegments, mergeCall, type TimedText, type Transcriber } from "@avanzel/engine";
 
 const SAMPLE_RATE = 16_000;
 /** The other side counts as heard when its loudest sample reaches this share of full scale. */
@@ -30,39 +30,45 @@ export interface CallMeta {
   themOffsetSeconds: number;
 }
 
-interface Stream {
-  samples: Float32Array;
-  peak: number;
-}
-
-/** A raw s16le file as samples in [-1, 1]; a missing or empty file is no samples. */
-function readStream(file: string): Stream {
+/**
+ * A raw s16le file as its 16-bit samples, read straight into them (the Mac is little-endian, as the file is); a missing or empty
+ * file is no samples.
+ */
+function readPcm(file: string): Int16Array {
   let size: number;
   try {
     size = statSync(file).size;
   } catch {
-    return { samples: new Float32Array(0), peak: 0 };
+    return new Int16Array(0);
   }
-  const samples = new Float32Array(Math.floor(size / 2));
+  const pcm = new Int16Array(Math.floor(size / 2));
+  const bytes = new Uint8Array(pcm.buffer);
   const fd = openSync(file, "r");
-  let peak = 0;
+  let at = 0;
   try {
-    const block = Buffer.alloc(READ_BLOCK);
-    let at = 0;
-    while (at < samples.length) {
-      const wanted = Math.min(block.length, (samples.length - at) * 2);
-      const got = readSync(fd, block, 0, wanted, at * 2);
-      if (got < 2) break;
-      for (let i = 0; i + 1 < got; i += 2, at++) {
-        const value = block.readInt16LE(i) / 32768;
-        samples[at] = value;
-        if (Math.abs(value) > peak) peak = Math.abs(value);
-      }
+    while (at < bytes.length) {
+      const got = readSync(fd, bytes, at, Math.min(READ_BLOCK, bytes.length - at), at);
+      if (got <= 0) break;
+      at += got;
     }
   } finally {
     closeSync(fd);
   }
-  return { samples, peak };
+  return at < bytes.length ? pcm.subarray(0, Math.floor(at / 2)) : pcm;
+}
+
+/** 16-bit samples as floats in [-1, 1], as the transcriber takes them. */
+function floats(pcm: Int16Array): Float32Array {
+  const samples = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) samples[i] = pcm[i]! / 32768;
+  return samples;
+}
+
+/** The loudest sample's share of full scale. */
+function peakOf(pcm: Int16Array): number {
+  let peak = 0;
+  for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]!));
+  return peak / 32768;
 }
 
 /** What one stream says: the transcriber's segments, or, for one that can't give them, the whole stream as one. */
@@ -148,26 +154,27 @@ export class CallSession {
   }
 
   /**
-   * The call as a transcript: each file read and transcribed in turn ("you" first, and let go of before "them" is read: the model
-   * is big, and so is a long call), the "them" side shifted by its offset, the microphone's pick-up of the call app's sound dropped,
-   * and the two sides merged by time. `seconds` is the longer stream's length. Throws a NoSpeechError when neither side has any
+   * The call as a transcript: each file read once as 16-bit samples and transcribed in turn ("you" first, its floats let go of
+   * before "them" is read: the model is big, and so is a long call), the "them" side shifted by its offset, the microphone's
+   * pick-up of the call app's sound dropped (`echoSegments`: a "you" segment whose sound is the "them" stream's, late and quieter,
+   * goes; one that only says the same words stays), and the two sides merged by time. `seconds` is the longer stream's length,
+   * `themHeard` whether the call app's side was ever loud enough to be heard. Throws a NoSpeechError when neither side has any
    * speech. The files stay. `_now` is the controller's clock; the transcript has no use for it.
    */
   async finish(t: Transcriber, _now: Date): Promise<{ transcript: string; seconds: number; themHeard: boolean }> {
     const offset = this.meta.themOffsetSeconds;
-    let you: Stream | null = readStream(this.youFile);
-    const youSeconds = you.samples.length / SAMPLE_RATE;
-    const youSegments = await segmentsOf(t, you.samples);
-    you = null; // its samples can go before the other side's are read
-    const them = readStream(this.themFile);
-    const themSegments = (await segmentsOf(t, them.samples)).map((s) => ({ ...s, start: s.start + offset, end: s.end + offset }));
-    const lines = mergeCall(dropEcho(youSegments, themSegments), themSegments);
+    const youPcm = readPcm(this.youFile);
+    const youSegments = await segmentsOf(t, floats(youPcm)); // its floats go once they are transcribed
+    const themPcm = readPcm(this.themFile);
+    const themSegments = (await segmentsOf(t, floats(themPcm))).map((s) => ({ ...s, start: s.start + offset, end: s.end + offset }));
+    const you = echoSegments(youSegments, youPcm, themPcm, { sampleRate: SAMPLE_RATE, themOffsetSeconds: offset });
+    const lines = mergeCall(you, themSegments);
     if (lines.length === 0) throw new NoSpeechError();
-    const themSeconds = them.samples.length > 0 ? them.samples.length / SAMPLE_RATE + offset : 0;
+    const themSeconds = themPcm.length > 0 ? themPcm.length / SAMPLE_RATE + offset : 0;
     return {
       transcript: callTranscript(lines),
-      seconds: Math.max(youSeconds, themSeconds),
-      themHeard: them.peak >= HEARD_PEAK,
+      seconds: Math.max(youPcm.length / SAMPLE_RATE, themSeconds),
+      themHeard: peakOf(themPcm) >= HEARD_PEAK,
     };
   }
 }
