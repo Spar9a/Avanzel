@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_DICTATION_SKIP_APPS } from "../../src/core/config.ts";
@@ -105,6 +105,35 @@ describe("appendDictation", () => {
 
   it("refuses a date that is not one", async () => {
     await expect(appendDictation(vault(), entry("a1", { at: new Date(Number.NaN) }))).rejects.toBeInstanceOf(AvanzelError);
+  });
+
+  it("refuses an id the day file already holds, in plain words, and leaves the file as it was", async () => {
+    await appendDictation(vault(), entry("twice"));
+    const before = read();
+    const error = await appendDictation(vault(), entry("twice", { at: minutesLater(1), text: "other words" })).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AvanzelError);
+    expect((error as Error).message).toBe("A dictation with the same id is already in that day's file. It was not kept in the library again.");
+    expect(read()).toBe(before);
+    // Another day's file is another file: the id is refused only where it would make a second block.
+    await appendDictation(vault(), entry("twice", { at: new Date("2026-11-06T09:00:00+04:00") }));
+    expect(blockIds(read("2026-11-06"))).toEqual(["twice"]);
+  });
+
+  it("makes the folder and the day file private to the person: 0700 and 0600", async () => {
+    mkdirSync(join(tmp(), "raw"));
+    await appendDictation(vault(), entry("a1"));
+    expect(lstatSync(join(tmp(), "raw", "dictations")).mode & 0o777).toBe(0o700);
+    expect(lstatSync(dayFile()).mode & 0o777).toBe(0o600);
+  });
+
+  it("leaves the mode of a folder and a day file the person made alone", async () => {
+    mkdirSync(join(tmp(), "raw", "dictations"), { recursive: true, mode: 0o755 });
+    chmodSync(join(tmp(), "raw", "dictations"), 0o755);
+    writeFileSync(dayFile(), "# Dictations 2026-11-05\n\n", { mode: 0o644 });
+    chmodSync(dayFile(), 0o644);
+    await appendDictation(vault(), entry("a1"));
+    expect(lstatSync(join(tmp(), "raw", "dictations")).mode & 0o777).toBe(0o755);
+    expect(lstatSync(dayFile()).mode & 0o777).toBe(0o644);
   });
 
   it("starts the entry on a fresh paragraph in a day file edited by hand: no final newline, or Windows line ends", async () => {
@@ -347,6 +376,16 @@ describe("forgetDictation", () => {
     await appendDictation(vault(), entry("f1"));
     await forgetDictation(vault(), "f1", AT);
     expect(readdirSync(join(tmp(), "raw", "dictations"))).toEqual(["2026-11-05.md"]);
+  });
+
+  it("keeps the day file's mode when it rewrites it: private stays private, and a mode the person chose stays theirs", async () => {
+    await appendDictation(vault(), entry("f1"));
+    await appendDictation(vault(), entry("f2", { at: minutesLater(1) }));
+    expect(await forgetDictation(vault(), "f1", AT)).toBe(true);
+    expect(lstatSync(dayFile()).mode & 0o777).toBe(0o600);
+    chmodSync(dayFile(), 0o640);
+    expect(await forgetDictation(vault(), "f2", AT)).toBe(true);
+    expect(lstatSync(dayFile()).mode & 0o777).toBe(0o640);
   });
 });
 

@@ -6,13 +6,15 @@
 // words and the heard line the sequences `<!--` and `-->` are written as `&lt;!--` and `--&gt;`. That reads the same when the Markdown is
 // shown, and no text can then contain a marker, or join pieces into one. (A text that already said `&lt;!--` keeps it as it was.)
 //
-// The day files are the owner's, and may be edited by hand: a missing final newline and Windows line ends are tolerated.
+// The day files are the owner's, and may be edited by hand: a missing final newline and Windows line ends are tolerated. They hold
+// private speech, so the folder is made readable by its owner only (0700) and each day file too (0600); a rewrite keeps the file's mode.
+// An id is used once per day file, so forgetting it can never leave a second block of it behind.
 //
 // Writes are not made under the library lock (`Vault.withLock`): a filing run holds that for minutes, and a dictation must not wait for
 // it. Instead appends and rewrites are queued, one after the other, per library, inside this process. The app is the only writer.
 
 import { randomUUID } from "node:crypto";
-import { appendFileSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { AvanzelError } from "../types.ts";
 import { plainLine } from "./dictionary.ts";
@@ -82,16 +84,31 @@ function append(root: string, entry: DictationLogEntry): void {
   if (Number.isNaN(entry.at.getTime())) throw new AvanzelError("A dictation needs the time it was said. It was not kept in the library.");
   const day = localDate(entry.at);
   const rel = `${FOLDER}/${day}.md`;
+  const folder = join(root, FOLDER);
+  const newFolder = lstatOrNull(folder) === null;
   if (!realFoldersTo(root, rel, true)) {
     throw new AvanzelError(`Avanzel keeps dictations only in plain folders, and ${FOLDER} isn't one: a link or a file is on its path. Remove it, then try again.`);
   }
+  // What was said into other apps is private speech: a folder made here is the person's alone. One they made keeps its mode.
+  if (newFolder) chmodSync(folder, 0o700);
   const file = join(root, rel);
   const there = lstatOrNull(file);
   if (there && !there.isFile()) {
     throw new AvanzelError(`Avanzel keeps dictations only in plain files, and ${rel} isn't one. Remove it, then try again.`);
   }
   const existing = there ? readFileSync(file, "utf8") : "";
-  appendFileSync(file, `${beginning(existing, day)}${block(entry)}`, "utf8");
+  // A second block with the same id could never be forgotten: forgetting removes the first, and the words would stay in the file.
+  if (holdsId(existing, entry.id)) {
+    throw new AvanzelError("A dictation with the same id is already in that day's file. It was not kept in the library again.");
+  }
+  // The mode is used only when the file is made, so a day file the person made, or opened up, keeps theirs.
+  appendFileSync(file, `${beginning(existing, day)}${block(entry)}`, { encoding: "utf8", mode: 0o600 });
+}
+
+/** Whether `text` has the opening marker of `id` on a line of its own, as `findBlock` looks for it. */
+function holdsId(text: string, id: string): boolean {
+  const open = `<!-- dictation ${id} -->`;
+  return text.split("\n").some((line) => line.replace(/\r$/, "") === open);
 }
 
 /** What goes before a new block: the header for a file that is not there or is empty, else what makes the block start a paragraph. */
@@ -139,11 +156,12 @@ function forget(root: string, id: string, at: Date): boolean {
   for (const day of [0, -1, 1].map((offset) => localDate(shifted(at, offset)))) {
     const rel = `${FOLDER}/${day}.md`;
     const file = join(root, rel);
-    if (!lstatOrNull(file)?.isFile() || !realFoldersTo(root, rel, false)) continue;
+    const stat = lstatOrNull(file);
+    if (!stat?.isFile() || !realFoldersTo(root, rel, false)) continue;
     const text = readFileSync(file, "utf8");
     const found = findBlock(text, id);
     if (!found) continue;
-    rewrite(file, text.slice(0, found.start) + text.slice(found.end));
+    rewrite(file, text.slice(0, found.start) + text.slice(found.end), stat.mode & 0o7777);
     return true;
   }
   return false;
@@ -155,11 +173,15 @@ function shifted(date: Date, days: number): Date {
   return moved;
 }
 
-/** The new text written aside in the same folder, then renamed over the file, so a crash leaves the old file whole. */
-function rewrite(file: string, text: string): void {
+/**
+ * The new text written aside in the same folder, then renamed over the file, so a crash leaves the old file whole. The new file is
+ * made private, then given the old one's `mode`, so the words are never readable by others meanwhile and a private file stays private.
+ */
+function rewrite(file: string, text: string, mode: number): void {
   const partial = join(dirname(file), `.${basename(file)}.${randomUUID()}.tmp`);
   try {
-    writeFileSync(partial, text, { encoding: "utf8", flag: "wx" });
+    writeFileSync(partial, text, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    chmodSync(partial, mode);
     renameSync(partial, file);
   } finally {
     rmSync(partial, { force: true });
