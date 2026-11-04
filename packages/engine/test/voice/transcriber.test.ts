@@ -330,6 +330,16 @@ describe("withDictionary", () => {
     ]);
   });
 
+  it("makes the dictionary ready once, so a long call's segments are corrected quickly", async () => {
+    const lines = Array.from({ length: 500 }, (_, i) => `Term${String.fromCharCode(97 + (i % 26))}${i} = heard${i}, ${Array.from({ length: 5 }, (_, a) => `misheard${i}x${a}`).join(", ")}`);
+    const segments = Array.from({ length: 3000 }, (_, i) => ({ start: i, end: i + 1, text: `so we said heard${i % 500} and then the plan moved on again` }));
+    const wrapped = withDictionary(inner({ transcribeSegments: vi.fn(async () => segments) }), lines);
+    const started = performance.now();
+    const corrected = await wrapped.transcribeSegments?.(audio, 16000);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(corrected?.[7]?.text).toBe(`so we said Termh7 and then the plan moved on again`);
+  });
+
   it("does not offer segments when the transcriber cannot time its speech", () => {
     const wrapped = withDictionary(inner({ transcribeSegments: undefined }), ["Ollama = Alema"]);
     expect(wrapped.transcribeSegments).toBeUndefined();

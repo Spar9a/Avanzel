@@ -3,6 +3,8 @@
 // A window of words may become a term only when it sounds like it, is spelt something like it, and stands inside one line
 // with nothing but spaces between its words. Known limit: an ordinary word that is both spelt and sounds close to a
 // term ("election" for "Electron") is still rewritten; the owner can add the term's spelling to their own words list.
+// A window spelt, letter for letter, as any listed term is that term and never becomes another that sounds the same
+// (Katherine and Catherine both listed keep their spellings).
 // A term the speech model splits across two call segments is not corrected, each segment being corrected alone.
 // A term and each alias are one plain line: runs of whitespace and control characters become one space, so a line
 // from a hand-edited config can never carry a newline into a prompt.
@@ -62,17 +64,32 @@ export function parseDictionary(lines: readonly string[]): DictionaryEntry[] {
   return [...byTerm.values()];
 }
 
+/** `text` corrected by `entries`. To correct many texts with one dictionary, compile it once (`compileDictionary`). */
 export function applyDictionary(
   text: string,
   entries: readonly DictionaryEntry[],
   opts: DictionaryOptions = {},
 ): DictionaryResult {
-  if (text === "" || entries.length === 0) return { text, changed: false };
-  const aliased = applyAliases(text, entries);
-  const result = opts.soundAlike === false
-    ? aliased.text
-    : applySoundAlike(aliased.text, entries, aliased.spans, opts.similarity ?? DEFAULT_SIMILARITY);
-  return { text: result, changed: result !== text };
+  return compileDictionary(entries, opts)(text);
+}
+
+/**
+ * `entries` made ready once (the aliases' pattern, the sound-alike candidates and the listed spellings), as a function that
+ * corrects a text as `applyDictionary` does. For a long call's thousands of segments, or every transcript of a transcriber.
+ */
+export function compileDictionary(
+  entries: readonly DictionaryEntry[],
+  opts: DictionaryOptions = {},
+): (text: string) => DictionaryResult {
+  if (entries.length === 0) return (text) => ({ text, changed: false });
+  const aliases = compileAliases(entries);
+  const sound = opts.soundAlike === false ? null : compileSoundAlike(entries, opts.similarity ?? DEFAULT_SIMILARITY);
+  return (text) => {
+    if (text === "") return { text, changed: false };
+    const aliased = aliases ? applyAliases(text, aliases) : { text, spans: [] };
+    const result = sound ? applySoundAlike(aliased.text, sound, aliased.spans) : aliased.text;
+    return { text: result, changed: result !== text };
+  };
 }
 
 const WORD_EDGE_BEFORE = "(?<![\\p{L}\\p{N}_])";
@@ -88,8 +105,13 @@ function foldAlias(value: string): string {
 
 type Span = readonly [start: number, end: number];
 
-/** One pass over the text, so one entry's output is never read as another's alias. */
-function applyAliases(text: string, entries: readonly DictionaryEntry[]): { text: string; spans: Span[] } {
+interface Aliases {
+  termOf: Map<string, string>;
+  pattern: RegExp;
+}
+
+/** Every alias in one pattern, longest first; an alias's words match across spaces and tabs only, never a line break. */
+function compileAliases(entries: readonly DictionaryEntry[]): Aliases | null {
   const termOf = new Map<string, string>();
   for (const entry of entries) {
     for (const alias of entry.heardAs) {
@@ -97,11 +119,14 @@ function applyAliases(text: string, entries: readonly DictionaryEntry[]): { text
       if (folded !== "" && !termOf.has(folded)) termOf.set(folded, entry.term);
     }
   }
-  if (termOf.size === 0) return { text, spans: [] };
+  if (termOf.size === 0) return null;
   const aliases = [...termOf.keys()].sort((a, b) => b.length - a.length);
-  const body = aliases.map((alias) => escapeRegExp(alias).replace(/ /g, "\\s+")).join("|");
-  const pattern = new RegExp(`${WORD_EDGE_BEFORE}(?:${body})${WORD_EDGE_AFTER}`, "giu");
+  const body = aliases.map((alias) => escapeRegExp(alias).replace(/ /g, "[ \\t]+")).join("|");
+  return { termOf, pattern: new RegExp(`${WORD_EDGE_BEFORE}(?:${body})${WORD_EDGE_AFTER}`, "giu") };
+}
 
+/** One pass over the text, so one entry's output is never read as another's alias. */
+function applyAliases(text: string, { termOf, pattern }: Aliases): { text: string; spans: Span[] } {
   const spans: Span[] = [];
   let out = "";
   let last = 0;
@@ -214,37 +239,62 @@ interface Candidate {
 interface Match {
   start: number;
   end: number;
-  term: string;
+  /** The spelling the window takes; null for a listed spelling the window keeps as it is. */
+  term: string | null;
   score: number;
   order: number;
 }
 
-/** Candidates by the first sound of their key, then by the length of the key, so a window meets only terms that could be close. */
-function candidatesOf(entries: readonly DictionaryEntry[]): Map<string, Candidate[][]> {
-  const byFirst = new Map<string, Candidate[][]>();
+/** The score of a window spelt, letter for letter, as a listed term: above every sound-alike score. */
+const EXACT = 2;
+
+/** A listed term by its bare letters: a window spelt so is that term, and never becomes another. */
+interface Spelling {
+  term: string;
+  /** Whether the window takes the term's own spelling (its case, its spaces): only for a term the sound-alike match uses. */
+  respell: boolean;
+  order: number;
+}
+
+interface SoundAlike {
+  /** Candidates by the first sound of their key, then by the length of the key, so a window meets only terms that could be close. */
+  candidates: Map<string, Candidate[][]>;
+  spellings: Map<string, Spelling>;
+  /** The most words a window may have. */
+  longest: number;
+  similarity: number;
+}
+
+function compileSoundAlike(entries: readonly DictionaryEntry[], similarity: number): SoundAlike | null {
+  const candidates = new Map<string, Candidate[][]>();
+  const spellings = new Map<string, Spelling>();
   const seen = new Set<string>();
+  let longest = 0;
   entries.forEach((entry, order) => {
     const term = entry.term.trim();
     if (term === "" || seen.has(term)) return;
     seen.add(term);
     if (/\p{L}/u.test(term.replace(/[A-Za-z]/g, ""))) return;
     const letters = lettersOf(term);
-    if (letters.length < MIN_TERM_LETTERS) return;
-    const key = soundKey(term);
-    if (key.length < MIN_KEY) return;
+    if (letters === "") return;
     const words = term.split(/\s+/).length;
-    const byLength = byFirst.get(key[0] as string) ?? [];
+    longest = Math.max(longest, words);
+    const key = soundKey(term);
+    const usable = letters.length >= MIN_TERM_LETTERS && key.length >= MIN_KEY;
+    if (!spellings.has(letters)) spellings.set(letters, { term, respell: usable, order });
+    if (!usable) return;
+    const byLength = candidates.get(key[0] as string) ?? [];
     const list = byLength[key.length] ?? [];
     list.push({ term, key, letters, minWords: Math.max(1, words - 1), maxWords: words + 2, order });
     byLength[key.length] = list;
-    byFirst.set(key[0] as string, byLength);
+    candidates.set(key[0] as string, byLength);
+    longest = Math.max(longest, words + 2);
   });
-  return byFirst;
+  // With no candidate, nothing can change: a listed spelling that no candidate is only keeps its window as it is.
+  return candidates.size === 0 ? null : { candidates, spellings, longest, similarity };
 }
 
-function applySoundAlike(text: string, entries: readonly DictionaryEntry[], locked: readonly Span[], similarity: number): string {
-  const candidates = candidatesOf(entries);
-  if (candidates.size === 0) return text;
+function applySoundAlike(text: string, { candidates, spellings, longest, similarity }: SoundAlike, locked: readonly Span[]): string {
 
   const words: Word[] = [...text.matchAll(/[\p{L}\p{N}]+(?:['\u2019][\p{L}\p{N}]+)*/gu)].map((m) => {
     const possessive = /^(.*[\p{L}\p{N}])['\u2019][sS]$/u.exec(m[0]);
@@ -263,9 +313,6 @@ function applySoundAlike(text: string, entries: readonly DictionaryEntry[], lock
     breaksBefore.push((breaksBefore[i] as number) + (/^[ \t]+$/.test(gap) ? 0 : 1));
   }
 
-  let longest = 0;
-  for (const byLength of candidates.values()) for (const list of byLength) for (const c of list ?? []) longest = Math.max(longest, c.maxWords);
-
   const best = new Map<string, Match>();
   for (let n = 1; n <= longest; n++) {
     for (let s = 0; s + n <= words.length; s++) {
@@ -273,13 +320,21 @@ function applySoundAlike(text: string, entries: readonly DictionaryEntry[], lock
       if ((breaksBefore[s + n] as number) - (breaksBefore[s + 1] as number) > 0) continue;
       const first = lower[s] as string;
       const lastWord = lower[s + n - 1] as string;
-      if (STOP.has(first) || STOP.has(lastWord)) continue;
+      const stopped = STOP.has(first) || STOP.has(lastWord);
       const joined = lower.slice(s, s + n).join("");
+      const letters = lettersOf(joined);
+      const id = `${s}:${s + n}`;
+      // A window spelt as a listed term is that term: it keeps its letters, whatever else it sounds like.
+      const spelt = spellings.get(letters);
+      if (spelt) {
+        best.set(id, { start: s, end: s + n, term: spelt.respell && !stopped ? spelt.term : null, score: EXACT, order: spelt.order });
+        continue;
+      }
+      if (stopped) continue;
       const key = soundKey(joined);
       if (key.length < MIN_KEY) continue;
       const pool = candidates.get(key[0] as string);
       if (!pool) continue;
-      const letters = lettersOf(joined);
       const reach = similarity > 0 ? Math.floor((key.length * (1 - similarity)) / similarity + 1e-9) : pool.length;
       const nearest: Candidate[] = [];
       for (let len = Math.max(MIN_KEY, key.length - reach); len <= Math.min(pool.length - 1, key.length + reach); len++) {
@@ -294,17 +349,22 @@ function applySoundAlike(text: string, entries: readonly DictionaryEntry[], lock
         if (distance > limit) continue;
         const score = 1 - distance / longer;
         if (score < similarity) continue;
-        const spelt = Math.max(letters.length, c.letters.length);
-        if (1 - levenshtein(letters, c.letters, spelt) / spelt < MIN_LETTER_SIMILARITY) continue;
-        const id = `${s}:${s + n}`;
+        const spelling = Math.max(letters.length, c.letters.length);
+        if (1 - levenshtein(letters, c.letters, spelling) / spelling < MIN_LETTER_SIMILARITY) continue;
         const current = best.get(id);
         if (!current || score > current.score || (score === current.score && c.order < current.order)) best.set(id, { start: s, end: s + n, term: c.term, score, order: c.order });
       }
     }
   }
 
+  // Listed spellings first, the longest of them first; then the best sound, the narrowest window first.
+  const width = (match: Match) => match.end - match.start;
   const ranked = [...best.values()].sort(
-    (a, b) => b.score - a.score || a.end - a.start - (b.end - b.start) || a.order - b.order || a.start - b.start,
+    (a, b) =>
+      b.score - a.score ||
+      (a.score === EXACT ? width(b) - width(a) : width(a) - width(b)) ||
+      a.order - b.order ||
+      a.start - b.start,
   );
   const taken = new Set<number>();
   const chosen: Match[] = [];
@@ -320,7 +380,7 @@ function applySoundAlike(text: string, entries: readonly DictionaryEntry[], lock
   for (const match of chosen.sort((a, b) => b.start - a.start)) {
     const from = (words[match.start] as Word).start;
     const to = (words[match.end - 1] as Word).end;
-    if (text.slice(from, to) !== match.term) out = out.slice(0, from) + match.term + out.slice(to);
+    if (match.term !== null && text.slice(from, to) !== match.term) out = out.slice(0, from) + match.term + out.slice(to);
   }
   return out;
 }

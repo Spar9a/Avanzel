@@ -1,6 +1,6 @@
 // Local speech-to-text: Parakeet through onnxruntime-node, or any speech-to-text CLI.
 import { join } from "node:path";
-import { applyDictionary, parseDictionary } from "../core/dictionary.ts";
+import { compileDictionary, parseDictionary } from "../core/dictionary.ts";
 import { AvanzelError, type TimedText, type Transcriber, type Transcript, type VoiceOptions } from "../types.ts";
 import { CommandTranscriber } from "./command.ts";
 import { locateModel, MissingModelError, MODELS, modelFiles, VAD_MODEL } from "./models.ts";
@@ -85,7 +85,7 @@ export function withDictionary(
 ): Transcriber {
   const entries = parseDictionary(dictionary);
   if (entries.length === 0) return inner;
-  const correct = (text: string) => applyDictionary(text, entries, { soundAlike });
+  const correct = compileDictionary(entries, { soundAlike }); // made ready once, for every transcript and segment
   const wrapped: Transcriber = {
     engine: inner.engine,
     async transcribe(audio, sampleRate) {

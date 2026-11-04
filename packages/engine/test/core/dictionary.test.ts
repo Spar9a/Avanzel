@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyDictionary, parseDictionary } from "../../src/core/dictionary.ts";
+import { applyDictionary, compileDictionary, parseDictionary } from "../../src/core/dictionary.ts";
 
 const STUDY_TERMS = [
   "Avanzel",
@@ -278,7 +278,116 @@ describe("where a match may stand", () => {
   });
 });
 
+describe("listed names that sound alike", () => {
+  it.each([
+    ["Katherine and Catherine met", ["Catherine", "Katherine"]],
+    ["Katherine and Catherine met", ["Katherine", "Catherine"]],
+    ["Dmitry and Dmitri", ["Dmitri", "Dmitry"]],
+    ["Dmitry and Dmitri", ["Dmitry", "Dmitri"]],
+    ["Kowalsky and Kowalski", ["Kowalski", "Kowalsky"]],
+    ["Kowalsky and Kowalski", ["Kowalsky", "Kowalski"]],
+  ])("never rewrites a correctly spelt listed name into another: %s with %j", (text, lines) => {
+    expect(applyDictionary(text, parseDictionary(lines))).toEqual({ text, changed: false });
+  });
+
+  it("matches a listed name by its letters whatever its case, and gives it the listed spelling", () => {
+    expect(fix("katherine and CATHERINE met", ["Catherine", "Katherine"])).toBe("Katherine and Catherine met");
+  });
+
+  it.each([[["Kowalski", "Kowalczyk"]], [["Kowalczyk", "Kowalski"]]])(
+    "keeps the right name and still corrects a mis-heard one in the same sentence (%j)",
+    (lines) => {
+      expect(fix("Kowalski signed for Mr Kowalkzik", lines)).toBe("Kowalski signed for Mr Kowalczyk");
+    },
+  );
+
+  it.each([[["Catherine", "Katherine", "Nandha"]], [["Nandha", "Katherine", "Catherine"]]])(
+    "keeps both similar names and corrects another one beside them (%j)",
+    (lines) => {
+      expect(fix("Catherine wrote to Nanda and Katherine", lines)).toBe("Catherine wrote to Nandha and Katherine");
+    },
+  );
+
+  it("never rewrites a listed name the sound-alike match does not use (too short) into another", () => {
+    expect(fix("Dmitr met Dmitri", ["Dmitri", "Dmitr"])).toBe("Dmitr met Dmitri");
+  });
+});
+
+describe("alias separators", () => {
+  const lines = ["Mark Lee = mark lee"];
+
+  it("joins an alias's words across spaces and tabs", () => {
+    expect(fix("I met mark  lee today", lines)).toBe("I met Mark Lee today");
+    expect(fix("I met mark\tlee today", lines)).toBe("I met Mark Lee today");
+  });
+
+  it("never joins an alias's words across a line break", () => {
+    expect(applyDictionary("I met mark\n\nlee today", parseDictionary(lines), { soundAlike: false }).text).toBe("I met mark\n\nlee today");
+    expect(applyDictionary("I met Mark\nLee today", parseDictionary(lines), { soundAlike: false }).text).toBe("I met Mark\nLee today");
+  });
+});
+
+describe("compileDictionary", () => {
+  const corpus = [
+    "We tried a local model through Alema but it was slow.",
+    "The speech model loads through onks runtime in node.",
+    "I wrote to Nanda and Dimitri about onks runtime for Kowalkzik.",
+    "signed by Mr Kowalkzik on Tuesday",
+    "Clawed code files each capture.",
+    "Katherine and Catherine met",
+    "He said 'Nanda' quietly, at Nanda's house",
+    "I met Mark.\n\nLee went home",
+    "Привет, Дмитрий, как дела",
+    "The deployment failed twice yesterday because of an expired certificate.",
+    "",
+  ];
+  const dictionaries = [
+    STUDY_TERMS,
+    [...STUDY_TERMS, "Ollama = Alema", "Claude Code = Clawed code", "Catherine", "Katherine", "Дмитро = Дмитрий"],
+    ["Nandha = Nanda", "Nandha"],
+  ];
+
+  it.each([{}, { soundAlike: false }, { similarity: 0.8 }])("gives what applyDictionary gives (%j)", (opts) => {
+    for (const lines of dictionaries) {
+      const entries = parseDictionary(lines);
+      const correct = compileDictionary(entries, opts);
+      for (const text of corpus) expect(correct(text)).toEqual(applyDictionary(text, entries, opts));
+    }
+  });
+
+  it("corrects nothing with no entries", () => {
+    expect(compileDictionary([])("through Alema")).toEqual({ text: "through Alema", changed: false });
+  });
+});
+
 describe("speed", () => {
+  it("corrects a long call of 3,000 twelve-word segments against 500 entries, some with 20 aliases, in under 500 ms", () => {
+    const syllables = ["ba", "ko", "ri", "tu", "lem", "san", "dor", "vi", "nex", "mar", "pol", "git"];
+    const make = (i: number) =>
+      `${syllables[i % 12]}${syllables[(i * 7) % 12]}${syllables[(i * 5 + 3) % 12]}${syllables[(i >> 3) % 12]}${i}`;
+    const lines = Array.from({ length: 500 }, (_, i) =>
+      i % 10 === 0
+        ? `${make(i)} = ${Array.from({ length: 20 }, (_, a) => `heard ${make(i * 20 + a + 2000)}`).join(", ")}`
+        : `${make(i)} = heard${make(i + 1000)}`,
+    );
+    const correct = compileDictionary(parseDictionary(lines));
+    const sentence = "The quarterly plan for Rotterdam needs another careful review before Friday morning arrives".split(" ");
+    // Every 50th segment has a one-alias entry's alias; every 100th also has one of a 20-alias entry's.
+    const word = (s: number, w: number) => {
+      if (w === 5 && s % 50 === 0) return `heard${make((s % 500) + 1 + 1000)}`;
+      if (w === 8 && s % 100 === 0) return `heard ${make((s % 500) * 20 + 3 + 2000)}`;
+      return sentence[(s + w) % 14];
+    };
+    const segments = Array.from({ length: 3000 }, (_, s) => Array.from({ length: 12 }, (_, w) => word(s, w)).join(" "));
+    correct(segments[0] as string);
+    const started = performance.now();
+    let changed = 0;
+    for (const segment of segments) if (correct(segment).changed) changed++;
+    const elapsed = performance.now() - started;
+    expect(changed).toBe(60);
+    expect(elapsed).toBeLessThan(500);
+  });
+
   it("corrects a 2,000-word text against 500 entries in under 200 ms", () => {
     const syllables = ["ba", "ko", "ri", "tu", "lem", "san", "dor", "vi", "nex", "mar", "pol", "git"];
     const make = (i: number) =>
