@@ -48,6 +48,8 @@ interface Pending {
   resolve(reply: Record<string, unknown>): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
+  /** The helper process the request went to; its ending rejects only its own requests. */
+  child: ChildProcess;
 }
 
 /** The script `AVANZEL_FAKE_CURSOR` points to: a stand-in for the Mac, for tests that must run without one. */
@@ -97,42 +99,56 @@ export class CursorHelper {
   private detector = new TapDetector();
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
-  /** stop() was called and start() has not been since: the helper is not to be run again, and its ending is no problem. */
+  /** stop() was called and start() has not been since: requests are refused rather than waking the helper again. */
   private closed = false;
-  private exited: Promise<void> | null = null;
-  private fake: { script: FakeScript; timers: ReturnType<typeof setTimeout>[]; targetsGiven: number } | null = null;
+  /** Children that stop() asked to end: their ending is expected, and start() must not reuse them. */
+  private readonly stopping = new WeakSet<ChildProcess>();
+  /** Resolves when a child has ended (or never started). */
+  private readonly exits = new WeakMap<ChildProcess, Promise<void>>();
+  private fake: { script: FakeScript; timers: ReturnType<typeof setTimeout>[]; targetsGiven: number; tapsScheduled: boolean } | null = null;
 
   constructor(private readonly opts: { onTap(): void; onProblem(message: string): void }) {}
 
+  // There is deliberately no backoff: a request after the helper ended starts it again, and if it ends at once every time, every request
+  // fails and calls onProblem once. Callers (a dictation, the setup screen's check) must make a request per person's action, never in a loop.
   /** Runs the helper if it is not running, and has it watch `key`; a call while it runs asks it to watch again, which retries a watch that was refused. */
   start(key: CursorKey): void {
     this.closed = false;
     this.useKey(key);
-    if (process.env.AVANZEL_FAKE_CURSOR) return this.startFake(process.env.AVANZEL_FAKE_CURSOR);
-    if (this.child) this.watch();
+    if (process.env.AVANZEL_FAKE_CURSOR) {
+      try {
+        this.scheduleFakeTaps(this.loadFake(process.env.AVANZEL_FAKE_CURSOR));
+      } catch (error) {
+        this.opts.onProblem(errorText(error));
+      }
+      return;
+    }
+    if (this.child && !this.stopping.has(this.child)) this.watch();
     else this.spawnChild();
   }
 
   /** Watches another key, or the same one again; if the helper is not running the key is kept for the next start(). */
   setKey(key: CursorKey): void {
     this.useKey(key);
-    if (this.child) this.watch();
+    if (this.child && !this.stopping.has(this.child)) this.watch();
   }
 
   /** Whether Avanzel may see the key and use the Accessibility API; `prompt` has macOS ask for both. */
   async permissions(prompt: boolean): Promise<CursorPermissions> {
-    if (this.fake) return this.fake.script.permissions ?? { accessibility: true, inputMonitoring: true };
+    const fake = this.fakeIfOn();
+    if (fake) return fake.script.permissions ?? { accessibility: true, inputMonitoring: true };
     const reply = await this.request({ cmd: "permissions", prompt });
     return { accessibility: reply.accessibility === true, inputMonitoring: reply.inputMonitoring === true };
   }
 
   /** The app in front and what holds its cursor. Rejects when no app is in front. */
   async inspect(): Promise<Target> {
-    if (this.fake) {
-      const { targets = [] } = this.fake.script;
-      const target = targets[Math.min(this.fake.targetsGiven, targets.length - 1)];
+    const fake = this.fakeIfOn();
+    if (fake) {
+      const { targets = [] } = fake.script;
+      const target = targets[Math.min(fake.targetsGiven, targets.length - 1)];
       if (!target) throw new Error("The fake cursor helper has no targets.");
-      this.fake.targetsGiven += 1;
+      fake.targetsGiven += 1;
       return target;
     }
     return targetFrom(await this.request({ cmd: "inspect" }));
@@ -140,8 +156,9 @@ export class CursorHelper {
 
   /** Has the front app paste what is on the clipboard (Command-V). Rejects when Accessibility is not granted. */
   async paste(): Promise<void> {
-    if (this.fake) {
-      const { pasteOut } = this.fake.script;
+    const fake = this.fakeIfOn();
+    if (fake) {
+      const { pasteOut } = fake.script;
       if (pasteOut) appendFileSync(pasteOut, await CursorHelper.fakeClipboardText());
       return;
     }
@@ -156,13 +173,15 @@ export class CursorHelper {
       this.fake = null;
     }
     const child = this.child;
-    if (child && child.exitCode === null && child.signalCode === null) {
+    if (!child) return;
+    this.stopping.add(child);
+    if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGTERM");
       const timer = setTimeout(() => child.kill("SIGKILL"), KILL_AFTER_MS);
       timer.unref();
       child.once("close", () => clearTimeout(timer));
     }
-    await this.exited;
+    await this.exits.get(child);
   }
 
   private useKey(key: CursorKey): void {
@@ -206,18 +225,25 @@ export class CursorHelper {
     const end = (message: string): void => {
       if (ended) return;
       ended = true;
+      // Only this child's ending: a newer child (stop() then start()) is not touched, nor are its requests.
       if (this.child === child) this.child = null;
-      const expected = this.closed;
-      this.rejectAll(new HelperGone(message));
-      if (!expected) this.opts.onProblem(message);
+      this.rejectAll(child, new HelperGone(message));
+      if (!this.stopping.has(child)) this.opts.onProblem(message);
     };
-    child.on("error", (error) => end(errorText(error)));
-    child.on("close", (code) => end(code === null ? "The cursor helper stopped unexpectedly." : `The cursor helper stopped (exit code ${code}).`));
-    // 'close' does not always follow a failed spawn, so an error counts as the end too; waiting for 'close' alone could hang stop().
-    this.exited = new Promise<void>((resolve) => {
-      child.once("close", () => resolve());
-      child.once("error", () => resolve());
+    // An 'error' with a pid is a failed kill or write on a running helper, not its end ('close' follows when it does end); one without
+    // a pid is a spawn that failed, after which 'close' may never come.
+    const failedToStart = (): boolean => child.pid === undefined;
+    child.on("error", (error) => {
+      if (failedToStart()) end(errorText(error));
     });
+    child.on("close", (code) => end(code === null ? "The cursor helper stopped unexpectedly." : `The cursor helper stopped (exit code ${code}).`));
+    this.exits.set(
+      child,
+      new Promise<void>((resolve) => {
+        child.once("close", () => resolve());
+        child.once("error", () => failedToStart() && resolve());
+      }),
+    );
 
     this.watch();
   }
@@ -250,18 +276,19 @@ export class CursorHelper {
     else waiting.reject(new Error(text(message.message, "The cursor helper could not do that.")));
   }
 
-  private rejectAll(error: Error): void {
+  private rejectAll(child: ChildProcess, error: Error): void {
     for (const [id, waiting] of this.pending) {
+      if (waiting.child !== child) continue;
       clearTimeout(waiting.timer);
       waiting.reject(error);
       this.pending.delete(id);
     }
   }
 
-  /** Sends a command and waits for the reply that carries its id, for at most three seconds. */
+  /** Sends a command and waits for the reply that carries its id, for at most three seconds. Starts the helper if it is not running. */
   private request(command: Record<string, unknown>): Promise<Record<string, unknown>> {
     if (this.closed) return Promise.reject(new HelperGone("The cursor helper is not running."));
-    if (!this.child) this.spawnChild();
+    if (!this.child || this.stopping.has(this.child)) this.spawnChild();
     const child = this.child;
     if (!child) return Promise.reject(new HelperGone("The cursor helper could not start."));
     const id = this.nextId++;
@@ -270,23 +297,35 @@ export class CursorHelper {
         this.pending.delete(id);
         reject(new Error("The cursor helper didn't answer."));
       }, REQUEST_TIMEOUT_MS);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, child });
       child.stdin!.write(`${JSON.stringify({ id, ...command })}\n`);
     });
   }
 
-  private startFake(file: string): void {
-    if (this.fake) return;
+  /** With `AVANZEL_FAKE_CURSOR` set the fake is the helper for every call, and the real binary is never run; null when it is not set. */
+  private fakeIfOn(): NonNullable<CursorHelper["fake"]> | null {
+    const file = process.env.AVANZEL_FAKE_CURSOR;
+    return file ? this.loadFake(file) : null;
+  }
+
+  /** Reads the fake's script the first time it is needed. A script that cannot be read is an error for the caller, plainly said. */
+  private loadFake(file: string): NonNullable<CursorHelper["fake"]> {
+    if (this.fake) return this.fake;
     let script: FakeScript;
     try {
       script = JSON.parse(readFileSync(file, "utf8")) as FakeScript;
     } catch (error) {
-      this.opts.onProblem(errorText(error));
-      return;
+      throw new Error(`The fake cursor helper's script couldn't be read: ${errorText(error)}`);
     }
-    const fake = { script, timers: [] as ReturnType<typeof setTimeout>[], targetsGiven: 0 };
-    this.fake = fake;
-    for (const at of script.taps ?? []) fake.timers.push(setTimeout(() => this.opts.onTap(), at));
+    this.fake = { script, timers: [], targetsGiven: 0, tapsScheduled: false };
+    return this.fake;
+  }
+
+  /** The scripted taps count from start(), once. */
+  private scheduleFakeTaps(fake: NonNullable<CursorHelper["fake"]>): void {
+    if (fake.tapsScheduled) return;
+    fake.tapsScheduled = true;
+    for (const at of fake.script.taps ?? []) fake.timers.push(setTimeout(() => this.opts.onTap(), at));
   }
 }
 

@@ -282,9 +282,128 @@ handle = (command) => reply(command, { accessibility: true, inputMonitoring: tru
     expect(problems).toEqual([]);
     await expect(helper.inspect()).rejects.toThrow();
   });
+
+  it("starts the helper for a request made before start()", async () => {
+    stub(`handle = (command) => reply(command, { accessibility: false, inputMonitoring: true });`);
+    const { helper, problems } = make();
+    await expect(helper.permissions(false)).resolves.toEqual({ accessibility: false, inputMonitoring: true });
+    expect(problems).toEqual([]);
+  });
+
+  it("starts the helper again for a request after it crashed, and answers it", async () => {
+    const marker = path.join(tmp(), "crashed");
+    const pidFile = path.join(tmp(), "pid.txt");
+    stub(`
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(pidFile)}, process.pid + "\\n");
+handle = (command) => {
+  if (command.cmd === "inspect" && !fs.existsSync(${JSON.stringify(marker)})) {
+    fs.writeFileSync(${JSON.stringify(marker)}, "x");
+    process.exit(3);
+  }
+  reply(command, ${JSON.stringify(front("Notes"))});
+};`);
+    const { helper, problems } = make();
+    helper.start("right-option");
+    await expect(helper.inspect()).rejects.toThrow(/stopped/i);
+    expect(problems).toHaveLength(1);
+    expect((await helper.inspect()).app.name).toBe("Notes");
+    expect(problems).toHaveLength(1);
+    expect(new Set(readFileSync(pidFile, "utf8").trim().split("\n")).size).toBe(2);
+  });
+
+  it("gives a fresh helper to a start() right after stop(), with no problem reported for the one that ended", async () => {
+    const pidFile = path.join(tmp(), "pid.txt");
+    const log = path.join(tmp(), "log.txt");
+    stub(`
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(pidFile)}, process.pid + "\\n");
+handle = (command) => {
+  fs.appendFileSync(${JSON.stringify(log)}, process.pid + " " + command.cmd + "\\n");
+  reply(command, { accessibility: true, inputMonitoring: true });
+};`);
+    const { helper, problems } = make();
+    helper.start("right-option");
+    await helper.permissions(false);
+    const stopped = helper.stop();
+    helper.start("right-option");
+    await stopped;
+    await expect(helper.permissions(false)).resolves.toEqual({ accessibility: true, inputMonitoring: true });
+    // Let the old helper's ending be heard if it was going to be.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(problems).toEqual([]);
+    const pids = readFileSync(pidFile, "utf8").trim().split("\n");
+    expect(new Set(pids).size).toBe(2);
+    // The new helper was the one to watch and to answer; the old one got nothing after stop().
+    const lines = readFileSync(log, "utf8").trim().split("\n");
+    expect(lines.filter((line) => line.startsWith(`${pids[1]} `)).map((line) => line.split(" ")[1])).toEqual(["watch", "permissions"]);
+  });
+
+  it("fails each request, and calls onProblem once for each, when the helper exits every time it starts", async () => {
+    stub(`process.exit(1);`);
+    const { helper, problems } = make();
+    for (const round of [1, 2, 3]) {
+      await expect(helper.permissions(false)).rejects.toThrow(/stopped/i);
+      expect(problems).toHaveLength(round);
+    }
+  });
 });
 
 describe("CursorHelper with the fake helper", () => {
+  /** A binaryPath that counts how often something asks to run the real helper. */
+  function realHelperWatch(): { spawns: () => number } {
+    let spawns = 0;
+    CursorHelper.binaryPath = () => {
+      spawns += 1;
+      return path.join(tmp(), "never-run");
+    };
+    return { spawns: () => spawns };
+  }
+
+  it("answers permissions before start() from the script, and never runs the real helper", async () => {
+    const script = path.join(tmp(), "fake.json");
+    writeFileSync(script, JSON.stringify({ permissions: { accessibility: false, inputMonitoring: true } }));
+    process.env.AVANZEL_FAKE_CURSOR = script;
+    const real = realHelperWatch();
+    const { helper, problems } = make();
+    await expect(helper.permissions(false)).resolves.toEqual({ accessibility: false, inputMonitoring: true });
+    expect(real.spawns()).toBe(0);
+    expect(problems).toEqual([]);
+  });
+
+  it("still fires the scripted taps when start() comes after a request", async () => {
+    const script = path.join(tmp(), "fake.json");
+    writeFileSync(script, JSON.stringify({ taps: [5] }));
+    process.env.AVANZEL_FAKE_CURSOR = script;
+    const { helper, tapped } = make();
+    await helper.permissions(false);
+    helper.start("right-option");
+    await tapped;
+  });
+
+  it("rejects every request, and runs nothing real, when the script cannot be read", async () => {
+    process.env.AVANZEL_FAKE_CURSOR = path.join(tmp(), "missing.json");
+    const real = realHelperWatch();
+    const { helper, problems } = make();
+    await expect(helper.permissions(false)).rejects.toThrow(/script couldn't be read/);
+    await expect(helper.inspect()).rejects.toThrow(/script couldn't be read/);
+    await expect(helper.paste()).rejects.toThrow(/script couldn't be read/);
+    helper.start("right-option");
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/script couldn't be read/);
+    expect(real.spawns()).toBe(0);
+  });
+
+  it("rejects when the script is not JSON, and runs nothing real", async () => {
+    const script = path.join(tmp(), "fake.json");
+    writeFileSync(script, "not json");
+    process.env.AVANZEL_FAKE_CURSOR = script;
+    const real = realHelperWatch();
+    const { helper } = make();
+    await expect(helper.inspect()).rejects.toThrow(/script couldn't be read/);
+    expect(real.spawns()).toBe(0);
+  });
+
   it("fires the scripted taps, returns the scripted targets (the last repeats) and appends the clipboard on paste", async () => {
     const dir = tmp();
     const pasteOut = path.join(dir, "pasted.txt");
