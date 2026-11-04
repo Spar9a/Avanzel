@@ -86,7 +86,14 @@ function endsMidLine(file: string): boolean {
  * file can't be rewritten.
  */
 export class DictationHistory {
-  constructor(private readonly file: string) {}
+  /**
+   * `onChange` is called after an entry was added or removed, so that what shows the history (the Dictations pane, the menu's
+   * "Forget the last dictation") can read it again. It is told nothing of the entry, and a failure in it costs nothing here.
+   */
+  constructor(
+    private readonly file: string,
+    private readonly onChange?: () => void,
+  ) {}
 
   add(entry: DictationEntry): void {
     try {
@@ -94,6 +101,16 @@ export class DictationHistory {
       // A line cut short by a crash would swallow this entry if it were glued on, so this one starts a fresh line.
       const lead = endsMidLine(this.file) ? "\n" : "";
       appendFileSync(this.file, `${lead}${JSON.stringify(entry)}\n`, { mode: 0o600 });
+    } catch (error) {
+      console.error("dictation history", error);
+      return;
+    }
+    this.changed();
+  }
+
+  private changed(): void {
+    try {
+      this.onChange?.();
     } catch (error) {
       console.error("dictation history", error);
     }
@@ -139,6 +156,7 @@ export class DictationHistory {
     const partial = `${this.file}.tmp`;
     writeFileSync(partial, kept.map((line) => `${line}\n`).join(""), { mode: 0o600 });
     renameSync(partial, this.file);
+    this.changed();
     return removed;
   }
 

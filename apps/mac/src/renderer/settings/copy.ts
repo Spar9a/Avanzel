@@ -10,6 +10,7 @@ import { NO_GIT_LINE, ownLine } from "../../shared/problems.ts";
 export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
   general: "General",
   voice: "Voice",
+  dictations: "Dictations",
   agents: "Agents",
   tasks: "Reviews",
   privacy: "Privacy",
@@ -88,6 +89,40 @@ export function cursorKeyOptions(chosen: CursorKey): PickOption[] {
 
 /** The "Dictate into any app" switch's description: how it works, in one sentence. */
 export const CURSOR_DICTATION_DESCRIPTION = "Tap the key once to start and once to finish. The words go where the cursor is.";
+
+/** The Dictations pane when the history is empty: the one line, and how to start. */
+export const DICTATIONS_EMPTY = "Nothing dictated yet.";
+export const DICTATIONS_START = "Turn on Dictate into any app in Voice, then tap its key and speak. What you say shows here.";
+
+/** Under a dictation whose words were not pasted: they were only copied, and Copy gives them again. */
+export const DICTATION_NOT_INSERTED = "These words didn't go in. Copy them to paste yourself.";
+
+/** The title of the Notice for a Delete the history refused; main's message says what is safe and the one fix. */
+export const DICTATION_NOT_DELETED = "That dictation couldn't be deleted.";
+
+/** The Notice for a Copy the clipboard refused: what happened, what is safe, and the one fix. */
+export const DICTATION_NOT_COPIED = "Those words couldn't be copied.";
+export const DICTATION_NOT_COPIED_BODY = "They are still in the history. Try copying them again.";
+
+/**
+ * When a dictation was said, in this Mac's time: "09:05" today, "Yesterday 23:59", "3 Nov 14:03" before that, and with the year
+ * when it was not this year. A time that can't be read is nothing at all.
+ */
+export function dictationWhen(at: string, now: Date): string {
+  const moment = new Date(at);
+  if (Number.isNaN(moment.getTime())) return "";
+  const time = `${twoDigits(moment.getHours())}:${twoDigits(moment.getMinutes())}`;
+  const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(moment, now)) return time;
+  if (sameDay(moment, new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) return `Yesterday ${time}`;
+  const year = moment.getFullYear() === now.getFullYear() ? "" : ` ${moment.getFullYear()}`;
+  return `${moment.getDate()} ${MONTHS[moment.getMonth()]}${year} ${time}`;
+}
+
+/** Where a dictation went: the app, and its window's title, or else the page's site, when it has either. */
+export function dictationPlace({ app, title, site }: { app: string; title: string | null; site: string | null }): { app: string; detail: string | null } {
+  return { app: app || "An app Avanzel couldn't see", detail: title || site || null };
+}
 
 /** The key row's description: a tap on its own is what counts. */
 export const CURSOR_KEY_DESCRIPTION = "Tap it on its own. Used with another key, it does nothing.";

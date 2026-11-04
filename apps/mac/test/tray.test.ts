@@ -241,6 +241,7 @@ describe("MenuBar's menu", () => {
     undoableFiling: false,
     showableReceipt: false,
     hasReceipt: false,
+    forgettableDictation: false,
   });
   type Item = { label?: string; sublabel?: string; icon?: { template: boolean; representations: { scaleFactor: number; buffer: Buffer }[] } };
   /** The items of the menu built last. */

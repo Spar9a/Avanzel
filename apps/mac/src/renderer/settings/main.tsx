@@ -10,6 +10,7 @@ import { createRoot } from "react-dom/client";
 import { SETTINGS_PANES, isSettingsPane, type AvanzelBridge, type SettingsPane, type SettingsSnapshot } from "../../shared/ipc.ts";
 import { PANE_LABELS, refusedCall } from "./copy.ts";
 import { Agents } from "./panes/Agents.tsx";
+import { Dictations } from "./panes/Dictations.tsx";
 import { General } from "./panes/General.tsx";
 import { Privacy } from "./panes/Privacy.tsx";
 import { Reviews, useReviewEdits, type ReviewEdits } from "./panes/Reviews.tsx";
@@ -38,7 +39,7 @@ const FOCUS_ROOM = 16;
 /**
  * What pane `pane` holds. A pane that needs a library is drawn here only while there is one, with NoLibrary in its place
  * otherwise (`snap.library?.exists ? <Pane {...props} /> : <NoLibrary {...props} />`), rather than returning early above
- * its own hooks. Voice and Privacy need none, and General shows the Notice itself, among its other groups. Reviews, and
+ * its own hooks. Voice, Dictations (the history is the app's own) and Privacy need none, and General shows the Notice itself, among its other groups. Reviews, and
  * General, which can turn the evening review on, are given the window's `edits`.
  */
 function paneContent(pane: SettingsPane, props: PaneProps, edits: ReviewEdits, dictionary: DictionaryEdit): ReactNode {
@@ -47,6 +48,8 @@ function paneContent(pane: SettingsPane, props: PaneProps, edits: ReviewEdits, d
       return <General {...props} edits={edits} />;
     case "voice":
       return <Voice {...props} dictionary={dictionary} />;
+    case "dictations":
+      return <Dictations />;
     case "agents":
       return props.snap.library?.exists ? <Agents {...props} /> : <NoLibrary {...props} />;
     case "tasks":

@@ -68,7 +68,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { isSettingsPane, noSuchReview } from "../shared/ipc.ts";
+import { isSettingsPane, noSuchReview, type DeleteDictationResult, type DictationRow } from "../shared/ipc.ts";
 import {
   ANOTHER_LIBRARY,
   avanzelFailure,
@@ -130,7 +130,8 @@ import { electronClipboard } from "./cursor-clipboard.ts";
 import { COPY_PROMPT_MS, CursorDictation, type CursorHost } from "./cursor-dictation.ts";
 import { CursorHelper, cursorPermissionsOf, type CursorPermissionState } from "./cursor-helper.ts";
 import { DEFAULT_SKIP_APPS } from "./cursor-policy.ts";
-import { DictationHistory } from "./dictation-history.ts";
+import { DictationHistory, type DictationEntry } from "./dictation-history.ts";
+import { deleteDictationResult, forgetDictation, rowOf } from "./dictation-rows.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import { answeredFrom, askLinks, captureMeta, captureWords, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog, savedPage } from "./library-info.ts";
@@ -403,6 +404,17 @@ export class Controller {
   /** The history of dictations, in the app's own data (`<userData>/dictations.jsonl`), never in the library. */
   private readonly dictations: DictationHistory;
   /**
+   * Whether the history holds a dictation, for the menu, which is built often: null until it is asked, and again after every change to
+   * the history (`dictationsChanged`), so that the file is not read at each build.
+   */
+  private hasDictation: boolean | null = null;
+  /**
+   * Called with the entry that "Forget the last dictation" or a pane's Delete has just taken out of the history (`forgetDictation`).
+   * It exists so that whatever else keeps a copy of a dictation can drop it too: the library's day file, once dictations are logged
+   * there. Nothing is set yet, so only the history forgets.
+   */
+  onForget: ((entry: DictationEntry) => void) | undefined = undefined;
+  /**
    * Bumped when a dictation is dropped (`cancelCursorRecording`): a recognition that started before reads it again when it ends, and
    * its words are thrown away if it has moved on, so they can't be pasted into the next dictation.
    */
@@ -583,7 +595,7 @@ export class Controller {
     this.firstRun = new FirstRunLog(path.join(userData, "first-run.json"));
     this.captureCount = new CaptureCount(path.join(userData, "captures.json"));
     this.calls = new CallNotes(this.callHost(path.join(userData, "calls")));
-    this.dictations = new DictationHistory(path.join(userData, "dictations.jsonl"));
+    this.dictations = new DictationHistory(path.join(userData, "dictations.jsonl"), () => this.dictationsChanged());
     this.cursor = new CursorDictation(this.cursorHost()); // after the history, which the host hands it
     this.setup = new Setup(this.setupHost()); // last: the host hands setup the stores made above
   }
@@ -878,6 +890,7 @@ export class Controller {
       this.rereadVoiceSettings();
       return this.showSettings("voice");
     }
+    if (action === "forget-dictation") return this.forgetLastDictation();
     if (action === "show-receipt") return this.showLastReceipt();
     if (action === "undo-filing") return this.undoLastFiling();
     if (action === "undo-review") return void this.undoEveningReview();
@@ -922,6 +935,7 @@ export class Controller {
       undoableFiling: this.undoableFiling(),
       showableReceipt: this.receiptShowable(),
       hasReceipt: this.lastReceipt !== null && this.undoChecked(),
+      forgettableDictation: (this.hasDictation ??= this.dictations.last() !== null),
     };
   }
 
@@ -1935,6 +1949,66 @@ export class Controller {
     const missing = !state.inputMonitoring ? "input-monitoring" : !state.accessibility ? "accessibility" : null;
     if (missing) this.openPane(missing);
     return state;
+  }
+
+  /**
+   * The history of dictations, for Settings → Dictations: newest first, each as the pane shows it (the words cut to a preview). It needs
+   * no library: the history is the app's own.
+   */
+  listDictations(): DictationRow[] {
+    return this.dictations.list().map(rowOf);
+  }
+
+  /** Copy, in the Dictations pane: dictation `id`'s whole words go on the clipboard. False when it has gone, or the clipboard refused. */
+  async copyDictation(id: string): Promise<boolean> {
+    const entry = this.dictations.list().find((each) => each.id === id);
+    if (!entry) return false;
+    try {
+      await electronClipboard.writeText(entry.text);
+      return true;
+    } catch (error) {
+      console.error("copy dictation", (error as NodeJS.ErrnoException).code ?? "failed"); // never the words
+      return false;
+    }
+  }
+
+  /**
+   * Takes dictation `id` out of the history, and tells `onForget`. The one way a dictation is forgotten: Delete in the pane
+   * (`deleteDictation`) and the menu's "Forget the last dictation" both come here. Throws when the history can't be rewritten, and
+   * then the dictation is still in it. Returns the entry, or null when there was none.
+   */
+  forgetDictation(id: string): DictationEntry | null {
+    return forgetDictation(this.dictations, id, (entry) => this.onForget?.(entry));
+  }
+
+  /** Delete, in the Dictations pane: ok once the dictation is gone, else a calm sentence for the pane's Notice, with the dictation kept. */
+  deleteDictation(id: string): DeleteDictationResult {
+    return deleteDictationResult(() => this.forgetDictation(id));
+  }
+
+  /** "Forget the last dictation", in the menu: the newest dictation goes. A history that can't be rewritten says so in a notification. */
+  private forgetLastDictation(): void {
+    const last = this.dictations.last();
+    if (!last) return;
+    const forgotten = deleteDictationResult(() => this.forgetDictation(last.id));
+    if (!forgotten.ok) this.notify("That dictation couldn't be forgotten.", forgotten.message);
+  }
+
+  /**
+   * The history changed, by a dictation that ended or by one forgotten: the menu is built again, with or without "Forget the last
+   * dictation", and an open Settings is told, so that its Dictations pane lists the history again.
+   */
+  private dictationsChanged(): void {
+    this.hasDictation = null;
+    this.refreshMenu();
+    const win = this.settingsWindow;
+    if (win && !win.isDestroyed()) win.webContents.send("settings:dictations-changed");
+  }
+
+  /** Whether `sender` is the Settings window's own page: the only one the history's words are handed to. */
+  isSettingsPage(sender: WebContents): boolean {
+    const win = this.settingsWindow;
+    return !!win && isPageOf(sender, win);
   }
 
   /** Opens System Settings at a privacy pane. With AVANZEL_TEST=1 it stays shut, and openedForTests says which pane it would have opened. */

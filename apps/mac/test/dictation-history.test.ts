@@ -227,6 +227,35 @@ describe("DictationHistory", () => {
     });
   });
 
+  describe("onChange", () => {
+    it("is called after an entry is added and after one is removed, not when nothing changed", () => {
+      const changed = vi.fn();
+      const history = new DictationHistory(file, changed);
+      history.add(entry("a"));
+      expect(changed).toHaveBeenCalledTimes(1);
+      history.remove("nobody");
+      expect(changed).toHaveBeenCalledTimes(1);
+      history.remove("a");
+      expect(changed).toHaveBeenCalledTimes(2);
+    });
+
+    it("is not called for an add the disk refused, nor for a remove that threw, and its own failure costs nothing", () => {
+      const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+      const blocker = path.join(dir, "blocker");
+      writeFileSync(blocker, "a file, not a folder");
+      const refused = vi.fn();
+      new DictationHistory(path.join(blocker, "dictations.jsonl"), refused).add(entry("a"));
+      expect(refused).not.toHaveBeenCalled();
+      const failing = new DictationHistory(file, () => {
+        throw new Error("the pane is gone");
+      });
+      expect(() => failing.add(entry("b"))).not.toThrow();
+      expect(failing.list().map((e) => e.id)).toEqual(["b"]);
+      expect(() => failing.remove("b")).not.toThrow();
+      quiet.mockRestore();
+    });
+  });
+
   describe("when the disk will not take it", () => {
     it("add logs and does not throw, and list is empty", () => {
       const locked = path.join(dir, "locked");

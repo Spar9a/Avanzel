@@ -10,6 +10,14 @@ import {
   cursorKeyOptions,
   cursorStatus,
   DAYS,
+  DICTATION_NOT_COPIED,
+  DICTATION_NOT_COPIED_BODY,
+  DICTATION_NOT_DELETED,
+  DICTATION_NOT_INSERTED,
+  dictationPlace,
+  DICTATIONS_EMPTY,
+  DICTATIONS_START,
+  dictationWhen,
   DICTIONARY_DESCRIPTION,
   DOWNLOAD_NOT_STARTED,
   failedSaveLine,
@@ -40,7 +48,47 @@ import { NO_GIT_LINE } from "../src/shared/problems.ts";
 
 describe("settings copy", () => {
   it("the toolbar lists the panes in their order", () => {
-    expect(SETTINGS_PANES.map((pane) => PANE_LABELS[pane])).toEqual(["General", "Voice", "Agents", "Reviews", "Privacy"]);
+    expect(SETTINGS_PANES.map((pane) => PANE_LABELS[pane])).toEqual(["General", "Voice", "Dictations", "Agents", "Reviews", "Privacy"]);
+  });
+
+  describe("the Dictations pane", () => {
+    const now = new Date(2026, 10, 5, 15, 30); // Thu 5 Nov 2026, 15:30 local
+    const at = (...parts: [number, number, number, number, number]) => new Date(...parts).toISOString();
+
+    it("dictationWhen gives the time for today, and the day before it for any other", () => {
+      expect(dictationWhen(at(2026, 10, 5, 9, 5), now)).toBe("09:05");
+      expect(dictationWhen(at(2026, 10, 5, 0, 0), now)).toBe("00:00");
+      expect(dictationWhen(at(2026, 10, 4, 23, 59), now)).toBe("Yesterday 23:59");
+      expect(dictationWhen(at(2026, 10, 3, 14, 3), now)).toBe("3 Nov 14:03");
+      expect(dictationWhen(at(2026, 0, 2, 8, 0), now)).toBe("2 Jan 08:00");
+      expect(dictationWhen(at(2025, 11, 31, 22, 15), now)).toBe("31 Dec 2025 22:15");
+    });
+
+    it("dictationWhen gives a time that cannot be read as nothing, never as a date that isn't one", () => {
+      expect(dictationWhen("yesterday-ish", now)).toBe("");
+    });
+
+    it("dictationPlace names the app, and its window's title or else the page's site", () => {
+      expect(dictationPlace({ app: "Slack", title: "#general", site: null })).toEqual({ app: "Slack", detail: "#general" });
+      expect(dictationPlace({ app: "Safari", title: null, site: "example.com" })).toEqual({ app: "Safari", detail: "example.com" });
+      expect(dictationPlace({ app: "Safari", title: "A page", site: "example.com" })).toEqual({ app: "Safari", detail: "A page" });
+      expect(dictationPlace({ app: "Notes", title: null, site: null })).toEqual({ app: "Notes", detail: null });
+      // A dictation whose app was never known (the words were kept so they weren't lost) has no name to give.
+      expect(dictationPlace({ app: "", title: null, site: null })).toEqual({ app: "An app Avanzel couldn't see", detail: null });
+    });
+
+    it("the empty line and its invitation, the note and the Notice's title are plain sentences", () => {
+      expect(DICTATIONS_EMPTY).toBe("Nothing dictated yet.");
+      for (const line of [DICTATIONS_EMPTY, DICTATIONS_START, DICTATION_NOT_INSERTED, DICTATION_NOT_DELETED, DICTATION_NOT_COPIED, DICTATION_NOT_COPIED_BODY]) {
+        expect(line).toMatch(/^[A-Z]/);
+        expect(line).toMatch(/\.$/);
+        expect(line).not.toMatch(/!|Oops|Sorry|\.\.\./);
+        expect(line).not.toMatch(/\b(he|she|his|her)\b/i);
+      }
+      expect(DICTATIONS_START).toBe("Turn on Dictate into any app in Voice, then tap its key and speak. What you say shows here.");
+      expect(DICTATION_NOT_INSERTED).toBe("These words didn't go in. Copy them to paste yourself.");
+      expect(DICTATION_NOT_DELETED).toBe("That dictation couldn't be deleted.");
+    });
   });
 
   it("libraryLine counts the six shelves' pages and says whether changes can be undone", () => {

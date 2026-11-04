@@ -30,9 +30,29 @@ export interface ScreenContext {
 export type CapsuleMode = "dictate" | "comment" | "call";
 
 /** The panes of the Settings window, in the order of its toolbar. "tasks" is the scheduled reviews' pane, named Reviews. */
-export const SETTINGS_PANES = ["general", "voice", "agents", "tasks", "privacy"] as const;
+export const SETTINGS_PANES = ["general", "voice", "dictations", "agents", "tasks", "privacy"] as const;
 export type SettingsPane = (typeof SETTINGS_PANES)[number];
 export const isSettingsPane = (value: unknown): value is SettingsPane => SETTINGS_PANES.some((pane) => pane === value);
+
+/**
+ * One dictation at the cursor, as the Dictations pane shows it. The words are cut to a preview (`previewOf`): the whole text stays in
+ * main, and Copy asks for it by `id`. The pane writes the time out itself, from `at`.
+ */
+export interface DictationRow {
+  id: string;
+  /** When it was said, ISO with the local offset. */
+  at: string;
+  preview: string;
+  /** The app that had the cursor; empty when it was never known. */
+  app: string;
+  title: string | null;
+  site: string | null;
+  /** False when the words were only copied for the person to paste. */
+  inserted: boolean;
+}
+
+/** What Delete answers. A failure carries what is safe and the one fix, in plain words, for the Notice's body. */
+export type DeleteDictationResult = { ok: true } | { ok: false; message: string };
 
 /** The steps of the setup window, in order. */
 export const SETUP_STEPS = ["hello", "found", "microphone", "think", "filing", "ask", "screen", "done"] as const;
@@ -814,6 +834,14 @@ export interface AvanzelBridge {
      * can't be seen without it). Resolves with what was granted at the time it asked.
      */
     askCursorPermissions(): Promise<CursorPermissionState>;
+    /** The history of dictations at the cursor, newest first, each as the Dictations pane shows it. Needs no library. */
+    listDictations(): Promise<DictationRow[]>;
+    /** Dictation `id`'s whole words go on the clipboard. False when there is no such dictation or the clipboard refused. */
+    copyDictation(id: string): Promise<boolean>;
+    /** Forgets dictation `id`. A history that can't be rewritten keeps it, and says so in plain words. */
+    deleteDictation(id: string): Promise<DeleteDictationResult>;
+    /** The history changed (a dictation finished, or one was forgotten, here or from the menu): the pane lists it again. */
+    onDictationsChanged(callback: () => void): () => void;
     setLibrary(patch: LibraryPatch): Promise<SettingsSnapshot>;
     chooseLibrary(): Promise<SettingsSnapshot>;
     downloadModel(): Promise<SettingsSnapshot>;

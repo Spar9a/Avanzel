@@ -26,9 +26,9 @@ import {
 /** What Settings is sent now. */
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
 
-const PANES = ["General", "Voice", "Agents", "Reviews", "Privacy"];
+const PANES = ["General", "Voice", "Dictations", "Agents", "Reviews", "Privacy"];
 
-test("Settings moves between its five panes on its toolbar, by click and by the arrow keys", async () => {
+test("Settings moves between its six panes on its toolbar, by click and by the arrow keys", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app);
   await expect(settings.getByRole("radiogroup", { name: "Section" }).getByRole("radio")).toHaveText(PANES);

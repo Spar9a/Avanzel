@@ -75,6 +75,11 @@ export interface MenuInput {
    * would bring "Nothing filed yet" back for the length of each, in a library whose only filing was noted on an earlier day.
    */
   hasReceipt: boolean;
+  /**
+   * The history of dictations at the cursor holds one (`Controller.forgettableDictation`). The menu then ends the group of actions that
+   * take words in with "Forget the last dictation", which takes the newest one out of the history.
+   */
+  forgettableDictation: boolean;
 }
 
 // Anything the owner has to read is an enabled item: macOS draws disabled items too dim to read.
@@ -186,6 +191,7 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     ...(input.cutShortCalls > 0 ? [{ type: "item" as const, label: "Finish notes for a call that was cut short", action: "finish-cut-short" }] : []),
     { type: "item", label: "Type a thought…", action: "type", ...shortcut("type") },
     { type: "item", label: "Ask your library…", action: "ask", ...shortcut("ask") },
+    ...(input.forgettableDictation ? [{ type: "item" as const, label: "Forget the last dictation", action: "forget-dictation" }] : []),
     SEP,
   ];
 

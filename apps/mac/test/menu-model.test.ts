@@ -28,6 +28,7 @@ function input(overrides: Partial<MenuInput> = {}): MenuInput {
     undoableFiling: false,
     showableReceipt: false,
     hasReceipt: false,
+    forgettableDictation: false,
     ...overrides,
   };
 }
@@ -418,8 +419,32 @@ describe("tray menu", () => {
     });
   });
 
+  describe("Forget the last dictation", () => {
+    const forget = { type: "item", label: "Forget the last dictation", action: "forget-dictation" };
+
+    it("ends the group of the actions that take words in, when the history has a dictation", () => {
+      const items = buildMenuModel(input({ forgettableDictation: true }), now);
+      expect(labels(items).slice(2, 8)).toEqual([
+        "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "Forget the last dictation", "--",
+      ]);
+      expect(items.filter((item) => item.type === "item" && item.action === "forget-dictation")).toEqual([forget]);
+    });
+
+    it("is not there while the history is empty, and the rest of the menu is the same either way", () => {
+      const without = buildMenuModel(input({ forgettableDictation: false }), now);
+      expect(JSON.stringify(without)).not.toContain("forget-dictation");
+      const withIt = buildMenuModel(input({ forgettableDictation: true }), now);
+      expect(withIt.filter((item) => item.type !== "item" || item.action !== "forget-dictation")).toEqual(without);
+    });
+
+    it("is an item that can be read, with no shortcut, and not offered where there is no library", () => {
+      expect(buildMenuModel(input({ forgettableDictation: true }), now).find((one) => one.type === "item" && one.action === "forget-dictation")).toEqual(forget);
+      expect(JSON.stringify(buildMenuModel(input({ libraryReady: false, forgettableDictation: true }), now))).not.toContain("forget-dictation");
+    });
+  });
+
   describe("Undo the last filing", () => {
-    const undo = { type: "item", label: "Undo the last filing", action: "undo-filing", accelerator: "Alt+Shift+Z" };
+    const undo ={ type: "item", label: "Undo the last filing", action: "undo-filing", accelerator: "Alt+Shift+Z" };
     const withUndo = (overrides: Partial<MenuInput> = {}) => buildMenuModel(input({ undoableFiling: true, ...overrides }), now);
 
     it("follows the recently filed pages, and is the last item of that section", () => {
