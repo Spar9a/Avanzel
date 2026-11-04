@@ -377,7 +377,11 @@ export class CallNotes {
         return host.failed(TAP_LOST, "finish-call", "Finish the notes");
       }
       await this.finishCallFolder(call.dir);
-    })().finally(() => this.ending--);
+    })().finally(() => {
+      // Only now is the end settled: the menu built before this (the changes the finish made) still saw it under way.
+      this.ending--;
+      host.changed();
+    });
     this.work = call.ending;
     return call.ending;
   }

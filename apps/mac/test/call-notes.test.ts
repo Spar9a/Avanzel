@@ -70,6 +70,8 @@ async function setup({ consent = true, answer = true, them = pcm(4, 0.1), maxCal
   /** The ids the call-start commands carried, in order. */
   const micIds: number[] = [];
   const state = { recording: false };
+  /** The phase each `changed` saw, in order: the menu is built from the phase as it is when it is told. */
+  const phases: string[] = [];
   const host: CallHost = {
     callsDir: path.join(root, "calls"),
     audioTimeoutMs,
@@ -101,7 +103,7 @@ async function setup({ consent = true, answer = true, them = pcm(4, 0.1), maxCal
     finishing: () => log.push("finishing"),
     filed: (capturePath, text) => filed.push({ path: capturePath, text }),
     failed: (problem, action, actionLabel) => failed.push({ ...problem, ...(action ? { action } : {}), ...(actionLabel ? { actionLabel } : {}) }),
-    changed: () => undefined,
+    changed: () => void phases.push(calls.phase),
     offerCutShort: (call, finish) => offers.push({ call, finish }),
   };
   calls = new CallNotes(host);
@@ -110,7 +112,7 @@ async function setup({ consent = true, answer = true, them = pcm(4, 0.1), maxCal
   const mic = (samples: Float32Array, last = false) => calls.audio(micIds.at(-1)!, samples, last);
   /** The folder of the only call on disk. */
   const callDir = () => path.join(host.callsDir, readdirSync(host.callsDir)[0]!);
-  return { calls, host, log, taps, filed, failed, offers, vault, inbox, callsDir: host.callsDir, consented: () => consented, micIds, mic, callDir, state };
+  return { calls, host, log, taps, filed, failed, offers, phases, vault, inbox, callsDir: host.callsDir, consented: () => consented, micIds, mic, callDir, state };
 }
 
 const zoom = { name: "zoom.us", pids: [101, 102] };
@@ -517,5 +519,41 @@ describe("what the menu offers", () => {
     expect(t.calls.phase).toBe("busy");
     await stopping;
     expect(t.calls.phase).toBe("idle");
+  });
+});
+
+describe("the menu settles after a call ends", () => {
+  // The menu is built from `phase` when the host is told `changed`; nothing tells it again later, so the last telling must see the end.
+  it("the last change after Stop sees idle", async () => {
+    const t = await setup();
+    await t.calls.start(zoom);
+    await t.calls.stop();
+    expect(t.inbox()).toHaveLength(1);
+    expect(t.phases.at(-1)).toBe("idle");
+  });
+
+  it("the last change after the helper stopped by itself sees idle", async () => {
+    const t = await setup();
+    await t.calls.start(zoom);
+    t.taps[0]!.emit({ event: "stopped", seconds: 4 });
+    await t.calls.settled();
+    expect(t.inbox()).toHaveLength(1);
+    expect(t.phases.at(-1)).toBe("idle");
+  });
+
+  it("the last change after the helper was lost sees idle", async () => {
+    const t = await setup();
+    await t.calls.start(zoom);
+    t.taps[0]!.emit({ event: "error", message: "gone" });
+    await t.calls.settled();
+    expect(t.failed.map((f) => f.title)).toEqual(["The other side of the call stopped being heard."]);
+    expect(t.phases.at(-1)).toBe("idle");
+  });
+
+  it("the last change after a cancel sees idle", async () => {
+    const t = await setup();
+    await t.calls.start(zoom);
+    await t.calls.cancel({ title: "The microphone didn't start.", body: "x" });
+    expect(t.phases.at(-1)).toBe("idle");
   });
 });

@@ -64,6 +64,27 @@ const trayMenus = (app: ElectronApplication) => app.evaluate(() => (globalThis a
 const menuLabels = async (app: ElectronApplication) =>
   ((await call(app, "menuForTests")) as MenuItemModel[]).flatMap((item) => (item.type === "item" ? [item.label] : []));
 
+/**
+ * The labels of the menu the tray holds (`MenuBar.menu`, what `refreshMenu` last gave it), not the model built afresh as
+ * `menuForTests` does: a menu that wasn't rebuilt after a call settled shows here.
+ */
+async function heldMenu(app: ElectronApplication): Promise<string[]> {
+  await call(app, "capsuleStateForTests"); // the controller is up
+  return app.evaluate(() => {
+    const controller = (globalThis as unknown as { __avanzel: { menuBar: { menu: { items: { label: string }[] } | null } } }).__avanzel;
+    return controller.menuBar.menu?.items.map((item) => item.label) ?? [];
+  });
+}
+
+/**
+ * The tray's menu offers Take notes on a call… again, and not Stop: whatever start or end was under way has settled. Within 3 s, under
+ * the 4 s of the saved card, whose hiding builds the menu again: a menu that only that rebuild brought back would pass otherwise.
+ */
+async function expectReadyMenu(app: ElectronApplication): Promise<void> {
+  await expect.poll(async () => (await heldMenu(app)).includes("Take notes on a call…"), { timeout: 3_000 }).toBe(true);
+  expect(await heldMenu(app)).not.toContain("Stop taking notes");
+}
+
 /** The captures in the inbox whose source is a call. */
 const callCaptures = (library: string) =>
   filesUnder(library, "inbox").filter((name) => name.endsWith(".md") && read(library, path.join("inbox", name)).includes("source: call"));
@@ -131,8 +152,7 @@ test("Take notes on a call… with Everything this Mac plays: the call's card, w
   await expect.poll(() => callCaptures(library), { timeout: 60_000 }).toHaveLength(1);
   expect(read(library, path.join("inbox", callCaptures(library)[0]!))).toContain("Shall we start with the budget?");
   await expect.poll(() => callFolders(userData)).toEqual([]);
-  await expect.poll(async () => (await menuLabels(app)).includes("Take notes on a call…")).toBe(true);
-  expect(await menuLabels(app)).not.toContain("Stop taking notes");
+  await expectReadyMenu(app);
   await app.close();
 });
 
@@ -143,11 +163,10 @@ test("the first call asks for consent: Not now writes nothing, Take notes starts
   await expect.poll(async () => (await dialogsAsked(app)).length).toBe(1);
   const [asked] = await dialogsAsked(app);
   expect(asked!.options).toMatchObject({ message: "Take notes on a call?", buttons: ["Take notes", "Not now"], defaultId: 1, cancelId: 1 });
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await expectReadyMenu(app); // the start has ended: nothing can begin listening after this
   expect(await capsuleKind(app)).not.toBe("listening");
   expect(callFolders(userData)).toEqual([]);
   expect(JSON.parse(readFileSync(path.join(userData, "settings.json"), "utf8")).callConsent).toBe(false);
-  expect(await menuLabels(app)).toContain("Take notes on a call…");
 
   await answerDialogs(app, 0); // Take notes
   await takeNotes(app);
@@ -155,6 +174,7 @@ test("the first call asks for consent: Not now writes nothing, Take notes starts
   expect(JSON.parse(readFileSync(path.join(userData, "settings.json"), "utf8")).callConsent).toBe(true);
   await call(app, "stopCallNotes");
   await expect.poll(() => callCaptures(library), { timeout: 60_000 }).toHaveLength(1);
+  await expectReadyMenu(app);
   // Asked once: the next call starts without the question.
   await answerDialogs(app, 1);
   await takeNotes(app);
@@ -162,6 +182,7 @@ test("the first call asks for consent: Not now writes nothing, Take notes starts
   expect(await dialogsAsked(app)).toEqual([]);
   await call(app, "stopCallNotes");
   await expect.poll(() => callCaptures(library), { timeout: 60_000 }).toHaveLength(2);
+  await expectReadyMenu(app);
   await app.close();
 });
 
@@ -170,15 +191,15 @@ test("a thought pressed while the consent question is up starts nothing, and nei
   await answerDialogs(app, 1, { hold: true });
   await takeNotes(app);
   await expect.poll(async () => (await dialogsAsked(app)).length).toBe(1);
-  expect(await menuLabels(app)).not.toContain("Take notes on a call…"); // the call is starting
+  expect(await heldMenu(app)).not.toContain("Take notes on a call…"); // the call is starting
+  // toggleDictate returns once the press was refused or its recording began: no wait is needed to see which.
   await call(app, "toggleDictate");
-  await new Promise((resolve) => setTimeout(resolve, 500));
   expect(await capsuleKind(app)).not.toBe("listening");
+  expect(await call(app, "menuForTests")).not.toContainEqual(expect.objectContaining({ label: "Stop recording" }));
   await letDialogsGo(app);
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await expectReadyMenu(app); // Not now ended the start: nothing can begin listening after this
   expect(await capsuleKind(app)).not.toBe("listening");
   expect(callFolders(userData)).toEqual([]);
-  expect(await menuLabels(app)).toContain("Take notes on a call…");
   await app.close();
 });
 
