@@ -38,6 +38,21 @@ describe("settings store", () => {
     expect(settings).not.toHaveProperty("surprise");
   });
 
+  it("keeps the call consent as true or false and takes anything else for false", () => {
+    expect(DEFAULT_SETTINGS.callConsent).toBe(false);
+    expect(normalizeSettings({}).callConsent).toBe(false);
+    expect(normalizeSettings({ callConsent: true }).callConsent).toBe(true);
+    expect(normalizeSettings({ callConsent: false }).callConsent).toBe(false);
+    expect(normalizeSettings({ callConsent: "yes" }).callConsent).toBe(false);
+    expect(normalizeSettings({ callConsent: 1 }).callConsent).toBe(false);
+  });
+
+  it("keeps the call consent across an update", () => {
+    const file = path.join(tmp(), "settings.json");
+    new SettingsStore(file).update({ callConsent: true });
+    expect(new SettingsStore(file).get().callConsent).toBe(true);
+  });
+
   it("an older settings file, with four shortcuts, gets ⌥⇧Z for Undo the last filing", () => {
     const four = { dictate: "Alt+D", capture: "Alt+Shift+S", type: "Alt+Shift+Space", ask: "Alt+Shift+A" };
     expect(normalizeSettings({ shortcuts: four }).shortcuts).toEqual({ ...four, undo: "Alt+Shift+Z" });

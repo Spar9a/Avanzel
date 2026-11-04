@@ -229,6 +229,8 @@ export interface AppSettings {
   fileMode: FileMode;
   microphoneId: string | null;
   launchAtLogin: boolean;
+  /** The person has agreed, once, to Avanzel hearing a call app's sound for call notes. */
+  callConsent: boolean;
 }
 
 export type PermissionStatus = "granted" | "denied" | "not-determined" | "restricted" | "unknown";
