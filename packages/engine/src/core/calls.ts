@@ -19,8 +19,9 @@ const ECHO_SAMPLE_RATE = 16_000;
 /** How late the echo may come after the other side's sound: speakers, the room and the microphone's buffers. */
 const ECHO_MAX_LAG_SECONDS = 0.4;
 /**
- * A "you" segment whose score (`echoScore`) reaches this is an echo. From a study of 160 clips through the speech model: 12 of 20
- * echoes caught and none of 99 honest segments dropped (0.15 caught 13 and dropped 1).
+ * A "you" segment whose score (`echoScore`) reaches this is an echo. Picked from a study of 160 synthetic clips through the speech
+ * model (the 119 with words on the microphone's side): this score catches 12 of 20 echoes and drops none of 99 honest segments,
+ * read-backs among them; at 0.15 it would catch 13 and drop 3 (the study's own scoring had 13 and 1).
  */
 const ECHO_THRESHOLD = 0.2;
 /** A segment shorter than this is never taken for an echo: too little sound to tell. */
@@ -49,8 +50,10 @@ export interface EchoOptions {
 
 /**
  * How much the "you" segment [start, end] (seconds on the "you" stream) sounds like the "them" stream heard up to `maxLagSeconds`
- * later, from 0 to 1: the largest correlation over those lags, normalised by the segment's own energy and that of the "them" sound
- * over the same stretch (with no lag). Samples outside either stream count as silence; 0 when either side is silent there.
+ * later, from 0 to 1: the largest correlation over those lags, normalised by the segment's own energy and that of the whole "them"
+ * reference, [start - maxLagSeconds, end]. Every lag's window lies inside that reference, so the score never passes 1, also when
+ * the other side's last words fall just before the segment and their stream is near-silent during it (a quick reply). Samples
+ * outside either stream count as silence; 0 when either side is silent there.
  */
 export function echoScore(segment: { start: number; end: number }, youPcm: Int16Array, themPcm: Int16Array, opts: EchoOptions = {}): number {
   const rate = opts.sampleRate ?? ECHO_SAMPLE_RATE;
@@ -67,11 +70,10 @@ export function echoScore(segment: { start: number; end: number }, youPcm: Int16
     return i >= 0 && i < themPcm.length ? themPcm[i]! / 32768 : 0;
   };
   let youEnergy = 0;
+  for (let t = 0; t < n; t++) youEnergy += you(t) ** 2;
+  // The whole reference, every sample any lag reaches: each lag's window lies inside it, so the score is at most 1 (Cauchy-Schwarz).
   let themEnergy = 0;
-  for (let t = 0; t < n; t++) {
-    youEnergy += you(t) ** 2;
-    themEnergy += ref(lag + t) ** 2;
-  }
+  for (let j = 0; j < n + lag; j++) themEnergy += ref(j) ** 2;
   if (youEnergy < ECHO_SILENT || themEnergy < ECHO_SILENT) return 0;
 
   // corr[m] = sum over t of you(t) * ref(t + m), for m in 0..lag (the echo `lag - m` samples late), block by block: each block's

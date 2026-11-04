@@ -157,9 +157,10 @@ export class CallSession {
    * The call as a transcript: each file read once as 16-bit samples and transcribed in turn ("you" first, its floats let go of
    * before "them" is read: the model is big, and so is a long call), the "them" side shifted by its offset, the microphone's
    * pick-up of the call app's sound dropped (`echoSegments`: a "you" segment whose sound is the "them" stream's, late and quieter,
-   * goes; one that only says the same words stays; nothing goes with a transcriber without segments), and the two sides merged by time. `seconds` is the longer stream's length,
-   * `themHeard` whether the call app's side was ever loud enough to be heard. Throws a NoSpeechError when neither side has any
-   * speech. The files stay. `_now` is the controller's clock; the transcript has no use for it.
+   * goes; one that only says the same words stays; nothing goes with a transcriber without segments), and the two sides merged
+   * by time. `seconds` is the longer stream's length, `themHeard` whether the call app's side was ever loud enough to be heard.
+   * Throws a NoSpeechError when neither side has any speech. The files stay. `_now` is the controller's clock; the transcript has
+   * no use for it.
    */
   async finish(t: Transcriber, _now: Date): Promise<{ transcript: string; seconds: number; themHeard: boolean }> {
     const offset = this.meta.themOffsetSeconds;

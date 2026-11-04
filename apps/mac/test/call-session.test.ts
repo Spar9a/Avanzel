@@ -239,6 +239,17 @@ describe("CallSession", () => {
     expect((await session.finish(t, new Date())).transcript).toBe("[00:04] Them: Yes, the budget is ready.\n");
   });
 
+  it("keeps a quick reply after the other side stops, while the call app's stream runs on at a low noise floor", async () => {
+    // The other side speaks until 3.85 s, then their stream carries only a faint floor; the person answers 0.15 s later. Their last
+    // words fall in the stretch looked back over, and the reply must not be taken for an echo of them (Ruling 19).
+    const session = new CallSession({ dir: tmp(), app: "zoom.us", startedAt });
+    const floor = noise(11);
+    writeFileSync(session.themFile, s16(mix(bursts(3.85, 1), at(3.85, Float32Array.from({ length: 6 * RATE }, () => floor() * 0.003)))));
+    writeFileSync(session.youFile, s16(at(4, bursts(3, 2))));
+    const t = inTurn({ you: [{ start: 4, end: 7, text: "Sure, I can do that." }], them: [{ start: 0.5, end: 3.85, text: "Can you send the draft?" }] });
+    expect((await session.finish(t, new Date())).transcript).toBe("[00:00] Them: Can you send the draft?\n\n[00:04] You: Sure, I can do that.\n");
+  });
+
   it("never scores a whole stream: with a transcriber without segments, the microphone's side stays even when it is echo", async () => {
     // Such a transcriber gives each stream as one segment. Scored whole, a call without headphones could pass the threshold and
     // lose everything the person said, so the echo check is skipped (Ruling 18).

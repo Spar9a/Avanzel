@@ -145,6 +145,29 @@ describe("echoSegments", () => {
     expect(echoSegments([echo], youPcm, themPcm)).toEqual([echo]);
   });
 
+  it("keeps a quick reply after the other side stops, while their stream runs on at a low noise floor", () => {
+    // Turn-taking: the other side's last words fall in the 0.4 s looked back over, their stream after it is only a floor. The
+    // score is normalised by that whole stretch of their stream, so the reply is not taken for an echo (Ruling 19).
+    const stop = 3.85; // the end of a burst: the other side speaks right up to it
+    const floor = noise(11);
+    const themFloats = mix(bursts(stop, 1), after(stop, Float32Array.from({ length: 6 * RATE }, () => floor() * 0.003)));
+    const themFloor = int16(themFloats);
+    for (const gap of [0.1, 0.25, 0.35]) {
+      const youPcm = int16(after(stop + gap, bursts(3, 8)));
+      const reply = seg(stop + gap, stop + gap + 3, "Sure, I can do that.");
+      expect(echoScore(reply, youPcm, themFloor)).toBeLessThan(0.1);
+      expect(echoSegments([reply], youPcm, themFloor)).toEqual([reply]);
+    }
+  });
+
+  it("finds an echo whose stretch looked back over also holds the other side's speech from before the segment", () => {
+    const longThem = bursts(8, 1);
+    const youPcm = int16(echoOf(longThem));
+    const echo = seg(2, 5);
+    expect(echoScore(echo, youPcm, int16(longThem))).toBeGreaterThanOrEqual(0.2);
+    expect(echoSegments([echo], youPcm, int16(longThem))).toEqual([]);
+  });
+
   it("keeps a segment longer than 30 s untouched, echo or not", () => {
     const longThem = bursts(31, 6);
     const youPcm = int16(echoOf(longThem));
@@ -169,7 +192,7 @@ describe("echoSegments", () => {
     expect(echoSegments([own], youPcm, themPcm, { threshold: score + 0.001 })).toEqual([own]);
   });
 
-  it("scores as the sum it stands for: the largest correlation over the lags, over both energies at no lag", () => {
+  it("scores as the sum it stands for: the largest correlation over the lags, over the segment's energy and the whole reference's", () => {
     // Long enough for the correlation to take several FFT blocks, with the other side starting 0.1 s late.
     const rate = 1000;
     const opts = { sampleRate: rate, maxLagSeconds: 0.05, themOffsetSeconds: 0.1 };
@@ -186,11 +209,9 @@ describe("echoSegments", () => {
       best = Math.max(best, Math.abs(sum));
     }
     let you2 = 0;
-    let them2 = 0;
-    for (let t = from; t < to; t++) {
-      you2 += (youPcm[t]! / 32768) ** 2;
-      them2 += them(t) ** 2;
-    }
+    for (let t = from; t < to; t++) you2 += (youPcm[t]! / 32768) ** 2;
+    let them2 = 0; // [start - maxLag, end]: every sample a lag reaches
+    for (let t = from - lag; t < to; t++) them2 += them(t) ** 2;
     const direct = best / Math.sqrt(you2 * them2);
     expect(direct).toBeGreaterThan(0.5);
     expect(echoScore(segment, youPcm, themPcm, opts)).toBeCloseTo(direct, 9);
