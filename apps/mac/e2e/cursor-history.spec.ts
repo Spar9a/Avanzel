@@ -109,6 +109,46 @@ test("a long dictation shows its first 400 characters, and Copy puts all of it o
   await app.close();
 });
 
+test("a long history lists the newest hundred, says how many older ones are kept, and Show 100 more lists them", async () => {
+  const start = Date.now() - 3 * 3_600_000;
+  // Written straight into the file, oldest first: entry-104 is the newest.
+  const entries = Array.from({ length: 105 }, (_, i) => entry(`entry-${i}`, { at: new Date(start + i * 1000).toISOString() }));
+  const userData = userDataWith(entries);
+  const app = await launchOn(userData);
+  const settings = await openSettings(app, "Dictations");
+  await expect(cards(settings)).toHaveCount(100);
+  await expect(cards(settings).first()).toContainText("words of entry-104");
+  await expect(cards(settings).last()).toContainText("words of entry-5");
+  await expect(settings.getByText("words of entry-4", { exact: true })).toHaveCount(0);
+  await expect(settings.getByText("5 older dictations are kept on this Mac.", { exact: true })).toBeVisible();
+  const more = settings.getByRole("button", { name: "Show 100 more", exact: true });
+  await expect(more).toBeVisible();
+  // A delete keeps the longer list a person asked for, and the count follows.
+  await cards(settings).first().getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(settings.getByText("4 older dictations are kept on this Mac.", { exact: true })).toBeVisible();
+  await expect(cards(settings)).toHaveCount(100);
+  await expect(cards(settings).last()).toContainText("words of entry-4");
+  await settings.getByRole("button", { name: "Show 100 more", exact: true }).click();
+  await expect(cards(settings)).toHaveCount(104);
+  await expect(cards(settings).last()).toContainText("words of entry-0");
+  await expect(settings.getByText(/older dictations? (is|are) kept/)).toHaveCount(0);
+  await expect(settings.getByRole("button", { name: "Show 100 more", exact: true })).toHaveCount(0);
+  // The longer list stays as it is when the history changes again.
+  await cards(settings).first().getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(cards(settings)).toHaveCount(103);
+  await app.close();
+});
+
+test("a history of exactly one page has no older line and no button", async () => {
+  const start = Date.now() - 3 * 3_600_000;
+  const app = await launchOn(userDataWith(Array.from({ length: 100 }, (_, i) => entry(`entry-${i}`, { at: new Date(start + i * 1000).toISOString() }))));
+  const settings = await openSettings(app, "Dictations");
+  await expect(cards(settings)).toHaveCount(100);
+  await expect(settings.getByText(/kept on this Mac/)).toHaveCount(0);
+  await expect(settings.getByRole("button", { name: /Show \d+ more/ })).toHaveCount(0);
+  await app.close();
+});
+
 test("Delete removes the dictation from the pane and from the file, and a new launch still lists the other", async () => {
   const userData = userDataWith([entry("one", { text: "first words", at: ago(2) }), entry("two", { text: "second words", at: ago(1) })]);
   const app = await launchOn(userData);

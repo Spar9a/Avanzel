@@ -10,6 +10,7 @@ import {
   cursorKeyOptions,
   cursorStatus,
   DAYS,
+  DELETE_FAILED_BODY,
   DICTATION_NOT_COPIED,
   DICTATION_NOT_COPIED_BODY,
   DICTATION_NOT_DELETED,
@@ -29,6 +30,7 @@ import {
   microphoneName,
   microphoneOptions,
   notSavedLine,
+  olderDictationsLine,
   PANE_LABELS,
   PERMISSION_NOT_ASKED,
   plainCause,
@@ -38,6 +40,7 @@ import {
   scheduleParts,
   scheduleText,
   SETTING_KEPT,
+  SHOW_MORE_DICTATIONS,
   speechModelLine,
   SPEECH_MODEL_DESCRIPTION,
   validTime,
@@ -75,6 +78,18 @@ describe("settings copy", () => {
       expect(dictationPlace({ app: "Notes", title: null, site: null })).toEqual({ app: "Notes", detail: null });
       // A dictation whose app was never known (the words were kept so they weren't lost) has no name to give.
       expect(dictationPlace({ app: "", title: null, site: null })).toEqual({ app: "An app Avanzel couldn't see", detail: null });
+    });
+
+    it("olderDictationsLine counts the dictations the list leaves out, one or many", () => {
+      expect(olderDictationsLine(1)).toBe("1 older dictation is kept on this Mac.");
+      expect(olderDictationsLine(5)).toBe("5 older dictations are kept on this Mac.");
+      expect(olderDictationsLine(1234)).toBe("1234 older dictations are kept on this Mac.");
+      expect(SHOW_MORE_DICTATIONS).toBe("Show 100 more");
+    });
+
+    it("the delete Notice's body says what is safe and offers one fix, in the words main sends", () => {
+      expect(DELETE_FAILED_BODY).toBe("It is still in the history. Try deleting it again.");
+      expect(DELETE_FAILED_BODY).not.toMatch(/!|Oops|Sorry|\.\.\./);
     });
 
     it("the empty line and its invitation, the note and the Notice's title are plain sentences", () => {

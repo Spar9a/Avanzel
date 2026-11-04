@@ -3,7 +3,7 @@
 // scheduled review's schedule, last run and kind, with the checks its editor makes and what a failed save says, and what
 // the window says of a change main refused.
 import { SHELVES } from "@avanzel/ui";
-import { noSuchReview, type CursorKey, type CursorPermissionState, type PickOption, type SettingsPane, type SettingsSnapshot, type TaskInfo } from "../../shared/ipc.ts";
+import { DICTATION_PAGE, noSuchReview, type CursorKey, type CursorPermissionState, type PickOption, type SettingsPane, type SettingsSnapshot, type TaskInfo } from "../../shared/ipc.ts";
 import { NO_GIT_LINE, ownLine } from "../../shared/problems.ts";
 
 /** Each pane's name on the toolbar, which is also its heading. The scheduled reviews' pane keeps its id, "tasks". */
@@ -99,6 +99,16 @@ export const DICTATION_NOT_INSERTED = "These words didn't go in. Copy them to pa
 
 /** The title of the Notice for a Delete the history refused; main's message says what is safe and the one fix. */
 export const DICTATION_NOT_DELETED = "That dictation couldn't be deleted.";
+
+/** The body of that Notice: what is safe, and the one fix. Defined in shared/ipc.ts, as main sends it too; re-exported for the pane. */
+export { DELETE_FAILED_BODY } from "../../shared/ipc.ts";
+
+/** Under the list, when the history holds more than it lists: how many older dictations there are, and that they are kept. */
+export const olderDictationsLine = (older: number): string =>
+  `${older === 1 ? "1 older dictation is" : `${older} older dictations are`} kept on this Mac.`;
+
+/** The button that lists another page of older dictations. */
+export const SHOW_MORE_DICTATIONS = `Show ${DICTATION_PAGE} more`;
 
 /** The Notice for a Copy the clipboard refused: what happened, what is safe, and the one fix. */
 export const DICTATION_NOT_COPIED = "Those words couldn't be copied.";

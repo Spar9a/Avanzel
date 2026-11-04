@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DictationEntry } from "../src/main/dictation-history.ts";
-import { DELETE_FAILED_BODY, deleteDictationResult, forgetDictation, PREVIEW_CHARACTERS, previewOf, rowOf } from "../src/main/dictation-rows.ts";
+import { deleteDictationResult, forgetDictation, pageOf, PREVIEW_CHARACTERS, previewOf, rowOf } from "../src/main/dictation-rows.ts";
+import { DELETE_FAILED_BODY, DICTATION_PAGE } from "../src/shared/ipc.ts";
 
 const entry = (over: Partial<DictationEntry> = {}): DictationEntry => ({
   id: "a",
@@ -54,6 +55,52 @@ describe("rowOf", () => {
     expect(row.preview.endsWith("…")).toBe(true);
     expect(row.preview.length).toBeLessThanOrEqual(PREVIEW_CHARACTERS + 1);
     expect(JSON.stringify(row)).not.toContain("heard");
+  });
+});
+
+describe("pageOf", () => {
+  const many = (count: number): DictationEntry[] => Array.from({ length: count }, (_, i) => entry({ id: `e${i}`, text: `words ${i}` }));
+
+  it("lists the first page of a long history, and reports how many there are in all", () => {
+    const page = pageOf(many(250));
+    expect(DICTATION_PAGE).toBe(100);
+    expect(page.rows).toHaveLength(100);
+    expect(page.total).toBe(250);
+    // The newest first: the entries come in the history's order, and the page keeps its head.
+    expect(page.rows[0]!.id).toBe("e0");
+    expect(page.rows[99]!.id).toBe("e99");
+  });
+
+  it("gives as many as were asked for, 100 more at a time", () => {
+    expect(pageOf(many(250), 200).rows).toHaveLength(200);
+    expect(pageOf(many(250), 200).total).toBe(250);
+    expect(pageOf(many(250), 7).rows.map((row) => row.id)).toEqual(["e0", "e1", "e2", "e3", "e4", "e5", "e6"]);
+  });
+
+  it("gives them all when the limit is above the total, with the total as it is", () => {
+    const page = pageOf(many(5), 1000);
+    expect(page.rows).toHaveLength(5);
+    expect(page.total).toBe(5);
+    expect(pageOf(many(105), 200)).toMatchObject({ total: 105, rows: expect.arrayContaining([expect.objectContaining({ id: "e104" })]) });
+  });
+
+  it("takes a limit that is 0, negative, fractional, not a number or missing for the first page", () => {
+    for (const limit of [undefined, 0, -5, 2.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const page = pageOf(many(150), limit);
+      expect(page.rows, String(limit)).toHaveLength(100);
+      expect(page.total, String(limit)).toBe(150);
+    }
+  });
+
+  it("is empty, with a total of 0, for an empty history", () => {
+    expect(pageOf([], 100)).toEqual({ rows: [], total: 0 });
+    expect(pageOf([])).toEqual({ rows: [], total: 0 });
+  });
+
+  it("makes rows only of the page, with each text cut to its preview", () => {
+    const page = pageOf([entry({ text: "x".repeat(1000) }), ...many(3)], 1);
+    expect(page.rows).toHaveLength(1);
+    expect(page.rows[0]!.preview.length).toBe(PREVIEW_CHARACTERS + 1);
   });
 });
 

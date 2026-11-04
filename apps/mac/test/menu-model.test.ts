@@ -444,7 +444,7 @@ describe("tray menu", () => {
   });
 
   describe("Undo the last filing", () => {
-    const undo ={ type: "item", label: "Undo the last filing", action: "undo-filing", accelerator: "Alt+Shift+Z" };
+    const undo = { type: "item", label: "Undo the last filing", action: "undo-filing", accelerator: "Alt+Shift+Z" };
     const withUndo = (overrides: Partial<MenuInput> = {}) => buildMenuModel(input({ undoableFiling: true, ...overrides }), now);
 
     it("follows the recently filed pages, and is the last item of that section", () => {

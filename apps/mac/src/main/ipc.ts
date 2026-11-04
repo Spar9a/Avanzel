@@ -43,11 +43,12 @@ export function registerIpc(controller: Controller): void {
   handle("settings:cursor-permissions", () => controller.cursorPermissions());
   handle("settings:ask-cursor-permissions", () => controller.askCursorPermissions());
   // The history holds what people said into other apps: only the Settings window's own page is answered.
-  handle("settings:list-dictations", (e) => (controller.isSettingsPage(e.sender) ? controller.listDictations() : []));
+  handle("settings:list-dictations", (e, limit: unknown) =>
+    controller.isSettingsPage(e.sender) ? controller.listDictations(typeof limit === "number" ? limit : undefined) : { rows: [], total: 0 });
   handle("settings:copy-dictation", (e, id: unknown) => (controller.isSettingsPage(e.sender) && typeof id === "string" ? controller.copyDictation(id) : false));
   handle("settings:delete-dictation", (e, id: unknown) =>
     controller.isSettingsPage(e.sender) && typeof id === "string" ? controller.deleteDictation(id) : { ok: false, message: "Only Settings can delete a dictation." });
-  handle("settings:set-library",(_e, patch: LibraryPatch) => controller.setLibrarySettings(patch));
+  handle("settings:set-library", (_e, patch: LibraryPatch) => controller.setLibrarySettings(patch));
   handle("settings:choose-library", () => controller.chooseLibrary());
   handle("settings:download-model", () => controller.downloadModel());
   handle("settings:save-task", (_e, task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">) =>

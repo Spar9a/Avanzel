@@ -4,9 +4,9 @@
 // from the menu). The words are shown here and nowhere else, and are never logged.
 import { Actions, Button, Card, Notice, Stack, Text } from "@avanzel/ui";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { DELETE_FAILED_BODY } from "../../../main/dictation-rows.ts";
-import type { DictationRow } from "../../../shared/ipc.ts";
+import { DICTATION_PAGE, type DictationRow } from "../../../shared/ipc.ts";
 import {
+  DELETE_FAILED_BODY,
   DICTATION_NOT_COPIED,
   DICTATION_NOT_COPIED_BODY,
   DICTATION_NOT_DELETED,
@@ -15,6 +15,8 @@ import {
   DICTATIONS_EMPTY,
   DICTATIONS_START,
   dictationWhen,
+  olderDictationsLine,
+  SHOW_MORE_DICTATIONS,
 } from "../copy.ts";
 
 const api = window.avanzel.settings;
@@ -73,16 +75,22 @@ function Dictation({ row, now, copied, onCopy, onDelete }: RowProps): ReactNode 
 export function Dictations(): ReactNode {
   // null until the first listing arrives, so the empty line is not shown for the moment before the history is read.
   const [rows, setRows] = useState<DictationRow[] | null>(null);
+  // How many the history holds in all: the list shows the newest `limit` of them, and Show more asks for another page.
+  const [total, setTotal] = useState(0);
+  const [limit, setLimit] = useState(DICTATION_PAGE);
   const [told, setTold] = useState<Told | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
+  // Asking again after a change keeps the limit, so a list the person lengthened is not cut back under them.
   const load = useCallback(async () => {
     try {
-      setRows(await api.listDictations());
+      const list = await api.listDictations(limit);
+      setRows(list.rows);
+      setTotal(list.total);
     } catch {
       // The list stays as it was; the next change to the history lists it again.
     }
-  }, []);
+  }, [limit]);
   useEffect(() => {
     void load();
     return api.onDictationsChanged(() => void load());
@@ -122,7 +130,7 @@ export function Dictations(): ReactNode {
   };
 
   if (rows === null) return null;
-  if (rows.length === 0) {
+  if (total === 0) {
     return (
       <Stack gap={4}>
         <Text>{DICTATIONS_EMPTY}</Text>
@@ -143,6 +151,18 @@ export function Dictations(): ReactNode {
       {rows.map((row) => (
         <Dictation key={row.id} row={row} now={now} copied={copied === row.id} onCopy={() => void copy(row.id)} onDelete={() => void remove(row.id)} />
       ))}
+      {total > rows.length && (
+        <Stack gap={8}>
+          <Text variant="footnote" tone="secondary">
+            {olderDictationsLine(total - rows.length)}
+          </Text>
+          <Actions align="start">
+            <Button size="small" variant="secondary" onClick={() => setLimit(limit + DICTATION_PAGE)}>
+              {SHOW_MORE_DICTATIONS}
+            </Button>
+          </Actions>
+        </Stack>
+      )}
     </Stack>
   );
 }

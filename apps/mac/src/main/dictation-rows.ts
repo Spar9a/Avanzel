@@ -1,16 +1,10 @@
 // What the Dictations pane is told about the history, and how an entry is forgotten. Kept apart from the controller, which needs
 // Electron, so that the cut of a long text and the way a failed delete is told can be tested on their own.
-import type { DeleteDictationResult, DictationRow } from "../shared/ipc.ts";
+import { DELETE_FAILED_BODY, DICTATION_PAGE, type DeleteDictationResult, type DictationList, type DictationRow } from "../shared/ipc.ts";
 import type { DictationEntry, DictationHistory } from "./dictation-history.ts";
 
 /** How many characters of a dictation a row shows; Copy still copies all of it. */
 export const PREVIEW_CHARACTERS = 400;
-
-/**
- * What the pane says under "That dictation couldn't be deleted.": what is safe, and the one fix. The system's own words are not
- * told, since they name files and say nothing a person could act on.
- */
-export const DELETE_FAILED_BODY = "It is still in the history. Try deleting it again.";
 
 /**
  * The first 400 characters of `text`, with an ellipsis when there was more. It counts whole characters, so a character made of two
@@ -25,6 +19,16 @@ export function previewOf(text: string): string {
 /** An entry as the pane shows it. The whole text stays here, in main: the pane asks for it to be copied by id. */
 export function rowOf(entry: DictationEntry): DictationRow {
   return { id: entry.id, at: entry.at, preview: previewOf(entry.text), app: entry.app, title: entry.title, site: entry.site, inserted: entry.inserted };
+}
+
+/**
+ * The newest `limit` of `entries` (newest first, as the history lists them) as rows, and how many there are in all. The history has no
+ * limit of its own, so the pane asks for a page at a time: a `limit` that is not a whole number above 0 means the first page, and one
+ * above the total gives them all. Only the rows kept are made, so a long history costs the window nothing.
+ */
+export function pageOf(entries: readonly DictationEntry[], limit?: number): DictationList {
+  const wanted = limit !== undefined && Number.isInteger(limit) && limit > 0 ? limit : DICTATION_PAGE;
+  return { rows: entries.slice(0, wanted).map(rowOf), total: entries.length };
 }
 
 /**

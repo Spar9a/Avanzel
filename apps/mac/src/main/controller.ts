@@ -68,7 +68,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { isSettingsPane, noSuchReview, type DeleteDictationResult, type DictationRow } from "../shared/ipc.ts";
+import { isSettingsPane, noSuchReview, type DeleteDictationResult, type DictationList } from "../shared/ipc.ts";
 import {
   ANOTHER_LIBRARY,
   avanzelFailure,
@@ -131,7 +131,7 @@ import { COPY_PROMPT_MS, CursorDictation, type CursorHost } from "./cursor-dicta
 import { CursorHelper, cursorPermissionsOf, type CursorPermissionState } from "./cursor-helper.ts";
 import { DEFAULT_SKIP_APPS } from "./cursor-policy.ts";
 import { DictationHistory, type DictationEntry } from "./dictation-history.ts";
-import { deleteDictationResult, forgetDictation, rowOf } from "./dictation-rows.ts";
+import { deleteDictationResult, forgetDictation, pageOf } from "./dictation-rows.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import { answeredFrom, askLinks, captureMeta, captureWords, filedPages, filedToday, findPage, obsidianUrl, pageAt, pageInfo, recentFromLog, savedPage } from "./library-info.ts";
@@ -1952,11 +1952,11 @@ export class Controller {
   }
 
   /**
-   * The history of dictations, for Settings → Dictations: newest first, each as the pane shows it (the words cut to a preview). It needs
-   * no library: the history is the app's own.
+   * The newest `limit` dictations of the history, for Settings → Dictations (`pageOf`): newest first, each as the pane shows it (the words
+   * cut to a preview), with how many the history holds. It needs no library: the history is the app's own.
    */
-  listDictations(): DictationRow[] {
-    return this.dictations.list().map(rowOf);
+  listDictations(limit?: number): DictationList {
+    return pageOf(this.dictations.list(), limit);
   }
 
   /** Copy, in the Dictations pane: dictation `id`'s whole words go on the clipboard. False when it has gone, or the clipboard refused. */

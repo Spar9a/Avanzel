@@ -54,6 +54,22 @@ export interface DictationRow {
 /** What Delete answers. A failure carries what is safe and the one fix, in plain words, for the Notice's body. */
 export type DeleteDictationResult = { ok: true } | { ok: false; message: string };
 
+/**
+ * What the pane says under "That dictation couldn't be deleted.": what is safe, and the one fix. Main sends it as a failed Delete's
+ * message, and the pane tells it itself when the call can't be made at all, so it is defined once, here. The system's own words are
+ * not told: they name files and say nothing a person could act on.
+ */
+export const DELETE_FAILED_BODY = "It is still in the history. Try deleting it again.";
+
+/** How many dictations the pane lists at first, and how many more each "Show more" adds: the history has no limit of its own. */
+export const DICTATION_PAGE = 100;
+
+/** The newest dictations as the pane lists them, and how many the history holds in all (so the pane can say how many are not shown). */
+export interface DictationList {
+  rows: DictationRow[];
+  total: number;
+}
+
 /** The steps of the setup window, in order. */
 export const SETUP_STEPS = ["hello", "found", "microphone", "think", "filing", "ask", "screen", "done"] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
@@ -834,8 +850,11 @@ export interface AvanzelBridge {
      * can't be seen without it). Resolves with what was granted at the time it asked.
      */
     askCursorPermissions(): Promise<CursorPermissionState>;
-    /** The history of dictations at the cursor, newest first, each as the Dictations pane shows it. Needs no library. */
-    listDictations(): Promise<DictationRow[]>;
+    /**
+     * The newest `limit` dictations at the cursor (DICTATION_PAGE when it is not a whole number above 0), newest first, each as the
+     * Dictations pane shows it, with the total the history holds. Needs no library.
+     */
+    listDictations(limit?: number): Promise<DictationList>;
     /** Dictation `id`'s whole words go on the clipboard. False when there is no such dictation or the clipboard refused. */
     copyDictation(id: string): Promise<boolean>;
     /** Forgets dictation `id`. A history that can't be rewritten keeps it, and says so in plain words. */
