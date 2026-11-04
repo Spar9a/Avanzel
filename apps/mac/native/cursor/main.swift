@@ -8,18 +8,27 @@
 // Out, stdout:
 //   {"event":"ready","accessibility":true,"inputMonitoring":true}     once, at start
 //   {"event":"modifier","key":"right-option","down":true}             a change of the watched key
-//   {"event":"key"}                                                   any other key-down or mouse-down: what breaks a tap
-//   {"event":"error","message":"..."}
-//   {"id":1,"ok":true,...}  or  {"id":1,"ok":false,"message":"..."}   the reply to the command with that id
+//   {"event":"key"}                                                   any other key-down or mouse-down: what breaks a tap.
+//                                                                     Sent only after a watch; it says nothing about which key.
+//   {"event":"error","message":"..."}                                 also for a line that is not JSON or has no id and no cmd
+//   {"id":1,"ok":true,...}  or  {"id":1,"ok":false,"message":"..."}   the reply to the command with that id; every success
+//                                                                     reply carries "ok":true beside its fields. A line with an
+//                                                                     id but no usable cmd gets an ok:false reply too.
 //
 // In, stdin:
 //   {"id":1,"cmd":"watch","key":"right-option"}      key: right-option, left-option, right-command or right-control.
-//                                                    Until the first watch, no modifier or key events are sent.
-//   {"id":2,"cmd":"permissions","prompt":false}      replies {"accessibility":bool,"inputMonitoring":bool}; prompt:true
-//                                                    asks macOS for both
-//   {"id":3,"cmd":"inspect"}                         replies {"app":{"name","bundleId","pid"},"window":{"title"}|null,
-//                                                    "element":{"role","secure","takesText":"yes"|"no"|"unknown"}|null}
-//   {"id":4,"cmd":"paste"}                           posts Command-V to the focused app
+//                                                    Until the first watch, no modifier or key events are sent. Replies
+//                                                    ok:false while Input Monitoring is missing, but the key stays chosen
+//                                                    and works once a later watch or permissions command finds the permission.
+//   {"id":2,"cmd":"permissions","prompt":false}      replies {"ok":true,"accessibility":bool,"inputMonitoring":bool};
+//                                                    prompt:true asks macOS for both
+//   {"id":3,"cmd":"inspect"}                         replies {"ok":true,"app":{"name","bundleId","pid"},"window":{"title"}|null,
+//                                                    "element":{"role","secure","takesText":"yes"|"no"|"unknown"}|null}.
+//                                                    Without Accessibility, or when nothing could be read, window and element
+//                                                    are null. With no focused window, element is present with takesText "no",
+//                                                    and its role is null when there is no focused element. Names and titles
+//                                                    may be null too.
+//   {"id":4,"cmd":"paste"}                           posts Command-V to the focused app; ok:false without Accessibility
 //
 // Without Input Monitoring the helper still starts (inputMonitoring:false) and answers every command but cannot see keys.
 import AppKit
@@ -88,6 +97,12 @@ func installTap(force: Bool) {
     if tap != nil || (!force && !CGPreflightListenEventAccess()) { return }
     let mask: CGEventMask = [CGEventType.flagsChanged, .keyDown, .leftMouseDown, .rightMouseDown].reduce(0) { $0 | (1 << $1.rawValue) }
     guard let created = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly, eventsOfInterest: mask, callback: tapCallback, userInfo: nil) else { return }
+    // A tap made without the permission can exist and still hear nothing, and would stay deaf after the grant. Drop it, so the
+    // next call makes a fresh one.
+    guard CGPreflightListenEventAccess() else {
+        CFMachPortInvalidate(created)
+        return
+    }
     CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, created, 0), .commonModes)
     CGEvent.tapEnable(tap: created, enable: true)
     tap = created
@@ -100,8 +115,13 @@ func accessibilityAllowed(prompt: Bool = false) -> Bool {
     return AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
 }
 
+/// Whether keys are heard now: macOS allows it and the tap (which is only ever kept while it was allowed) is running.
+func listening() -> Bool {
+    tap != nil && CGPreflightListenEventAccess()
+}
+
 func permissionState() -> [String: Any] {
-    ["accessibility": AXIsProcessTrusted(), "inputMonitoring": CGPreflightListenEventAccess()]
+    ["accessibility": AXIsProcessTrusted(), "inputMonitoring": listening()]
 }
 
 // MARK: Inspecting
@@ -189,14 +209,13 @@ func run(_ command: String, _ request: [String: Any]) -> [String: Any] {
     switch command {
     case "watch":
         guard let name = request["key"] as? String, let key = keys[name] else { return ["ok": false, "message": "Unknown key. Use right-option, left-option, right-command or right-control."] }
-        let listening: Bool = DispatchQueue.main.sync {
+        let heard: Bool = DispatchQueue.main.sync {
             watched = key
             installTap(force: true)
-            // A tap made without the permission may exist and still hear nothing, so both must hold.
-            return tap != nil && CGPreflightListenEventAccess()
+            return listening()
         }
-        // The key stays chosen, and is reported once the tap can start (a later watch or permissions command retries it).
-        if !listening { return ["ok": false, "message": "Avanzel is not allowed to watch the keyboard yet."] }
+        // The key stays chosen, and is heard once the tap can start (a later watch or permissions command retries it).
+        if !heard { return ["ok": false, "message": "Avanzel is not allowed to watch the keyboard yet."] }
         return ["ok": true]
     case "permissions":
         if request["prompt"] as? Bool == true {
@@ -206,7 +225,7 @@ func run(_ command: String, _ request: [String: Any]) -> [String: Any] {
         } else {
             DispatchQueue.main.sync { installTap(force: false) }
         }
-        return permissionState().merging(["ok": true]) { a, _ in a }
+        return DispatchQueue.main.sync { permissionState() }.merging(["ok": true]) { a, _ in a }
     case "inspect":
         return inspect()
     case "paste":
@@ -217,8 +236,14 @@ func run(_ command: String, _ request: [String: Any]) -> [String: Any] {
 }
 
 func handle(_ line: String) {
-    guard let data = line.data(using: .utf8), let request = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let command = request["cmd"] as? String else {
+    guard let data = line.data(using: .utf8), let request = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
         send(["event": "error", "message": "That line is not a command."])
+        return
+    }
+    guard let command = request["cmd"] as? String else {
+        var reply: [String: Any] = ["ok": false, "message": "That line has no cmd."]
+        if let id = request["id"] { reply["id"] = id } else { reply = ["event": "error", "message": "That line is not a command."] }
+        send(reply)
         return
     }
     var reply = run(command, request)
@@ -238,7 +263,7 @@ for signalNumber in [SIGINT, SIGTERM] {
 }
 
 installTap(force: false)
-send(["event": "ready", "accessibility": AXIsProcessTrusted(), "inputMonitoring": tap != nil && CGPreflightListenEventAccess()])
+send(["event": "ready", "accessibility": AXIsProcessTrusted(), "inputMonitoring": listening()])
 
 let reader = Thread {
     while let line = readLine(strippingNewline: true) {
