@@ -10,7 +10,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse, TomlError } from "smol-toml";
 import { AvanzelError, type VoiceOptions } from "../types.ts";
-import { MAX_DICTIONARY_ENTRIES } from "./dictionary.ts";
+import { MAX_DICTIONARY_ENTRIES, plainLine } from "./dictionary.ts";
 import { render } from "./templates.ts";
 
 export const VAULT_MARKER = ".avanzel";
@@ -273,7 +273,7 @@ function dictionaryLines(data: Table, path: string): string[] {
         "Shorten it, or put some of its heard-as words on a second line for the same term.",
     );
   }
-  return lines;
+  return lines.map(plainLine);
 }
 
 // --- paths ---------------------------------------------------------------------------------------

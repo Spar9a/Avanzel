@@ -2,6 +2,7 @@
 // AGENTS.md still know the rules; the first line names the task for logs and test doubles.
 
 import { localDate, localMinute } from "./dates.ts";
+import { plainLine } from "./dictionary.ts";
 import { render, substitute } from "./templates.ts";
 
 const READONLY = "4. Do not create, edit or delete any files.";
@@ -39,6 +40,24 @@ const CALL =
   "the owner of each. Link the people by [[wikilink]] and update their pages, citing the capture. Never write the " +
   "transcript out in full on the page. When you do not know a speaker's name, say so rather than guessing.";
 
+const MAX_NAMES = 100;
+const MAX_NAMES_CHARACTERS = 2000;
+
+/** The names as plain single-line terms, in order: empty ones dropped, at most 100, and no more than 2,000 characters in all. */
+function boundedNames(names: readonly string[]): string[] {
+  const kept: string[] = [];
+  let length = 0;
+  for (const name of names) {
+    const term = plainLine(name);
+    if (term === "") continue;
+    const added = length + (kept.length > 0 ? 2 : 0) + term.length;
+    if (kept.length >= MAX_NAMES || added > MAX_NAMES_CHARACTERS) break;
+    kept.push(term);
+    length = added;
+  }
+  return kept;
+}
+
 export function filePrompt(
   captureRel: string,
   captureId: string,
@@ -52,7 +71,8 @@ export function filePrompt(
     notes.push(`This capture has screenshots: ${attachments.join(", ")}. Open them to see what the owner was looking at.`);
   }
   if (call) notes.push(CALL);
-  if (names.length > 0) notes.push(`The owner uses these names and terms. Spell them exactly this way: ${names.join(", ")}.`);
+  const spelled = boundedNames(names);
+  if (spelled.length > 0) notes.push(`The owner uses these names and terms. Spell them exactly this way: ${spelled.join(", ")}.`);
   const standing = instructions?.trim();
   if (standing) notes.push(`The owner's standing instructions for this run: ${standing}`);
   return render("prompts/file.md", {

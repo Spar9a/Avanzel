@@ -372,6 +372,13 @@ describe("withDictionary", () => {
     );
     expect(listed).not.toBeInstanceOf(CommandTranscriber);
     expect(listed.engine).toBe("command:whisper-cli");
+    // Without a dictionary the Parakeet backend is the lazily loading transcriber itself: nothing wraps it.
+    for (const options of [voice({}), voice({ dictionary: [] }), voice({ dictionary: ["", "= foo"] })]) {
+      const bare = await makeTranscriber(options, tempDir());
+      expect(Object.keys(bare).sort()).toEqual(["engine", "release", "transcribe", "transcribeSegments"]);
+      expect(Object.getPrototypeOf(bare)).toBe(Object.prototype);
+      expect(bare.engine).toBe("onnx-asr:nemo-parakeet-tdt-0.6b-v3");
+    }
     const parakeet = await makeTranscriber(voice({ dictionary: ["Ollama = Alema"] }), tempDir());
     expect(parakeet.engine).toBe("onnx-asr:nemo-parakeet-tdt-0.6b-v3");
     expect(parakeet.transcribeSegments).toBeDefined();

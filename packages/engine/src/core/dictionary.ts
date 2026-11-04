@@ -3,6 +3,9 @@
 // A window of words may become a term only when it sounds like it, is spelt something like it, and stands inside one line
 // with nothing but spaces between its words. Known limit: an ordinary word that is both spelt and sounds close to a
 // term ("election" for "Electron") is still rewritten; the owner can add the term's spelling to their own words list.
+// A term the speech model splits across two call segments is not corrected, each segment being corrected alone.
+// A term and each alias are one plain line: runs of whitespace and control characters become one space, so a line
+// from a hand-edited config can never carry a newline into a prompt.
 
 export interface DictionaryEntry {
   term: string;
@@ -26,13 +29,18 @@ const SHORT_KEY = 5;
 const MIN_KEY = 4;
 const MIN_LETTER_SIMILARITY = 0.6;
 
+/** `value` as one plain line: every run of whitespace and control characters (newline, tab, DEL, ...) is one space; trimmed. */
+export function plainLine(value: string): string {
+  return value.replace(/[\s\p{Cc}]+/gu, " ").trim();
+}
+
 /** One line per entry: "Term" or "Term = heard one, heard two". Repeated terms merge. */
 export function parseDictionary(lines: readonly string[]): DictionaryEntry[] {
   const byTerm = new Map<string, DictionaryEntry>();
   const seen = new Map<string, Set<string>>();
   for (const line of lines) {
     const split = line.indexOf("=");
-    const term = (split < 0 ? line : line.slice(0, split)).trim();
+    const term = plainLine(split < 0 ? line : line.slice(0, split));
     if (term === "") continue;
     let entry = byTerm.get(term);
     if (!entry) {
@@ -44,7 +52,7 @@ export function parseDictionary(lines: readonly string[]): DictionaryEntry[] {
     const known = seen.get(term) as Set<string>;
     if (split < 0) continue;
     for (const raw of line.slice(split + 1).split(",")) {
-      const alias = raw.trim();
+      const alias = plainLine(raw);
       const folded = alias.toLowerCase();
       if (alias === "" || known.has(folded)) continue;
       known.add(folded);
