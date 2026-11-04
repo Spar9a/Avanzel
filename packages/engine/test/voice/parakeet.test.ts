@@ -12,6 +12,7 @@ import {
   ParakeetTranscriber,
   parseVocab,
   recognizeSegments,
+  recognizeTimed,
 } from "../../src/voice/parakeet.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -219,5 +220,34 @@ describe("recognizeSegments", () => {
     const recognize = vi.fn(async () => ["never"]);
     expect(await recognizeSegments(samples, [], recognize)).toBe("");
     expect(recognize).not.toHaveBeenCalled();
+  });
+});
+
+describe("recognizeTimed", () => {
+  const samples = new Float32Array(16000 * 10);
+  const segments: [number, number][] = [
+    [8000, 40000],
+    [48000, 56000],
+    [72000, 120000],
+  ];
+
+  it("returns one trimmed text per segment, timed in seconds, and drops the empty ones", async () => {
+    const heard = [" first ", "  ", "third"];
+    let done = 0;
+    const recognize = async (batch: Float32Array[]) => heard.slice(done, (done += batch.length));
+    expect(await recognizeTimed(samples, segments, recognize)).toEqual([
+      { start: 0.5, end: 2.5, text: "first" },
+      { start: 4.5, end: 7.5, text: "third" },
+    ]);
+  });
+
+  it("recognizes in batches of the given size", async () => {
+    const sizes: number[] = [];
+    const recognize = async (batch: Float32Array[]) => {
+      sizes.push(batch.length);
+      return batch.map(() => "x");
+    };
+    expect(await recognizeTimed(samples, segments, recognize, 2)).toHaveLength(3);
+    expect(sizes).toEqual([2, 1]);
   });
 });

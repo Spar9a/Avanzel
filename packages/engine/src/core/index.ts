@@ -12,5 +12,6 @@ export * from "./guard-hook.ts";
 export * from "./harness.ts";
 export * from "./librarian.ts";
 export * from "./tasks.ts";
+export * from "./calls.ts";
 export * from "./skills.ts";
 export { templatesDir } from "./templates.ts";

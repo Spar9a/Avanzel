@@ -1,6 +1,6 @@
 // Local speech-to-text: Parakeet through onnxruntime-node, or any speech-to-text CLI.
 import { join } from "node:path";
-import { AvanzelError, type Transcriber, type Transcript, type VoiceOptions } from "../types.ts";
+import { AvanzelError, type TimedText, type Transcriber, type Transcript, type VoiceOptions } from "../types.ts";
 import { CommandTranscriber } from "./command.ts";
 import { locateModel, MissingModelError, MODELS, modelFiles, VAD_MODEL } from "./models.ts";
 import { ParakeetTranscriber } from "./parakeet.ts";
@@ -80,13 +80,23 @@ export function lazily(engine: string, load: () => Promise<Transcriber>): Requir
   const running = new Set<Promise<unknown>>();
   let releasing: Promise<void> | null = null;
 
-  async function loadAndTranscribe(audio: string | Float32Array, sampleRate?: number): Promise<Transcript> {
+  async function loadAndUse<T>(use: (model: Transcriber) => Promise<T>): Promise<T> {
     if (releasing) await releasing.catch(() => {}); // a failed release is for its caller to hear about, not this transcription
     loading ??= load().catch((error: unknown) => {
       loading = null;
       throw error;
     });
-    return (await loading).transcribe(audio, sampleRate);
+    return use(await loading);
+  }
+
+  async function track<T>(use: (model: Transcriber) => Promise<T>): Promise<T> {
+    const run = loadAndUse(use);
+    running.add(run);
+    try {
+      return await run;
+    } finally {
+      running.delete(run);
+    }
   }
 
   async function freeModel(): Promise<void> {
@@ -98,15 +108,12 @@ export function lazily(engine: string, load: () => Promise<Transcriber>): Requir
 
   return {
     engine,
-    async transcribe(audio, sampleRate) {
-      const run = loadAndTranscribe(audio, sampleRate);
-      running.add(run);
-      try {
-        return await run;
-      } finally {
-        running.delete(run);
-      }
-    },
+    transcribe: (audio, sampleRate) => track((model) => model.transcribe(audio, sampleRate)),
+    transcribeSegments: (samples, sampleRate): Promise<TimedText[]> =>
+      track((model) => {
+        if (!model.transcribeSegments) throw new AvanzelError(`${engine} cannot tell where in the audio each part was said.`);
+        return model.transcribeSegments(samples, sampleRate);
+      }),
     release() {
       releasing ??= freeModel().finally(() => {
         releasing = null;

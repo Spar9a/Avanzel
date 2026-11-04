@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { InferenceSession, Tensor } from "onnxruntime-node";
-import { AvanzelError, type Transcriber, type Transcript } from "../types.ts";
+import { AvanzelError, type TimedText, type Transcriber, type Transcript } from "../types.ts";
 import { parakeetFileNames } from "./models.ts";
 import { assetsDir, SESSION_OPTIONS } from "./onnx.ts";
 import { resampleTo16k } from "./resample.ts";
@@ -99,6 +99,28 @@ export function needsSegments(seconds: number): boolean {
   return seconds > VAD_THRESHOLD_SECONDS;
 }
 
+/**
+ * Recognises `segments` (sample ranges of 16 kHz `samples`) `batchSize` at a time. Each text is trimmed and timed in
+ * seconds from the start of `samples`; segments that said nothing are left out.
+ */
+export async function recognizeTimed(
+  samples: Float32Array,
+  segments: readonly (readonly [number, number])[],
+  recognize: (batch: Float32Array[]) => Promise<string[]>,
+  batchSize = VAD_BATCH_SIZE,
+): Promise<TimedText[]> {
+  const timed: TimedText[] = [];
+  for (let i = 0; i < segments.length; i += batchSize) {
+    const chunk = segments.slice(i, i + batchSize);
+    const texts = await recognize(chunk.map(([start, end]) => samples.subarray(start, end)));
+    chunk.forEach(([start, end], j) => {
+      const text = texts[j]!.trim();
+      if (text) timed.push({ start: start / SAMPLE_RATE, end: end / SAMPLE_RATE, text });
+    });
+  }
+  return timed;
+}
+
 /** Recognises `segments` of `samples` `batchSize` at a time; trims each text, drops empty ones, joins with one space. */
 export async function recognizeSegments(
   samples: Float32Array,
@@ -106,12 +128,7 @@ export async function recognizeSegments(
   recognize: (batch: Float32Array[]) => Promise<string[]>,
   batchSize = VAD_BATCH_SIZE,
 ): Promise<string> {
-  const texts: string[] = [];
-  for (let i = 0; i < segments.length; i += batchSize) {
-    const batch = segments.slice(i, i + batchSize).map(([start, end]) => samples.subarray(start, end));
-    texts.push(...(await recognize(batch)));
-  }
-  return texts.map((text) => text.trim()).filter(Boolean).join(" ");
+  return (await recognizeTimed(samples, segments, recognize, batchSize)).map(({ text }) => text).join(" ");
 }
 
 export interface ParakeetOptions {
@@ -193,9 +210,21 @@ export class ParakeetTranscriber implements Transcriber {
 
   /** A WAV (or, with ffmpeg, any audio) file, or mono samples at `sampleRate`. Refused once the model is released. */
   async transcribe(audio: string | Float32Array, sampleRate = SAMPLE_RATE): Promise<Transcript> {
+    return this.#track(() => this.#transcribe(audio, sampleRate));
+  }
+
+  /**
+   * The speech in `samples` as one text per stretch Silero VAD finds, timed in seconds, empty ones left out. Audio up
+   * to 25 s is a single stretch, as it is for `transcribe`. Refused once the model is released.
+   */
+  async transcribeSegments(samples: Float32Array, sampleRate = SAMPLE_RATE): Promise<TimedText[]> {
+    return this.#track(() => this.#transcribeSegments(samples, sampleRate));
+  }
+
+  async #track<T>(work: () => Promise<T>): Promise<T> {
     if (this.#released) throw new AvanzelError("The speech model was released; load it again to transcribe.");
     // Registered before anything is awaited, so a release() called right after this waits for the transcription.
-    const run = this.#transcribe(audio, sampleRate);
+    const run = work();
     this.#running.add(run);
     try {
       return await run;
@@ -228,13 +257,24 @@ export class ParakeetTranscriber implements Transcriber {
     if (samples.length < MIN_SAMPLES) {
       text = "";
     } else if (needsSegments(seconds)) {
-      const { vad } = this.#sessions;
-      if (!vad) throw new AvanzelError(`Audio longer than ${VAD_THRESHOLD_SECONDS} s needs the Silero VAD model.`);
-      text = await recognizeSegments(samples, await segmentSpeech(samples, vad), (batch) => this.#recognize(batch));
+      text = await recognizeSegments(samples, await this.#speech(samples), (batch) => this.#recognize(batch));
     } else {
       text = (await this.#recognize([samples]))[0]!;
     }
     return { text: text.trim(), engine: this.engine, seconds };
+  }
+
+  async #transcribeSegments(audio: Float32Array, sampleRate: number): Promise<TimedText[]> {
+    const samples = await resampleTo16k(audio, sampleRate);
+    if (samples.length < MIN_SAMPLES) return [];
+    const segments = needsSegments(audio.length / sampleRate) ? await this.#speech(samples) : [[0, samples.length] as const];
+    return recognizeTimed(samples, segments, (batch) => this.#recognize(batch));
+  }
+
+  async #speech(samples: Float32Array): Promise<[number, number][]> {
+    const { vad } = this.#sessions;
+    if (!vad) throw new AvanzelError(`Audio longer than ${VAD_THRESHOLD_SECONDS} s needs the Silero VAD model.`);
+    return segmentSpeech(samples, vad);
   }
 
   /** Recognises a batch of 16 kHz waveforms, zero-padded to the longest like onnx-asr's `pad_list`. */

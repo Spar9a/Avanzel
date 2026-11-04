@@ -105,6 +105,7 @@ describe("speechModels", () => {
 });
 
 const heard: Transcript = { text: "heard", engine: "fake", seconds: 1 };
+const timed = [{ start: 0, end: 1, text: "heard" }];
 const audio = new Float32Array(16000);
 
 /** A promise the test settles by hand. */
@@ -130,7 +131,12 @@ interface Hooks {
 
 /** A loader of fake models, which it keeps in `models` with their calls counted. */
 function fakeModels({ ready, transcribe = async () => heard, release = async () => {} }: Hooks = {}) {
-  const make = () => ({ engine: "fake", transcribe: vi.fn(transcribe), release: vi.fn(release) });
+  const make = () => ({
+    engine: "fake",
+    transcribe: vi.fn(transcribe),
+    transcribeSegments: vi.fn(async () => timed),
+    release: vi.fn(release),
+  });
   const models: ReturnType<typeof make>[] = [];
   const load = vi.fn(async () => {
     await ready;
@@ -142,6 +148,18 @@ function fakeModels({ ready, transcribe = async () => heard, release = async () 
 }
 
 describe("a lazily loading transcriber", () => {
+  it("transcribeSegments loads the model and returns its timed texts", async () => {
+    const { load, models } = fakeModels();
+    const transcriber = lazily("fake", load);
+    expect(await transcriber.transcribeSegments(audio, 8000)).toEqual(timed);
+    expect(models[0]!.transcribeSegments).toHaveBeenCalledWith(audio, 8000);
+  });
+
+  it("transcribeSegments says so when the model cannot time its speech", async () => {
+    const transcriber = lazily("fake", async () => ({ engine: "fake", transcribe: async () => heard }));
+    await expect(transcriber.transcribeSegments(audio)).rejects.toThrow(AvanzelError);
+  });
+
   it("release frees the loaded model and the next use loads it again", async () => {
     const { load, models } = fakeModels();
     const transcriber = lazily("fake", load);

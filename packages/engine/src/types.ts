@@ -8,10 +8,22 @@ export interface Transcript {
   seconds: number | null;
 }
 
+/** A stretch of speech with its place in the audio; `start` and `end` are seconds from the start. */
+export interface TimedText {
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface Transcriber {
   readonly engine: string;
   /** A WAV file path, or mono samples in [-1, 1] at `sampleRate` (16 kHz when omitted). */
   transcribe(audio: string | Float32Array, sampleRate?: number): Promise<Transcript>;
+  /**
+   * The speech in mono samples, one text per stretch the voice-activity detector found, in order, empty ones left out.
+   * Optional: only a transcriber that knows where each stretch lies can give it (the command backend cannot).
+   */
+  transcribeSegments?(samples: Float32Array, sampleRate?: number): Promise<TimedText[]>;
   /**
    * Waits for the transcriptions in progress, then frees the model (Parakeet's is ~700 MB). The transcriber from
    * `makeTranscriber` loads it again on its next `transcribe`; a `ParakeetTranscriber` refuses to transcribe any more.
