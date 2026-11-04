@@ -100,6 +100,7 @@ import type {
   AppSettings,
   AskResult,
   AskSnapshot,
+  CapsuleCommand,
   CapsuleMode,
   CapsuleState,
   CardAction,
@@ -115,6 +116,9 @@ import type {
   Shortcuts,
   TaskInfo,
 } from "../shared/ipc.ts";
+import type { CallApp } from "./call-apps.ts";
+import { CALL_CONSENT_DIALOG, CallNotes, MAX_CALL_MS, type CallHost } from "./call-notes.ts";
+import { CallTap } from "./calltap.ts";
 import { frontContext } from "./front-app.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
 import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
@@ -254,6 +258,12 @@ type FilingState = Extract<CapsuleState, { kind: "filing" }>;
 /** What an error card's one button does: where its Open Settings goes, or the fix a failed filing offers. */
 type ErrorAction = Extract<CapsuleState, { kind: "error" }>["action"];
 
+/** The capsule page's microphone didn't start, in the words the browser gave (`message`): nothing was recorded. */
+const microphoneProblem = (message: string): Problem => ({
+  title: "The microphone didn't start.",
+  body: [ownLine(message), "Nothing was recorded. Check the microphone in Settings → Voice."].filter(Boolean).join(" "),
+});
+
 /**
  * The watch of one agent's sign-in (`watchSignIn`): the notes that wait for it, each with what its failure says once no watch
  * will file it (`unwatched`); when it gives up; and its next look.
@@ -364,6 +374,10 @@ export class Controller {
    */
   private cardUnkept: Problem | null = null;
   private recording: Recording | null = null;
+  /** Notes on a call: a call is not a recording, and while one runs no recording starts (`CallNotes.refuse`). */
+  private readonly calls: CallNotes;
+  /** The listening card of the call that runs, which the capsule goes back to instead of hiding (`setCapsule`); null with no call. */
+  private callCard: CapsuleState | null = null;
   /**
    * The transcription whose recording Stop can keep while it runs, as long as the capsule's card is its card (`transcribeWithStop`,
    * and `stopRecording`, which takes the card for a newer recording).
@@ -494,7 +508,7 @@ export class Controller {
   private audioTimeout: NodeJS.Timeout | null = null;
   /** Whether the capsule page listens yet; commands for its recorder wait until it does. */
   private capsuleListening = false;
-  private heldCommands: ("start" | "stop" | "cancel")[] = [];
+  private heldCommands: CapsuleCommand[] = [];
   /** Notifications posted, kept for the e2e tests only. `silent`: posted without macOS's sound, and only then present. */
   private readonly notified: { title: string; body: string; silent?: true }[] = [];
   /**
@@ -518,6 +532,7 @@ export class Controller {
     this.noticed = new NoticedShortcuts(path.join(userData, "noticed-shortcuts.json"));
     this.firstRun = new FirstRunLog(path.join(userData, "first-run.json"));
     this.captureCount = new CaptureCount(path.join(userData, "captures.json"));
+    this.calls = new CallNotes(this.callHost(path.join(userData, "calls")));
     this.setup = new Setup(this.setupHost()); // last: the host hands setup the stores made above
   }
 
@@ -551,10 +566,11 @@ export class Controller {
 
   /**
    * Whether quitting now would cut an agent run, work queued behind one, or an edit short, or leave
-   * words only in memory (kept edits and corrections whose save failed): `stopForQuit` saves those.
+   * words only in memory (kept edits and corrections whose save failed): `stopForQuit` saves those. A call that runs is busy too:
+   * `stopForQuit` ends it and keeps its folder for the next start.
    */
   busy(): boolean {
-    return this.runs.size > 0 || this.queued > 0 || this.editing.size > 0 || this.kept.size > 0 || this.unwritten.size > 0;
+    return this.runs.size > 0 || this.queued > 0 || this.editing.size > 0 || this.kept.size > 0 || this.unwritten.size > 0 || this.calls.running;
   }
 
   /**
@@ -565,12 +581,13 @@ export class Controller {
    */
   async stopForQuit(): Promise<void> {
     this.quitting = true;
+    const leaving = this.calls.leave();
     for (const abort of this.runs.keys()) abort.abort();
     this.stopAgentChecks();
     this.keepEdit();
     let timer: NodeJS.Timeout | undefined;
     const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, quitWaitMs())));
-    await Promise.race([Promise.allSettled([this.queue, ...this.runs.values()]), waited]);
+    await Promise.race([Promise.allSettled([this.queue, ...this.runs.values(), leaving]), waited]);
     clearTimeout(timer);
     this.saveUnwritten();
   }
@@ -1147,7 +1164,7 @@ export class Controller {
   /**
    * A thought of the person's is in flight: it is being recorded or made into words, its editor is open, its edit is still to be settled
    * (`editing`), or its filing (the capsule's own, whether its card shows or is hidden) shows, waits for its turn or runs. A recording of
-   * setup's first thought counts. An edit is settled in the queued work that files the corrected words (`settleEdit`, `refile`), so File
+   * setup's first thought counts, and so do notes on a call while they run. An edit is settled in the queued work that files the corrected words (`settleEdit`, `refile`), so File
    * after Edit during a review is in flight until that work's turn comes, whether its card shows or is hidden: it is in neither
    * `queuedToFile` nor `runs` meanwhile. (`job` is never a background filing's: only the capsule's own filings set it.)
    */
@@ -1155,7 +1172,7 @@ export class Controller {
     const capsule = this.capsuleState.kind;
     const job = this.job;
     const filing = job !== null && (this.queuedToFile.has(job.capturePath) || this.runs.has(job.abort));
-    return this.recording !== null || capsule === "transcribing" || capsule === "filing" || this.inEditor !== null || this.editing.size > 0 || filing;
+    return this.recording !== null || this.calls.running || capsule === "transcribing" || capsule === "filing" || this.inEditor !== null || this.editing.size > 0 || filing;
   }
 
   /**
@@ -1185,6 +1202,7 @@ export class Controller {
 
   /** `capture`: the note an error card is about (`cardCapture`), which stays only as long as that card is what the capsule shows. */
   private setCapsule(state: CapsuleState, autoHideMs?: number, capture?: string): void {
+    if (state.kind === "hidden" && this.callCard) state = this.callCard; // while a call runs its card is what the capsule rests on
     if (state.kind !== "editing") this.keepEdit(); // whatever replaces the editor (a recording, a typed thought, an error) keeps its edit
     const was = this.capsuleState;
     const wasEditing = was.kind === "editing";
@@ -1235,7 +1253,7 @@ export class Controller {
   }
 
   /** A command for the capsule's recorder. Sent while its page loads, it would be lost: so it waits. */
-  private capsuleCommand(command: "start" | "stop" | "cancel"): void {
+  private capsuleCommand(command: CapsuleCommand): void {
     if (this.capsuleListening) this.capsule.webContents.send("capsule:command", command);
     else this.heldCommands.push(command);
   }
@@ -1301,6 +1319,7 @@ export class Controller {
 
   async toggleCapture(): Promise<void> {
     if (this.recording) return this.stopRecording();
+    if (this.calls.refuse()) return;
     if (!(await this.readyToListen())) return;
     const screen = permissionStatus("screen");
     if (screen === "denied" || screen === "restricted") return this.cantSeeScreen();
@@ -1405,6 +1424,10 @@ export class Controller {
     shot?: Recording["shot"],
     { forSetup = false, askPage = null }: { forSetup?: boolean; askPage?: number | null } = {},
   ): Promise<void> {
+    if (this.calls.refuse()) {
+      if (shot) rmSync(shot.path, { force: true });
+      return;
+    }
     if (mode === "dictate" && !(await this.readyToListen())) return;
     if (this.recording) {
       // Another tap started one while this one waited (say, on the microphone prompt).
@@ -1520,15 +1543,12 @@ export class Controller {
    */
   micError(message: string): void {
     const recording = this.recording;
-    if (!recording) return;
+    if (!recording) return void this.calls.cancel(microphoneProblem(message), "open-settings:voice", "Open Settings");
     this.abandonRecording(recording);
     this.recordingFailed(
       recording,
       { problem: "microphone" },
-      {
-        title: "The microphone didn't start.",
-        body: [ownLine(message), "Nothing was recorded. Check the microphone in Settings → Voice."].filter(Boolean).join(" "),
-      },
+      microphoneProblem(message),
       "open-settings:voice",
       "Open Settings",
     );
@@ -1784,6 +1804,96 @@ export class Controller {
   private keepInInbox({ vault, audioPath, now, samples }: Transcribing): void {
     if (audioPath) moveInto(vault.inbox, audioPath);
     else writeInto(vault.inbox, `${idStamp(now)}.wav`, (file) => writeWav(file, samples, 16000));
+  }
+
+  // ---------------------------------------------------------------- calls
+
+  /**
+   * Notes on a call in `app`, or in everything the Mac plays (`CallNotes.start`): asked about once (CALL_CONSENT_DIALOG), then the call
+   * app's sound and the microphone are taken until `stopCallNotes`. Refused while a recording runs, and while another call does.
+   */
+  async startCallNotes(app: CallApp | "everything"): Promise<boolean> {
+    if (this.recording) return false;
+    return this.calls.start(app);
+  }
+
+  /** Ends the call that runs, which becomes its capture and is filed as a thought is. Nothing while no call runs. */
+  stopCallNotes(): Promise<void> {
+    return this.calls.stop();
+  }
+
+  /** Makes the notes of a call whose folder (`<userData>/calls/<id>/`) was left over, as Stop would have (`CallNotes.finishCallFolder`). */
+  finishCallFolder(dir: string): Promise<void> {
+    return this.calls.finishCallFolder(dir);
+  }
+
+  /** Stop, on the call's listening card. Only the capsule's own page is heard. */
+  stopCall(sender: WebContents): Promise<void> {
+    return isPageOf(sender, this.capsule) ? this.stopCallNotes() : Promise.resolve();
+  }
+
+  /**
+   * A block of the call's microphone from the capsule page (only its own page is heard). With AVANZEL_FAKE_AUDIO the page records
+   * nothing, and the fake recording stands in for the call's microphone at its end.
+   */
+  async onCallAudio(sender: WebContents, samples: Float32Array, last: boolean): Promise<void> {
+    if (!isPageOf(sender, this.capsule)) return;
+    const fake = process.env.AVANZEL_FAKE_AUDIO;
+    this.calls.audio(fake && last ? await this.fakeAudio(fake) : samples, last);
+  }
+
+  private callHost(callsDir: string): CallHost {
+    return {
+      callsDir,
+      audioTimeoutMs: AUDIO_TIMEOUT_MS,
+      maxCallMs: MAX_CALL_MS,
+      tapAvailable: () => !!process.env.AVANZEL_FAKE_CALLTAP || CallTap.available(),
+      consented: () => this.store.get().callConsent,
+      askConsent: async () => {
+        stealFocus(); // a menu bar app isn't the frontmost app: the question would come up behind the others
+        const { response } = await dialog.showMessageBox(CALL_CONSENT_DIALOG);
+        if (response !== 0) return false;
+        this.store.update({ callConsent: true });
+        return true;
+      },
+      readyToListen: () => this.readyToListen(),
+      newTap: (opts) => new CallTap(opts),
+      transcriber: () => this.callTranscriber(),
+      captureCall: async (call) => (await this.librarian()).captureCall(call).path,
+      listening: (startedAt) => {
+        this.callCard = {
+          kind: "listening",
+          mode: "call",
+          startedAt,
+          fakeMic: !!process.env.AVANZEL_FAKE_AUDIO,
+          microphoneId: this.store.get().microphoneId,
+          fileMode: null, // a call is filed as the setting says: it has no switch of its own
+          review: null,
+          hint: null,
+        };
+        this.wake();
+        this.setCapsule(this.callCard);
+      },
+      microphone: (on) => {
+        if (!on) this.callCard = null;
+        this.capsuleCommand(on ? "call-start" : "call-stop");
+      },
+      refused: () => this.setCapsule({ kind: "call-running" }, NOTHING_TO_UNDO_MS),
+      finishing: () => this.setCapsule({ kind: "transcribing", mode: "call", onThisMac: this.transcribesOnThisMac() }),
+      filed: (capturePath, text, transcribedIn) => {
+        this.captureCount.add();
+        this.afterCapture(capturePath, text, transcribedIn);
+      },
+      failed: (problem, action, actionLabel) => this.fail(problem, action, actionLabel),
+      changed: () => this.refreshMenu(),
+    };
+  }
+
+  /** The library's transcriber, or, with AVANZEL_FAKE_TRANSCRIPT, one that hears those words in each side of a call. */
+  private async callTranscriber(): Promise<Transcriber> {
+    const fake = process.env.AVANZEL_FAKE_TRANSCRIPT;
+    if (fake === undefined) return this.transcriberFor(loadSettings(this.requireVault().root).voice);
+    return { engine: "fake", transcribe: async (audio) => ({ text: fake, engine: "fake", seconds: typeof audio === "string" ? 0 : audio.length / 16000 }) };
   }
 
   // ---------------------------------------------------------------- filing
@@ -3068,6 +3178,10 @@ export class Controller {
       if (capture !== null) this.fileAgainWith(capture, action.slice("refile:".length));
       return;
     }
+    if (action === "finish-call") {
+      if (this.capsuleState.kind === "error") void this.calls.finishKept(); // its card is replaced by the transcribing one
+      return;
+    }
     if (action === "type-a-thought") {
       if (this.capsuleState.kind === "error") {
         this.setCapsule({ kind: "hidden" });
@@ -3477,7 +3591,7 @@ export class Controller {
    */
   private notify(title: string, body: string, onClick?: () => void): void {
     if (this.quitting) return;
-    const quiet = this.recording !== null;
+    const quiet = this.recording !== null || this.calls.running;
     if (process.env.AVANZEL_TEST === "1") {
       // The tests read `notified`, not the screen: no banner and no sound reach this Mac's Notification Centre.
       this.notified.push({ title, body, ...(quiet ? { silent: true as const } : {}) });

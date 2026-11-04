@@ -1,5 +1,15 @@
 // Microphone → 16 kHz mono float samples, plus a loudness level for the waveform.
 
+function joined(chunks: readonly Float32Array[]): Float32Array {
+  const samples = new Float32Array(chunks.reduce((n, c) => n + c.length, 0));
+  let offset = 0;
+  for (const c of chunks) {
+    samples.set(c, offset);
+    offset += c.length;
+  }
+  return samples;
+}
+
 export class Recorder {
   private context: AudioContext | null = null;
   private stream: MediaStream | null = null;
@@ -49,19 +59,19 @@ export class Recorder {
     source.connect(this.node);
   }
 
-  /** Stops the microphone and returns everything recorded since start. */
+  /** Stops the microphone and returns everything recorded since start, or since the last `drain`. */
   async stop(): Promise<Float32Array> {
     this.generation++;
     const chunks = this.chunks;
     await this.release();
-    const total = chunks.reduce((n, c) => n + c.length, 0);
-    const samples = new Float32Array(total);
-    let offset = 0;
-    for (const c of chunks) {
-      samples.set(c, offset);
-      offset += c.length;
-    }
-    return samples;
+    return joined(chunks);
+  }
+
+  /** What was recorded since start, or since the last drain, which it lets go of: a call sends its microphone in such blocks. */
+  drain(): Float32Array {
+    const chunks = this.chunks;
+    this.chunks = [];
+    return joined(chunks);
   }
 
   async cancel(): Promise<void> {

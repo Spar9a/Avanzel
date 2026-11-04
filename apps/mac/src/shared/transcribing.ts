@@ -38,3 +38,9 @@ export function filingMeta(seconds: number, estimate: number): string {
   const whole = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
   return whole < estimate ? `${whole} s of about ${estimate}` : `${whole} s`;
 }
+
+/** The bar's line while notes on a call are taken: it stays the same for the whole call, beside the call's time. */
+export const CALL_LISTENING_LINE = "Taking notes on the call";
+
+/** The capsule's bar when a thought, a screen comment or a question is asked for while notes on a call are taken. */
+export const CALL_RUNNING_LINE = "Notes on the call are running. Stop them to record a thought.";

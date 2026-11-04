@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
 import type { CapsuleState } from "../../shared/ipc.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
+import { CALL_RUNNING_LINE } from "../../shared/transcribing.ts";
 import { api, type StateOf } from "./api.ts";
 import { stillInMenuLine } from "./copy.ts";
 import { editorScene } from "./editor.tsx";
@@ -20,6 +21,8 @@ import { transcribingScene } from "./transcribing.tsx";
 import "./styles.css";
 
 const BARS = 16;
+/** How often a call's microphone is sent to main, as a block, while the call runs. */
+const CALL_BLOCK_MS = 5_000;
 
 /** Whole megabytes, as macOS counts them. */
 const mb = (bytes: number) => Math.round(bytes / 1e6);
@@ -64,6 +67,11 @@ function nothingToUndoScene(): Scene {
   return { bar: { mood: "filed", line: "There's no filing to undo." } };
 }
 
+/** A thought, a screen comment or a question was asked for while notes on a call are taken: a bar says so, drawn as Undo's is. */
+function callRunningScene(): Scene {
+  return { bar: { mood: "filed", line: CALL_RUNNING_LINE } };
+}
+
 /**
  * What each stacked state draws, from the top of its stack: its card, the hint, and its bar. Every kind of state is here: a kind added
  * without a scene is a type error, not a blank panel, as `cancelled` and `recorded` were for two tasks.
@@ -90,6 +98,8 @@ function sceneOf(state: Stacked, levels: readonly number[]): Scene {
       return pickedScene(state);
     case "nothing-to-undo":
       return nothingToUndoScene();
+    case "call-running":
+      return callRunningScene();
     default: {
       const unhandled: never = state;
       return unhandled;
@@ -194,6 +204,8 @@ function App() {
   const listening = state.kind === "listening";
   const { levels, push } = useLevels(listening, listening && state.fakeMic);
   const recorder = useRef(new Recorder((level) => push(level)));
+  /** While a call runs: the timer that sends its microphone to main in blocks. */
+  const callBlocks = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const off = api.onState((next) => {
@@ -218,6 +230,21 @@ function App() {
       await api.sendAudio(samples);
     } else if (command === "cancel") {
       await recorder.current.cancel();
+    } else if (command === "call-start" && current.kind === "listening" && !fake) {
+      // Set before the microphone opens: a stop that comes while it opens finds it, and clears it.
+      callBlocks.current = setInterval(() => {
+        const block = recorder.current.drain();
+        if (block.length > 0) void api.sendCallAudio(block, false);
+      }, CALL_BLOCK_MS);
+      try {
+        await recorder.current.start(current.microphoneId);
+      } catch (error) {
+        api.reportMicError(error instanceof Error ? error.message : String(error));
+      }
+    } else if (command === "call-stop") {
+      if (callBlocks.current) clearInterval(callBlocks.current);
+      callBlocks.current = null;
+      await api.sendCallAudio(await recorder.current.stop(), true);
     }
   }), []);
 

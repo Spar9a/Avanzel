@@ -3,7 +3,7 @@
 // ticking time inside the region, which VoiceOver may read each second (owner item 5).
 import { Button, Hud, Kbd, Text } from "@avanzel/ui";
 import { prettyAccelerator } from "../../main/shortcuts.ts";
-import { fileModeLabel } from "../../shared/transcribing.ts";
+import { CALL_LISTENING_LINE, fileModeLabel } from "../../shared/transcribing.ts";
 import { api, type StateOf } from "./api.ts";
 import { ScreenshotCard } from "./screenshot.tsx";
 import type { Scene } from "./scene.tsx";
@@ -16,6 +16,7 @@ import type { Scene } from "./scene.tsx";
  * it began (`startedAt`), whatever is pressed.
  */
 export function listeningScene(state: StateOf<"listening">, levels: readonly number[]): Scene {
+  if (state.mode === "call") return callScene(state, levels);
   return {
     card: state.mode === "comment" && state.thumbnail ? <ScreenshotCard thumbnail={state.thumbnail} context={state.context} /> : undefined,
     hint: state.hint ? (
@@ -36,6 +37,22 @@ export function listeningScene(state: StateOf<"listening">, levels: readonly num
           {fileModeLabel(state.fileMode, state.review)}
         </Button>
       ),
+    },
+  };
+}
+
+/**
+ * Notes on a call: the bar alone, with its line (the same for the whole call, so the live region says it once), the voice, the call's
+ * time and Stop, which ends the call and makes its notes. No card, no hint and no file-mode switch: a call is filed as the setting says.
+ */
+function callScene(state: StateOf<"listening">, levels: readonly number[]): Scene {
+  return {
+    bar: {
+      mood: "listening",
+      line: CALL_LISTENING_LINE,
+      levels,
+      startedAt: state.startedAt,
+      actions: <Button size="small" onClick={() => api.stopCall()}>Stop</Button>,
     },
   };
 }

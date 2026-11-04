@@ -4,6 +4,7 @@ import { Recorder } from "../src/renderer/capsule/recorder.ts";
 /** Just enough of the browser's media APIs; the microphone opens when the test says so. */
 function fakeMedia() {
   const released: string[] = [];
+  const nodes: { port: { onmessage: ((event: { data: Float32Array }) => void) | null } }[] = [];
   let open: () => void = () => undefined;
   const stream = { getTracks: () => [{ stop: () => released.push("microphone") }] };
   vi.stubGlobal("navigator", {
@@ -21,9 +22,14 @@ function fakeMedia() {
   });
   vi.stubGlobal("AudioWorkletNode", class {
     port = { onmessage: null, close: () => undefined };
+    constructor() {
+      nodes.push(this);
+    }
     disconnect() {}
   });
-  return { released, open: () => open() };
+  /** The microphone hears `block`, as the capture worklet would post it. */
+  const hear = (block: Float32Array) => nodes.at(-1)!.port.onmessage!({ data: block });
+  return { released, open: () => open(), hear };
 }
 
 describe("recorder", () => {
@@ -59,5 +65,19 @@ describe("recorder", () => {
     await starting;
     await recorder.cancel();
     expect(media.released).toEqual(["microphone", "audio context"]);
+  });
+
+  it("drains what it holds in blocks, and stop gives what came after the last drain", async () => {
+    const media = fakeMedia();
+    const recorder = new Recorder(() => undefined);
+    const starting = recorder.start(null);
+    media.open();
+    await starting;
+    media.hear(new Float32Array([0.1, 0.2]));
+    media.hear(new Float32Array([0.3]));
+    expect(Array.from(recorder.drain())).toEqual([0.1, 0.2, 0.3].map(Math.fround));
+    expect(recorder.drain()).toHaveLength(0);
+    media.hear(new Float32Array([0.4]));
+    expect(Array.from(await recorder.stop())).toEqual([Math.fround(0.4)]);
   });
 });

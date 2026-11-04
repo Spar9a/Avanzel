@@ -13,6 +13,9 @@ export function registerIpc(controller: Controller): void {
   // capsule
   on("capsule:ready", () => controller.capsuleReady());
   handle("capsule:audio", (_e, samples: Float32Array) => controller.onAudio(samples));
+  // only the capsule's own page sends a call's microphone, and stops a call from its card
+  handle("capsule:call-audio", (e, samples: Float32Array, last: boolean) => controller.onCallAudio(e.sender, samples, last));
+  on("capsule:stop-call", (e) => void controller.stopCall(e.sender));
   on("capsule:mic-error", (_e, message: string) => controller.micError(message));
   on("capsule:interactive", (_e, interactive: boolean) => controller.setInteractive(interactive));
   on("capsule:edit", () => controller.edit());

@@ -21,7 +21,8 @@ export interface ScreenContext {
   url?: string;
 }
 
-export type CapsuleMode = "dictate" | "comment";
+/** What the capsule listens to: a thought, a screen comment, or a call (its microphone side; the controller's `calls`). */
+export type CapsuleMode = "dictate" | "comment" | "call";
 
 /** The panes of the Settings window, in the order of its toolbar. "tasks" is the scheduled reviews' pane, named Reviews. */
 export const SETTINGS_PANES = ["general", "voice", "agents", "tasks", "privacy"] as const;
@@ -40,7 +41,7 @@ export type LibraryFolder = "missing" | "empty" | "has-files" | "library";
  * What the one button of the capsule's problem card does: opens a pane of System Settings, or Avanzel's Settings on the pane
  * that fixes the problem; opens Terminal, where an agent signs in; opens Type a thought, where the words of a thought that couldn't
  * be saved still are (`type-a-thought`); or (`refile:<agent>`, the agent's harness name) files the note the card is about again
- * with that agent.
+ * with that agent; or (`finish-call`) makes the notes of the call whose notes weren't made, from what it kept (`CallNotes.finishKept`).
  */
 export type CardAction =
   | "open-microphone-settings"
@@ -48,7 +49,14 @@ export type CardAction =
   | `open-settings:${SettingsPane}`
   | "open-terminal"
   | "type-a-thought"
+  | "finish-call"
   | `refile:${string}`;
+
+/**
+ * What main tells the capsule page's microphone: a recording's start, stop (its samples go back by `sendAudio`) and cancel; and a call's
+ * start and stop, between which its blocks go back by `sendCallAudio`.
+ */
+export type CapsuleCommand = "start" | "stop" | "cancel" | "call-start" | "call-stop";
 
 export type CapsuleState =
   | { kind: "hidden" }
@@ -209,7 +217,9 @@ export type CapsuleState =
   /** A free shortcut picked on that notice works: `key` now uses `accelerator`. It hides by itself. */
   | { kind: "shortcut-picked"; key: keyof Shortcuts; accelerator: string }
   /** The Undo shortcut was pressed with no filing to take back: a bar says so. It hides by itself. */
-  | { kind: "nothing-to-undo" };
+  | { kind: "nothing-to-undo" }
+  /** A thought, a screen comment or a question was asked for while notes on a call run: a bar says so. It hides by itself. */
+  | { kind: "call-running" };
 
 export interface Shortcuts {
   dictate: string;
@@ -715,8 +725,12 @@ export interface AvanzelBridge {
     onState(callback: (state: CapsuleState) => void): () => void;
     /** Listening now: send the current state again (one sent while the page loaded is lost). */
     ready(): void;
-    onCommand(callback: (command: "start" | "stop" | "cancel") => void): () => void;
+    onCommand(callback: (command: CapsuleCommand) => void): () => void;
     sendAudio(samples: Float32Array): Promise<void>;
+    /** A block of a call's microphone, about every 5 s while the call runs; `last` once its microphone has stopped. */
+    sendCallAudio(samples: Float32Array, last: boolean): Promise<void>;
+    /** Stop, on the listening card of a call: the call ends and becomes its notes. */
+    stopCall(): void;
     reportMicError(message: string): void;
     setInteractive(interactive: boolean): void;
     edit(): void;
