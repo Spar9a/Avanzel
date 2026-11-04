@@ -5,6 +5,10 @@ import {
   AGENTS_NOT_CHECKED,
   asSentence,
   CHANGE_NOT_SAVED,
+  CURSOR_DICTATION_DESCRIPTION,
+  cursorKeyName,
+  cursorKeyOptions,
+  cursorStatus,
   DAYS,
   DICTIONARY_DESCRIPTION,
   DOWNLOAD_NOT_STARTED,
@@ -413,5 +417,71 @@ describe("a scheduled review's copy", () => {
     );
     expect(remoteMessage(new Error("No scheduled review called x."))).toBe("No scheduled review called x.");
     expect(remoteMessage("gone")).toBe("gone");
+  });
+
+  it("the keys dictation can use are named as the keyboard names them, with the chosen one checked", () => {
+    expect(cursorKeyOptions("left-option").map((option) => [option.label, option.value, option.checked])).toEqual([
+      ["Right Option", "right-option", false],
+      ["Left Option", "left-option", true],
+      ["Right Command", "right-command", false],
+      ["Right Control", "right-control", false],
+    ]);
+    expect(cursorKeyName("right-control")).toBe("Right Control");
+  });
+
+  it("the dictation switch says in one calm sentence how it works", () => {
+    expect(CURSOR_DICTATION_DESCRIPTION).toBe("Tap the key once to start and once to finish. The words go where the cursor is.");
+  });
+
+  describe("cursorStatus", () => {
+    const sees = { available: true, accessibility: true, inputMonitoring: true };
+
+    it("says all is well when both permissions are granted, with nothing to press", () => {
+      expect(cursorStatus(sees)).toEqual({ line: "Avanzel can see the key and type for you.", fix: null });
+    });
+
+    it("names the one permission that is missing, with a button that opens its pane", () => {
+      expect(cursorStatus({ ...sees, inputMonitoring: false })).toEqual({
+        line: "Avanzel needs Input Monitoring to see the key.",
+        fix: "Open System Settings",
+      });
+      expect(cursorStatus({ ...sees, accessibility: false })).toEqual({
+        line: "Avanzel needs Accessibility to type for you.",
+        fix: "Open System Settings",
+      });
+    });
+
+    it("names both in one sentence when both are missing", () => {
+      expect(cursorStatus({ available: true, accessibility: false, inputMonitoring: false })).toEqual({
+        line: "Avanzel needs Input Monitoring to see the key and Accessibility to type for you.",
+        fix: "Open System Settings",
+      });
+    });
+
+    it("says it is not available on a Mac without the helper, and offers nothing to press", () => {
+      // The permissions mean nothing then, whatever they say.
+      expect(cursorStatus({ available: false, accessibility: false, inputMonitoring: false })).toEqual({
+        line: "Dictating into any app isn't available on this Mac.",
+        fix: null,
+      });
+    });
+
+    it("keeps to the copy rules: sentence case, a full stop, no exclamation mark", () => {
+      const lines = [
+        CURSOR_DICTATION_DESCRIPTION,
+        ...[
+          sees,
+          { ...sees, inputMonitoring: false },
+          { ...sees, accessibility: false },
+          { available: true, accessibility: false, inputMonitoring: false },
+          { available: false, accessibility: false, inputMonitoring: false },
+        ].map((state) => cursorStatus(state).line),
+      ];
+      for (const line of lines) {
+        expect(line).toMatch(/^[A-Z][^!]*\.$/);
+        expect(line.length).toBeLessThan(100);
+        expect(line).not.toMatch(/\b[A-Z]{2,}\b|Oops|Sorry/);
+      }
+    });
   });
 });

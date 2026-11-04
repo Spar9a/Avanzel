@@ -1,13 +1,25 @@
-// Settings → Voice: the shortcuts, with a Notice for each one that has a problem; the microphone Avanzel listens with;
-// the speech model that turns what it hears into text; and the library's dictionary of names and terms. Each control applies
-// at once, the dictionary when the focus leaves its field.
-import { Actions, Button, Group, GroupRow, Kbd, Notice, Progress, Row, Stack, Text, TextArea } from "@avanzel/ui";
+// Settings → Voice: the shortcuts, with a Notice for each one that has a problem; dictating into any app, its key and the
+// permission it lacks; the microphone Avanzel listens with; the speech model that turns what it hears into text; and the library's
+// dictionary of names and terms. Each control applies at once, the dictionary when the focus leaves its field.
+import { Actions, Button, Group, GroupRow, Kbd, Notice, Progress, Row, Stack, Switch, Text, TextArea } from "@avanzel/ui";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, inMenuLine, prettyAccelerator } from "../../../main/shortcuts.ts";
-import type { ModelStatus, SettingsSnapshot, Shortcuts } from "../../../shared/ipc.ts";
+import type { CursorKey, CursorPermissionState, ModelStatus, SettingsSnapshot, Shortcuts } from "../../../shared/ipc.ts";
 import { downloadFailedProblem, voiceSettingsProblem } from "../../../shared/problems.ts";
 import { passesThrough, toAccelerator } from "../accelerator.ts";
-import { DICTIONARY_DESCRIPTION, DOWNLOAD_NOT_STARTED, microphoneName, microphoneOptions, speechModelLine, type InputDevice } from "../copy.ts";
+import {
+  CURSOR_DICTATION_DESCRIPTION,
+  CURSOR_KEY_DESCRIPTION,
+  cursorKeyName,
+  cursorKeyOptions,
+  cursorStatus,
+  DICTIONARY_DESCRIPTION,
+  DOWNLOAD_NOT_STARTED,
+  microphoneName,
+  microphoneOptions,
+  speechModelLine,
+  type InputDevice,
+} from "../copy.ts";
 import { failed, followSnapshot, saved, sent, startDraft, toSend, typed, type DictionaryDraft } from "../dictionary-draft.ts";
 import { attemptChange, ChooseButton, type PaneProps } from "../parts.tsx";
 
@@ -37,6 +49,74 @@ export function MicrophoneGroup(props: PaneProps): ReactNode {
           onChoose={(value) => attemptChange(props, () => api.setApp({ microphoneId: value || null }))}
         />
       </GroupRow>
+    </Group>
+  );
+}
+
+/**
+ * What macOS has granted for dictating into any app, null until the first answer. It is asked again when the setting changes (the
+ * helper starts or stops) and when this window gets the focus back, which is where the person is after granting a permission in
+ * System Settings. An answer that comes after a newer question was asked is dropped, so the older one can't overwrite it.
+ */
+function useCursorPermissions(enabled: boolean): { state: CursorPermissionState | null; ask(): Promise<void> } {
+  const [state, setState] = useState<CursorPermissionState | null>(null);
+  const asked = useRef(0);
+  const check = (question: () => Promise<CursorPermissionState>) => {
+    const mine = ++asked.current;
+    return question().then(
+      (answer) => {
+        if (mine === asked.current) setState(answer);
+      },
+      // A question main couldn't answer leaves the line as it was.
+      () => undefined,
+    );
+  };
+  useEffect(() => {
+    const again = () => void check(() => api.cursorPermissions());
+    again();
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+  }, [enabled]);
+  return { state, ask: () => check(() => api.askCursorPermissions()) };
+}
+
+/**
+ * Voice's "Dictate into any app" group: the switch, the key, and a line on what macOS has granted, with the button that asks for the
+ * rest. The line shows while the switch is off too, so the person can grant before turning it on; turning it on with a permission
+ * missing still turns it on, and the line says what to do. A Mac without the helper gets one line and controls that are off.
+ */
+function CursorDictationGroup(props: PaneProps): ReactNode {
+  const { enabled, key } = props.snap.app.cursorDictation;
+  const { state, ask } = useCursorPermissions(enabled);
+  const status = state && cursorStatus(state);
+  const off = state !== null && !state.available;
+  return (
+    <Group label="Dictate into any app">
+      <Switch
+        label="Dictate into any app"
+        description={CURSOR_DICTATION_DESCRIPTION}
+        checked={enabled}
+        disabled={off}
+        onChange={(on) => attemptChange(props, () => api.setCursorDictation({ enabled: on }))}
+      />
+      <GroupRow label={cursorKeyName(key)} description={CURSOR_KEY_DESCRIPTION}>
+        <ChooseButton
+          label="Dictation key"
+          valueLabel={cursorKeyName(key)}
+          options={cursorKeyOptions(key)}
+          disabled={off}
+          onChoose={(value) => attemptChange(props, () => api.setCursorDictation({ key: value as CursorKey }))}
+        />
+      </GroupRow>
+      {status && (
+        <GroupRow label={status.line}>
+          {status.fix && (
+            <Button size="small" variant="secondary" onClick={() => void ask()}>
+              {status.fix}
+            </Button>
+          )}
+        </GroupRow>
+      )}
     </Group>
   );
 }
@@ -271,6 +351,7 @@ export function Voice({ dictionary, ...props }: PaneProps & { dictionary: Dictio
           {snap.library?.exists ? inMenuLine(key) : undefined}
         </Notice>
       ))}
+      <CursorDictationGroup {...props} />
       <MicrophoneGroup {...props} />
       <Group label="Speech">
         <GroupRow label="Speech model" description={speechModelLine(snap.voice)}>

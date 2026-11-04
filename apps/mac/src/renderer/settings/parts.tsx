@@ -98,11 +98,13 @@ export function NoLibrary({ snap, onChange, attempt }: PaneProps): ReactNode {
  * what VoiceOver says, so it hears the value beside the button, and what tests find the row's button by, when several
  * rows each have a Choose….
  */
-export function ChooseButton({ label, valueLabel, options, onChoose }: {
+export function ChooseButton({ label, valueLabel, options, onChoose, disabled }: {
   label: string;
   valueLabel: string;
   options: readonly PickOption[];
   onChoose(value: string): void;
+  /** The choice can't be made now (dictating into any app on a Mac that can't); the button is there but off. */
+  disabled?: boolean;
 }): ReactNode {
   const group = useRef<HTMLDivElement>(null);
   const choose = async () => {
@@ -112,7 +114,7 @@ export function ChooseButton({ label, valueLabel, options, onChoose }: {
   };
   return (
     <div ref={group} role="group" aria-label={`${label}: ${valueLabel}`}>
-      <Button size="small" variant="secondary" onClick={choose}>Choose…</Button>
+      <Button size="small" variant="secondary" disabled={disabled} onClick={choose}>Choose…</Button>
     </div>
   );
 }

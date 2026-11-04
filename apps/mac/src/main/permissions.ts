@@ -42,7 +42,14 @@ export async function requestMicrophone(): Promise<boolean> {
   return systemPreferences.askForMediaAccess("microphone");
 }
 
-export function openPrivacyPane(kind: "microphone" | "screen"): void {
-  const anchor = kind === "microphone" ? "Privacy_Microphone" : "Privacy_ScreenCapture";
+const PRIVACY_ANCHORS = {
+  microphone: "Privacy_Microphone",
+  screen: "Privacy_ScreenCapture",
+  "input-monitoring": "Privacy_ListenEvent",
+  accessibility: "Privacy_Accessibility",
+} as const;
+
+export function openPrivacyPane(kind: keyof typeof PRIVACY_ANCHORS): void {
+  const anchor = PRIVACY_ANCHORS[kind];
   void shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${anchor}`);
 }

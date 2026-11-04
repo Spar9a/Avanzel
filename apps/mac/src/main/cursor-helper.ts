@@ -24,6 +24,11 @@ export interface CursorPermissions {
   inputMonitoring: boolean;
 }
 
+/** What Settings shows of dictating into any app: whether this Mac can do it, and which of the two permissions it still lacks. */
+export interface CursorPermissionState extends CursorPermissions {
+  available: boolean;
+}
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /** Where the helper is: in the app's Resources when packaged, else where `build-cursor.mjs` puts it (from src/main or dist). */
@@ -330,3 +335,22 @@ export class CursorHelper {
 }
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/**
+ * What the helper says is granted, for Settings, which shows it whether or not dictating is on. `running` is the helper the app
+ * already runs, if any; without one, a short-lived helper answers and is ended after, so the setting being off costs nothing more
+ * than the question. A Mac without the helper, or a helper that can't answer, is "not available": that is not the same as a
+ * permission being missing, and the person is told so. `prompt` has macOS ask for both permissions.
+ */
+export async function cursorPermissionsOf(running: CursorHelper | null, prompt: boolean): Promise<CursorPermissionState> {
+  const unavailable = { available: false, accessibility: false, inputMonitoring: false };
+  if (!CursorHelper.available()) return unavailable;
+  const helper = running ?? new CursorHelper({ onTap: () => undefined, onProblem: () => undefined });
+  try {
+    return { available: true, ...(await helper.permissions(prompt)) };
+  } catch {
+    return unavailable;
+  } finally {
+    if (!running) await helper.stop();
+  }
+}

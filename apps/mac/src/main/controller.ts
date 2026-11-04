@@ -128,7 +128,7 @@ import { TranscriberCache } from "./transcriber-cache.ts";
 import { browserWindow, frontContext } from "./front-app.ts";
 import { electronClipboard } from "./cursor-clipboard.ts";
 import { COPY_PROMPT_MS, CursorDictation, type CursorHost } from "./cursor-dictation.ts";
-import { CursorHelper } from "./cursor-helper.ts";
+import { CursorHelper, cursorPermissionsOf, type CursorPermissionState } from "./cursor-helper.ts";
 import { DEFAULT_SKIP_APPS } from "./cursor-policy.ts";
 import { DictationHistory } from "./dictation-history.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
@@ -1920,6 +1920,32 @@ export class Controller {
     return this.changeApp({ cursorDictation: { ...this.store.get().cursorDictation, ...patch } });
   }
 
+  /** What macOS has granted for dictating into any app, for Settings: asked of the running helper, or of one that lives for the answer. */
+  async cursorPermissions(): Promise<CursorPermissionState> {
+    return cursorPermissionsOf(this.cursorHelper, false);
+  }
+
+  /**
+   * Has macOS ask for the permissions (its prompts come up once; after a refusal only System Settings can grant), and opens System
+   * Settings at the one still missing: Input Monitoring first, as without it the key is never seen.
+   */
+  async askCursorPermissions(): Promise<CursorPermissionState> {
+    const state = await cursorPermissionsOf(this.cursorHelper, true);
+    if (!state.available) return state;
+    const missing = !state.inputMonitoring ? "input-monitoring" : !state.accessibility ? "accessibility" : null;
+    if (missing) this.openPane(missing);
+    return state;
+  }
+
+  /** Opens System Settings at a privacy pane. With AVANZEL_TEST=1 it stays shut, and openedForTests says which pane it would have opened. */
+  private openPane(kind: "input-monitoring" | "accessibility"): void {
+    if (process.env.AVANZEL_TEST === "1") {
+      this.opened.push(`System Settings → ${kind === "accessibility" ? "Accessibility" : "Input Monitoring"}`);
+      return;
+    }
+    openPrivacyPane(kind);
+  }
+
   /**
    * Runs the helper while the setting is on and a library is open, and has it watch the chosen key; stops it otherwise. Called at
    * launch (a library opens), whenever a library opens or closes, and when the setting changes.
@@ -1930,7 +1956,7 @@ export class Controller {
     if (!this.cursorHelper) {
       this.cursorHelper = new CursorHelper({
         onTap: () => this.pressCursorDictation(),
-        // Settings shows the permissions (Task 7); until then a problem is only logged.
+        // Settings asks for the permissions itself (cursorPermissions), so a helper that can't watch the key is only logged here.
         onProblem: (message) => console.error("cursor helper", message),
       });
       this.cursorHelper.start(key);

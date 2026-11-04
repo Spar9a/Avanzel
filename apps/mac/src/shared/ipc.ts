@@ -1,8 +1,10 @@
 // The contract between the main process and the renderers (capsule, settings, quick-type, ask, setup).
+import type { CursorPermissionState } from "../main/cursor-helper.ts";
 import type { CursorKey } from "../main/tap-detector.ts";
 import type { AgentFailure, PartialEdits, TooBroad } from "./problems.ts";
 
 export type { CursorKey } from "../main/tap-detector.ts";
+export type { CursorPermissionState } from "../main/cursor-helper.ts";
 
 export interface FiledPage {
   title: string;
@@ -802,6 +804,16 @@ export interface AvanzelBridge {
     setApp(patch: Partial<AppSettings>): Promise<SettingsSnapshot>;
     /** Turns dictating into any app on or off, or chooses its key; what isn't in `patch` stays. The helper starts, stops or watches the new key at once. */
     setCursorDictation(patch: Partial<AppSettings["cursorDictation"]>): Promise<SettingsSnapshot>;
+    /**
+     * What macOS has granted for dictating into any app, and whether this Mac can do it at all. It answers while the setting is off
+     * too, and leaves nothing running.
+     */
+    cursorPermissions(): Promise<CursorPermissionState>;
+    /**
+     * Has macOS ask for both permissions, and opens System Settings at the one still missing (Input Monitoring first, as the key
+     * can't be seen without it). Resolves with what was granted at the time it asked.
+     */
+    askCursorPermissions(): Promise<CursorPermissionState>;
     setLibrary(patch: LibraryPatch): Promise<SettingsSnapshot>;
     chooseLibrary(): Promise<SettingsSnapshot>;
     downloadModel(): Promise<SettingsSnapshot>;

@@ -3,7 +3,7 @@
 // scheduled review's schedule, last run and kind, with the checks its editor makes and what a failed save says, and what
 // the window says of a change main refused.
 import { SHELVES } from "@avanzel/ui";
-import { noSuchReview, type PickOption, type SettingsPane, type SettingsSnapshot, type TaskInfo } from "../../shared/ipc.ts";
+import { noSuchReview, type CursorKey, type CursorPermissionState, type PickOption, type SettingsPane, type SettingsSnapshot, type TaskInfo } from "../../shared/ipc.ts";
 import { NO_GIT_LINE, ownLine } from "../../shared/problems.ts";
 
 /** Each pane's name on the toolbar, which is also its heading. The scheduled reviews' pane keeps its id, "tasks". */
@@ -69,6 +69,42 @@ export function microphoneOptions(id: string | null, devices: readonly InputDevi
     { label: "System default", value: "", checked: id === null },
     ...(devices ?? []).map((device, place) => ({ label: deviceName(device, place), value: device.deviceId, checked: device.deviceId === id })),
   ];
+}
+
+/** The keys dictating into any app can listen to, in the order the menu lists them, named as the keyboard names them. */
+const CURSOR_KEYS: readonly { key: CursorKey; name: string }[] = [
+  { key: "right-option", name: "Right Option" },
+  { key: "left-option", name: "Left Option" },
+  { key: "right-command", name: "Right Command" },
+  { key: "right-control", name: "Right Control" },
+];
+
+export const cursorKeyName = (key: CursorKey): string => CURSOR_KEYS.find((entry) => entry.key === key)!.name;
+
+/** Choose…'s menu for the dictation key, with the key in use checked. */
+export function cursorKeyOptions(chosen: CursorKey): PickOption[] {
+  return CURSOR_KEYS.map(({ key, name }) => ({ label: name, value: key, checked: key === chosen }));
+}
+
+/** The "Dictate into any app" switch's description: how it works, in one sentence. */
+export const CURSOR_DICTATION_DESCRIPTION = "Tap the key once to start and once to finish. The words go where the cursor is.";
+
+/** The key row's description: a tap on its own is what counts. */
+export const CURSOR_KEY_DESCRIPTION = "Tap it on its own. Used with another key, it does nothing.";
+
+/**
+ * The status line under the dictation switch, from what macOS has granted, and the label of the button that fixes it (none when
+ * nothing needs fixing, or when nothing can: a Mac without the helper). It says which permission is missing and why Avanzel wants it.
+ */
+export function cursorStatus(state: CursorPermissionState): { line: string; fix: string | null } {
+  if (!state.available) return { line: "Dictating into any app isn't available on this Mac.", fix: null };
+  const fix = "Open System Settings";
+  if (!state.inputMonitoring && !state.accessibility) {
+    return { line: "Avanzel needs Input Monitoring to see the key and Accessibility to type for you.", fix };
+  }
+  if (!state.inputMonitoring) return { line: "Avanzel needs Input Monitoring to see the key.", fix };
+  if (!state.accessibility) return { line: "Avanzel needs Accessibility to type for you.", fix };
+  return { line: "Avanzel can see the key and type for you.", fix: null };
 }
 
 /** The speech model row's description for the default model: which languages it hears, as a person would want to know, naming no model. */

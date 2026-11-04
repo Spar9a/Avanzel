@@ -1,8 +1,8 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CursorHelper } from "../src/main/cursor-helper.ts";
+import { CursorHelper, cursorPermissionsOf } from "../src/main/cursor-helper.ts";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "avz-cursor-"));
 const realBinaryPath = CursorHelper.binaryPath;
@@ -440,5 +440,47 @@ describe("CursorHelper with the fake helper", () => {
     await helper.paste();
     expect(readFileSync(pasteOut, "utf8")).toBe("hellohello");
     expect(taps).toBe(2);
+  });
+});
+
+describe("cursorPermissionsOf", () => {
+  it("says it is not available, and runs nothing, when the helper is not built and there is no fake", async () => {
+    CursorHelper.binaryPath = () => path.join(tmp(), "not-built");
+    expect(CursorHelper.available()).toBe(false);
+    await expect(cursorPermissionsOf(null, false)).resolves.toEqual({ available: false, accessibility: false, inputMonitoring: false });
+  });
+
+  it("asks the running helper when there is one, and leaves it running", async () => {
+    stub(`
+handle = (command) => reply(command, { accessibility: command.prompt, inputMonitoring: true });`);
+    const { helper } = make();
+    helper.start("right-option");
+    await expect(cursorPermissionsOf(helper, false)).resolves.toEqual({ available: true, accessibility: false, inputMonitoring: true });
+    await expect(cursorPermissionsOf(helper, true)).resolves.toEqual({ available: true, accessibility: true, inputMonitoring: true });
+    // Still the same helper's: it answers a request of its own.
+    await expect(helper.permissions(false)).resolves.toEqual({ accessibility: false, inputMonitoring: true });
+  });
+
+  it("starts a short-lived helper when none is running, and ends it after the answer", async () => {
+    const pidFile = path.join(tmp(), "pid.txt");
+    stub(`
+require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+handle = (command) => reply(command, { accessibility: true, inputMonitoring: false });`);
+    await expect(cursorPermissionsOf(null, false)).resolves.toEqual({ available: true, accessibility: true, inputMonitoring: false });
+    expect(existsSync(pidFile)).toBe(true);
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(() => process.kill(pid, 0)).toThrow(); // gone: stop() waited for it to end
+  });
+
+  it("uses the fake's scripted answer, whether the setting is on or off", async () => {
+    const script = path.join(tmp(), "cursor.json");
+    writeFileSync(script, JSON.stringify({ permissions: { accessibility: false, inputMonitoring: true } }));
+    process.env.AVANZEL_FAKE_CURSOR = script;
+    await expect(cursorPermissionsOf(null, false)).resolves.toEqual({ available: true, accessibility: false, inputMonitoring: true });
+  });
+
+  it("says it is not available when the helper cannot answer, rather than that a permission is missing", async () => {
+    stub(`process.exit(1);`);
+    await expect(cursorPermissionsOf(null, false)).resolves.toEqual({ available: false, accessibility: false, inputMonitoring: false });
   });
 });
