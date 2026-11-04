@@ -22,6 +22,7 @@ describe("default skip list", () => {
       "com.lastpass.LastPass",
       "com.dashlane.Dashlane",
       "com.enpass.Enpass",
+      "in.sinew.Enpass-Desktop",
     ]);
   });
 });

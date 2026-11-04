@@ -159,11 +159,11 @@ export function cursorStatus(state: CursorPermissionState): { line: string; fix:
   if (!state.available) return { line: "Dictating into any app isn't available on this Mac.", fix: null };
   const fix = "Open System Settings";
   if (!state.inputMonitoring && !state.accessibility) {
-    return { line: "Avanzel needs Input Monitoring to see the key and Accessibility to type for you.", fix };
+    return { line: "Avanzel needs Input Monitoring to see the key and Accessibility to paste for you.", fix };
   }
   if (!state.inputMonitoring) return { line: "Avanzel needs Input Monitoring to see the key.", fix };
-  if (!state.accessibility) return { line: "Avanzel needs Accessibility to type for you.", fix };
-  return { line: "Avanzel can see the key and type for you.", fix: null };
+  if (!state.accessibility) return { line: "Avanzel needs Accessibility to paste for you.", fix };
+  return { line: "Avanzel can see the key and paste for you.", fix: null };
 }
 
 /** The speech model row's description for the default model: which languages it hears, as a person would want to know, naming no model. */

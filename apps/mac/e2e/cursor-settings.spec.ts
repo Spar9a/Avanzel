@@ -69,7 +69,7 @@ test("with both permissions granted the group says so, with nothing to press, ev
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: true }) });
   const settings = await openSettings(app, "Voice");
   expect((await snapshot(app)).app.cursorDictation.enabled).toBe(false);
-  await expect(group(settings).getByText("Avanzel can see the key and type for you.", { exact: true })).toBeVisible();
+  await expect(group(settings).getByText("Avanzel can see the key and paste for you.", { exact: true })).toBeVisible();
   await expect(group(settings).getByRole("button", { name: "Open System Settings" })).toHaveCount(0);
   await app.close();
 });
@@ -78,19 +78,19 @@ test("with Accessibility missing the group says so and its button asks macOS and
   const script = fakeCursor({ accessibility: false, inputMonitoring: true });
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: script });
   const settings = await openSettings(app, "Voice");
-  await expect(group(settings).getByText("Avanzel needs Accessibility to type for you.", { exact: true })).toBeVisible();
-  await expect(settings.getByText("Avanzel can see the key and type for you.", { exact: true })).toHaveCount(0);
+  await expect(group(settings).getByText("Avanzel needs Accessibility to paste for you.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Avanzel can see the key and paste for you.", { exact: true })).toHaveCount(0);
   expect(await call(app, "openedForTests")).toEqual([]);
 
   await group(settings).getByRole("button", { name: "Open System Settings" }).click();
   await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Accessibility"]);
   // It still lacks it: the line stays, since nothing was granted yet.
-  await expect(group(settings).getByText("Avanzel needs Accessibility to type for you.", { exact: true })).toBeVisible();
+  await expect(group(settings).getByText("Avanzel needs Accessibility to paste for you.", { exact: true })).toBeVisible();
 
   // The person grants it in System Settings and comes back: the window gets the focus again.
   writeFileSync(script, JSON.stringify({ permissions: { accessibility: true, inputMonitoring: true } }));
   await settings.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await expect(group(settings).getByText("Avanzel can see the key and type for you.", { exact: true })).toBeVisible();
+  await expect(group(settings).getByText("Avanzel can see the key and paste for you.", { exact: true })).toBeVisible();
   await expect(group(settings).getByRole("button", { name: "Open System Settings" })).toHaveCount(0);
   await app.close();
 });
@@ -107,7 +107,7 @@ test("with Input Monitoring missing the group says so, and its button opens that
 test("with both missing the group says both in one sentence, turning dictating on still works, and the line stays", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: false, inputMonitoring: false }) });
   const settings = await openSettings(app, "Voice");
-  const line = "Avanzel needs Input Monitoring to see the key and Accessibility to type for you.";
+  const line = "Avanzel needs Input Monitoring to see the key and Accessibility to paste for you.";
   await expect(group(settings).getByText(line, { exact: true })).toBeVisible();
   await group(settings).getByRole("switch", { name: "Dictate into any app" }).click();
   await expect.poll(async () => (await snapshot(app)).app.cursorDictation.enabled).toBe(true);

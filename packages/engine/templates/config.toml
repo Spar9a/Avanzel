@@ -35,9 +35,10 @@ dictionary_sound_alike = ${voice_dictionary_sound_alike}
 # app and window it was said in, to raw/dictations/YYYY-MM-DD.md here, so the evening review can read
 # the day. Those files stay on this machine and out of git.
 log = ${dictation_log}
-# Apps that are never dictated into, by bundle id (the password managers by default). An empty list
-# means no app is skipped. Up to 500 entries of 200 characters each.
-${dictation_skip_apps}# Websites that are never dictated into, such as "bank.example.com".
+# Apps whose dictations are never kept, by bundle id (the password managers by default): the words
+# still go in, but nothing of them is kept, in the app's history or here. An empty list means no app
+# is skipped. Up to 500 entries of 200 characters each.
+${dictation_skip_apps}# Websites whose dictations are never kept, in the same way, such as "bank.example.com".
 ${dictation_skip_sites}
 
 # Any other agent CLI: {prompt} and {vault} are substituted.

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A person taps Right Option, speaks, taps again, and the words are typed at the cursor of whatever app has focus; every dictation is kept in a history, and, if the person turns it on, in a day file in the library with the app and window it was said in.
+**Goal:** A person taps Right Option, speaks, taps again, and the words are pasted at the cursor of whatever app has focus; every dictation is kept in a history, and, if the person turns it on, in a day file in the library with the app and window it was said in.
 
 **Architecture:** A small Swift helper (`avanzel-cursor`, built and signed like `avanzel-calltap`) reports raw modifier-key events and, on request, inspects the focused app/window/element and sends a paste keystroke; JSON lines over stdin/stdout. A pure `TapDetector` decides what a tap is. A `CursorDictation` session in the main process drives one dictation: it reuses the capsule's microphone recording (as a question for the Ask window does, `Recording.askPage`), transcribes with the library's transcriber and dictionary, then pastes or shows the copy prompt. A history store keeps every dictation outside the library; an engine module writes the optional `raw/dictations/YYYY-MM-DD.md` day file.
 
@@ -25,6 +25,7 @@ Branch `cursor-dictation` (sixteen commits from main 75fe0c5, spec and plan in d
 - **Task 9 (ca98eb1):** the engine's day file `raw/dictations/YYYY-MM-DD.md`, kept out of git, appended to and forgotten again.
 - **Task 10 (7831d0b, 22d95d1, eaeb046):** the library log switch, the skip lists, forgetting reaching the day file, and a day file that refuses a repeated id.
 - **Task 10b:** the checks, the README line and this section.
+- **Final fix wave (after the whole-branch review):** the helper pastes through its own pasteboard (every item and type kept and put back only if nobody copied meanwhile; the words marked transient and concealed so clipboard managers skip them; ⌘V with the "v" of the current layout); "same window" is the helper's identity check of the window kept at the second tap, titles only as a fallback; the time limit ends a dictation as an unknown target (copy card, history only, nothing pasted); any other modifier breaks a tap and secure keyboard entry keeps a dictation nowhere; a dictation's cards wait while a thought records or transcribes; a browser that can't be asked says so once, with Open System Settings at Automation; the helper starts again after a crash (1 s, 2 s, 5 s, three times a minute) and one card says when it gives up; Enpass's `in.sinew.Enpass-Desktop` joins the skip list; the listening card says it is dictating and names the key; the app is the one the keys go to (Spotlight-like panels included). Rulings F1 to F5 in the ledger.
 
 Rulings that changed the plan:
 1. A cursor recording starts like a question for the Ask window: no file-mode switch and no shortcut hint, since the words never become a thought.
@@ -34,27 +35,30 @@ Rulings that changed the plan:
 5. Task 3 only decides from what the browser reports; the host reads the Chrome-family window's private mode with AppleScript, and Safari's private windows stay undetectable.
 6. `DictationHistory.add` never throws, so a disk problem cannot lose or block the dictation; the file is kept at mode 0600.
 7. `DictationHistory.remove` does throw when the rewrite fails, and its callers say in one calm line that the dictation could not be deleted.
-8. The host gets `wait(ms)` for the 150 ms between paste and clipboard restore, so tests need no timers.
+8. The host gets `wait(ms)` for the 150 ms between paste and clipboard restore, so tests need no timers. (Superseded by Ruling F1: the helper holds the clipboard 400 ms and restores it itself; `wait` is gone.)
 9. If the second tap's inspect fails, the target is unknown: nothing is pasted, the copy prompt shows, and the entry goes to the history only, never to the library log.
 10. Fix round 1 for Task 5 also restores the clipboard in a `finally` and keeps the history entry when the copy prompt throws.
 11. `cancelListening()` also drops any recognition in flight, the host's private-window lookup can reject (so the fail-closed branch fires), and the host enforces `COPY_PROMPT_MS` itself.
 12. After Esc during transcribing, the host makes `heard({ text: "", seconds: 0 })` happen once, so a quick re-tap is not swallowed for 10 s.
-13. Clipboard formats other than text, HTML, RTF and PNG are lost when a dictation pastes and restores the clipboard; accepted for now, and the real fix is typing the text with key events.
+13. Clipboard formats other than text, HTML, RTF and PNG are lost when a dictation pastes and restores the clipboard; accepted for now, and the real fix is typing the text with key events. (Closed by Ruling F1: the helper keeps and restores every item and type.)
 14. The day file is serialised by an in-process queue per library root, not by `vault.withLock`, which can wait behind a filing run for minutes; only this app writes `raw/dictations/`.
 15. The engine exports `isoLocal`, and the app's private copy of it is gone.
 16. A day file refuses an id it already holds, so a forget can never leave a copy behind; the controller feeds unique ids.
 17. An unknown site stays stored, and the "Sites to skip" line says sites are recognised in Safari and Chrome-based browsers only.
 
 Known limits:
-- Pasting restores only text, HTML, RTF and PNG on the clipboard. A copied file, spreadsheet cells or a TIFF-only image are gone after a dictation.
-- Safari private windows can't be told apart, so what is dictated there is stored. Firefox and other browsers outside Safari and the Chromium set (Chrome Canary and Dev, Dia, Orion, Zen) can't report the site or private mode either. Arc and other Chrome-based browsers that don't answer the window query fail closed: the dictation is stored nowhere.
+- The words are pasted through the clipboard, not typed: the clipboard is borrowed for 400 ms and given back (every format, copied files included) unless something else was copied meanwhile. An app that takes longer than that to read a paste could paste the old clipboard instead.
+- Dvorak-type layouts are handled: the paste key is the one that gives "v" with Command in the current layout ("Dvorak - QWERTY ⌘" and Cyrillic layouts keep it where QWERTY has it).
+- Safari private windows can't be told apart, so what is dictated there is stored (unchanged). Firefox and other browsers outside Safari and the Chromium set (Dia, Orion, Zen) can't report the site or private mode either. Chrome Canary and Dev are in the Chrome family now, and Arc answers the same window query (its AppleScript has `mode`: "normal" or "incognito"). A Chrome-family browser that doesn't answer (Automation not allowed, or no answer in time) fails closed: the dictation is stored nowhere, and a card says so once per browser per run.
 - A site that isn't listed, and a page the browser can't name, is stored.
-- Pasting needs focus to stay where it was: if the app or window title changes before the words are ready, nothing is typed and the copy prompt shows for 5 seconds.
+- Pasting needs focus to stay where it was: if the app or the very window changes before the words are ready, nothing is pasted and the copy prompt shows for 5 seconds. The helper tells windows apart by their Accessibility identity; only when it can't read the window are titles compared.
+- Secure keyboard entry (a password field anywhere, a terminal's Secure Keyboard Entry) keeps a dictation nowhere, even when another app left it switched on.
+- The time limit (600 s by default) never pastes: the words are offered on the copy card and kept in the history only.
 - There is no clean-up pass: the words are what the speech model heard, after the dictionary.
 - One microphone user at a time: a dictation can't start while a thought or call notes are recording, and the reverse.
 - The history has no limit; the pane shows 100 at a time.
 - Sync tools (Obsidian Sync, iCloud) that copy the day file are not covered by Delete or forget.
-- The Enpass bundle id in the default skip list (`com.enpass.Enpass`) is unverified; it may be `in.sinew.Enpass-Desktop`.
+- Enpass is in the default skip list under both `com.enpass.Enpass` and `in.sinew.Enpass-Desktop`. A library whose `config.toml` was written before (the default list is written into it whenever any setting is saved) keeps its own list: add `in.sinew.Enpass-Desktop` by hand in Settings → Voice → Apps to skip.
 
 ## Global Constraints
 

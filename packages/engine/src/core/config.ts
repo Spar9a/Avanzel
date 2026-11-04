@@ -33,9 +33,10 @@ export interface VoiceSettings extends VoiceOptions {
 }
 
 /**
- * The apps dictation never pastes into by default: the password managers on a Mac, by bundle id. The app keeps the same list
- * (`DEFAULT_SKIP_APPS` in apps/mac/src/main/cursor-policy.ts) because it can't import from here and the engine can't import from it;
- * a test pins this one, and the two must stay equal.
+ * The apps whose dictations are never kept by default: the password managers on a Mac, by bundle id (the words still go in). The app
+ * keeps the same list (`DEFAULT_SKIP_APPS` in apps/mac/src/main/cursor-policy.ts) because it can't import from here and the engine
+ * can't import from it; a test pins this one, and the two must stay equal. Enpass is listed under both ids it has shipped with. A
+ * library whose config.toml was written before an id was added keeps the list it wrote.
  */
 export const DEFAULT_DICTATION_SKIP_APPS: readonly string[] = [
   "com.1password.1password",
@@ -47,15 +48,22 @@ export const DEFAULT_DICTATION_SKIP_APPS: readonly string[] = [
   "com.lastpass.LastPass",
   "com.dashlane.Dashlane",
   "com.enpass.Enpass",
+  "in.sinew.Enpass-Desktop",
 ];
 
 /** The `[dictation]` table: dictating into any app, and whether the library keeps a day file of it. */
 export interface DictationSettings {
   /** Also append every dictation to `raw/dictations/YYYY-MM-DD.md` in the library. The app's own history is kept either way. */
   log: boolean;
-  /** Bundle ids of apps that are never dictated into. Entries are trimmed; blanks and repeats are dropped. */
+  /**
+   * Bundle ids of apps whose dictations are never kept, neither in the app's history nor in the library: the words are still dictated
+   * into them. Entries are trimmed; blanks and repeats are dropped.
+   */
   skipApps: string[];
-  /** Websites that are never dictated into, as the owner wrote them (the app turns them into hosts). */
+  /**
+   * Websites whose dictations are never kept, neither in the app's history nor in the library, as the owner wrote them (the app turns
+   * them into hosts): the words are still dictated into them.
+   */
   skipSites: string[];
 }
 

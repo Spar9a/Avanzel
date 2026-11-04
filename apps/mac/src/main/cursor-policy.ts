@@ -1,6 +1,10 @@
 import type { Target } from "./cursor-helper.ts";
 
-/** Password managers, by bundle id: what is said while one is in front is never kept. */
+/**
+ * Password managers, by bundle id: what is said while one is in front is never kept (it still goes in). Enpass under both ids it has
+ * shipped with. The engine keeps the same list (`DEFAULT_DICTATION_SKIP_APPS`); a library's config.toml written before an id was
+ * added keeps the list it wrote, so the person adds a new id by hand in Settings → Voice.
+ */
 export const DEFAULT_SKIP_APPS: string[] = [
   "com.1password.1password",
   "com.agilebits.onepassword7",
@@ -11,6 +15,7 @@ export const DEFAULT_SKIP_APPS: string[] = [
   "com.lastpass.LastPass",
   "com.dashlane.Dashlane",
   "com.enpass.Enpass",
+  "in.sinew.Enpass-Desktop",
 ];
 
 /**

@@ -91,7 +91,7 @@ describe("loadSettings", () => {
 
   // The app keeps the same list in apps/mac/src/main/cursor-policy.ts (DEFAULT_SKIP_APPS); the engine can't import from the app,
   // so the two are kept equal by hand and this pins the engine's side.
-  it("skips the nine password managers by default", () => {
+  it("skips the password managers by default (Enpass under both of its ids)", () => {
     expect(DEFAULT_DICTATION_SKIP_APPS).toEqual([
       "com.1password.1password",
       "com.agilebits.onepassword7",
@@ -102,6 +102,7 @@ describe("loadSettings", () => {
       "com.lastpass.LastPass",
       "com.dashlane.Dashlane",
       "com.enpass.Enpass",
+      "in.sinew.Enpass-Desktop",
     ]);
     expect(defaultSettings().dictation.skipApps).not.toBe(DEFAULT_DICTATION_SKIP_APPS); // a copy: changing one library's never changes the next
   });
@@ -281,7 +282,7 @@ describe("saveSettings", () => {
       expect(text).toContain(line);
     }
     expect(text).toContain('skip_apps = [\n  "com.1password.1password",\n');
-    expect(text).toContain('  "com.enpass.Enpass",\n]\n');
+    expect(text).toContain('  "com.enpass.Enpass",\n  "in.sinew.Enpass-Desktop",\n]\n');
     expect(text).not.toContain("$");
     expect(text).not.toMatch(/^command = /m);
     expect(text).not.toMatch(/^\[harnesses/m);

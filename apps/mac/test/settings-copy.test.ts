@@ -525,7 +525,7 @@ describe("a scheduled review's copy", () => {
     const sees = { available: true, accessibility: true, inputMonitoring: true };
 
     it("says all is well when both permissions are granted, with nothing to press", () => {
-      expect(cursorStatus(sees)).toEqual({ line: "Avanzel can see the key and type for you.", fix: null });
+      expect(cursorStatus(sees)).toEqual({ line: "Avanzel can see the key and paste for you.", fix: null });
     });
 
     it("names the one permission that is missing, with a button that opens its pane", () => {
@@ -534,14 +534,14 @@ describe("a scheduled review's copy", () => {
         fix: "Open System Settings",
       });
       expect(cursorStatus({ ...sees, accessibility: false })).toEqual({
-        line: "Avanzel needs Accessibility to type for you.",
+        line: "Avanzel needs Accessibility to paste for you.",
         fix: "Open System Settings",
       });
     });
 
     it("names both in one sentence when both are missing", () => {
       expect(cursorStatus({ available: true, accessibility: false, inputMonitoring: false })).toEqual({
-        line: "Avanzel needs Input Monitoring to see the key and Accessibility to type for you.",
+        line: "Avanzel needs Input Monitoring to see the key and Accessibility to paste for you.",
         fix: "Open System Settings",
       });
     });
