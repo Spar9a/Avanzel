@@ -23,15 +23,25 @@ const SHOWN =
 export interface FilePromptOptions {
   /** Vault-relative screenshots that came with the capture. */
   attachments?: readonly string[];
+  /** The capture is a call: a transcript of two streams, "You" and "Them". */
+  call?: boolean;
   /** The owner's standing instructions for this run (a shadow task's body). */
   instructions?: string | null;
 }
+
+// Self-contained: libraries made before calls keep their old AGENTS.md.
+const CALL =
+  "This capture is a call. The transcript marks who spoke: \"You\" is the owner and \"Them\" is everyone else on the call. " +
+  "Write one meeting page, `meetings/YYYY-MM-DD-<slug>.md` (create the `meetings/` folder if it is missing, and add a " +
+  "\"Meetings\" heading in `index.md`). On it put what was decided and who promised what, as `- [ ]` lines that name " +
+  "the owner of each. Link the people by [[wikilink]] and update their pages, citing the capture. Never write the " +
+  "transcript out in full on the page. When you do not know a speaker's name, say so rather than guessing.";
 
 export function filePrompt(
   captureRel: string,
   captureId: string,
   now: Date,
-  { attachments = [], instructions = null }: FilePromptOptions = {},
+  { attachments = [], call = false, instructions = null }: FilePromptOptions = {},
 ): string {
   const notes: string[] = [];
   if (attachments.length === 1) {
@@ -39,6 +49,7 @@ export function filePrompt(
   } else if (attachments.length > 1) {
     notes.push(`This capture has screenshots: ${attachments.join(", ")}. Open them to see what the owner was looking at.`);
   }
+  if (call) notes.push(CALL);
   const standing = instructions?.trim();
   if (standing) notes.push(`The owner's standing instructions for this run: ${standing}`);
   return render("prompts/file.md", {

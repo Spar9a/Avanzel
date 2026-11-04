@@ -16,6 +16,7 @@ write. Everything is plain Markdown, so it works in any editor and in Obsidian.
 | `problems/` | Open problems, frictions and questions the owner is wrestling with | create, edit |
 | `memories/` | Facts, events, experiences, decisions and lessons from the owner's life | create, edit |
 | `people/` | People the owner mentions: who they are, context, commitments | create, edit |
+| `meetings/` | One page per call: what was decided and who promised what | create, edit |
 | `topics/` | Knowledge and recurring themes; saved answers and syntheses | create, edit |
 | `reviews/` | Health-check reports and evening-review summaries | create |
 | `tasks/` | Scheduled reviews: schedules and standing instructions for runs Avanzel starts on its own | read |
@@ -111,6 +112,15 @@ Some captures come with a screenshot of what the owner was looking at: `source: 
 in the body as `![[name.png]]`. Look at the screenshot if you can view images; the owner's comment
 says why it mattered to them. File the capture on what it is about, cite the capture as usual, and
 mention the source (title and link) on the page.
+
+Some captures are calls: `source: call`, the `app` it was in (left out when it was everything the Mac
+plays), `seconds` for its length, and the transcript as the body. The transcript marks who spoke:
+"You" is the owner and "Them" is everyone else on the call. Write one meeting page,
+`meetings/YYYY-MM-DD-<slug>.md` (create the `meetings/` folder if it is missing, and add a "Meetings"
+heading in `index.md`). On it put what was decided and who promised what, as `- [ ]` lines that name
+the owner of each. Link the people by `[[wikilink]]` and update their pages, citing the capture.
+Never write the transcript out in full on the page. When you do not know a speaker's name, say so
+rather than guessing.
 
 ## Operations
 

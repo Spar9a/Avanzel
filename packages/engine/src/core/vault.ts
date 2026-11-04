@@ -79,8 +79,8 @@ export interface CaptureOptions {
   audio?: string | null;
   /** Screenshots inside the library, usually under `raw/attachments/`. */
   attachments?: readonly string[];
-  /** Where the capture came from: `app`, `title`, `url`, … (empty values are left out). */
-  context?: Readonly<Record<string, string | undefined>>;
+  /** Where the capture came from: `app`, `title`, `url`, … (empty values are left out; a number is written as one). */
+  context?: Readonly<Record<string, string | number | undefined>>;
   /** The speech-to-text engine, e.g. "onnx-asr:nemo-parakeet-tdt-0.6b-v3". */
   transcriber?: string | null;
   now?: Date;
@@ -168,13 +168,13 @@ export class Vault {
     const { source, audio = null, attachments = [], context = {}, transcriber = null, now = new Date() } = options;
     const words = text.trim();
     if (!words && !attachments.length) throw new AvanzelError("Nothing to capture: the text is empty.");
-    const fields = Object.entries(context).filter((entry): entry is [string, string] => Boolean(entry[1]));
+    const fields = Object.entries(context).filter((entry): entry is [string, string | number] => Boolean(entry[1]));
     for (const [key] of fields) {
       if (!/^[A-Za-z][\w-]*$/.test(key) || RESERVED_FIELDS.has(key)) throw new Error(`Invalid capture field: ${key}`);
     }
     const render = (id: string) => {
       const lines = ["---", `id: ${id}`, "type: capture", `source: ${yamlScalar(source)}`, `created: ${isoLocal(now)}`];
-      for (const [key, value] of fields) lines.push(`${key}: ${yamlScalar(value)}`);
+      for (const [key, value] of fields) lines.push(`${key}: ${typeof value === "number" ? value : yamlScalar(value)}`);
       if (attachments.length) {
         lines.push(`attachments: [${attachments.map((file) => yamlScalar(this.relativePath(file), true)).join(", ")}]`);
       }

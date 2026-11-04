@@ -118,6 +118,17 @@ export interface ScreenCapture {
   context?: { app?: string; title?: string; url?: string };
 }
 
+export interface CallCapture {
+  /** The call as it was said (see `callTranscript`). */
+  transcript: string;
+  /** The app the call was in ("Zoom"); left out for everything the Mac plays. */
+  app?: string;
+  title?: string;
+  startedAt: Date;
+  /** How long the call ran. */
+  seconds: number;
+}
+
 export interface FileOptions {
   progress?: (message: string) => void;
   /** The owner's standing instructions for this run (a shadow task's body). */
@@ -227,6 +238,15 @@ export class Librarian {
       audio: recording,
       transcriber,
       now,
+    });
+  }
+
+  /** A finished call, as its transcript. It waits in the inbox for the evening review. */
+  captureCall({ transcript, app, title, startedAt, seconds }: CallCapture): Capture {
+    return this.vault.newCapture(transcript, {
+      source: "call",
+      context: { app, title, seconds: Math.round(seconds) },
+      now: startedAt,
     });
   }
 
@@ -360,7 +380,8 @@ export class Librarian {
     const archiveExisted = lstatOrNull(join(root, archiveRel)) !== null;
     const attachments = this.#attachments(original.toString("utf8"));
     const before = snapshot(root);
-    const prompt = filePrompt(captureRel, captureId, now, { attachments, instructions });
+    const call = this.#isCall(original.toString("utf8"));
+    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, instructions });
     // Only a caller that asked for the steps is told them: Claude Code's come from its own events, and other agents'
     // from the folder. The changes below are read from `after`, the library as the run left it, whether or not they are.
     const { result, guarded, after } = await this.#run(prompt, { write: true, images: attachments, signal, before, steps });
@@ -419,6 +440,11 @@ export class Librarian {
     const rel = `${this.vault.relativePath(this.vault.logsDir)}/${captureId}.original.md`;
     if (createInside(this.vault.root, rel, original)) return rel;
     return isRegularFile(join(this.vault.root, rel)) ? rel : null;
+  }
+
+  #isCall(captureText: string): boolean {
+    const [frontmatter] = splitFrontmatter(captureText);
+    return frontmatterFields(frontmatter).get("source") === "call";
   }
 
   /** The capture's screenshots that really are images inside the library, vault-relative. */

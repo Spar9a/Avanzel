@@ -735,3 +735,54 @@ describe("captureScreen", () => {
     expect(() => librarian.captureScreen({ image: join(tmp(), "missing.png") })).toThrow(AvanzelError);
   });
 });
+
+describe("captureCall", () => {
+  const transcript = "You: Shall we ship on Friday?\n\nThem: Yes, I will send the contract tomorrow.";
+
+  it("writes the transcript as a call capture, with the app and the length", () => {
+    const capture = librarian.captureCall({ transcript, app: "Zoom", startedAt: NOW, seconds: 1834.6 });
+    expect(capture).toEqual({
+      id: "2026-10-20-140312-you-shall-we-ship-on",
+      path: join(vault.inbox, "2026-10-20-140312-you-shall-we-ship-on.md"),
+      source: "call",
+    });
+    expect(read(capture.path)).toBe(
+      "---\n" +
+        "id: 2026-10-20-140312-you-shall-we-ship-on\n" +
+        "type: capture\n" +
+        "source: call\n" +
+        "created: 2026-10-20T14:03:12+04:00\n" +
+        "app: Zoom\n" +
+        "seconds: 1835\n" +
+        "---\n" +
+        "\n" +
+        `${transcript}\n`,
+    );
+    expect(vault.pending()).toEqual([capture.path]);
+  });
+
+  it("leaves the app out when the call is everything the Mac plays, and dates the capture from the call's start", () => {
+    const startedAt = new Date(NOW.getTime() - 3_600_000);
+    const capture = librarian.captureCall({ transcript, startedAt, seconds: 90 });
+    const text = read(capture.path);
+    expect(text).toContain("created: 2026-10-20T13:03:12+04:00\nseconds: 90\n---\n");
+    expect(text).not.toContain("app:");
+    expect(text).not.toContain("audio:");
+    expect(text).not.toContain("attachments:");
+  });
+
+  it("refuses an empty transcript", () => {
+    expect(() => librarian.captureCall({ transcript: "  \n", startedAt: NOW, seconds: 5 })).toThrow(AvanzelError);
+    expect(vault.pending()).toEqual([]);
+  });
+
+  it("asks the agent to file it as a call", async () => {
+    const runs = recordRuns();
+    librarian.captureCall({ transcript, app: "Zoom", startedAt: NOW, seconds: 60 });
+    librarian.captureText("A plain thought");
+    await librarian.file();
+    const prompts = runs().map((run) => run.prompt);
+    expect(prompts.filter((prompt) => prompt.includes("This capture is a call."))).toHaveLength(1);
+    expect(prompts).toHaveLength(2); // the plain thought's prompt has no call note
+  });
+});

@@ -27,6 +27,35 @@ describe("filePrompt", () => {
     expect(two).toContain("This capture has screenshots: raw/a.png, raw/b.png. Open them to see what the owner was looking at.");
   });
 
+  it("says how to file a call (file_prompt_explains_a_call)", () => {
+    const prompt = filePrompt("inbox/x.md", "x", NOW, { call: true });
+    expect(prompt).toContain("\n\nThis capture is a call. ");
+    const note = prompt.slice(prompt.indexOf("This capture is a call."), prompt.indexOf(WHEN_DONE));
+    const steps = [
+      '"You" is the owner and "Them" is everyone else',
+      "`meetings/YYYY-MM-DD-<slug>.md`",
+      "create the `meetings/` folder if it is missing",
+      'a "Meetings" heading in `index.md`',
+      "what was decided",
+      "who promised what",
+      "`- [ ]`",
+      "[[wikilink]]",
+      "citing the capture",
+      "Never write the transcript out in full",
+      "say so rather than guessing",
+    ];
+    let at = -1;
+    for (const step of steps) {
+      const found = note.indexOf(step);
+      expect(found, step).toBeGreaterThan(at);
+      at = found;
+    }
+    expect(note).not.toContain("!");
+    expect(prompt).not.toContain("$");
+    expect(filePrompt("inbox/x.md", "x", NOW)).not.toContain("This capture is a call.");
+    expect(filePrompt("inbox/x.md", "x", NOW, { call: false })).not.toContain("This capture is a call.");
+  });
+
   it("passes on the owner's standing instructions, after the screenshot note", () => {
     const prompt = filePrompt("inbox/x.md", "x", NOW, {
       attachments: ["raw/a.png"],
