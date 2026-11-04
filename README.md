@@ -63,6 +63,9 @@ doesn't yet notice a call by itself, read calendar titles or tell the other side
 
 Good to know:
 
+- **Dictate into any app**: tap Right Option (settable in Settings → Voice) to dictate into the app that has
+  focus; the words are typed at the cursor. Every dictation is kept in a history in Settings, and an optional
+  library log keeps them in `raw/dictations/` with the app and window.
 - **A dictionary** in Settings → Voice lists the names and terms you use, one per line. What the speech model
   hears is corrected to them (`Ollama = Alema` fixes a word it keeps getting wrong), your agent is told how to
   spell them, and a thought that was corrected keeps what was heard in its `heard:` line.
