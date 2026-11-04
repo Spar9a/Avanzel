@@ -3,8 +3,9 @@
 // needs Electron, so both ways can be tested on a real library.
 import { lstatSync, readFileSync, type Stats } from "node:fs";
 import path from "node:path";
-import { appendDictation, forgetDictation, localDate, type DictationLogEntry, type Vault } from "@avanzel/engine";
+import { appendDictation, forgetDictation, localDate, Vault, type DictationLogEntry } from "@avanzel/engine";
 import type { DictationEntry } from "./dictation-history.ts";
+import { DayFileNotUpdated } from "./dictation-rows.ts";
 
 /** The history's entry as the day file takes it: the time as a Date, and `heard` only when the history kept one. */
 export function logEntryOf(entry: DictationEntry): DictationLogEntry {
@@ -36,6 +37,27 @@ export async function forgetLogged(vault: Vault, entry: DictationEntry): Promise
   const at = new Date(entry.at);
   if (await forgetDictation(vault, entry.id, at)) return;
   if (mayHold(vault.root, entry.id, at)) throw new Error("The day file of that dictation couldn't be updated.");
+}
+
+/**
+ * Takes `entry` out of the day file of the library it was kept in (`entry.library`), which may not be the one open (`open`): another
+ * may have been opened since, or none. When that library can't be reached (moved, renamed, unmounted) or its day file can't be updated,
+ * it rejects with `DayFileNotUpdated` naming its folder (`label`, as the person reads it). An entry kept before the field existed, or
+ * with the log off, has no `library`: it is looked for in the open library, as before, whose own failure names no other library.
+ */
+export async function forgetKept(open: Vault | null, entry: DictationEntry, label: (root: string) => string): Promise<void> {
+  const kept = entry.library;
+  if (kept === undefined || (open !== null && path.resolve(kept) === path.resolve(open.root))) {
+    if (open) await forgetLogged(open, entry);
+    return;
+  }
+  const vault = new Vault(kept);
+  if (!vault.exists()) throw new DayFileNotUpdated(label(kept));
+  try {
+    await forgetLogged(vault, entry);
+  } catch {
+    throw new DayFileNotUpdated(label(kept));
+  }
 }
 
 /** Whether a day file the engine looks in for `id` (the day of `at`, and the day before and after) might still hold it. */

@@ -4,12 +4,13 @@
 // Settings → Voice holds the switch and the skip lists. The Mac's side is the fake cursor helper (AVANZEL_FAKE_CURSOR).
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, localDate } from "../../../packages/engine/src/index.ts";
 import type { Target } from "../src/main/cursor-helper.ts";
 import type { DictationEntry } from "../src/main/dictation-history.ts";
+import { tildePath } from "../src/main/setup-model.ts";
 import { expectProblem, holdTheQueue, letTheQueueGo } from "./capsule-helpers.ts";
 import { call, capsuleKind, launch, makeLibrary, openSettings, speechWav, windowFor } from "./helpers.ts";
 
@@ -46,19 +47,17 @@ const dayFile = (library: string) => path.join(dictations(library), `${localDate
 const dayText = (library: string): string => (existsSync(dayFile(library)) ? readFileSync(dayFile(library), "utf8") : "");
 
 /**
- * The `times`th dictation, as two taps of the key would make it; resolves once the words are pasted and the history holds `kept`
- * entries. The session takes no new tap until it has kept the words, which comes after the paste.
+ * The `times`th dictation, as two taps of the key would make it; resolves once the words are pasted and the session is idle again,
+ * which it is only after it has kept the words (or decided to keep none). A write to the day file starts within that same turn of
+ * main's event loop, and is done before main answers the next call from here.
  */
-async function dictate(app: ElectronApplication, pasteOut: string, times: number, kept = times): Promise<void> {
+async function dictate(app: ElectronApplication, pasteOut: string, times: number): Promise<void> {
   await call(app, "pressCursorDictation");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await call(app, "pressCursorDictation");
   await expect.poll(() => pasted(pasteOut), { timeout: 60_000 }).toBe(WORDS.repeat(times));
-  await expect.poll(() => capsuleKind(app)).toBe("hidden");
-  await expect.poll(async () => (await history(app)).length).toBe(kept);
+  await expect.poll(() => call(app, "cursorIdleForTests")).toBe(true);
 }
-
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The fake helper's paste reads the Mac's real clipboard: its text is put back when the tests are done.
 let ownersClipboard = "";
@@ -74,8 +73,8 @@ test("with the log off, as a library starts, a dictation is kept in the app's hi
   expect(loadSettings(library).dictation.log).toBe(false);
   const { app, pasteOut } = await launchWith(library);
   await dictate(app, pasteOut, 1);
-  await expect.poll(() => history(app)).toEqual([expect.objectContaining({ text: WORDS, app: "Slack" })]);
-  await wait(500); // a write to the day file would follow the history's at once
+  expect(await history(app)).toEqual([expect.objectContaining({ text: WORDS, app: "Slack" })]);
+  expect((await history(app))[0]).not.toHaveProperty("library");
   expect(existsSync(dictations(library))).toBe(false);
   await app.close();
 });
@@ -99,10 +98,14 @@ test("a skipped app gets the words pasted, and they are kept in neither the hist
   const library = await makeLibrary();
   const { app, pasteOut } = await launchWith(library);
   await call(app, "setLibrarySettings", { dictationLog: true, dictationSkipApps: ["com.tinyspeck.slackmacgap"] });
-  await dictate(app, pasteOut, 1, 0);
-  await wait(500);
+  await dictate(app, pasteOut, 1);
   expect(await history(app)).toEqual([]);
   expect(existsSync(dictations(library))).toBe(false);
+  // The same app, off the list: kept in both, so the session above had its chance to keep and chose not to.
+  await call(app, "setLibrarySettings", { dictationSkipApps: [] });
+  await dictate(app, pasteOut, 2);
+  expect(await history(app)).toHaveLength(1);
+  await expect.poll(() => dayText(library)).toContain((await history(app))[0]!.id);
   await app.close();
 });
 
@@ -185,6 +188,42 @@ test("a day file that can't be rewritten is told, by Delete and by the menu, and
   await app.close();
 });
 
+test("a dictation forgotten after another library opened leaves the day file of the library it was kept in, and one that has gone is named", async () => {
+  const first = await makeLibrary();
+  const { app, pasteOut } = await launchWith(first);
+  await call(app, "setLibrarySettings", { dictationLog: true });
+  await dictate(app, pasteOut, 1);
+  await dictate(app, pasteOut, 2);
+  const [older, newer] = await history(app);
+  expect([older!.library, newer!.library]).toEqual([first, first]);
+  await expect.poll(() => dayText(first)).toContain(`<!-- /dictation ${newer!.id} -->`);
+
+  const second = await makeLibrary();
+  await call(app, "useLibrary", second);
+  const settings = await openSettings(app, "Dictations");
+  const cards = settings.getByRole("article");
+  await cards.last().getByRole("button", { name: "Delete", exact: true }).click(); // the older one
+  await expect(cards).toHaveCount(1);
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+  expect(dayText(first)).not.toContain(older!.id);
+  expect(dayText(first)).toContain(newer!.id);
+  expect(existsSync(dictations(second))).toBe(false);
+
+  // The first library is moved away: the history still lets the dictation go, and says which library may still hold it.
+  const moved = `${first}-moved`;
+  renameSync(first, moved);
+  await cards.first().getByRole("button", { name: "Delete", exact: true }).click();
+  const notice = settings.getByRole("alert");
+  await expect(notice).toContainText("That dictation may still be in the library.");
+  await expect(notice).toContainText(
+    `The words are deleted from the history, but the day file in the library at ${tildePath(first, homedir())} couldn't be updated. They may still be in raw/dictations there. Open that day's file in that library and remove them.`,
+  );
+  await expect(cards).toHaveCount(0);
+  expect(await history(app)).toEqual([]);
+  expect(readFileSync(path.join(moved, "raw", "dictations", path.basename(dayFile(first))), "utf8")).toContain(newer!.id);
+  await app.close();
+});
+
 /** The "Dictate into any app" group of Settings → Voice. */
 const cursorGroup = (settings: Page) => settings.locator("section", { has: settings.getByRole("heading", { name: "Dictate into any app", level: 3 }) });
 
@@ -213,7 +252,12 @@ test("Settings → Voice turns the log on at once and saves the skip lists clean
     ),
   ).toBeVisible();
   await expect(group.getByText("One bundle id per line, such as com.apple.Passwords. What you dictate there still goes in, but is never kept.", { exact: true })).toBeVisible();
-  await expect(group.getByText("One website per line, such as example.com. What you dictate there still goes in, but is never kept.", { exact: true })).toBeVisible();
+  await expect(
+    group.getByText(
+      "One website per line, such as example.com. In Safari and Chrome-based browsers, what you dictate there still goes in but is never kept. Other browsers can't say which site is open, so there it is kept.",
+      { exact: true },
+    ),
+  ).toBeVisible();
   await log.click();
   await expect.poll(() => loadSettings(library).dictation.log).toBe(true);
   await expect(log).toBeChecked();

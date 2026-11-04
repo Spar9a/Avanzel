@@ -510,7 +510,11 @@ describe("a scheduled review's copy", () => {
 
   it("the skip lists say what a line holds, and that what is said there still goes in but is never kept", () => {
     expect(SKIP_APPS_DESCRIPTION).toBe("One bundle id per line, such as com.apple.Passwords. What you dictate there still goes in, but is never kept.");
-    expect(SKIP_SITES_DESCRIPTION).toBe("One website per line, such as example.com. What you dictate there still goes in, but is never kept.");
+    // Only the browsers that say which page is open can skip a site; the line doesn't promise more.
+    expect(SKIP_SITES_DESCRIPTION).toBe(
+      "One website per line, such as example.com. In Safari and Chrome-based browsers, what you dictate there still goes in but is " +
+        "never kept. Other browsers can't say which site is open, so there it is kept.",
+    );
     for (const line of [DICTATION_LOG_DESCRIPTION, SKIP_APPS_DESCRIPTION, SKIP_SITES_DESCRIPTION]) {
       expect(line).toMatch(/^[A-Z][^!]*\.$/);
       expect(line).not.toMatch(/Oops|Sorry/);

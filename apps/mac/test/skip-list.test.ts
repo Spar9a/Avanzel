@@ -41,6 +41,23 @@ describe("cleanSkipList: sites", () => {
     expect(refusal(() => cleanSkipList(["ftp://example.com"], "sites"))).toContain("Line 1 of the sites to skip");
   });
 
+  it("refuses a line that would be a single name, such as www.com, which would skip every .com site; localhost stays", () => {
+    for (const [line, typed] of [["www.com", "www.com"], ["com", "com"], ["https://www.com/", "https://www.com/"], ["intranet", "intranet"]]) {
+      expect(refusal(() => cleanSkipList([typed!], "sites"))).toBe(
+        `Line 1 of the sites to skip, "${line}", isn't a website. Write it as its address, such as example.com.`,
+      );
+    }
+    expect(cleanSkipList(["localhost", "http://localhost:3000/x"], "sites")).toEqual(["localhost"]);
+  });
+
+  it("refuses a number the address parser would turn into another address, and keeps a written-out IP address", () => {
+    expect(refusal(() => cleanSkipList(["example.com", "12345"], "sites"))).toBe(
+      'Line 2 of the sites to skip, "12345", isn\'t a website. Write it as its address, such as example.com.',
+    );
+    expect(refusal(() => cleanSkipList(["0x7f.1"], "sites"))).toContain("Line 1 of the sites to skip");
+    expect(cleanSkipList(["192.168.1.10", "http://10.0.0.1:8080/admin"], "sites")).toEqual(["192.168.1.10", "10.0.0.1"]);
+  });
+
   it("names a long bad line by its start only", () => {
     const message = refusal(() => cleanSkipList([`bad site ${"x".repeat(100)}`], "sites"));
     expect(message).toContain(`"bad site ${"x".repeat(31)}…"`);

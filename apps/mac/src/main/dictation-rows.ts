@@ -1,6 +1,6 @@
 // What the Dictations pane is told about the history, and how an entry is forgotten. Kept apart from the controller, which needs
 // Electron, so that the cut of a long text and the way a failed delete is told can be tested on their own.
-import { DAY_FILE_NOT_UPDATED, DELETE_FAILED_BODY, DICTATION_PAGE, type DeleteDictationResult, type DictationList, type DictationRow } from "../shared/ipc.ts";
+import { dayFileNotUpdated, DELETE_FAILED_BODY, DICTATION_PAGE, type DeleteDictationResult, type DictationList, type DictationRow } from "../shared/ipc.ts";
 import type { DictationEntry, DictationHistory } from "./dictation-history.ts";
 
 /** How many characters of a dictation a row shows; Copy still copies all of it. */
@@ -37,10 +37,25 @@ export function pageOf(entries: readonly DictationEntry[], limit?: number): Dict
  */
 export type ForgetHook = (entry: DictationEntry) => void | Promise<void>;
 
-/** What a forget did: the entry that left the history (null when there was none), and whether every other copy went too. */
+/**
+ * What a hook throws when the day file it couldn't update is in a library other than the open one: `library` is that library's
+ * folder as the person reads it (`~/Notes`), for the sentence that tells them where the words may still be.
+ */
+export class DayFileNotUpdated extends Error {
+  constructor(readonly library: string) {
+    super("The day file of that dictation couldn't be updated.");
+    this.name = "DayFileNotUpdated";
+  }
+}
+
+/**
+ * What a forget did: the entry that left the history (null when there was none), and whether every other copy went too; when not,
+ * and the copy is in another library than the open one, `library` names its folder.
+ */
 export interface Forgotten {
   entry: DictationEntry | null;
   elsewhere: boolean;
+  library?: string;
 }
 
 /**
@@ -57,7 +72,7 @@ export async function forgetDictation(history: Pick<DictationHistory, "remove">,
   } catch (error) {
     // Only the code: the message can name a path, and the words are what people said.
     console.error("forget dictation", (error as NodeJS.ErrnoException).code ?? "failed");
-    return { entry, elsewhere: false };
+    return error instanceof DayFileNotUpdated ? { entry, elsewhere: false, library: error.library } : { entry, elsewhere: false };
   }
 }
 
@@ -74,5 +89,7 @@ export async function deleteDictationResult(forget: () => Promise<Forgotten>): P
     console.error("delete dictation", (error as NodeJS.ErrnoException).code ?? "failed");
     return { ok: false, message: DELETE_FAILED_BODY };
   }
-  return forgotten.elsewhere ? { ok: true } : { ok: false, title: DAY_FILE_NOT_UPDATED.title, message: DAY_FILE_NOT_UPDATED.body };
+  if (forgotten.elsewhere) return { ok: true };
+  const told = dayFileNotUpdated(forgotten.library ?? null);
+  return { ok: false, title: told.title, message: told.body };
 }

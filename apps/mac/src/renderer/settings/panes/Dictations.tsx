@@ -131,24 +131,29 @@ export function Dictations(): ReactNode {
   };
 
   if (rows === null) return null;
+  // Deleting the last dictation can leave something to tell: its words may still be in the library's day file.
+  const notice = told && (
+    <Notice tone="error" title={told.title}>
+      {told.body}
+    </Notice>
+  );
   if (total === 0) {
     return (
-      <Stack gap={4}>
-        <Text>{DICTATIONS_EMPTY}</Text>
-        <Text variant="footnote" tone="secondary">
-          {DICTATIONS_START}
-        </Text>
+      <Stack gap={16}>
+        {notice}
+        <Stack gap={4}>
+          <Text>{DICTATIONS_EMPTY}</Text>
+          <Text variant="footnote" tone="secondary">
+            {DICTATIONS_START}
+          </Text>
+        </Stack>
       </Stack>
     );
   }
   const now = new Date();
   return (
     <Stack gap={16}>
-      {told && (
-        <Notice tone="error" title={told.title}>
-          {told.body}
-        </Notice>
-      )}
+      {notice}
       {rows.map((row) => (
         <Dictation key={row.id} row={row} now={now} copied={copied === row.id} onCopy={() => void copy(row.id)} onDelete={() => void remove(row.id)} />
       ))}

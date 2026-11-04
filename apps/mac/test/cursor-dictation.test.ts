@@ -22,7 +22,9 @@ function stubHost(
     browser?: { address?: string; privateWindow?: boolean } | null | Error;
     skip?: { apps: string[]; sites: string[] };
     logEnabled?: boolean;
+    logLibrary?: string;
     historyFails?: boolean;
+    historyRefuses?: boolean;
     logFails?: boolean;
     readFails?: boolean;
     waitFails?: boolean;
@@ -98,6 +100,7 @@ function stubHost(
     logTo() {
       return {
         enabled: over.logEnabled ?? true,
+        ...(over.logLibrary !== undefined ? { library: over.logLibrary } : {}),
         write(entry: DictationEntry) {
           calls.push("log.write");
           if (over.logFails) throw new Error("library is locked");
@@ -118,6 +121,7 @@ function stubHost(
       add(entry: DictationEntry) {
         calls.push("history.add");
         if (over.historyFails) throw new Error("disk full");
+        if (over.historyRefuses) return false;
         added.push(entry);
       },
     } as unknown as DictationHistory,
@@ -410,14 +414,47 @@ describe("what is stored", () => {
     expect(stub.calls).not.toContain("log.write");
   });
 
-  it("pastes and logs even when the history can't be written", async () => {
+  it("pastes when the history can't be written, but then writes nothing to the library, where it could never be forgotten from the app", async () => {
     const stub = stubHost({ historyFails: true });
     const dictation = new CursorDictation(stub.host);
     await expect(dictate(dictation)).resolves.toBeUndefined();
 
     expect(stub.pasted).toEqual(["milk and eggs"]);
-    expect(stub.written).toHaveLength(1);
+    expect(stub.calls).not.toContain("log.write");
     expect(errors).toHaveBeenCalledWith("cursor dictation", expect.any(Error));
+
+    // A history that refuses without throwing (it says so with false) is the same.
+    const refusing = stubHost({ historyRefuses: true });
+    await dictate(new CursorDictation(refusing.host));
+    expect(refusing.pasted).toEqual(["milk and eggs"]);
+    expect(refusing.calls).toContain("history.add");
+    expect(refusing.calls).not.toContain("log.write");
+  });
+
+  it("is idle only before a dictation starts and after its words are kept", async () => {
+    const stub = stubHost();
+    const dictation = new CursorDictation(stub.host);
+    expect(dictation.idle()).toBe(true);
+    await dictation.tap();
+    expect(dictation.idle()).toBe(false);
+    await dictation.tap();
+    expect(dictation.idle()).toBe(false);
+    const words = dictation.heard({ text: "milk and eggs", seconds: 2.5 });
+    expect(dictation.idle()).toBe(false); // pasting and keeping
+    await words;
+    expect(stub.added).toHaveLength(1);
+    expect(dictation.idle()).toBe(true);
+  });
+
+  it("marks the entry with the library the log writes to, before the history keeps it, and not when the log is off", async () => {
+    const logged = stubHost({ logLibrary: "/Users/someone/Avanzel" });
+    await dictate(new CursorDictation(logged.host));
+    expect(logged.added[0]?.library).toBe("/Users/someone/Avanzel");
+    expect(logged.written[0]?.library).toBe("/Users/someone/Avanzel");
+
+    const off = stubHost({ logEnabled: false, logLibrary: "/Users/someone/Avanzel" });
+    await dictate(new CursorDictation(off.host));
+    expect("library" in (off.added[0] as DictationEntry)).toBe(false);
   });
 
   it("pastes even when the library log can't be written, and can dictate again", async () => {

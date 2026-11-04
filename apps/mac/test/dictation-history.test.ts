@@ -71,6 +71,24 @@ describe("DictationHistory", () => {
     expect("heard" in (b as DictationEntry)).toBe(false);
   });
 
+  it("keeps the library an entry was logged in, and reads an entry from before that field as it was", () => {
+    const history = new DictationHistory(file);
+    history.add(entry("a", { library: "/Users/someone/Avanzel" }));
+    history.add(entry("b"));
+    const [b, a] = new DictationHistory(file).list();
+    expect(a?.library).toBe("/Users/someone/Avanzel");
+    expect("library" in (b as DictationEntry)).toBe(false);
+  });
+
+  it("says whether an add reached the file", () => {
+    expect(new DictationHistory(file).add(entry("a"))).toBe(true);
+    const blocker = path.join(dir, "blocker");
+    writeFileSync(blocker, "a file, not a folder");
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(new DictationHistory(path.join(blocker, "dictations.jsonl")).add(entry("b"))).toBe(false);
+    quiet.mockRestore();
+  });
+
   it("makes the folder when it is missing, and the file private", () => {
     const nested = path.join(dir, "deep", "er", "dictations.jsonl");
     new DictationHistory(nested).add(entry("a"));
@@ -132,6 +150,7 @@ describe("DictationHistory", () => {
           JSON.stringify({ ...entry("bad-inserted"), inserted: "yes" }),
           JSON.stringify({ ...entry("bad-title"), title: 5 }),
           JSON.stringify({ ...entry("bad-heard"), heard: 5 }),
+          JSON.stringify({ ...entry("bad-library"), library: 5 }),
           JSON.stringify({ ...entry("bad-nan"), seconds: null }),
           "[1,2]",
           "null",

@@ -100,9 +100,15 @@ export const DICTATION_LOG_DESCRIPTION =
   "Each dictation is also written to raw/dictations/ in the library, one file a day, kept out of git, where your agent can read it. " +
   "Copies made by sync tools such as Obsidian Sync or iCloud are outside this: a dictation you forget may stay in them.";
 
-/** The skip lists' rows: what a line holds, and that a skipped app or site still gets the words but keeps none of them. */
+/**
+ * The skip lists' rows: what a line holds, and that a skipped app or site still gets the words but keeps none of them. A site can be
+ * told only where the browser says which page is open (front-app.ts: Safari and the Chromium set); elsewhere the dictation is kept
+ * (cursor-policy.ts), and the line says so rather than promise more.
+ */
 export const SKIP_APPS_DESCRIPTION = "One bundle id per line, such as com.apple.Passwords. What you dictate there still goes in, but is never kept.";
-export const SKIP_SITES_DESCRIPTION = "One website per line, such as example.com. What you dictate there still goes in, but is never kept.";
+export const SKIP_SITES_DESCRIPTION =
+  "One website per line, such as example.com. In Safari and Chrome-based browsers, what you dictate there still goes in but is " +
+  "never kept. Other browsers can't say which site is open, so there it is kept.";
 
 /** The Dictations pane when the history is empty: the one line, and how to start. */
 export const DICTATIONS_EMPTY = "Nothing dictated yet.";

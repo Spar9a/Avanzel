@@ -59,15 +59,24 @@ export type DeleteDictationResult = { ok: true } | { ok: false; message: string;
 
 /**
  * A forgotten dictation left the history, but the library's day file of dictations (`raw/dictations/`) couldn't be updated: what
- * happened, what remains, and the one fix. Told by the Dictations pane after a Delete and by the capsule after the menu's "Forget the
- * last dictation".
+ * happened, what remains, and the one fix. `library` names the folder of the library the dictation was kept in, when that is not the
+ * one open (null: the open one). Told by the Dictations pane after a Delete and by the capsule after the menu's "Forget the last
+ * dictation".
  */
-export const DAY_FILE_NOT_UPDATED = {
-  title: "That dictation may still be in the library.",
-  body:
-    "The words are deleted from the history, but the day file in the library couldn't be updated. They may still be in " +
-    "raw/dictations. Open that day's file in the library and remove them.",
-} as const;
+export function dayFileNotUpdated(library: string | null): { title: string; body: string } {
+  return {
+    title: "That dictation may still be in the library.",
+    body:
+      library === null
+        ? "The words are deleted from the history, but the day file in the library couldn't be updated. They may still be in " +
+          "raw/dictations. Open that day's file in the library and remove them."
+        : `The words are deleted from the history, but the day file in the library at ${library} couldn't be updated. They may still ` +
+          "be in raw/dictations there. Open that day's file in that library and remove them.",
+  };
+}
+
+/** `dayFileNotUpdated` for the open library. */
+export const DAY_FILE_NOT_UPDATED = dayFileNotUpdated(null);
 
 /**
  * What the pane says under "That dictation couldn't be deleted.": what is safe, and the one fix. Main sends it as a failed Delete's

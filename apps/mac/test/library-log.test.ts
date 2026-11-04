@@ -4,7 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { appendDictation, Vault } from "@avanzel/engine";
 import type { DictationEntry } from "../src/main/dictation-history.ts";
-import { forgetLogged, logDictation, logEntryOf } from "../src/main/library-log.ts";
+import { DayFileNotUpdated } from "../src/main/dictation-rows.ts";
+import { forgetKept, forgetLogged, logDictation, logEntryOf } from "../src/main/library-log.ts";
+
+const label = (root: string) => `label of ${root}`;
 
 const library = async () => Vault.init(mkdtempSync(path.join(tmpdir(), "avz-log-")), { git: false });
 
@@ -109,6 +112,58 @@ describe("forgetLogged", () => {
     rmSync(dayFile(vault));
     mkdirSync(dayFile(vault));
     await expect(forgetLogged(vault, entry())).rejects.toThrow();
+  });
+
+  it("forgets from the library the entry was kept in, though another library is open, or none", async () => {
+    const first = await library();
+    const second = await library();
+    const kept = entry({ library: first.root });
+    await logDictation(first, kept);
+    await logDictation(second, entry({ id: "in-the-second" }));
+    const secondBefore = readFileSync(dayFile(second), "utf8");
+    await forgetKept(second, kept, label);
+    expect(readFileSync(dayFile(first), "utf8")).not.toContain("Ship it on Friday");
+    expect(readFileSync(dayFile(second), "utf8")).toBe(secondBefore);
+
+    const third = entry({ id: "third", library: first.root });
+    await logDictation(first, third);
+    await forgetKept(null, third, label);
+    expect(readFileSync(dayFile(first), "utf8")).not.toContain("third");
+  });
+
+  it("names the library it was kept in when that library can't be reached, or its day file can't be rewritten", async () => {
+    const first = await library();
+    const open = await library();
+    const kept = entry({ library: first.root });
+    await logDictation(first, kept);
+    const folder = path.dirname(dayFile(first));
+    chmodSync(folder, 0o555);
+    locked.push(folder);
+    const unwritable = await forgetKept(open, kept, label).catch((error: unknown) => error);
+    expect(unwritable).toBeInstanceOf(DayFileNotUpdated);
+    expect((unwritable as DayFileNotUpdated).library).toBe(`label of ${first.root}`);
+    chmodSync(folder, 0o755);
+    locked.pop();
+
+    rmSync(first.root, { recursive: true, force: true });
+    const gone = await forgetKept(open, kept, label).catch((error: unknown) => error);
+    expect(gone).toBeInstanceOf(DayFileNotUpdated);
+    expect((gone as DayFileNotUpdated).library).toBe(`label of ${first.root}`);
+  });
+
+  it("forgets an entry from before the field (no library) in the open library, as before, and does nothing with none open", async () => {
+    const open = await library();
+    await logDictation(open, entry());
+    await forgetKept(open, entry(), label);
+    expect(readFileSync(dayFile(open), "utf8")).not.toContain("Ship it on Friday");
+    await expect(forgetKept(null, entry(), label)).resolves.toBeUndefined();
+    // The open library's own failure names no other library.
+    await logDictation(open, entry({ id: "again", library: open.root }));
+    chmodSync(path.dirname(dayFile(open)), 0o555);
+    locked.push(path.dirname(dayFile(open)));
+    const failed = await forgetKept(open, entry({ id: "again", library: open.root }), label).catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(Error);
+    expect(failed).not.toBeInstanceOf(DayFileNotUpdated);
   });
 
   it("looks a day either side, as the engine does, for an entry whose clock and file disagree", async () => {

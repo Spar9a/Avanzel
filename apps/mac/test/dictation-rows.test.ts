@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DictationEntry } from "../src/main/dictation-history.ts";
-import { deleteDictationResult, forgetDictation, pageOf, PREVIEW_CHARACTERS, previewOf, rowOf } from "../src/main/dictation-rows.ts";
-import { DAY_FILE_NOT_UPDATED, DELETE_FAILED_BODY, DICTATION_PAGE } from "../src/shared/ipc.ts";
+import { DayFileNotUpdated, deleteDictationResult, forgetDictation, pageOf, PREVIEW_CHARACTERS, previewOf, rowOf } from "../src/main/dictation-rows.ts";
+import { DAY_FILE_NOT_UPDATED, dayFileNotUpdated, DELETE_FAILED_BODY, DICTATION_PAGE } from "../src/shared/ipc.ts";
 
 const entry = (over: Partial<DictationEntry> = {}): DictationEntry => ({
   id: "a",
@@ -173,6 +173,24 @@ describe("deleteDictationResult", () => {
     expect(result).toEqual({ ok: false, message: DELETE_FAILED_BODY });
     expect(DELETE_FAILED_BODY).toBe("It is still in the history. Try deleting it again.");
     expect(JSON.stringify(result)).not.toContain("EACCES");
+    quiet.mockRestore();
+  });
+
+  it("names the library a dictation was kept in when that one's day file couldn't be updated", async () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const removed = entry();
+    const forgotten = await forgetDictation({ remove: () => removed }, "a", () => {
+      throw new DayFileNotUpdated("~/Old library");
+    });
+    expect(forgotten).toEqual({ entry: removed, elsewhere: false, library: "~/Old library" });
+    expect(await deleteDictationResult(async () => forgotten)).toEqual({
+      ok: false,
+      title: "That dictation may still be in the library.",
+      message:
+        "The words are deleted from the history, but the day file in the library at ~/Old library couldn't be updated. They may still " +
+        "be in raw/dictations there. Open that day's file in that library and remove them.",
+    });
+    expect(dayFileNotUpdated(null)).toEqual(DAY_FILE_NOT_UPDATED);
     quiet.mockRestore();
   });
 

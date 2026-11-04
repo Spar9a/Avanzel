@@ -18,6 +18,17 @@ function quoted(line: string): string {
 }
 
 /**
+ * Whether `site`, what `line` became, is a website the person could mean. A single name would skip every site under it: `www.com`
+ * becomes `com`, and `com` matches every .com site, so only `localhost` (and an IPv6 address, in brackets) may be one. And an address
+ * the parser made up is refused: it reads `12345` or `0x7f.1` as numbers (`0.0.48.57`, `127.0.0.1`), which the person never wrote.
+ */
+function readsAsWritten(site: string, line: string): boolean {
+  if (!site.includes(".")) return site === "localhost" || site.startsWith("[");
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(site)) return line.toLowerCase().includes(site);
+  return true;
+}
+
+/**
  * The lines of a skip-list field, as the library keeps them: each one plain line (`plainLine`), blank ones and repeats dropped, in
  * the order typed. A site is kept as its host (`skipSiteOf`: `https://Example.com/login`, `example.com:8080` and `www.example.com`
  * are all `example.com`); a bundle id as typed, and a repeat of it in other capitals is dropped, as the rule ignores case. Refuses,
@@ -34,7 +45,7 @@ export function cleanSkipList(typed: readonly string[], kind: "apps" | "sites"):
     let entry: string;
     if (kind === "sites") {
       const site = skipSiteOf(line);
-      if (site === null) {
+      if (site === null || !readsAsWritten(site, line)) {
         throw new AvanzelError(`Line ${index + 1} of the ${name}, ${quoted(line)}, isn't a website. Write it as its address, such as example.com.`);
       }
       entry = site;

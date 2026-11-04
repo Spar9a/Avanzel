@@ -22,6 +22,11 @@ export interface DictationEntry {
   seconds: number;
   /** Whether the words were pasted: false when they were only copied for the person to paste. */
   inserted: boolean;
+  /**
+   * The root of the library whose day file the dictation was also written to, so forgetting it finds that file even when another
+   * library is open by then. Absent when the log was off, and in entries kept before the field was.
+   */
+  library?: string;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -49,7 +54,8 @@ function parseEntry(line: string): DictationEntry | null {
     nullableString(raw.site) &&
     typeof raw.seconds === "number" &&
     Number.isFinite(raw.seconds) &&
-    typeof raw.inserted === "boolean";
+    typeof raw.inserted === "boolean" &&
+    (raw.library === undefined || typeof raw.library === "string");
   return ok ? (raw as unknown as DictationEntry) : null;
 }
 
@@ -95,7 +101,11 @@ export class DictationHistory {
     private readonly onChange?: () => void,
   ) {}
 
-  add(entry: DictationEntry): void {
+  /**
+   * Appends `entry`. It never throws (a disk problem must not lose or block the dictation itself), and says whether the entry reached
+   * the file, so a caller can keep it nowhere else when it didn't: a copy the history doesn't list can't be forgotten from the app.
+   */
+  add(entry: DictationEntry): boolean {
     try {
       mkdirSync(path.dirname(this.file), { recursive: true });
       // A line cut short by a crash would swallow this entry if it were glued on, so this one starts a fresh line.
@@ -103,9 +113,10 @@ export class DictationHistory {
       appendFileSync(this.file, `${lead}${JSON.stringify(entry)}\n`, { mode: 0o600 });
     } catch (error) {
       console.error("dictation history", error);
-      return;
+      return false;
     }
     this.changed();
+    return true;
   }
 
   private changed(): void {

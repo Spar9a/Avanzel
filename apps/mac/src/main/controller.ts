@@ -149,7 +149,7 @@ import {
   recentFromLog,
   savedPage,
 } from "./library-info.ts";
-import { forgetLogged, logDictation } from "./library-log.ts";
+import { forgetKept, logDictation } from "./library-log.ts";
 import { buildMenuModel, reviewProgress, speechProblemOf, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
@@ -2014,17 +2014,17 @@ export class Controller {
     if (!last) return;
     const forgotten = await deleteDictationResult(() => this.forgetDictation(last.id));
     if (forgotten.ok) return;
-    if (forgotten.title === DAY_FILE_NOT_UPDATED.title) this.fail(DAY_FILE_NOT_UPDATED);
+    if (forgotten.title === DAY_FILE_NOT_UPDATED.title) this.fail({ title: forgotten.title, body: forgotten.message });
     else this.notify("That dictation couldn't be forgotten.", forgotten.message);
   }
 
   /**
-   * The hook of `onForget`: the dictation leaves the open library's day file. With no library open there is no day file to reach, and
-   * nothing is said. Rejects when its words may still be there (`forgetLogged`).
+   * The hook of `onForget`: the dictation leaves the day file of the library it was kept in (`forgetKept`), which may be another than
+   * the one open, or one with none open; an entry that names no library is looked for in the open one. Rejects when its words may still
+   * be there, naming the library's folder when it is not the open one.
    */
   private async forgetFromLibrary(entry: DictationEntry): Promise<void> {
-    const vault = this.vault;
-    if (vault) await forgetLogged(vault, entry);
+    await forgetKept(this.vault, entry, (root) => tildePath(root, homedir()));
   }
 
   /**
@@ -2113,7 +2113,7 @@ export class Controller {
       logTo: () => {
         const vault = this.vault;
         if (!vault) return { enabled: false, write: () => undefined };
-        return { enabled: loadSettings(vault.root).dictation.log, write: (entry) => void logDictation(vault, entry) };
+        return { enabled: loadSettings(vault.root).dictation.log, library: vault.root, write: (entry) => void logDictation(vault, entry) };
       },
       showCopyPrompt: (prompt) => {
         this.copyPromptText = prompt.text;
@@ -4945,6 +4945,11 @@ export class Controller {
 
   async idleForTests(): Promise<void> {
     await this.queue;
+  }
+
+  /** Whether no dictation into another app is under way: the last one's words have been pasted and kept (or not kept) by now. */
+  cursorIdleForTests(): boolean {
+    return this.cursor.idle();
   }
 
   pageTitleForTests(rel: string): string {

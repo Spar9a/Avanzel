@@ -36,7 +36,8 @@ export interface CursorHost {
   busy(): boolean;
   browser(target: Target): Promise<{ address?: string; privateWindow?: boolean } | null>;
   skip(): { apps: string[]; sites: string[] };
-  logTo(): { enabled: boolean; write(entry: DictationEntry): void };
+  /** The library log; `library` is the root of the library it writes to, which the entry then carries (`DictationEntry.library`). */
+  logTo(): { enabled: boolean; library?: string; write(entry: DictationEntry): void };
   showCopyPrompt(p: { text: string; app: string; reason: "failed" | "focus-moved" }): void;
   say(line: "refused" | "nothing-heard" | "cancelled"): void;
   history: DictationHistory;
@@ -86,6 +87,11 @@ export class CursorDictation {
   private cancelledAt: Date | null = null;
 
   constructor(private readonly host: CursorHost) {}
+
+  /** No dictation is under way: none listening, none whose words are being made, pasted or kept. The next tap starts one. */
+  idle(): boolean {
+    return this.state === "idle" && !this.starting && !this.fixing && !this.delivering;
+  }
 
   /** One tap of the key. */
   async tap(): Promise<void> {
@@ -324,10 +330,18 @@ export class CursorDictation {
       site: policy.site,
       inserted,
     });
-    this.addToHistory(entry);
+    let log: ReturnType<CursorHost["logTo"]> | null = null;
     try {
-      const log = this.host.logTo();
-      if (log.enabled) log.write(entry);
+      log = this.host.logTo();
+    } catch (error) {
+      console.error("cursor dictation", error);
+    }
+    // The history keeps the library the words also go to, so forgetting them later finds that library's day file.
+    if (log?.enabled && log.library !== undefined) entry.library = log.library;
+    // An entry the history couldn't keep can't be forgotten from the app, so it goes into no day file either.
+    if (!this.addToHistory(entry) || !log?.enabled) return;
+    try {
+      log.write(entry);
     } catch (error) {
       console.error("cursor dictation", error);
     }
@@ -338,11 +352,13 @@ export class CursorDictation {
     this.addToHistory(this.entry(words, at, { app: "", bundleId: "", title: null, site: null, inserted: false }));
   }
 
-  private addToHistory(entry: DictationEntry): void {
+  /** Whether the history kept `entry`: false when it threw or said it couldn't. */
+  private addToHistory(entry: DictationEntry): boolean {
     try {
-      this.host.history.add(entry);
+      return this.host.history.add(entry) !== false;
     } catch (error) {
       console.error("cursor dictation", error);
+      return false;
     }
   }
 
