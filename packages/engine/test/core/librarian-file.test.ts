@@ -670,6 +670,22 @@ describe("captureAudio", () => {
     expect(capture?.source).toBe("audio");
   });
 
+  it("keeps what was heard when the dictionary corrected the words, and nothing more when it did not", async () => {
+    const corrected: Transcriber = {
+      engine: "fake:asr",
+      transcribe: async () => ({ text: "We tried Ollama", engine: "fake:asr", seconds: 1, heard: "We tried Alema" }),
+    };
+    librarian = new Librarian(vault, fakeSettings(), { transcriber: corrected, clock: () => NOW });
+    const capture = await librarian.captureAudio(write(tmp(), "note.wav", "audio"), { source: "audio" });
+    const text = read(capture!.path);
+    expect(text).toMatch(/^heard: We tried Alema$/m);
+    expect(text).toContain("---\n\nWe tried Ollama\n");
+
+    librarian = new Librarian(vault, fakeSettings(), { transcriber: new FakeTranscriber("plain words"), clock: () => new Date(NOW.getTime() + 60_000) });
+    const plain = await librarian.captureAudio(write(tmp(), "other.wav", "audio"), { source: "audio" });
+    expect(read(plain!.path)).not.toContain("heard:");
+  });
+
   it("needs a speech-to-text engine", async () => {
     await expect(librarian.captureAudio(write(tmp(), "note.wav", "audio"), { source: "voice" })).rejects.toThrow(AvanzelError);
   });
@@ -741,6 +757,18 @@ describe("captureScreen", () => {
     );
     expect(readdirSync(join(vault.raw, "attachments", "2026", "10"))).toEqual(["2026-10-20-140312.png"]);
     expect(readdirSync(join(vault.raw, "audio", "2026", "10"))).toEqual(["2026-10-20-140312.wav"]);
+  });
+
+  it("keeps what was heard of a spoken comment the dictionary corrected", () => {
+    const capture = librarian.captureScreen({
+      image: write(tmp(), "shot.png", "PNG"),
+      comment: "Ask Kowalczyk about this",
+      transcriber: "fake:asr",
+      context: { app: "Preview", heard: "Ask Kowalkzik about this" },
+    });
+    const text = read(capture.path);
+    expect(text).toMatch(/^app: Preview\nheard: Ask Kowalkzik about this\n/m);
+    expect(text).toContain("---\n\nAsk Kowalczyk about this\n");
   });
 
   it("says (no comment) when there is none", () => {

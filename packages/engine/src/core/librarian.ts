@@ -116,7 +116,8 @@ export interface ScreenCapture {
   audio?: string | null;
   /** The speech-to-text engine that transcribed the comment. */
   transcriber?: string | null;
-  context?: { app?: string; title?: string; url?: string };
+  /** Where it was taken; `heard` is what the speech model recognised of the comment, when the dictionary corrected it. */
+  context?: { app?: string; title?: string; url?: string; heard?: string };
 }
 
 export interface CallCapture {
@@ -220,7 +221,8 @@ export class Librarian {
     const transcript = await this.#transcriber.transcribe(audio);
     const stored = this.#keepUnder("audio", audio, keepOriginal, (suffix) => this.vault.newAudioPath(now, suffix || ".wav"));
     if (!transcript.text.trim()) return null;
-    return this.vault.newCapture(transcript.text, { source, audio: stored, transcriber: transcript.engine, now });
+    const heard = transcript.heard?.trim(); // what was recognised, when the dictionary corrected it
+    return this.vault.newCapture(transcript.text, { source, audio: stored, transcriber: transcript.engine, now, context: { heard } });
   }
 
   /** A screenshot with the owner's comment. It waits in the inbox for the evening review. */
@@ -234,7 +236,7 @@ export class Librarian {
       : null;
     return this.vault.newCapture(comment ?? "", {
       source: "screen",
-      context: { app: context.app, title: context.title, url: context.url },
+      context: { app: context.app, title: context.title, url: context.url, heard: context.heard },
       attachments: [stored],
       audio: recording,
       transcriber,
