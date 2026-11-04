@@ -100,15 +100,60 @@ wait`,
     expect(readFileSync(args, "utf8").trim()).toBe("--pid 42 --pid 43");
   });
 
-  it("treats an exit during the waiting phase, with no stopped line, as a cancel", async () => {
+  it("treats a signal death during the waiting phase, with no stop asked for, as a cancel", async () => {
     const dir = tmp();
-    CallTap.binaryPath = () => script(`echo '{"event":"waiting"}' >&2\nexec sleep 30`);
+    CallTap.binaryPath = () => script(`echo '{"event":"waiting"}' >&2\nkill -TERM $$\nsleep 5`);
     const events: TapEvent[] = [];
     const tap = new CallTap({ pids: [9], outFile: path.join(dir, "them.pcm"), onEvent: (e) => events.push(e) });
     tap.start();
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(events).toEqual([]);
     await tap.stop();
     expect(events).toEqual([]);
+  });
+
+  it("reports a helper killed by a signal after it started as an error", async () => {
+    const dir = tmp();
+    CallTap.binaryPath = () => script(`echo '{"event":"waiting"}' >&2\necho '{"event":"started"}' >&2\nkill -KILL $$\nsleep 5`);
+    const seen = collect("error");
+    new CallTap({ pids: [9], outFile: path.join(dir, "them.pcm"), onEvent: seen.onEvent }).start();
+    await seen.done;
+    expect(seen.events.map((e) => e.event)).toEqual(["started", "error"]);
+    expect(seen.events[1]?.message).toBeTruthy();
+  });
+
+  it("ends the call with one error when the sound can't be written, and no stopped after it", async () => {
+    const dir = tmp();
+    CallTap.binaryPath = () =>
+      script(
+        `yes &
+trap 'kill $!; echo "{\\"event\\":\\"stopped\\",\\"seconds\\":1}" >&2; exit 0' TERM
+echo '{"event":"started"}' >&2
+wait`,
+      );
+    const events: TapEvent[] = [];
+    const tap = new CallTap({ pids: [9], outFile: path.join(dir, "no-such-folder", "them.pcm"), onEvent: (e) => events.push(e) });
+    tap.start();
+    await tap.stop();
+    // Nothing more comes after the error, even later.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // The file fails to open at once, so the helper may not have said started yet; either way the error is the only end.
+    expect(events.filter((e) => e.event === "error")).toEqual([{ event: "error", message: "The call's sound couldn't be written to disk." }]);
+    expect(events.at(-1)?.event).toBe("error");
+    expect(events.some((e) => e.event === "stopped")).toBe(false);
+  });
+
+  it("ends the fake helper with an error too when the file can't be written", async () => {
+    const dir = tmp();
+    const pcm = path.join(dir, "fixture.pcm");
+    writeFileSync(pcm, Buffer.alloc(64));
+    process.env.AVANZEL_FAKE_CALLTAP = pcm;
+    const events: TapEvent[] = [];
+    const tap = new CallTap({ pids: [], outFile: path.join(dir, "no-such-folder", "them.pcm"), onEvent: (e) => events.push(e) });
+    tap.start();
+    await tap.stop();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(events.map((e) => e.event)).toEqual(["started", "error"]);
   });
 
   it("turns an error line and a non-zero exit into an error event", async () => {

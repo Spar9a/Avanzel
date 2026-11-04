@@ -63,33 +63,41 @@ export class CallTap {
   /** Asks the helper to end (SIGTERM) and resolves once it has, and `outFile` is complete. Fine to call after it ended by itself. */
   async stop(): Promise<void> {
     this.stopping = true;
-    const child = this.child;
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGTERM");
-      const timer = setTimeout(() => child.kill("SIGKILL"), KILL_AFTER_MS);
-      timer.unref();
-      await this.done;
-      clearTimeout(timer);
-      return;
-    }
+    this.terminate();
     await this.done;
+  }
+
+  /** SIGTERM to the helper if it still runs, and SIGKILL if it hasn't ended after a while. */
+  private terminate(): void {
+    const child = this.child;
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGTERM");
+    const timer = setTimeout(() => child.kill("SIGKILL"), KILL_AFTER_MS);
+    timer.unref();
+    child.once("close", () => clearTimeout(timer));
   }
 
   private run(): Promise<void> {
     const { pids, outFile, onEvent } = this.opts;
     return new Promise((resolve) => {
       const file = createWriteStream(outFile);
+      // A file that can't be written (disk full, no folder) loses the call's sound: the helper ends, and the call ends in an error.
+      let writeFailed: TapEvent | null = null;
       const fileClosed = new Promise<void>((done) => {
         file.on("close", () => done());
-        file.on("error", () => done());
+        file.on("error", () => {
+          writeFailed ??= { event: "error", message: "The call's sound couldn't be written to disk." };
+          this.terminate();
+          done();
+        });
       });
       // Stopped and error are held back until the sound is all in the file, so a reader told "stopped" finds it complete.
       let final: TapEvent | null = null;
-      let waiting = false;
       let started = false;
       const finish = (event: TapEvent | null): void => {
         void fileClosed.then(() => {
-          if (event) onEvent(event);
+          const last = writeFailed ?? event;
+          if (last) onEvent(last);
           resolve();
         });
       };
@@ -115,8 +123,7 @@ export class CallTap {
         }
         if (typeof parsed !== "object" || parsed === null) return;
         const { event, message, seconds } = parsed as Record<string, unknown>;
-        if (event === "waiting") waiting = true;
-        else if (event === "started") {
+        if (event === "started") {
           started = true;
           onEvent({ event: "started" });
         } else if (event === "stopped") {
@@ -145,10 +152,14 @@ export class CallTap {
         ended = true;
         if (buffered.trim()) line(buffered);
         file.end();
-        // A signal during the wait kills the helper with no stopped line: that is a cancel, not a failure.
-        const cancelled = this.stopping || ((waiting || !started) && code === null);
-        const failed = !final && code !== 0 && code !== null && !cancelled;
-        finish(final ?? (failed ? { event: "error", message: `avanzel-calltap exited with code ${code}` } : null));
+        if (final) return finish(final);
+        // Asked to stop, or killed by a signal before it started (during its wait): a cancel, not a failure.
+        if (this.stopping || (!started && code === null)) return finish(null);
+        if (code === 0) return finish(null);
+        finish({
+          event: "error",
+          message: code === null ? "avanzel-calltap ended unexpectedly" : `avanzel-calltap exited with code ${code}`,
+        });
       });
     });
   }
@@ -159,7 +170,11 @@ export class CallTap {
     return new Promise((resolve) => {
       const out: WriteStream = createWriteStream(outFile);
       process.nextTick(() => onEvent({ event: "started" }));
+      let failed = false;
       const fail = (error: Error): void => {
+        if (failed) return;
+        failed = true;
+        input.destroy();
         out.destroy();
         onEvent({ event: "error", message: error.message });
         resolve();
@@ -168,6 +183,7 @@ export class CallTap {
       input.on("error", fail);
       out.on("error", fail);
       out.on("finish", () => {
+        if (failed) return;
         onEvent({ event: "stopped", seconds: statSync(outFile).size / BYTES_PER_SECOND });
         resolve();
       });
