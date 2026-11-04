@@ -228,6 +228,7 @@ describe("MenuBar's menu", () => {
   const menuInput = (recent: FiledPage[]): MenuInput => ({
     libraryReady: true,
     callNotes: "off",
+    cutShortCalls: 0,
     inbox: 2,
     recent,
     tasks: [],

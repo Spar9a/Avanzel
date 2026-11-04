@@ -4,7 +4,7 @@
 // AVANZEL_FAKE_AUDIO, and both are heard as AVANZEL_FAKE_TRANSCRIPT. No test opens a real menu or alert: `answerTrayMenus` and
 // `answerDialogs` stand in for them.
 import { expect, test, type ElectronApplication } from "@playwright/test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { readWav } from "../../../packages/engine/src/index.ts";
@@ -203,22 +203,39 @@ test("a thought pressed while the consent question is up starts nothing, and nei
   await app.close();
 });
 
-test("quitting mid-call keeps its folder, and the next launch offers to finish it, once, which files its notes", async () => {
+test("quitting mid-call keeps its folder, and the next launch offers to finish it, once, from a notification and from the menu", async () => {
   const first = await launchForCalls({ consent: true });
   await answerDialogs(first.app, 1);
   await takeNotes(first.app);
   await expectCallCard(first.app, first.capsule);
   await first.app.close(); // a quit mid-call: both sides end, and the folder stays
+  const [id] = callFolders(first.userData);
   expect(callFolders(first.userData)).toHaveLength(1);
   expect(callCaptures(first.library)).toEqual([]);
+  // A second call cut short, a copy of the first: one is finished from the menu, the other from its notification.
+  cpSync(path.join(first.userData, "calls", id!), path.join(first.userData, "calls", `${id}-2`), { recursive: true });
 
   const { app, library, userData } = await launchForCalls({ consent: true, userData: first.userData, library: first.library });
   const offers = async () => ((await call(app, "notificationsForTests")) as { title: string; body: string }[]).filter((n) => n.title === CUT_SHORT);
-  await expect.poll(offers).toEqual([{ title: CUT_SHORT, body: expect.stringMatching(/^The call from .+ is safe on this Mac\.$/) }]);
+  const body = expect.stringMatching(/^The call from .+ was cut short\. Click to finish the notes\. Your recording stays on this Mac until then\.$/);
+  await expect.poll(offers).toEqual([
+    { title: CUT_SHORT, body },
+    { title: CUT_SHORT, body },
+  ]);
   expect(callCaptures(library)).toEqual([]); // nothing is filed until the person chooses it
-  expect(await call(app, "clickNotificationForTests", CUT_SHORT)).toBe(true);
+  // The menu offers the row right under Take notes on a call…, and it finishes the oldest.
+  await expect.poll(async () => (await heldMenu(app)).includes(CUT_SHORT)).toBe(true);
+  const menu = await menuLabels(app);
+  expect(menu[menu.indexOf("Take notes on a call…") + 1]).toBe(CUT_SHORT);
+  await call(app, "menuAction", "finish-cut-short");
   await expect.poll(() => callCaptures(library), { timeout: 60_000 }).toHaveLength(1);
+  await expect.poll(() => callFolders(userData)).toEqual([`${id}-2`]);
+  // The other one waits, still offered in the menu; its notification finishes it.
+  await expect.poll(async () => (await heldMenu(app)).includes(CUT_SHORT), { timeout: 10_000 }).toBe(true);
+  expect(await call(app, "clickNotificationForTests", CUT_SHORT)).toBe(true);
+  await expect.poll(() => callCaptures(library), { timeout: 60_000 }).toHaveLength(2);
   await expect.poll(() => callFolders(userData)).toEqual([]);
-  expect(await offers()).toHaveLength(1);
+  await expect.poll(async () => (await heldMenu(app)).includes(CUT_SHORT), { timeout: 10_000 }).toBe(false);
+  expect(await offers()).toHaveLength(2);
   await app.close();
 });

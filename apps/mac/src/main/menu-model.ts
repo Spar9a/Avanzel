@@ -44,6 +44,12 @@ export interface MenuInput {
    * can't tap a call, no library is open, or a call is starting or being finished (`Controller.menuInput`).
    */
   callNotes: "off" | "ready" | "running";
+  /**
+   * How many calls cut short (by a quit, a crash, or a microphone, helper or disk that failed) wait to be finished, while one can be
+   * now (no call starts, runs or is being finished, no thought records); 0 otherwise. Over 0, "Finish notes for a call that was cut
+   * short" follows the call's rows and finishes the oldest.
+   */
+  cutShortCalls: number;
   shortcuts: Shortcuts;
   /**
    * The actions whose shortcut didn't register: another app holds it, an earlier action has it, or macOS doesn't
@@ -177,6 +183,7 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     { type: "item", label: "Capture screen with a comment", action: "capture", ...shortcut("capture") },
     ...(input.callNotes === "ready" ? [{ type: "item" as const, label: "Take notes on a call…", action: "call-notes" }] : []),
     ...(input.callNotes === "running" ? [{ type: "item" as const, label: "Stop taking notes", action: "call-notes-stop" }] : []),
+    ...(input.cutShortCalls > 0 ? [{ type: "item" as const, label: "Finish notes for a call that was cut short", action: "finish-cut-short" }] : []),
     { type: "item", label: "Type a thought…", action: "type", ...shortcut("type") },
     { type: "item", label: "Ask your library…", action: "ask", ...shortcut("ask") },
     SEP,

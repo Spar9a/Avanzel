@@ -35,10 +35,17 @@ Rulings that changed the plan:
 10. The call menu settles after a call ends, and the spec polls conditions, not fixed waits.
 11. The review build goes to `release/review-call-notes`, never into `release/mac-arm64` while the owner's Avanzel runs from it.
 12. Task 6 ran only the quiet e2e specs for the areas touched, so the owner's Mac stayed usable.
+13. The final review's fix wave, in one dispatch: all six Important findings, the `micError` spec regression and the cheap minors.
+
+Final review wave (Task 7, Ruling 13):
+- The helper ends by itself once every tapped pid has exited, and the call then finishes with what was heard and a short notice. A helper that fails before it started says the app wasn't playing sound yet.
+- `dropEcho` leaves a whole-stream side alone, and otherwise drops a "You" segment of 3 words or more only under a "Them" segment no more than 1.5 times as long that says 60 % of its words in order. This replaces Task 1's set rule.
+- `call.json` keeps `themOffsetSeconds`, and every finish (also after a launch) shifts "Them" by it. The consent text names the agent's provider. A call cut short is also offered by a menu row, its notification is held until it is finished, and an unfinished folder expires after 7 days.
+- Also: no Safari, collision-free call ids, a full disk ends the call with its own problem, `NoSpeechError`, the capture's app as people know it ("Zoom"), and truer kept-folder and not-heard copy.
 
 Build: from `apps/mac`, `env -u ELECTRON_RUN_AS_NODE sh -c 'node scripts/build.mjs && node scripts/build-calltap.mjs && npx electron-builder --mac dir -c.directories.output=release/review-call-notes && node scripts/signing.mjs sign release/review-call-notes/mac-arm64/Avanzel.app'`. It gives `apps/mac/release/review-call-notes/mac-arm64/Avanzel.app`, signed with the local identity "Avanzel Local".
 
-Left for later, as the header says: call detection, calendar names, speaker names, the Meetings pane, and keeping the audio. Known limits: the two sides can be about 10 s out of step; a named app is tapped only for sound that starts within 10 s of Start; the capture names the app by its process name ("zoom.us"); a call is capped at 4 hours.
+Left for later, as the header says: call detection, calendar names, speaker names, the Meetings pane, and keeping the audio. Known limits: a named app is tapped only for sound that starts within 10 s of Start; a call is capped at 4 hours.
 
 ## Global Constraints
 

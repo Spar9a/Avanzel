@@ -117,7 +117,7 @@ import type {
   TaskInfo,
 } from "../shared/ipc.ts";
 import { callAppLabel, runningCallApps, type CallApp } from "./call-apps.ts";
-import { CALL_CONSENT_DIALOG, CallNotes, MAX_CALL_MS, type CallHost } from "./call-notes.ts";
+import { CALL_CONSENT_DIALOG, CALL_KEPT_LINE, CallNotes, MAX_CALL_MS, type CallHost } from "./call-notes.ts";
 import { CallTap } from "./calltap.ts";
 import { frontContext } from "./front-app.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
@@ -258,10 +258,13 @@ type FilingState = Extract<CapsuleState, { kind: "filing" }>;
 /** What an error card's one button does: where its Open Settings goes, or the fix a failed filing offers. */
 type ErrorAction = Extract<CapsuleState, { kind: "error" }>["action"];
 
-/** The capsule page's microphone didn't start, in the words the browser gave (`message`): nothing was recorded. */
-const microphoneProblem = (message: string): Problem => ({
+/**
+ * The capsule page's microphone didn't start, in the words the browser gave (`message`): nothing was recorded, or, for a call whose
+ * folder kept what the call app played meanwhile (`kept`), the notes weren't made and that is safe.
+ */
+const microphoneProblem = (message: string, kept = false): Problem => ({
   title: "The microphone didn't start.",
-  body: [ownLine(message), "Nothing was recorded. Check the microphone in Settings → Voice."].filter(Boolean).join(" "),
+  body: [ownLine(message), kept ? CALL_KEPT_LINE : "Nothing was recorded.", "Check the microphone in Settings → Voice."].filter(Boolean).join(" "),
 });
 
 /**
@@ -831,6 +834,7 @@ export class Controller {
     if (action === "capture") return this.toggleCapture();
     if (action === "call-notes") return this.pickCall();
     if (action === "call-notes-stop") return this.stopCallNotes();
+    if (action === "finish-cut-short") return this.calls.finishOldestCutShort();
     if (action === "type") return this.openQuick();
     if (action === "ask") return this.openAsk();
     if (action === "settings") return this.showSettings();
@@ -881,6 +885,7 @@ export class Controller {
       ...(speech ? { speechSublabel: speech.sublabel } : {}),
       recording: !!this.recording,
       callNotes: this.callNotesOffer(),
+      cutShortCalls: this.cutShortOffer(),
       shortcuts: this.store.get().shortcuts,
       unregisteredShortcuts: Object.keys(this.shortcutProblems) as (keyof Shortcuts)[],
       undoableReview: this.lastEveningCommits.length > 0 && this.undoChecked(),
@@ -1548,12 +1553,11 @@ export class Controller {
   /**
    * The capsule's page couldn't start the microphone, and says why in the words the browser gave (`message`). Nothing was
    * recorded, and the card sends the person to Settings → Voice, where the microphone is chosen. For a call, the call ends
-   * (`CallNotes.cancel`). Only the capsule's own page is heard (`sender`).
+   * (`CallNotes.cancel`). The IPC channel hears only the capsule's own page (`micErrorFrom`); the e2e tests call this directly.
    */
-  micError(sender: WebContents, message: string): void {
-    if (!isPageOf(sender, this.capsule)) return;
+  micError(message: string): void {
     const recording = this.recording;
-    if (!recording) return void this.calls.cancel(microphoneProblem(message), "open-settings:voice", "Open Settings");
+    if (!recording) return void this.calls.cancel((kept) => microphoneProblem(message, kept), "open-settings:voice", "Open Settings");
     this.abandonRecording(recording);
     this.recordingFailed(
       recording,
@@ -1562,6 +1566,11 @@ export class Controller {
       "open-settings:voice",
       "Open Settings",
     );
+  }
+
+  /** The microphone's error from the IPC channel (`micError`): only the capsule's own page ends a recording or a call. */
+  micErrorFrom(sender: WebContents, message: string): void {
+    if (isPageOf(sender, this.capsule)) this.micError(message);
   }
 
   /** Give a recording up without its audio: the capsule lets go of the microphone, and a screenshot taken for it goes. */
@@ -1833,8 +1842,8 @@ export class Controller {
   }
 
   /** Makes the notes of a call whose folder (`<userData>/calls/<id>/`) was left over, as Stop would have (`CallNotes.finishCallFolder`). */
-  finishCallFolder(dir: string): Promise<void> {
-    return this.calls.finishCallFolder(dir);
+  async finishCallFolder(dir: string): Promise<void> {
+    await this.calls.finishCallFolder(dir);
   }
 
   /** Stop, on the call's listening card. Only the capsule's own page is heard. */
@@ -1869,7 +1878,8 @@ export class Controller {
       readyToListen: () => this.readyToListen(),
       newTap: (opts) => new CallTap(opts),
       transcriber: () => this.callTranscriber(),
-      captureCall: async (call) => (await this.librarian()).captureCall(call).path,
+      // The capture names the app as people know it ("Zoom", not its process "zoom.us").
+      captureCall: async (call) => (await this.librarian()).captureCall(call.app ? { ...call, app: callAppLabel(call.app) } : call).path,
       listening: (startedAt) => {
         this.callCard = {
           kind: "listening",
@@ -1896,11 +1906,17 @@ export class Controller {
         this.afterCapture(capturePath, text, transcribedIn);
       },
       failed: (problem, action, actionLabel) => this.fail(problem, action, actionLabel),
+      notice: (line) => this.notify(line, ""),
       changed: () => this.refreshMenu(),
+      // The notification is held by CallNotes until the call is finished or its folder is gone, so that its click stays alive.
       offerCutShort: (call, finish) => {
         const when = call.startedAt.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
         const where = call.app ? ` in ${callAppLabel(call.app)}` : "";
-        this.notify("Finish notes for a call that was cut short", `The call${where} from ${when} is safe on this Mac.`, () => void finish());
+        return this.notify(
+          "Finish notes for a call that was cut short",
+          `The call${where} from ${when} was cut short. Click to finish the notes. Your recording stays on this Mac until then.`,
+          () => void finish(),
+        );
       },
     };
   }
@@ -1914,6 +1930,14 @@ export class Controller {
     if (phase === "running") return "running";
     const tappable = !!process.env.AVANZEL_FAKE_CALLTAP || CallTap.available();
     return tappable && this.vault && phase === "idle" && !this.recording ? "ready" : "off";
+  }
+
+  /**
+   * How many calls cut short the menu offers to finish (`MenuInput.cutShortCalls`): those waiting (`CallNotes.cutShortCalls`), while a
+   * library is open and no call starts, runs or is being finished and no thought records; else none, and the row is left out.
+   */
+  private cutShortOffer(): number {
+    return this.vault && this.calls.phase === "idle" && !this.recording ? this.calls.cutShortCalls : 0;
   }
 
   /**
@@ -3640,19 +3664,20 @@ export class Controller {
    * from the shortcut are all quiet then. `notified` keeps `silent` only on a silent one, so the tests' `{ title, body }` assertions stand
    * for the others.
    */
-  private notify(title: string, body: string, onClick?: () => void): void {
-    if (this.quitting) return;
+  private notify(title: string, body: string, onClick?: () => void): Notification | undefined {
+    if (this.quitting) return undefined;
     const quiet = this.recording !== null || this.calls.running;
     if (process.env.AVANZEL_TEST === "1") {
       // The tests read `notified`, not the screen: no banner and no sound reach this Mac's Notification Centre.
       this.notified.push({ title, body, ...(quiet ? { silent: true as const } : {}) });
       this.notifiedClicks.push(onClick);
-      return;
+      return undefined;
     }
-    if (!Notification.isSupported()) return;
+    if (!Notification.isSupported()) return undefined;
     const note = new Notification({ title, body, silent: quiet });
     if (onClick) note.on("click", onClick);
     note.show();
+    return note; // whoever needs its click later holds it: a notification no one holds can be collected, and its click with it
   }
 
   // ---------------------------------------------------------------- settings

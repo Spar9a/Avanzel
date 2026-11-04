@@ -21,6 +21,7 @@ function input(overrides: Partial<MenuInput> = {}): MenuInput {
     speechProblem: null,
     recording: false,
     callNotes: "off",
+    cutShortCalls: 0,
     shortcuts: DEFAULT_SETTINGS.shortcuts,
     unregisteredShortcuts: [],
     undoableReview: false,
@@ -575,6 +576,24 @@ describe("tray menu", () => {
     expect(off).not.toContain("Stop taking notes");
     // Without a library the menu only sets one up, whatever the call says.
     expect(labels(buildMenuModel(input({ libraryReady: false, callNotes: "ready" }), now))).toEqual(["Set up Avanzel…", "--", "Quit Avanzel"]);
+  });
+
+  it("offers to finish a call that was cut short right under Take notes on a call…, only while one waits", () => {
+    const CUT_SHORT = "Finish notes for a call that was cut short";
+    const waiting = labels(buildMenuModel(input({ callNotes: "ready", cutShortCalls: 2 }), now));
+    expect(waiting.slice(waiting.indexOf("Take notes on a call…"), waiting.indexOf("Take notes on a call…") + 2)).toEqual([
+      "Take notes on a call…",
+      CUT_SHORT,
+    ]);
+    expect(waiting.filter((label) => label === CUT_SHORT)).toHaveLength(1); // one row, however many wait
+    expect(buildMenuModel(input({ callNotes: "ready", cutShortCalls: 1 }), now).find((i) => i.type === "item" && i.label === CUT_SHORT)).toEqual({
+      type: "item",
+      label: CUT_SHORT,
+      action: "finish-cut-short",
+    });
+    expect(labels(buildMenuModel(input({ callNotes: "ready", cutShortCalls: 0 }), now))).not.toContain(CUT_SHORT);
+    // Without a library the menu only sets one up.
+    expect(labels(buildMenuModel(input({ libraryReady: false, cutShortCalls: 1 }), now))).not.toContain(CUT_SHORT);
   });
 
   it("says nothing of an empty inbox, and offers undo after an evening review", () => {
