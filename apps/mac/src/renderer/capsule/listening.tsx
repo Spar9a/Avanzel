@@ -1,7 +1,8 @@
 // The capsule while a recording listens: one panel of glass, with the words as they are said above a row of Zel or the app, the voice and the
-// time. The row is a live region and has no line while listening, so its one button is all a screen reader hears of it. A card of paper
-// goes above the panel only for a screen comment's screenshot: paper is for what is kept, and these words are still in the air.
-import { Button, Kbd, Text } from "@avanzel/ui";
+// time. The row is a live region and has no line while listening, so a screen reader says nothing while the person speaks, but for what its
+// one button says when pressed. A card of paper goes above the panel only for a screen comment's screenshot: paper is for what is kept,
+// and these words are still in the air.
+import { Button, Kbd } from "@avanzel/ui";
 import { prettyAccelerator } from "../../main/shortcuts.ts";
 import { CALL_LISTENING_LINE, fileModeLabel } from "../../shared/transcribing.ts";
 import { api, type StateOf } from "./api.ts";
@@ -31,9 +32,9 @@ export function listeningScene(state: StateOf<"listening">, levels: readonly num
       wordLines: comment ? 2 : 3,
       app: appOf(state.dictation),
       hint: state.hint ? (
-        <Text variant="footnote" tone="secondary">
+        <>
           <Kbd>{prettyAccelerator(state.hint)}</Kbd> to finish, <Kbd>Esc</Kbd> to cancel
-        </Text>
+        </>
       ) : undefined,
       actions: state.fileMode && (
         <Button size="small" onClick={() => api.toggleFileMode()}>

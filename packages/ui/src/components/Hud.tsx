@@ -10,8 +10,9 @@ export interface HudProps {
   children: ReactNode;
 }
 
-/** The capsule's dark glass. It is the only glass in Avanzel: content sits on paper or the window,
-    never on glass (Apple's HIG, "Materials"). Text, buttons and fields inside it take its inks. */
+/** The capsule's dark glass. It is the only glass in Avanzel: content sits on paper or the window, not on glass (Apple's HIG,
+    "Materials"), and the one exception is a person's words while they are heard, before anything is kept. Text, buttons and fields
+    inside it take its inks. */
 export function Hud({ shape = "card", role, children }: HudProps) {
   return <div className="av-hud" data-shape={shape} role={role}>{children}</div>;
 }

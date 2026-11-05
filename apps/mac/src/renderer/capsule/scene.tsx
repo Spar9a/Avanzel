@@ -41,13 +41,12 @@ export interface Scene {
 }
 
 /**
- * What stands for the app a dictation's words are going to: the place is held empty until it has been looked at (null), and Zel stands in
- * (undefined) where it couldn't be told, the app has no icon, or this is no dictation and the words go to the library.
+ * What stands for where the words are going. A dictation's app, or an empty place (null) until it has been looked at, where it couldn't be
+ * told, or where the app has no icon: Zel stands for the library, and these words aren't going there. Otherwise Zel (undefined).
  */
 export function appOf(dictation: DictationState | undefined): CapsuleBarProps["app"] {
   if (!dictation) return undefined;
-  if (dictation.app === undefined) return null;
-  return dictation.app?.icon ? { icon: dictation.app.icon, label: dictatingIntoLabel(dictation.app.name) } : undefined;
+  return dictation.app?.icon ? { icon: dictation.app.icon, label: dictatingIntoLabel(dictation.app.name) } : null;
 }
 
 /**

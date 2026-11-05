@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Hud } from "../components/Hud.tsx";
+import { Text } from "../components/Text.tsx";
 import { Wave } from "../components/Wave.tsx";
 import { Zel, type ZelMood } from "../components/Zel.tsx";
 import "../foundations.css";
@@ -27,10 +28,11 @@ export interface CapsuleBarProps {
   words?: string;
   /** How many lines of `words` stay in view: 3, or 2 where a card above leaves less room. */
   wordLines?: 2 | 3;
-  /** A short line above the row while there are no `words`, such as the keys that finish a recording. */
+  /** A short line above the row while there are no `words`, such as the keys that finish a recording: words and keys, set as a footnote. */
   hint?: ReactNode;
-  /** The app the words are going to, in Zel's place: Zel stands for the library. `null` holds the place empty until it is known.
-      `label` is what a screen reader hears of the icon, and `icon` an image's address. */
+  /** The app the words are going to, in Zel's place: Zel stands for the library. `null` holds the place empty, for words going to an app
+      with no icon to show, or none known yet. `icon` is an image's address. `label` names it for a screen reader that moves onto it,
+      outside the live region, so that nothing speaks while the person does and a microphone hears only them. */
   app?: { icon: string; label: string } | null;
   /** The voice, or the line, stands in the middle of the row, whatever is at either side. */
   centred?: boolean;
@@ -41,22 +43,25 @@ export interface CapsuleBarProps {
 export function CapsuleBar({ mood, children, levels, time, actions, words, wordLines = 3, hint, app, centred }: CapsuleBarProps) {
   return (
     <Hud shape="capsule">
+      {app ? <span className="av-capsule-label">{app.label}</span> : null}
       {words ? (
         <div className="av-capsule-words" data-lines={wordLines}>
           <div>{words}</div>
         </div>
       ) : hint ? (
-        <div className="av-capsule-hint">{hint}</div>
+        <div className="av-capsule-hint">
+          <Text variant="footnote" tone="secondary">{hint}</Text>
+        </div>
       ) : null}
       <div className="av-capsule-row" role="status" data-centred={centred ? "" : undefined}>
         {app ? (
-          <img className="av-capsule-app" src={app.icon} alt={app.label} />
+          <img className="av-capsule-app" src={app.icon} alt="" />
         ) : (
           <span className="av-capsule-zel">{app === null ? null : <Zel mood={ZEL_MOOD[mood]} size="tiny" />}</span>
         )}
         <span className="av-capsule-middle">
           {children ? <span className="av-capsule-live"><span className="av-capsule-text">{children}</span></span> : null}
-          {mood === "listening" && levels && <Wave levels={levels} />}
+          {mood === "listening" && levels && <Wave levels={levels} tone="ink" />}
         </span>
         {(time || actions) && (
           <span className="av-capsule-end">

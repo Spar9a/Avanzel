@@ -125,20 +125,27 @@ test("the panel is one row until there are words and grows upward as they come, 
   await app.close();
 });
 
-test("a dictation shows the app its words are going to, in Zel's place, and Zel where it has no icon", async () => {
+test("a dictation shows the app its words are going to in Zel's place, named outside the live region, and an empty place where it has no icon", async () => {
   const withIcon = fakeCursor();
   const first = await launchWith(withIcon.script);
   await dictating(first.app);
-  const icon = first.capsule.getByRole("img", { name: "Dictating into Slack", exact: true });
+  const icon = first.capsule.locator(".av-capsule-app");
   await expect(icon).toBeVisible();
   expect(await icon.getAttribute("src")).toBe(`data:image/png;base64,${ICON}`);
   await expect(first.capsule.locator("svg[data-mood]")).toHaveCount(0);
+  // Named for a screen reader that moves onto it, and silent as it changes: nothing speaks over the person, where the microphone would hear it.
+  const name = first.capsule.getByText("Dictating into Slack", { exact: true });
+  await expect(name).toHaveCount(1);
+  expect(await name.evaluate((el) => el.closest('[role="status"],[aria-live]')?.tagName ?? null)).toBeNull();
+  await expect(first.capsule.getByRole("status")).not.toContainText("Slack");
+  expect(await icon.getAttribute("alt")).toBe("");
   await first.app.close();
 
   const noIcon = fakeCursor({ ...slack, app: { name: "Slack", bundleId: "com.tinyspeck.slackmacgap", pid: 501 } });
   const second = await launchWith(noIcon.script);
   await dictating(second.app);
-  await expect(second.capsule.locator("svg[data-mood]")).toHaveAttribute("data-mood", "listening");
+  // Zel stands for the library, and these words aren't going there.
+  await expect(second.capsule.locator("svg[data-mood]")).toHaveCount(0);
   await expect(second.capsule.locator(".av-capsule-app")).toHaveCount(0);
   await second.app.close();
 });
@@ -153,7 +160,7 @@ test("the words said so far stay on the panel while the final words are made, wi
   await expect.poll(() => capsuleKind(app)).toBe("transcribing");
   await expect(heard(capsule).getByText(WORDS, { exact: true })).toBeVisible();
   await expect(capsule.getByRole("status").getByText("Transcribing on this Mac…", { exact: true })).toBeVisible();
-  await expect(capsule.getByRole("img", { name: "Dictating into Slack", exact: true })).toBeVisible();
+  await expect(capsule.locator(".av-capsule-app")).toBeVisible();
   await expect(capsule.locator(".av-wave")).toHaveCount(0);
   await snap(capsule, "live-words-finishing");
   await expect.poll(() => pasted(pasteOut), { timeout: 30_000 }).toBe(WORDS);

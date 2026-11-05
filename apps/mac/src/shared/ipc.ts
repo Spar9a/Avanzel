@@ -122,10 +122,6 @@ export type CardAction =
   | `refile:${string}`;
 
 /**
- * What main tells the capsule page's microphone: a recording's start, stop (its samples go back by `sendAudio`) and cancel; and a call's
- * start and stop, between which its blocks go back by `sendCallAudio` with the call's id (`call`).
- */
-/**
  * A dictation into another app, on its capsule. `app`: what has focus, which the words would go to, shown where Zel is for a recording that
  * goes to the library. Absent until it has been looked at, null when it couldn't be told. `icon`: the app's icon, as a PNG's data URL.
  */
@@ -133,6 +129,10 @@ export interface DictationState {
   app?: { name: string; icon?: string } | null;
 }
 
+/**
+ * What main tells the capsule page's microphone: a recording's start, stop (its samples go back by `sendAudio`) and cancel; and a call's
+ * start and stop, between which its blocks go back by `sendCallAudio` with the call's id (`call`).
+ */
 export type CapsuleCommand = "start" | "stop" | "cancel" | { kind: "call-start" | "call-stop"; call: number };
 
 export type CapsuleState =

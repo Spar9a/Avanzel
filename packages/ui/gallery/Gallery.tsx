@@ -227,7 +227,7 @@ export function Gallery() {
       <Specimen id="capsule" title="The capsule" use="Dark glass in light and dark mode, because it floats over any desktop. One panel: the words above a row." code={'<CapsuleBar mood="listening" levels={levels} centred words="…and book the room" />'}>
         {() => (
           <Stack gap={12}>
-            <CapsuleBar mood="listening" levels={LEVELS} time="0:01" centred hint={<Text variant="footnote" tone="secondary"><Kbd>⌥Space</Kbd> to finish, <Kbd>Esc</Kbd> to cancel</Text>} />
+            <CapsuleBar mood="listening" levels={LEVELS} time="0:01" centred hint={<><Kbd>⌥Space</Kbd> to finish, <Kbd>Esc</Kbd> to cancel</>} />
             <CapsuleBar mood="listening" levels={LEVELS} time="0:07" centred words="Ask Dana about the launch checklist before Friday" />
             <CapsuleBar mood="listening" levels={LEVELS} time="0:31" centred app={{ icon: APP_ICON, label: "Dictating into Slack" }} words={LONG_WORDS} />
             <CapsuleBar mood="thinking" centred app={{ icon: APP_ICON, label: "Dictating into Slack" }} words={LONG_WORDS}>Transcribing on this Mac…</CapsuleBar>

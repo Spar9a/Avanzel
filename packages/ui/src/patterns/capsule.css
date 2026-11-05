@@ -15,7 +15,8 @@
 .av-capsule-row[data-centred] > .av-capsule-middle { grid-column: 2; justify-content: center; }
 .av-capsule-row[data-centred] > .av-capsule-end { grid-column: 3; }
 .av-capsule-row[data-centred] .av-capsule-live { flex: none; color: var(--av-ink-secondary); }
-.av-capsule-row .av-wave > i { background: var(--av-ink); }
+/* The app's name, for a screen reader that moves onto the panel: it stands outside the row's live region, and nothing is drawn of it. */
+.av-capsule-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .av-capsule-zel { position: relative; flex: none; width: 34px; height: 38px; margin-top: -6px; }
 .av-capsule-zel .av-zel { position: absolute; left: 0; top: 0; }
 .av-capsule-app { display: block; flex: none; width: 26px; height: 26px; margin-left: 12px; }
@@ -48,6 +49,10 @@
   color: var(--av-ink);
 }
 .av-capsule-words[data-lines="2"] { --_lines: 2; --_strip: 0px; }
+/* A line cut through and fading out is what these two settings ask not to have: whole lines only. */
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  .av-capsule-words { --_strip: 0px; }
+}
 .av-capsule-words > div {
   -webkit-mask-image: linear-gradient(to top, var(--av-ink) calc(var(--_lines) * 1lh), transparent calc(var(--_lines) * 1lh + var(--_strip)));
   mask-image: linear-gradient(to top, var(--av-ink) calc(var(--_lines) * 1lh), transparent calc(var(--_lines) * 1lh + var(--_strip)));
