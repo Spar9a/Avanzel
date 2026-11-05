@@ -320,7 +320,7 @@ test("a browser that can't be asked which page it shows is said once, with Open 
   await expect.poll(() => capsuleKind(app)).toBe("error");
   await expectProblem(capsule, {
     title: "Avanzel couldn't ask Google Chrome which page this is.",
-    lines: ["Nothing was kept of that dictation. It was still typed in. Allow it under Automation in System Settings."],
+    lines: ["Nothing was kept of that dictation. The words were still pasted. Allow it under Automation in System Settings."],
     fix: "Open System Settings",
   });
   expect(await history(app)).toEqual([]);

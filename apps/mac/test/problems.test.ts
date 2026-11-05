@@ -1232,7 +1232,7 @@ describe("the cursor dictation's notices", () => {
   it("says a browser couldn't be asked which page it shows, what that meant for the dictation, and where to allow it", () => {
     expect(browserUnaskedProblem("Arc")).toEqual({
       title: "Avanzel couldn't ask Arc which page this is.",
-      body: "Nothing was kept of that dictation. It was still typed in. Allow it under Automation in System Settings.",
+      body: "Nothing was kept of that dictation. The words were still pasted. Allow it under Automation in System Settings.",
     });
     expect(browserUnaskedProblem("  ").title).toBe("Avanzel couldn't ask the browser which page this is.");
   });

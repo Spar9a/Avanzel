@@ -513,7 +513,7 @@ export const NO_GIT_LINE = "This Mac has no git yet, so changes can't be undone.
 export function browserUnaskedProblem(browser: string): Problem {
   return {
     title: `Avanzel couldn't ask ${browser.trim() || "the browser"} which page this is.`,
-    body: "Nothing was kept of that dictation. It was still typed in. Allow it under Automation in System Settings.",
+    body: "Nothing was kept of that dictation. The words were still pasted. Allow it under Automation in System Settings.",
   };
 }
 

@@ -90,6 +90,9 @@ let keys: [String: Watched] = [
     "right-control": Watched(name: "right-control", code: 62, deviceMask: 0x2000),
 ]
 
+// The flag bit of each physical modifier key: left and right control, shift, command and option.
+let allModifierBits: UInt64 = 0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x20 | 0x40 | 0x2000
+
 // Both are touched on the main thread only: the tap callback runs there, and a watch command hops there to set them.
 var watched: Watched? = nil
 var tap: CFMachPort? = nil
@@ -101,7 +104,11 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in
     case .flagsChanged:
         guard let watched else { break }
         if event.getIntegerValueField(.keyboardEventKeycode) == watched.code {
-            send(["event": "modifier", "key": watched.name, "down": event.flags.rawValue & watched.deviceMask != 0])
+            let down = event.flags.rawValue & watched.deviceMask != 0
+            send(["event": "modifier", "key": watched.name, "down": down])
+            // Another modifier already held as this one goes down (Shift first, then Right Option): a chord from the start. The
+            // `key` follows the press, because a press clears any earlier break.
+            if down && event.flags.rawValue & allModifierBits & ~watched.deviceMask != 0 { send(["event": "key"]) }
         } else {
             // Another modifier (⌥⇧ to switch layouts, ⌥⌘ for a shortcut): the watched key is part of a chord, not tapped.
             send(["event": "key"])

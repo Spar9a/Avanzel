@@ -68,7 +68,7 @@ Good to know:
   files and other formats included) is put back after, unless you copied something meanwhile. The words are
   marked so clipboard managers skip them. Every dictation is kept in a history in Settings, and an optional
   library log keeps them in `raw/dictations/` with the app and window; nothing is kept from password managers,
-  password fields, private browser windows or the apps and sites you list.
+  password fields, Chrome-family private windows or the apps and sites you list (Safari and Firefox private windows can't be told apart).
 - **A dictionary** in Settings → Voice lists the names and terms you use, one per line. What the speech model
   hears is corrected to them (`Ollama = Alema` fixes a word it keeps getting wrong), your agent is told how to
   spell them, and a thought that was corrected keeps what was heard in its `heard:` line.
