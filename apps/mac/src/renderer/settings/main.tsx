@@ -12,7 +12,7 @@ import { SETTINGS_PANES, isSettingsPane, type AvanzelBridge, type SettingsPane, 
 import { PANE_LABELS, refusedCall } from "./copy.ts";
 import { useLibraryDrafts, type LibraryDrafts } from "./lines-field.tsx";
 import { Agents } from "./panes/Agents.tsx";
-import { Dictations } from "./panes/Dictations.tsx";
+import { Dictations, useDictationListing, type DictationListing } from "./panes/Dictations.tsx";
 import { General } from "./panes/General.tsx";
 import { Privacy } from "./panes/Privacy.tsx";
 import { Reviews, useReviewEdits, type ReviewEdits } from "./panes/Reviews.tsx";
@@ -59,14 +59,14 @@ const FOCUS_ROOM = 16;
  * its own hooks. Voice, Dictation (the history is the app's own) and Privacy need none, and General shows the Notice itself, among its other groups. Reviews, and
  * General, which can turn the evening review on, are given the window's `edits`.
  */
-function paneContent(pane: SettingsPane, props: PaneProps, edits: ReviewEdits, drafts: LibraryDrafts): ReactNode {
+function paneContent(pane: SettingsPane, props: PaneProps, edits: ReviewEdits, drafts: LibraryDrafts, listing: DictationListing): ReactNode {
   switch (pane) {
     case "general":
       return <General {...props} edits={edits} />;
     case "voice":
       return <Voice {...props} drafts={drafts} />;
     case "dictations":
-      return <Dictations {...props} />;
+      return <Dictations {...props} listing={listing} />;
     case "agents":
       return props.snap.library?.exists ? <Agents {...props} /> : <NoLibrary {...props} />;
     case "tasks":
@@ -76,42 +76,27 @@ function paneContent(pane: SettingsPane, props: PaneProps, edits: ReviewEdits, d
   }
 }
 
-/** How long the window waits for what it shows to settle before it moves, in ms: a pane whose history arrives a moment after it takes one move, not two. */
-const FIT_SETTLES_MS = 80;
-
 /**
  * Keeps the window as high as what it shows needs: the rows above the pane, the pane's own padding, and what the pane holds. None of those
- * depends on the window's height, so taking it settles at once. Told again whenever one changes, which is a new pane, a Notice's row, or a
- * pane's own contents changing, such as a list that opens or a history that arrives. The first fit comes at once, before the window shows, and is not
- * animated; neither is any under Reduce Motion.
+ * depends on the window's height, so it takes one move. Told again whenever one changes, which is a new pane, a Notice's row, or a pane's own contents
+ * changing, such as a list that opens. It moves at once: macOS's animated resize holds the main process for as long as it runs, 230 to 350 ms for a
+ * pane, with the new pane already showing, which reads as lag, and the owner took it out.
  */
 function useWindowFit(pane: SettingsPane, ready: boolean, scrolls: RefObject<HTMLElement | null>): { holds: RefObject<HTMLDivElement | null>; problemRow: RefObject<HTMLDivElement | null> } {
   const holds = useRef<HTMLDivElement>(null);
   const problemRow = useRef<HTMLDivElement>(null);
-  const fitted = useRef(false);
   useEffect(() => {
     const scroller = scrolls.current;
     const inner = holds.current;
     const row = problemRow.current;
     if (!scroller || !inner || !row) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const fit = () => {
-      const { paddingTop, paddingBottom } = getComputedStyle(scroller);
-      const height = scroller.getBoundingClientRect().top + parseFloat(paddingTop) + parseFloat(paddingBottom) + inner.getBoundingClientRect().height;
-      api.fit(Math.ceil(height), fitted.current && !matchMedia("(prefers-reduced-motion: reduce)").matches);
-      fitted.current = true;
-    };
     const observer = new ResizeObserver(() => {
-      clearTimeout(timer);
-      if (fitted.current) timer = setTimeout(fit, FIT_SETTLES_MS);
-      else fit();
+      const { paddingTop, paddingBottom } = getComputedStyle(scroller);
+      api.fit(Math.ceil(scroller.getBoundingClientRect().top + parseFloat(paddingTop) + parseFloat(paddingBottom) + inner.getBoundingClientRect().height));
     });
     observer.observe(inner);
     observer.observe(row);
-    return () => {
-      observer.disconnect();
-      clearTimeout(timer);
-    };
+    return () => observer.disconnect();
   }, [pane, ready]);
   return { holds, problemRow };
 }
@@ -169,6 +154,8 @@ function App() {
   // Kept here too: the drafts of the fields of lines (the Dictionary on Voice and the skip lists on Privacy) and their saves on the way,
   // which a return to their pane must find as they were.
   const drafts = useLibraryDrafts(snap, draw, attempt);
+  // And the dictation history, listed as the window opens: the Dictation pane has its whole height the moment it shows.
+  const listing = useDictationListing();
   // Whether a press of the pointer on the toolbar is under way: from its pointer-down to just after its release, which is where
   // the click that shows a pane comes. The press took the problem the person had seen away as it began (below); a refusal that
   // comes in during it, as a field's save does when the press takes the focus out of it, they haven't seen.
@@ -243,7 +230,7 @@ function App() {
       {/* Keyed by its pane: a pane starts at its top, and the one left is unmounted, which ends whatever it had going,
           but for the reviews' edits and the fields' drafts, which the window keeps. */}
       <main key={pane} ref={scrolls} className="settings-pane">
-        <div ref={holds}>{paneContent(pane, { snap, onChange: draw, attempt }, edits, drafts)}</div>
+        <div ref={holds} className="settings-pane-holds">{paneContent(pane, { snap, onChange: draw, attempt }, edits, drafts, listing)}</div>
       </main>
     </div>
   );

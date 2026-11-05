@@ -62,7 +62,7 @@ const bridge: AvanzelBridge = {
     relaunch: () => ipcRenderer.send("settings:relaunch"),
     requestPermission: (kind) => ipcRenderer.invoke("settings:request-permission", kind),
     pick: (options, at) => ipcRenderer.invoke("settings:pick", options, at),
-    fit: (height, animate) => ipcRenderer.send("settings:fit", height, animate),
+    fit: (height) => ipcRenderer.send("settings:fit", height),
   },
   quick: {
     submit: (text) => ipcRenderer.invoke("quick:submit", text),

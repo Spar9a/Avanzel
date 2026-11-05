@@ -1,9 +1,9 @@
 // Settings → Dictation: dictating into any app and what it has done. The switch, its key, whether the library keeps a day file, and a line with
 // its fix while macOS lacks a permission (Privacy lists them all). Then what was dictated, newest first, each on a card with the app it
 // went to, when, the words (a preview of a long text) and Copy and Delete: words that are kept go on paper. The history is the app's own,
-// not the library's, so the pane works with no library open and is never behind NoLibrary. It lists the history again when main says it
-// changed (a dictation ended, or one was forgotten from the menu). Once a dictation has ended its words are shown here and in the menu's Recent
-// dictations, and they are never logged.
+// not the library's, so the pane works with no library open and is never behind NoLibrary. The window keeps the listing, which follows main when it
+// says the history changed (a dictation ended, or one was forgotten from the menu). Once a dictation has ended its words are shown here and in the
+// menu's Recent dictations, and they are never logged.
 import { Actions, Button, Card, Group, GroupRow, Notice, Stack, Switch, Text } from "@avanzel/ui";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { DICTATION_PAGE, type CursorKey, type DictationRow } from "../../../shared/ipc.ts";
@@ -136,25 +136,24 @@ function DictationGroup(props: PaneProps): ReactNode {
   );
 }
 
-export function Dictations(props: PaneProps): ReactNode {
-  return (
-    <Stack gap={20}>
-      <DictationGroup {...props} />
-      <History enabled={props.snap.app.cursorDictation.enabled} />
-    </Stack>
-  );
+/** What the history holds, as the Settings window keeps it. */
+export interface DictationListing {
+  /** Null until the first listing arrives, so the empty line is not shown for the moment before the history is read. */
+  rows: DictationRow[] | null;
+  /** How many the history holds in all: `rows` are the newest of them, and `more` asks for another page. */
+  total: number;
+  more(): void;
+  load(): Promise<void>;
 }
 
-/** What was dictated, newest first. With nothing yet, it says how to start: `enabled` is whether the switch above it is on. */
-function History({ enabled }: { enabled: boolean }): ReactNode {
-  // null until the first listing arrives, so the empty line is not shown for the moment before the history is read.
+/**
+ * The history, for the Settings window to keep, as it keeps the reviews' edits and the fields' drafts. It is listed as the window opens, and not as the
+ * pane does, so that the pane has its whole height the moment it shows and the window moves once for it. It is listed again when main says it changed.
+ */
+export function useDictationListing(): DictationListing {
   const [rows, setRows] = useState<DictationRow[] | null>(null);
-  // How many the history holds in all: the list shows the newest `limit` of them, and Show more asks for another page.
   const [total, setTotal] = useState(0);
   const [limit, setLimit] = useState(DICTATION_PAGE);
-  const [told, setTold] = useState<Told | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
-
   // Asking again after a change keeps the limit, so a list the person lengthened is not cut back under them.
   const load = useCallback(async () => {
     try {
@@ -169,6 +168,25 @@ function History({ enabled }: { enabled: boolean }): ReactNode {
     void load();
     return api.onDictationsChanged(() => void load());
   }, [load]);
+  return { rows, total, more: () => setLimit(limit + DICTATION_PAGE), load };
+}
+
+export function Dictations({ listing, ...props }: PaneProps & { listing: DictationListing }): ReactNode {
+  return (
+    <Stack gap={20}>
+      <DictationGroup {...props} />
+      <History enabled={props.snap.app.cursorDictation.enabled} listing={listing} />
+    </Stack>
+  );
+}
+
+/** What was dictated, newest first. With nothing yet, it says how to start: `enabled` is whether the switch above it is on. */
+function History({ enabled, listing }: { enabled: boolean; listing: DictationListing }): ReactNode {
+  const { rows, total, more, load } = listing;
+  const [told, setTold] = useState<Told | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  // Asked again as the pane shows, in case the listing the window made didn't arrive: it draws what it has meanwhile.
+  useEffect(() => void load(), []);
   useEffect(() => {
     if (copied === null) return;
     const timer = setTimeout(() => setCopied(null), COPIED_MS);
@@ -240,7 +258,7 @@ function History({ enabled }: { enabled: boolean }): ReactNode {
             {olderDictationsLine(total - rows.length)}
           </Text>
           <Actions align="start">
-            <Button size="small" variant="secondary" onClick={() => setLimit(limit + DICTATION_PAGE)}>
+            <Button size="small" variant="secondary" onClick={more}>
               {SHOW_MORE_DICTATIONS}
             </Button>
           </Actions>

@@ -111,6 +111,42 @@ test("Settings takes the height each pane needs, has one width, and no one sizes
   await app.close();
 });
 
+test("a new pane moves the window once and at once: no animation, and no second move for a scrollbar or a history that comes late", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  writeFileSync(
+    path.join(userData, "dictations.jsonl"),
+    Array.from({ length: 12 }, (_, i) => `${JSON.stringify({ id: `d${i}`, at: new Date().toISOString(), text: `Words of dictation ${i}`, app: "Notes", bundleId: "com.apple.Notes", title: null, site: null, seconds: 3, inserted: true })}\n`).join(""),
+  );
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
+  const settings = await openSettings(app);
+  // A classic scrollbar, whatever this Mac shows: one that came for the moment before the window had moved would wrap the words, and move it twice.
+  await settings.addStyleTag({ content: "main::-webkit-scrollbar { width: 15px; }" });
+  // The history has been listed, as the window opens, before the Dictation pane has been asked for. Permissions don't move it either: their answer is known.
+  await toolbarItem(settings, "Dictation").click();
+  await expect(settings.getByRole("article")).toHaveCount(12);
+  await fitted(app, settings);
+  await toolbarItem(settings, "General").click();
+  await fitted(app, settings);
+  await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))!;
+    const moves: { height: number; animate: unknown }[] = [];
+    (globalThis as { settingsMoves?: unknown }).settingsMoves = moves;
+    const real = win.setBounds.bind(win);
+    win.setBounds = (bounds: Electron.Rectangle, animate?: boolean) => {
+      moves.push({ height: bounds.height, animate });
+      real(bounds, animate);
+    };
+  });
+  const moves = () => app.evaluate(() => (globalThis as { settingsMoves?: { height: number; animate: unknown }[] }).settingsMoves?.splice(0) ?? []);
+  for (const pane of ["Voice", "Dictation", "Agents", "General", "Reviews", "Privacy", "General", "Dictation"]) {
+    await toolbarItem(settings, pane).click();
+    const height = await fitted(app, settings);
+    await settings.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 100))));
+    expect(await moves(), `${pane} moves the window once, to ${height} px`).toEqual([{ height, animate: undefined }]);
+  }
+  await app.close();
+});
+
 test("Settings grows for what opens in a pane and for a Notice over it, and goes back when they go", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });

@@ -107,11 +107,14 @@ export function settingsFrame(now: Frame, workArea: Frame, height: number): Fram
   return { ...now, y: Math.max(workArea.y, Math.min(now.y, lowest)), height: fitted };
 }
 
-/** Settings takes the height its page asks for, smoothly when `animate` says so. A height it already has moves nothing. */
-export function fitSettings(win: BrowserWindow, height: number, animate: boolean): void {
+/**
+ * Settings takes the height its page asks for, at once: macOS's animated resize would hold this process, and everything it does, for as long as it runs,
+ * 230 to 350 ms for a pane. A height it already has moves nothing.
+ */
+export function fitSettings(win: BrowserWindow, height: number): void {
   const now = win.getBounds();
   const next = settingsFrame(now, screen.getDisplayMatching(now).workArea, height);
-  if (next.y !== now.y || next.height !== now.height) win.setBounds(next, animate);
+  if (next.y !== now.y || next.height !== now.height) win.setBounds(next);
 }
 
 /** The first run's window: one fixed size, the traffic lights inset over the page's drag strip. */

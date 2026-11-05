@@ -948,8 +948,8 @@ export interface AvanzelBridge {
         value picked, or null when the menu closes without one. Only the Settings window's own page is answered: sent from any
         other window, it resolves null and shows no menu. */
     pick(options: readonly PickOption[], at: { x: number; y: number } | null): Promise<string | null>;
-    /** What the pane in view needs, in px: the window takes that height, within the screen, smoothly when `animate` says so. Only the Settings window's own page is heard. */
-    fit(height: number, animate: boolean): void;
+    /** What the pane in view needs, in px: the window takes that height, within the screen, at once. Only the Settings window's own page is heard. */
+    fit(height: number): void;
   };
   quick: {
     submit(text: string): Promise<void>;

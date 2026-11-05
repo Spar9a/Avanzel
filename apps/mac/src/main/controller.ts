@@ -4295,14 +4295,11 @@ export class Controller {
     return popupChoice(win, request.options, request.at);
   }
 
-  /**
-   * The Settings page says what its pane needs, and its window takes that height (`fitSettings` in windows.ts). Only its own page is heard, and
-   * only a height that reads. An animated resize holds this process until it ends, which tests have no use for.
-   */
-  fitSettings(sender: WebContents, height: unknown, animate: unknown): void {
+  /** The Settings page says what its pane needs, and its window takes that height (`fitSettings` in windows.ts). Only its own page is heard, and only a height that reads. */
+  fitSettings(sender: WebContents, height: unknown): void {
     const win = this.settingsWindow;
     if (!win || !isPageOf(sender, win) || typeof height !== "number" || !Number.isFinite(height)) return;
-    fitSettings(win, height, animate === true && process.env.AVANZEL_TEST !== "1");
+    fitSettings(win, height);
   }
 
   /** Settings' Show in Finder: the library's folder opens in Finder. Nothing without a library. */
