@@ -1,4 +1,4 @@
-// The draft of a field of the library's lines in Settings → Voice (the Dictionary, and the skip lists of dictating into any app),
+// The draft of a field of the library's lines in Settings (the Dictionary on Voice, and the skip lists of dictating into any app on Privacy),
 // kept by the Settings window so a save on its way outlasts the pane. Pure: each step gives the next state, and the window's hook
 // (useLibraryTextEdit, one for each field) holds it.
 

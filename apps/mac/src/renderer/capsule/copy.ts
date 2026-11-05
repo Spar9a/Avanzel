@@ -99,7 +99,7 @@ export function recordedLine(review: string | null): string {
   return later === null ? "It's in the inbox." : `It's in the inbox. ${later}`;
 }
 
-/** The taken-shortcut notice's body: pick another shortcut, and where the action's item is (`inMenuLine`, which Settings → Voice says too). */
+/** The taken-shortcut notice's body: pick another shortcut, and where the action's item is (`inMenuLine`, which Settings → General says too). */
 export function stillInMenuLine(key: keyof Shortcuts): string {
   return `Pick another shortcut. ${inMenuLine(key)}`;
 }

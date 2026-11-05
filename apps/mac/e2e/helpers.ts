@@ -417,11 +417,23 @@ export async function windowFor(app: ElectronApplication, name: string): Promise
 export const shown = (app: ElectronApplication, name: string) =>
   app.evaluate(({ BrowserWindow }, page) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes(`/renderer/${page}/`) && w.isVisible()), name);
 
+/** The Settings toolbar's item for `pane`, by the name it shows. */
+export const toolbarItem = (settings: Page, pane: string) => settings.getByRole("navigation", { name: "Section" }).getByRole("button", { name: pane, exact: true });
+
+/** A row of a Settings group, whole, by its name: what is said of it, and its controls. */
+export const settingsRow = (settings: Page, name: string) => settings.locator(".av-group-row", { has: settings.getByText(name, { exact: true }) });
+
+/**
+ * Settings keeps the height it has from here on, whatever its pane needs: a window that fits its pane has nothing to scroll, as a pane
+ * has on a short screen or when it is longer than the window's most.
+ */
+export const stopFittingSettings = (app: ElectronApplication) => app.evaluate(({ ipcMain }) => void ipcMain.removeAllListeners("settings:fit"));
+
 /** Opens Settings (showSettings) and moves to `pane` on its toolbar; returns the window once that pane's heading shows. */
 export async function openSettings(app: ElectronApplication, pane = "General"): Promise<Page> {
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  await settings.getByRole("radiogroup", { name: "Section" }).getByRole("radio", { name: pane, exact: true }).click();
+  await toolbarItem(settings, pane).click();
   await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
   return settings;
 }

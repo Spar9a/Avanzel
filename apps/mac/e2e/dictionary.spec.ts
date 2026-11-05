@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { loadSettings } from "../../../packages/engine/src/index.ts";
 import { holdTheQueue, letTheQueueGo } from "./capsule-helpers.ts";
-import { call, capsuleKind, filesUnder, launch, makeLibrary, openSettings, read, snap, speechWav, windowFor } from "./helpers.ts";
+import { call, capsuleKind, filesUnder, launch, makeLibrary, openSettings, read, snap, speechWav, windowFor, toolbarItem } from "./helpers.ts";
 
 const configOf = (library: string) => readFileSync(path.join(library, ".avanzel", "config.toml"), "utf8");
 
@@ -33,7 +33,6 @@ test("the Dictionary saves its lines when the field is left, and a spoken though
   });
   const settings = await openSettings(app, "Voice");
   const group = dictionaryGroup(settings);
-  await expect(group.getByText("Names and terms", { exact: true })).toBeVisible();
   await expect(
     group.getByText(
       "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya, and names with accents, are corrected only with an equals entry. The names are also given to your filing agent.",
@@ -50,8 +49,8 @@ test("the Dictionary saves its lines when the field is left, and a spoken though
   await snap(settings, "settings-voice-dictionary");
 
   // Another pane and back: the field starts from the library's lines.
-  await settings.getByRole("radiogroup", { name: "Section" }).getByRole("radio", { name: "General", exact: true }).click();
-  await settings.getByRole("radiogroup", { name: "Section" }).getByRole("radio", { name: "Voice", exact: true }).click();
+  await toolbarItem(settings, "General").click();
+  await toolbarItem(settings, "Voice").click();
   await expect(dictionaryGroup(settings).getByRole("textbox", { name: "Dictionary" })).toHaveValue(
     "Ollama = Alema\nKowalczyk",
   );
@@ -93,13 +92,12 @@ test("a save that waits while the person goes to another pane and back lands in 
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Voice");
-  const section = settings.getByRole("radiogroup", { name: "Section" });
   await holdTheQueue(app); // as a filing run would: the save waits its turn
   const field = dictionaryGroup(settings).getByRole("textbox", { name: "Dictionary" });
   await field.fill("Ollama = Alema\n\n  Kowalczyk ");
   await field.press("Tab"); // the save is sent, and waits
-  await section.getByRole("radio", { name: "General", exact: true }).click();
-  await section.getByRole("radio", { name: "Voice", exact: true }).click();
+  await toolbarItem(settings, "General").click();
+  await toolbarItem(settings, "Voice").click();
   const again = dictionaryGroup(settings).getByRole("textbox", { name: "Dictionary" });
   await letTheQueueGo(app);
   await call(app, "idleForTests");

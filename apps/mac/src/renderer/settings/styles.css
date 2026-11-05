@@ -3,27 +3,25 @@
   height: 100%;
 }
 
-/* A strip to drag the window by, where the traffic lights sit; the toolbar that moves between the panes, in the middle,
-   as a macOS settings window has it; the row for the problem a refused call leaves, which has no height while there is none;
-   the pane under them. The pane scrolls; the toolbar and the problem stay put. */
+/* A strip that holds the pane's name, as a title bar does, where the traffic lights sit and the window is dragged by; the toolbar
+   that moves between the panes; the row for the problem a refused call leaves, which has no height while there is none; the pane under
+   them. The window takes the height these need (useWindowFit), so the pane scrolls only when the screen, or the window's most, is too short for it. */
 .settings {
   display: grid;
-  grid-template-rows: 40px auto auto minmax(0, 1fr);
+  grid-template-rows: 42px auto auto minmax(0, 1fr);
   height: 100%;
 }
 .settings-drag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   -webkit-app-region: drag;
 }
-.settings-toolbar {
-  display: flex;
-  justify-content: center;
-  padding: 0 var(--av-space-24) var(--av-space-20);
-}
-/* The problem's Notice, in line with the pane's rows and 20 above what follows, as the toolbar is. Its words break rather than
-   push the row sideways, as the pane's do. */
+/* The problem's Notice, in line with the pane's rows, under the toolbar's line as the pane is. Its words break rather than push
+   the row sideways, as the pane's do. */
 .settings-problem-box {
   overflow-wrap: anywhere;
-  padding: 0 var(--av-space-24) var(--av-space-20);
+  padding: var(--av-space-20) var(--av-space-24) 0;
 }
 /* A word too long for its line, such as a path or an agent's message, breaks rather than pushing the pane sideways. The pane
    holds what is positioned inside it, such as a field's hidden label: left to the page, one below the pane's fold
@@ -32,18 +30,17 @@
   position: relative;
   overflow-y: auto;
   overflow-wrap: anywhere;
-  padding: 0 var(--av-space-24) var(--av-space-24);
+  padding: var(--av-space-20) var(--av-space-24) var(--av-space-24);
 }
 /* The library's shelves, under its row in the same panel, 12 in from every edge as the row's label is. */
 .settings-shelves {
   padding: var(--av-space-12);
 }
-/* Reviews' intro, a footnote between the heading and the first group: inset as a group's label and note are, 4 in from
-   each side, so its words line up with theirs. */
+/* Reviews' intro, a footnote above the first group: inset as a group's label and note are, 4 in from each side, so its words line up with theirs. */
 .settings-intro {
   padding: 0 var(--av-space-4);
 }
-/* What leaves this Mac: a paragraph in its group's panel, which isn't a row, so it is padded as a row is. */
+/* What isn't a row but sits in a group's panel (what leaves this Mac, the dictionary's field): padded as a row is. */
 .settings-words {
   padding: var(--av-space-10) var(--av-space-12);
 }
@@ -51,26 +48,16 @@
 .settings-meter {
   width: 120px;
 }
-/* An agent's status, which wraps rather than pushing its buttons off the row: a sign-in hint or the agent's own line. Narrow
-   enough that the widest row, Claude Code's with Use, Check and "Best results", leaves its name on one line at the window's
-   least width, beside a scrollbar. */
-.settings-status {
-  max-width: 124px;
-}
 /* The model's field, a short one in its row. */
 .settings-field {
   width: 200px;
-}
-/* A field of lines (the dictionary, the skip lists), a few lines wide beside its row's words, leaving them room at the window's least width. */
-.settings-lines {
-  width: 240px;
 }
 /* A review's time, typed as HH:MM in a short field in its row. */
 .settings-time {
   width: 72px;
 }
-/* What a review's editor holds that isn't a row, its instructions and its Save: in the group's panel, each 12 in from its
-   edges as a row's label is. */
+/* What an editor in a group holds that isn't a row, a review's instructions and Save, or a skip list's lines: in the group's panel, each 12 in
+   from its edges as a row's label is. */
 .settings-editor {
   padding: var(--av-space-10) var(--av-space-12);
 }

@@ -1,5 +1,5 @@
 // A shortcut another app holds (AVANZEL_FAKE_TAKEN_SHORTCUTS stands in for those apps): the capsule names it at launch
-// with two free ones to pick, the menu stops showing it, and Settings → Voice offers the same free ones. And ⌥⇧Z, the shortcut
+// with two free ones to pick, the menu stops showing it, and Settings → General offers the same free ones. And ⌥⇧Z, the shortcut
 // that takes the last filing back from any app, or says there is none to take back.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -9,10 +9,14 @@ import { Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { CapsuleState, SettingsSnapshot } from "../src/shared/ipc.ts";
 import { dictate, filedFromTheCapsule, holdTheQueue, inbox, launchOn, letTheQueueGo, notified, reachedUndo, undoCalls, undone, watchUndos, type Left } from "./capsule-helpers.ts";
-import { call, capsuleKind, emptyHfCache, firstRun, launch, makeLibrary, openSettings, snap, windowFor } from "./helpers.ts";
+import { call, capsuleKind, emptyHfCache, firstRun, launch, makeLibrary, openSettings, settingsRow, snap, toolbarItem, windowFor } from "./helpers.ts";
 import { zel } from "./setup-helpers.ts";
 
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
+
+/** A shortcut's key cap, as VoiceOver hears it: what it does and its keys, and that a press changes them. While it records, what it wants. */
+const CHANGE = /: \S+\. Change$/;
+const LISTENING = /: type the new shortcut$/;
 const capsuleState = async (app: ElectronApplication) => (await call(app, "capsuleStateForTests")) as CapsuleState;
 
 /** The menu's item for `action`: Record a thought is "dictate". */
@@ -85,7 +89,7 @@ test("the launch notice names each taken shortcut once, and again only after it 
   let app = await start("Alt+Space");
   expect(await capsuleState(app)).toMatchObject({ kind: "shortcut-taken", key: "dictate" });
   await app.close();
-  // Still taken: not named again, while Settings → Voice and the menu still say so.
+  // Still taken: not named again, while Settings → General and the menu still say so.
   app = await start("Alt+Space");
   expect(await capsuleKind(app)).toBe("hidden");
   expect((await snapshot(app)).shortcutProblems).toHaveProperty("dictate");
@@ -132,7 +136,7 @@ test("a shortcut two of Avanzel's actions have is the earlier one's: no notice, 
   expect(await capsuleKind(app)).toBe("hidden");
   expect(await recordItem(app)).toMatchObject({ accelerator: "Alt+Space" });
   expect(await menuItem(app, "type")).not.toHaveProperty("accelerator");
-  await call(app, "showSettings", "voice");
+  await call(app, "showSettings", "general");
   const settings = await windowFor(app, "settings");
   await expect(settings.getByText("⌥Space is already the shortcut for Record a thought. Pick another shortcut.")).toBeVisible();
   await expect(settings.getByRole("button", { name: /^Use / })).toHaveCount(0);
@@ -153,16 +157,16 @@ test("with no free shortcut the notice offers Open Settings", async () => {
 
   await capsule.getByRole("button", { name: "Open Settings" }).click();
   const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("heading", { name: "Voice" })).toBeVisible();
+  await expect(settings.getByRole("heading", { name: "General" })).toBeVisible();
   await expect(settings.getByText(/⌥Space is used by another app/)).toBeVisible();
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await app.close();
 });
 
-test("Settings → Voice offers the free ones under the taken shortcut's problem", async () => {
+test("Settings → General offers the free ones under the taken shortcut's problem", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
   await expect.poll(() => capsuleKind(app)).toBe("shortcut-taken");
-  await call(app, "showSettings", "voice");
+  await call(app, "showSettings", "general");
   const settings = await windowFor(app, "settings");
   await expect(settings.getByText(/⌥Space is used by another app.* Pick another shortcut\./)).toBeVisible();
   await expect(settings.getByText("“Record a thought” is still in the menu bar.", { exact: true })).toBeVisible();
@@ -181,20 +185,20 @@ test("Settings → Voice offers the free ones under the taken shortcut's problem
   await expect(settings.getByRole("button", { name: /^Use / })).toHaveCount(0);
   await expect(settings.getByText(/is used by another app/)).toHaveCount(0);
   // The buttons went with the pick, so the focus is on the row of the shortcut it changed.
-  const row = settings.getByRole("group", { name: "Record a thought", exact: true });
+  const row = settingsRow(settings, "Record a thought");
   await expect(row.getByText("⌃⇧Space", { exact: true })).toBeVisible();
-  await expect(row.getByRole("button", { name: "Change", exact: true })).toBeFocused();
+  await expect(row.getByRole("button", { name: CHANGE })).toBeFocused();
   await app.close();
 });
 
 /**
- * Settings → Voice of a library whose speech model fails to download at once (an empty cache, so that this Mac's own copy
+ * Settings → General of a library whose speech model fails to download at once (an empty cache, so that this Mac's own copy
  * stays out of it, and launch()'s dead port), with the `taken` shortcuts held by other apps. Its Notices come in the
- * menu's order: Record a thought's, Capture screen with a comment's, and the speech model's last.
+ * menu's order: Record a thought's, then Capture screen with a comment's. The speech model's is on Voice.
  */
-async function voiceWithProblems(taken: string): Promise<{ app: ElectronApplication; settings: Page }> {
+async function generalWithProblems(taken: string): Promise<{ app: ElectronApplication; settings: Page }> {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_TAKEN_SHORTCUTS: taken, HF_HUB_CACHE: emptyHfCache() });
-  return { app, settings: await openSettings(app, "Voice") };
+  return { app, settings: await openSettings(app, "General") };
 }
 
 /** The pane's primary buttons: one moment, one primary. */
@@ -209,15 +213,17 @@ const TAKEN_TITLES = [/^⌥Space is used by another app.* Pick another shortcut\
 
 test("with more than one shortcut problem, the best free shortcut of the first Notice is the pane's only primary", async () => {
   // Record a thought and Capture screen with a comment are both taken, and each has two free shortcuts to offer.
-  const { app, settings } = await voiceWithProblems("Alt+Space,Alt+Shift+S");
+  const { app, settings } = await generalWithProblems("Alt+Space,Alt+Shift+S");
   await expect(settings.getByRole("button", { name: /^Use / })).toHaveText(["Use ⌃⌥R", "Use ⌃⇧Space", "Use ⌃⌥C", "Use ⌃⌥S"]);
   await expect(settings.getByRole("button", { name: "Use ⌃⇧Space" })).toHaveAttribute("data-variant", "primary");
   for (const name of ["Use ⌃⌥R", "Use ⌃⌥C", "Use ⌃⌥S"]) {
     await expect(settings.getByRole("button", { name })).toHaveAttribute("data-variant", "secondary");
   }
   await expect(settings.getByText(/is used by another app/)).toHaveText(TAKEN_TITLES);
-  // The failed download's Notice comes last, and its Try again is not a second primary.
-  await expect(tryAgain(settings)).toHaveAttribute("data-variant", "secondary");
+  await expect(primaries(settings)).toHaveCount(1);
+  // The failed download's Notice is on Voice, where its Try again is that pane's own primary.
+  await toolbarItem(settings, "Voice").click();
+  await expect(tryAgain(settings)).toHaveAttribute("data-variant", "primary");
   await expect(primaries(settings)).toHaveCount(1);
   await app.close();
 });
@@ -225,39 +231,40 @@ test("with more than one shortcut problem, the best free shortcut of the first N
 test("a Notice with no free shortcut to offer leaves the primary to the next one that has some", async () => {
   // Every shortcut that Record a thought could move to is taken too, so its Notice has no button. Capture screen with a
   // comment's still has two.
-  const { app, settings } = await voiceWithProblems("Alt+Space,Control+Shift+Space,Control+Alt+R,Control+Alt+D,Alt+Shift+S");
+  const { app, settings } = await generalWithProblems("Alt+Space,Control+Shift+Space,Control+Alt+R,Control+Alt+D,Alt+Shift+S");
   await expect(settings.getByText(/is used by another app/)).toHaveText(TAKEN_TITLES);
   await expect(settings.getByRole("alert").filter({ hasText: "⌥Space is used by another app" }).getByRole("button")).toHaveCount(0);
   await expect(settings.getByRole("button", { name: /^Use / })).toHaveText(["Use ⌃⌥C", "Use ⌃⌥S"]);
-  // The best of those is the primary, as it would be in the first Notice, and Try again is not a second one.
+  // The best of those is the primary, as it would be in the first Notice.
   await expect(settings.getByRole("button", { name: "Use ⌃⌥S" })).toHaveAttribute("data-variant", "primary");
   await expect(settings.getByRole("button", { name: "Use ⌃⌥C" })).toHaveAttribute("data-variant", "secondary");
-  await expect(tryAgain(settings)).toHaveAttribute("data-variant", "secondary");
   await expect(primaries(settings)).toHaveCount(1);
   await app.close();
 });
 
-test("with no free shortcut to offer anywhere, a failed download's Try again is the pane's only primary", async () => {
+test("with no free shortcut to offer anywhere, General has no primary to give, and a failed download's Try again is Voice's", async () => {
   // Record a thought is taken, and so is every shortcut it could move to: its Notice has no button.
-  const { app, settings } = await voiceWithProblems("Alt+Space,Control+Shift+Space,Control+Alt+R,Control+Alt+D");
+  const { app, settings } = await generalWithProblems("Alt+Space,Control+Shift+Space,Control+Alt+R,Control+Alt+D");
   await expect(settings.getByText(/⌥Space is used by another app/)).toBeVisible();
   await expect(settings.getByRole("button", { name: /^Use / })).toHaveCount(0);
+  await expect(primaries(settings)).toHaveCount(0);
+  await toolbarItem(settings, "Voice").click();
   await expect(tryAgain(settings)).toHaveAttribute("data-variant", "primary");
   await expect(primaries(settings)).toHaveCount(1);
   await app.close();
 });
 
-test("Change records the next shortcut; Esc, leaving the row or the window, a key with no modifier, and a move to another pane keep the old one", async () => {
+test("A key cap records the next shortcut; Esc, leaving the row or the window, a key with no modifier, and a move to another pane keep the old one", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
-  const settings = await openSettings(app, "Voice");
-  const row = settings.getByRole("group", { name: "Type a thought", exact: true });
-  const change = row.getByRole("button", { name: "Change", exact: true });
-  const listening = row.getByRole("button", { name: "Type the new shortcut…", exact: true });
+  const settings = await openSettings(app, "General");
+  const row = settingsRow(settings, "Type a thought");
+  const change = row.getByRole("button", { name: CHANGE });
+  const listening = row.getByRole("button", { name: LISTENING });
   const record = async () => {
     await change.click();
     await expect(listening).toBeVisible();
   };
-  // However a recording ends without a whole shortcut, the button reads Change again and the shortcut is as it was.
+  // However a recording ends without a whole shortcut, the button shows the shortcut again and the shortcut is as it was.
   const kept = async () => {
     await expect(change).toBeVisible();
     await expect(listening).toHaveCount(0);
@@ -265,11 +272,18 @@ test("Change records the next shortcut; Esc, leaving the row or the window, a ke
   };
 
   await record();
+  await expect(row.getByRole("status")).toHaveText("Recording. Type the new shortcut."); // what a screen reader is told
   await settings.keyboard.press("Escape");
   await kept();
+  await expect(row.getByRole("status")).toHaveText("Not changed");
 
   await record();
-  await settings.getByRole("radio", { name: "Voice", exact: true }).focus(); // the focus leaves the row
+  await listening.click(); // a press on the key cap again gives it up too
+  await kept();
+  await expect(row.getByRole("status")).toHaveText("Not changed");
+
+  await record();
+  await toolbarItem(settings, "Voice").focus(); // the focus leaves the row
   await kept();
 
   await record();
@@ -279,7 +293,7 @@ test("Change records the next shortcut; Esc, leaving the row or the window, a ke
   await record();
   await settings.keyboard.press("Tab"); // the focus moves on to the next row, which ends it: a recording is no keyboard trap
   await kept();
-  await expect(settings.getByRole("group", { name: "Ask your library", exact: true }).getByRole("button", { name: "Change", exact: true })).toBeFocused();
+  await expect(settingsRow(settings, "Ask your library").getByRole("button", { name: CHANGE })).toBeFocused();
 
   await record();
   for (const key of ["K", "Enter", "Space"]) {
@@ -290,13 +304,13 @@ test("Change records the next shortcut; Esc, leaving the row or the window, a ke
   await settings.keyboard.press("Escape");
   await kept();
 
-  // Another pane unmounts Voice, and a key pressed there goes nowhere. Voice, opened again, starts afresh.
+  // Another pane unmounts General, and a key pressed there goes nowhere. General, opened again, starts afresh.
   await record();
   await call(app, "openSettingsFor", "open-settings:privacy");
-  await expect(settings.getByRole("radio", { name: "Privacy", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Privacy")).toHaveAttribute("aria-current", "page");
   await settings.keyboard.press("Control+Alt+K");
-  await call(app, "showSettings", "voice");
-  await expect(settings.getByRole("heading", { name: "Voice", exact: true })).toBeVisible();
+  await call(app, "showSettings", "general");
+  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
   await kept();
 
   // A whole shortcut is saved, and the focus is on the row's Change.
@@ -306,14 +320,15 @@ test("Change records the next shortcut; Esc, leaving the row or the window, a ke
   await expect(row.getByText("⌃⌥K", { exact: true })).toBeVisible();
   await expect(change).toBeVisible();
   await expect(change).toBeFocused();
+  await expect(row.getByRole("status")).toHaveText("Saved ⌃⌥K");
   await app.close();
 });
 
-test("Change takes no shortcut without ⌃ or ⌥, which apps use themselves, and lets ⌘ keys go on to the app", async () => {
+test("A key cap takes no shortcut without ⌃ or ⌥, which apps use themselves, and lets ⌘ keys go on to the app", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
-  const settings = await openSettings(app, "Voice");
-  const row = settings.getByRole("group", { name: "Type a thought", exact: true });
-  const listening = row.getByRole("button", { name: "Type the new shortcut…", exact: true });
+  const settings = await openSettings(app, "General");
+  const row = settingsRow(settings, "Type a thought");
+  const listening = row.getByRole("button", { name: LISTENING });
   // What reaches the page past the recorder, by key: each one with ⌘ or ⇧, and whether something kept it from the app.
   await settings.evaluate(() => {
     const page = window as unknown as { passed: { code: string; prevented: boolean }[] };
@@ -322,7 +337,7 @@ test("Change takes no shortcut without ⌃ or ⌥, which apps use themselves, an
       if (event.metaKey || event.shiftKey) page.passed.push({ code: event.code, prevented: event.defaultPrevented });
     });
   });
-  await row.getByRole("button", { name: "Change", exact: true }).click();
+  await row.getByRole("button", { name: CHANGE }).click();
   await expect(listening).toBeVisible();
   // ⌘W, ⌘⇧Z and ⇧A would take a key from every app: the recorder keeps listening, and saves nothing.
   for (const keys of ["Meta+W", "Meta+Shift+Z", "Shift+A"]) {
@@ -343,19 +358,19 @@ test("Change takes no shortcut without ⌃ or ⌥, which apps use themselves, an
   await app.close();
 });
 
-test("only one shortcut is recorded at a time, and Change again stops it", async () => {
+test("only one shortcut is recorded at a time, and a press of its key cap again stops it", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
-  const settings = await openSettings(app, "Voice");
-  const listening = settings.getByRole("button", { name: "Type the new shortcut…", exact: true });
-  const change = (name: string) => settings.getByRole("group", { name, exact: true }).getByRole("button", { name: "Change", exact: true });
+  const settings = await openSettings(app, "General");
+  const listening = settings.getByRole("button", { name: LISTENING });
+  const change = (name: string) => settingsRow(settings, name).getByRole("button", { name: CHANGE });
   await change("Type a thought").click();
   await expect(listening).toHaveCount(1);
   // Starting another row's recording ends the first one's.
   await change("Ask your library").click();
   await expect(listening).toHaveCount(1);
-  await expect(settings.getByRole("group", { name: "Ask your library", exact: true }).getByRole("button", { name: "Type the new shortcut…" })).toBeVisible();
-  // Change on the row that listens stops it.
-  await settings.getByRole("button", { name: "Type the new shortcut…" }).click();
+  await expect(settingsRow(settings, "Ask your library").getByRole("button", { name: LISTENING })).toBeVisible();
+  // A press on the row that listens stops it.
+  await listening.click();
   await expect(listening).toHaveCount(0);
   const { shortcuts } = (await snapshot(app)).app;
   expect(shortcuts).toMatchObject({ type: "Alt+Shift+Space", ask: "Alt+Shift+A" });
@@ -374,14 +389,14 @@ test("a picked shortcut another app took meanwhile gets the notice, with fresh f
   await app.close();
 });
 
-test("without a library a taken shortcut shows no notice, and Settings → Voice offers the free ones", async () => {
+test("without a library a taken shortcut shows no notice, and Settings → General offers the free ones", async () => {
   const app = await launch({ AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
   await call(app, "snapshot"); // the app has started
   // Its body would point at a Record a thought the menu doesn't have yet.
   expect(await capsuleKind(app)).toBe("hidden");
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
   await expect(settings.getByRole("button", { name: "Use ⌃⇧Space" })).toBeVisible();
   await expect(settings.getByRole("button", { name: "Use ⌃⌥R" })).toBeVisible();
   // The menu has no Record a thought yet, so the Notice doesn't say it is still there.
@@ -585,12 +600,12 @@ test("⌥⇧Z says nothing while the saved Undo of the library just opened is be
   await app.close();
 });
 
-test("Undo the last filing has its row in Settings → Voice, recorded and saved like the others", async () => {
+test("Undo the last filing has its row in Settings → General, recorded and saved like the others", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
-  const settings = await openSettings(app, "Voice");
-  const row = settings.getByRole("group", { name: "Undo the last filing", exact: true });
+  const settings = await openSettings(app, "General");
+  const row = settingsRow(settings, "Undo the last filing");
   await expect(row.getByText("⌥⇧Z", { exact: true })).toBeVisible();
-  await row.getByRole("button", { name: "Change", exact: true }).click();
+  await row.getByRole("button", { name: CHANGE }).click();
   await settings.keyboard.press("Control+Alt+U");
   await expect.poll(async () => (await snapshot(app)).app.shortcuts.undo).toBe("Control+Alt+U");
   await expect(row.getByText("⌃⌥U", { exact: true })).toBeVisible();
@@ -606,8 +621,8 @@ test("a taken ⌥⇧Z gets the launch notice, with ⌃⌥Z and ⌃⌥U, and says
   await expect(capsule.getByText("Pick another shortcut. “Undo the last filing” is in the menu bar after each filing.", { exact: true })).toBeVisible();
   // Hide first; the best one last, as the primary.
   await expect(capsule.getByRole("button")).toHaveText(["Hide", "Use ⌃⌥U", "Use ⌃⌥Z"]);
-  // Settings → Voice keeps the problem, and says of the item what the capsule does: it is in the menu after a filing, not "still" there.
-  await call(app, "showSettings", "voice");
+  // Settings → General keeps the problem, and says of the item what the capsule does: it is in the menu after a filing, not "still" there.
+  await call(app, "showSettings", "general");
   const settings = await windowFor(app, "settings");
   await expect(settings.getByText(/⌥⇧Z is used by another app.* Pick another shortcut\./)).toBeVisible();
   await expect(settings.getByText("“Undo the last filing” is in the menu bar after each filing.", { exact: true })).toBeVisible();

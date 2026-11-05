@@ -63,25 +63,55 @@ export function placeCapsule(win: BrowserWindow): void {
 }
 
 /**
- * Settings: an opaque window, as setup is, with the traffic lights inset over the page's drag strip and the panes'
- * toolbar under it. `pane`: the pane the page opens on, passed in its address (?pane=voice); without one it opens on
- * General. The height lets General show whole (its pane needs 557 px under the 87 px toolbar, so 644 would do): the pane it opens
- * on shouldn't need a scroll to reach its Startup switch. Another pane can scroll, down to the least height.
+ * Settings: an opaque window of one width, as a macOS settings window is, with the traffic lights inset over the page's strip, which holds
+ * the pane's name, and the panes' toolbar under it. The person doesn't size it: the page says what its pane needs (`settingsFrame`). `pane`:
+ * the pane the page opens on, passed in its address (?pane=voice); without one it opens on the pane it showed last. The height here is
+ * only what it starts from, and the page has fitted it before it first shows.
  */
 export function createSettingsWindow(pane?: SettingsPane): BrowserWindow {
   const win = new BrowserWindow({
     width: 680,
     height: 660,
-    minWidth: 640,
-    minHeight: 440,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
     show: false,
     title: "Avanzel Settings",
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 18, y: 18 },
+    trafficLightPosition: { x: 18, y: 14 },
     webPreferences,
   });
   void win.loadFile(pagePath("settings"), pane ? { query: { pane } } : undefined);
   return win;
+}
+
+/** Settings' height, whatever its pane asks: enough for a small pane to read as a window, and a long one (a long history) scrolls inside the most. */
+const SETTINGS_HEIGHT = { least: 320, most: 800 };
+
+/** A window's place and size on screen, or a display's work area. */
+interface Frame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Where Settings goes for a pane that needs `height` px: that high, within SETTINGS_HEIGHT and the screen. Its top stays where it is, as a macOS
+ * settings window's does, unless its bottom would then go below the work area: then it moves up by what it needs, and no further.
+ */
+export function settingsFrame(now: Frame, workArea: Frame, height: number): Frame {
+  const fitted = Math.round(Math.min(Math.max(height, SETTINGS_HEIGHT.least), SETTINGS_HEIGHT.most, workArea.height));
+  const lowest = workArea.y + workArea.height - fitted;
+  return { ...now, y: Math.max(workArea.y, Math.min(now.y, lowest)), height: fitted };
+}
+
+/** Settings takes the height its page asks for, smoothly when `animate` says so. A height it already has moves nothing. */
+export function fitSettings(win: BrowserWindow, height: number, animate: boolean): void {
+  const now = win.getBounds();
+  const next = settingsFrame(now, screen.getDisplayMatching(now).workArea, height);
+  if (next.y !== now.y || next.height !== now.height) win.setBounds(next, animate);
 }
 
 /** The first run's window: one fixed size, the traffic lights inset over the page's drag strip. */

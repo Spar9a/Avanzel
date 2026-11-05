@@ -1,23 +1,35 @@
-// Settings → Dictations: what was dictated into other apps, newest first, each on a card with the app it went to, when, the words
-// (a preview of a long text) and Copy and Delete. The history is the app's own, not the library's, so the pane works with no library
-// open and is never behind NoLibrary. It lists the history again when main says it changed (a dictation ended, or one was forgotten
-// from the menu). Once a dictation has ended its words are shown here and nowhere else, and they are never logged.
-import { Actions, Button, Card, Notice, Stack, Text } from "@avanzel/ui";
+// Settings → Dictation: dictating into any app and what it has done. The switch, its key, whether the library keeps a day file, and a line with
+// its fix while macOS lacks a permission (Privacy lists them all). Then what was dictated, newest first, each on a card with the app it
+// went to, when, the words (a preview of a long text) and Copy and Delete: words that are kept go on paper. The history is the app's own,
+// not the library's, so the pane works with no library open and is never behind NoLibrary. It lists the history again when main says it
+// changed (a dictation ended, or one was forgotten from the menu). Once a dictation has ended its words are shown here and nowhere else, and
+// they are never logged.
+import { Actions, Button, Card, Group, GroupRow, Notice, Stack, Switch, Text } from "@avanzel/ui";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { DICTATION_PAGE, type DictationRow } from "../../../shared/ipc.ts";
+import { DICTATION_PAGE, type CursorKey, type DictationRow } from "../../../shared/ipc.ts";
 import {
+  CURSOR_DICTATION_DESCRIPTION,
+  CURSOR_KEY_DESCRIPTION,
+  cursorKeyName,
+  cursorKeyOptions,
+  cursorStatus,
   DELETE_FAILED_BODY,
+  DICTATION_LOG_LABEL,
+  dictationLogLine,
   DICTATION_NOT_COPIED,
   DICTATION_NOT_COPIED_BODY,
   DICTATION_NOT_DELETED,
   DICTATION_NOT_INSERTED,
   dictationPlace,
   DICTATIONS_EMPTY,
-  DICTATIONS_START,
+  DICTATIONS_RECENT,
+  dictationsStart,
   dictationWhen,
   olderDictationsLine,
   SHOW_MORE_DICTATIONS,
 } from "../copy.ts";
+import { useCursorPermissions } from "../cursor-permissions.ts";
+import { attemptChange, PickButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
 
@@ -72,7 +84,69 @@ function Dictation({ row, now, copied, onCopy, onDelete }: RowProps): ReactNode 
   );
 }
 
-export function Dictations(): ReactNode {
+/**
+ * The switch, the key, and a line on what macOS still has to grant, with the button that asks for it. The line shows while the switch is off
+ * too, so the person can grant before turning it on; turning it on with a permission missing still turns it on, and the line says what to
+ * do. A Mac without the helper gets one line and controls that are off. With a library open, whether it keeps a day file follows, which
+ * applies at once.
+ */
+function DictationGroup(props: PaneProps): ReactNode {
+  const { enabled, key } = props.snap.app.cursorDictation;
+  const library = props.snap.library?.exists ? props.snap.library : null;
+  const { state, ask } = useCursorPermissions(enabled);
+  const status = state && cursorStatus(state);
+  const off = state !== null && !state.available;
+  return (
+    <Group>
+      <Switch
+        label="Dictate into any app"
+        description={CURSOR_DICTATION_DESCRIPTION}
+        checked={enabled}
+        disabled={off}
+        onChange={(on) => attemptChange(props, () => api.setCursorDictation({ enabled: on }))}
+      />
+      <GroupRow label="Key" description={CURSOR_KEY_DESCRIPTION}>
+        <PickButton
+          label="Dictation key"
+          value={cursorKeyName(key)}
+          options={cursorKeyOptions(key)}
+          disabled={off}
+          onChoose={(value) => attemptChange(props, () => api.setCursorDictation({ key: value as CursorKey }))}
+        />
+      </GroupRow>
+      {/* All granted, there is nothing to say here: Privacy lists the permissions. */}
+      {status && (status.fix || off) && (
+        <GroupRow label={status.line}>
+          {status.fix && (
+            <Button size="small" variant="secondary" onClick={() => void ask()}>
+              {status.fix}
+            </Button>
+          )}
+        </GroupRow>
+      )}
+      {library && (
+        <Switch
+          label={DICTATION_LOG_LABEL}
+          description={dictationLogLine(library.dictationLog)}
+          checked={library.dictationLog}
+          onChange={(on) => attemptChange(props, () => api.setLibrary({ dictationLog: on }))}
+        />
+      )}
+    </Group>
+  );
+}
+
+export function Dictations(props: PaneProps): ReactNode {
+  return (
+    <Stack gap={20}>
+      <DictationGroup {...props} />
+      <History enabled={props.snap.app.cursorDictation.enabled} />
+    </Stack>
+  );
+}
+
+/** What was dictated, newest first. With nothing yet, it says how to start: `enabled` is whether the switch above it is on. */
+function History({ enabled }: { enabled: boolean }): ReactNode {
   // null until the first listing arrives, so the empty line is not shown for the moment before the history is read.
   const [rows, setRows] = useState<DictationRow[] | null>(null);
   // How many the history holds in all: the list shows the newest `limit` of them, and Show more asks for another page.
@@ -144,7 +218,7 @@ export function Dictations(): ReactNode {
         <Stack gap={4}>
           <Text>{DICTATIONS_EMPTY}</Text>
           <Text variant="footnote" tone="secondary">
-            {DICTATIONS_START}
+            {dictationsStart(enabled)}
           </Text>
         </Stack>
       </Stack>
@@ -153,6 +227,9 @@ export function Dictations(): ReactNode {
   const now = new Date();
   return (
     <Stack gap={16}>
+      <Text variant="footnote" tone="secondary" as="h3">
+        {DICTATIONS_RECENT}
+      </Text>
       {notice}
       {rows.map((row) => (
         <Dictation key={row.id} row={row} now={now} copied={copied === row.id} onCopy={() => void copy(row.id)} onDelete={() => void remove(row.id)} />

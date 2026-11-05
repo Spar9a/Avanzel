@@ -45,6 +45,9 @@ If nothing fits, add a component or a variant in `packages/ui` (see "When someth
 | `Actions` | A row of buttons, with the primary last | More than one primary |
 | `Switch` | An on/off setting that applies at once | Choices with more than two states |
 | `Segmented` | Two to five short exclusive choices | Long lists |
+| `PopUp` | One choice from a flat list: the current value with chevrons, beside a label that says what is chosen. The list is a native menu | A list of actions, or a label that is the value |
+| `Toolbar` | A settings window's panes: an icon and a label for each | Anything but moving between panes |
+| `ShortcutField` | A shortcut as a key cap that a press changes, telling a screen reader what happens | Showing a key: use `Kbd` |
 | `TextField`, `TextArea` | Typing. `label` is required, and `labelHidden` hides it on screen only. `size="large" variant="bare"` is a field that fills the window, as in Quick | Read-only values: use `Text` |
 | `Kbd` | Shortcuts, written as macOS writes them (`⌥Space`). `size="key"` draws a keycap for teaching | Ordinary words |
 | `Link` | A web address or a file | Actions in the app: use `Button variant="link"` |
@@ -56,7 +59,7 @@ If nothing fits, add a component or a variant in `packages/ui` (see "When someth
 | `Card` | The index card: the user's words on ruled paper, with `label`, `meta`, `stamp` and `footer` | Settings or chrome: cards hold words |
 | `Stamp` | The receipt that ends a piece of work: `filed`, `noted`, `saved`, `letter`, `remembered`, `hello` | Decoration or emphasis |
 | `ShelfDrawer` | The six shelf tabs in one line, with the pages each holds (`total`) or has just taken in (the filing) | A single shelf: use `ShelfTag` |
-| `ChoiceRow` | A row of a `Group` where exactly one row is chosen, as with agents: a check on the chosen row and "Use X" on the others, with a badge and the row's other buttons | Settings with more than one choice at once: use `Switch` |
+| `ChoiceRow` | A row of a `Group` where exactly one row is chosen, as with agents: a check on the chosen row and a Use button on the others, with a badge and the row's other buttons | Settings with more than one choice at once: use `Switch` |
 | `ShelfTag` | A shelf as a chip or a tab, always with its colour, glyph and name. A tab's `count` is read as "1 page" or "3 pages"; `total` makes it the shelf's total, shown at 0 too | Colour alone |
 | `ShelfGlyph`, `ShelfMark` | A shelf's glyph or mini tab next to its visible name | Without the name |
 | `Zel` | The librarian: six moods (`idle`, `listening`, `thinking`, `filed`, `needs-you`, `asleep`) at four sizes | Anywhere outside Avanzel's own windows |

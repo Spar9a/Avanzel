@@ -1,4 +1,4 @@
-// Settings → Dictations: the history of what was dictated into other apps, newest first, with Copy and Delete on each, and the menu bar
+// Settings → Dictation: the history of what was dictated into other apps, newest first, with Copy and Delete on each, and the menu bar
 // menu's "Forget the last dictation". The history is the app's own file (<userData>/dictations.jsonl), so most tests write it before
 // Avanzel opens; one makes real dictations with the fake cursor helper (AVANZEL_FAKE_CURSOR), whose pastes go to a file.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
@@ -64,7 +64,7 @@ test("the pane lists the dictations newest first, each with its time, app, windo
     entry("mid", { at: ago(0.5), text: "words that did not go in", app: "Notes", inserted: false }),
   ]);
   const app = await launchOn(userData);
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   await expect(cards(settings)).toHaveCount(3);
   await expect(cards(settings).nth(0)).toContainText("the newest dictation");
   await expect(cards(settings).nth(1)).toContainText("words that did not go in");
@@ -93,7 +93,7 @@ test("a long dictation shows its first 400 characters, and Copy puts all of it o
   expect(long.length).toBeGreaterThan(600);
   const app = await launchOn(userDataWith([entry("long", { text: long }), entry("short", { text: "a short one", at: ago(1) })]));
   await app.evaluate(({ clipboard }) => clipboard.writeText("what was there before"));
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   const card = cards(settings).first();
   const shown = (await card.innerText()).replace(/\s+/g, " ");
   expect(shown).toContain("word0 word1 word2");
@@ -115,7 +115,7 @@ test("a long history lists the newest hundred, says how many older ones are kept
   const entries = Array.from({ length: 105 }, (_, i) => entry(`entry-${i}`, { at: new Date(start + i * 1000).toISOString() }));
   const userData = userDataWith(entries);
   const app = await launchOn(userData);
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   await expect(cards(settings)).toHaveCount(100);
   await expect(cards(settings).first()).toContainText("words of entry-104");
   await expect(cards(settings).last()).toContainText("words of entry-5");
@@ -142,7 +142,7 @@ test("a long history lists the newest hundred, says how many older ones are kept
 test("a history of exactly one page has no older line and no button", async () => {
   const start = Date.now() - 3 * 3_600_000;
   const app = await launchOn(userDataWith(Array.from({ length: 100 }, (_, i) => entry(`entry-${i}`, { at: new Date(start + i * 1000).toISOString() }))));
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   await expect(cards(settings)).toHaveCount(100);
   await expect(settings.getByText(/kept on this Mac/)).toHaveCount(0);
   await expect(settings.getByRole("button", { name: /Show \d+ more/ })).toHaveCount(0);
@@ -152,7 +152,7 @@ test("a history of exactly one page has no older line and no button", async () =
 test("Delete removes the dictation from the pane and from the file, and a new launch still lists the other", async () => {
   const userData = userDataWith([entry("one", { text: "first words", at: ago(2) }), entry("two", { text: "second words", at: ago(1) })]);
   const app = await launchOn(userData);
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   await expect(cards(settings)).toHaveCount(2);
   await cards(settings).filter({ hasText: "second words" }).getByRole("button", { name: "Delete", exact: true }).click();
   await expect(cards(settings)).toHaveCount(1);
@@ -161,7 +161,7 @@ test("Delete removes the dictation from the pane and from the file, and a new la
   await app.close();
 
   const again = await launchOn(userData);
-  const settingsAgain = await openSettings(again, "Dictations");
+  const settingsAgain = await openSettings(again, "Dictation");
   await expect(cards(settingsAgain)).toHaveCount(1);
   await expect(cards(settingsAgain).first()).toContainText("first words");
   // The last one goes, and the pane says there is nothing, and how to start.
@@ -177,7 +177,7 @@ test("a Delete the history can't write is told in a Notice, the dictation stays,
   const blocker = path.join(userData, "dictations.jsonl.tmp");
   mkdirSync(blocker);
   const app = await launchOn(userData);
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   const card = cards(settings).first();
   await card.getByRole("button", { name: "Delete", exact: true }).click();
   const notice = settings.getByRole("alert");
@@ -200,7 +200,7 @@ test("a Delete the history can't write is told in a Notice, the dictation stays,
 test("Forget the last dictation is in the menu while the history has one, forgets the newest, and goes with the last", async () => {
   const userData = userDataWith([entry("older", { text: "older words", at: ago(2) }), entry("newer", { text: "newer words", at: ago(1) })]);
   const app = await launchOn(userData);
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   await expect(cards(settings)).toHaveCount(2);
   expect(await forgetItem(app)).toEqual({ type: "item", label: "Forget the last dictation", action: "forget-dictation" });
 
@@ -222,9 +222,9 @@ test("Forget the last dictation is in the menu while the history has one, forget
 
 test("an empty history says so in one line and how to start, offers nothing to copy, and the menu has no Forget item", async () => {
   const app = await launchOn(userDataWith([]));
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   await expect(settings.getByText("Nothing dictated yet.", { exact: true })).toBeVisible();
-  await expect(settings.getByText("Turn on Dictate into any app in Voice, then tap its key and speak. What you say shows here.", { exact: true })).toBeVisible();
+  await expect(settings.getByText(/tap the key and speak\. What you say shows here\.$/)).toBeVisible();
   await expect(cards(settings)).toHaveCount(0);
   await expect(settings.getByRole("button", { name: "Copy", exact: true })).toHaveCount(0);
   expect(await forgetItem(app)).toBeUndefined();
@@ -234,7 +234,7 @@ test("an empty history says so in one line and how to start, offers nothing to c
 test("the pane works with no library open", async () => {
   const userData = userDataWith([entry("kept", { text: "words kept without a library" })]);
   const app = await launch({ ...firstRun().env, AVANZEL_USER_DATA: userData });
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   await expect(cards(settings)).toHaveCount(1);
   await expect(cards(settings).first()).toContainText("words kept without a library");
   await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toHaveCount(0);
@@ -256,7 +256,7 @@ test("a dictation made while the pane is open appears at the top without a reloa
   const userData = userDataWith([entry("old", { text: "an older dictation", at: ago(30) })]);
   const app = await launchOn(userData, { AVANZEL_FAKE_CURSOR: script, AVANZEL_FAKE_AUDIO: speechWav(WORDS), AVANZEL_FAKE_TRANSCRIPT: WORDS });
   await windowFor(app, "capsule");
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   const logged: string[] = [];
   settings.on("console", (message) => logged.push(message.text()));
   await expect(cards(settings)).toHaveCount(1);

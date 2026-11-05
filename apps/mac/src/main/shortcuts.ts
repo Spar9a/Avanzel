@@ -10,7 +10,7 @@ export interface ShortcutApi {
 
 /**
  * Each action by its role name: its item in the menu bar menu, which adds "…" to some. Undo the last filing's item is there only after a
- * filing. The actions register in this order (`registerShortcuts`), and Settings → Voice draws a row for each, in it.
+ * filing. The actions register in this order (`registerShortcuts`), and Settings → General draws a row for each, in it.
  */
 export const ACTION_NAMES: Readonly<Record<keyof Shortcuts, string>> = {
   dictate: "Record a thought",
@@ -109,7 +109,7 @@ export function takenMessage(accelerator: string, holder: string | null): string
 
 /**
  * "“Record a thought” is still in the menu bar.": where the action's item is, for the notices of a shortcut that doesn't work (the
- * capsule's, and Settings → Voice's). Undo the last filing's item is in the menu bar only after a filing, so it is not "still" there.
+ * capsule's, and Settings → General's). Undo the last filing's item is in the menu bar only after a filing, so it is not "still" there.
  */
 export function inMenuLine(key: keyof Shortcuts): string {
   return `“${ACTION_NAMES[key]}” ${key === "undo" ? "is in the menu bar after each filing" : "is still in the menu bar"}.`;

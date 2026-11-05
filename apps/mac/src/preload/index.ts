@@ -43,7 +43,7 @@ const bridge: AvanzelBridge = {
     setApp: (patch) => ipcRenderer.invoke("settings:set-app", patch),
     setCursorDictation: (patch) => ipcRenderer.invoke("settings:set-cursor-dictation", patch),
     cursorPermissions: () => ipcRenderer.invoke("settings:cursor-permissions"),
-    askCursorPermissions: () => ipcRenderer.invoke("settings:ask-cursor-permissions"),
+    askCursorPermissions: (permission) => ipcRenderer.invoke("settings:ask-cursor-permissions", permission),
     listDictations: (limit) => ipcRenderer.invoke("settings:list-dictations", limit),
     copyDictation: (id) => ipcRenderer.invoke("settings:copy-dictation", id),
     deleteDictation: (id) => ipcRenderer.invoke("settings:delete-dictation", id),
@@ -62,6 +62,7 @@ const bridge: AvanzelBridge = {
     relaunch: () => ipcRenderer.send("settings:relaunch"),
     requestPermission: (kind) => ipcRenderer.invoke("settings:request-permission", kind),
     pick: (options, at) => ipcRenderer.invoke("settings:pick", options, at),
+    fit: (height, animate) => ipcRenderer.send("settings:fit", height, animate),
   },
   quick: {
     submit: (text) => ipcRenderer.invoke("quick:submit", text),

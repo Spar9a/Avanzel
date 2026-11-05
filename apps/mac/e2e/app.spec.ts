@@ -30,6 +30,7 @@ import {
   speechWav,
   stubOpening,
   windowFor,
+  toolbarItem,
 } from "./helpers.ts";
 import { expectProblem, launchOn } from "./capsule-helpers.ts";
 
@@ -730,7 +731,7 @@ test("when the library's agent is gone, the fix is Open Settings, on Agents", as
   await snap(ask, "9-ask-failed-gone");
   await settingsFix.click();
   const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("radio", { name: "Agents", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
   await app.close();
 });
 
@@ -847,13 +848,13 @@ test("Open Settings in the Ask window leaves a recording and a note being edited
   const ask = await windowFor(app, "ask");
   // What the Ask window's Open Settings sends, when the library's agent isn't installed: the capsule's own call, for Agents.
   const openAgents = () => ask.evaluate(() => window.avanzel.capsule.openSettingsFor("open-settings:agents"));
-  const agents = (settings: Page) => settings.getByRole("radio", { name: "Agents", exact: true });
+  const agents = (settings: Page) => toolbarItem(settings, "Agents");
 
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await openAgents();
   const settings = await windowFor(app, "settings");
-  await expect(agents(settings)).toHaveAttribute("aria-checked", "true");
+  await expect(agents(settings)).toHaveAttribute("aria-current", "page");
   expect(await capsuleKind(app)).toBe("listening"); // the recording goes on
   await expect(capsule.getByRole("status").getByRole("button", { name: "Files now", exact: true })).toBeVisible();
 
@@ -864,10 +865,10 @@ test("Open Settings in the Ask window leaves a recording and a note being edited
   await expect.poll(() => capsuleKind(app)).toBe("editing");
   await capsule.getByRole("textbox").fill("Remember to email Mark the agentic plan");
   await expect.poll(() => call(app, "draftForTests")).toBe("Remember to email Mark the agentic plan");
-  await settings.getByRole("radio", { name: "General", exact: true }).click(); // so that the second Open Settings has somewhere to go
-  await expect(agents(settings)).toHaveAttribute("aria-checked", "false");
+  await toolbarItem(settings, "General").click(); // so that the second Open Settings has somewhere to go
+  await expect(agents(settings)).not.toHaveAttribute("aria-current", "page");
   await openAgents();
-  await expect(agents(settings)).toHaveAttribute("aria-checked", "true");
+  await expect(agents(settings)).toHaveAttribute("aria-current", "page");
   expect(await capsuleKind(app)).toBe("editing");
   await expect(capsule.getByRole("textbox")).toHaveValue("Remember to email Mark the agentic plan");
   await app.close();
@@ -884,7 +885,7 @@ test("Open Settings still takes away the capsule's error card and its notice of 
   expect(await capsuleKind(app)).toBe("hidden");
   await call(app, "setCapsule", { kind: "shortcut-taken", key: "dictate", accelerator: "Alt+Space", holder: null, alternatives: [] });
   expect(await capsuleKind(app)).toBe("shortcut-taken");
-  await call(app, "openSettingsFor", "open-settings:voice");
+  await call(app, "openSettingsFor", "open-settings:general");
   expect(await capsuleKind(app)).toBe("hidden");
   await app.close();
 });

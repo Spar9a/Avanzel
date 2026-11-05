@@ -287,7 +287,7 @@ function FailedNotice({ thought, onType }: { thought: Extract<SetupThought, { ki
 /**
  * The Notice of a shortcut that may not work: another app holds it (an error), or no press followed the person's reach
  * for it within the wait, so another app may hold it though it registered. Each offers the free ones, the best last as
- * the primary, or Settings → Voice when none is free. Nothing while the shortcut works or the step still waits.
+ * the primary, or Settings → General when none is free. Nothing while the shortcut works or the step still waits.
  */
 function PressNotice({ press, accelerator }: { press: SetupPress; accelerator: string }) {
   if (!press.taken && !press.silent) return null;
@@ -303,7 +303,7 @@ function PressNotice({ press, accelerator }: { press: SetupPress; accelerator: s
           ))
           .reverse()
       ) : (
-        <Button size="small" variant="primary" onClick={() => window.avanzel.capsule.openSettingsFor("open-settings:voice")}>
+        <Button size="small" variant="primary" onClick={() => window.avanzel.capsule.openSettingsFor("open-settings:general")}>
           Open Settings
         </Button>
       )}
@@ -312,7 +312,7 @@ function PressNotice({ press, accelerator }: { press: SetupPress; accelerator: s
   if (press.taken) {
     return (
       <Notice tone="error" title={takenMessage(accelerator, press.holder)} actions={actions}>
-        {free ? "Pick another shortcut." : "Pick another one in Settings → Voice."}
+        {free ? "Pick another shortcut." : "Pick another one in Settings → General."}
       </Notice>
     );
   }
@@ -320,7 +320,7 @@ function PressNotice({ press, accelerator }: { press: SetupPress; accelerator: s
   const maybe = `Another app may be using it${free && press.holder ? `, probably ${press.holder}` : ""}.`;
   return (
     <Notice title={`Did ${prettyAccelerator(accelerator)} do nothing?`} actions={actions}>
-      {free ? `${maybe} Try another shortcut.` : `${maybe} Pick another one in Settings → Voice.`}
+      {free ? `${maybe} Try another shortcut.` : `${maybe} Pick another one in Settings → General.`}
     </Notice>
   );
 }

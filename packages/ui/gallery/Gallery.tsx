@@ -4,7 +4,7 @@
 // main.tsx mounts it in a browser; static.tsx renders it to plain HTML for a preview.
 import { useState, type CSSProperties, type ReactNode } from "react";
 import {
-  Actions, Badge, Bubble, Button, CapsuleBar, CapsuleNotice, Card, ChoiceRow, Group, GroupRow, Hud, Icon, ICON_NAMES, Kbd, Letter, Link, Notice,
+  Actions, Badge, Bubble, Button, CapsuleBar, CapsuleNotice, Card, ChoiceRow, Group, GroupRow, Hud, Icon, ICON_NAMES, Kbd, Letter, Link, Notice, PopUp, ShortcutField, Toolbar,
   PermissionPrimer, Progress, Receipt, Row, Segmented, SHELVES, SHELF_NAMES, ShelfDrawer, ShelfGlyph, ShelfMark, ShelfTag, Spacer, Spinner,
   Stack, Stage, Stamp, Switch, Text, TextArea, TextField, Wave, Zel, type ZelMood,
 } from "../src/index.ts";
@@ -261,13 +261,28 @@ export function Gallery() {
         )}
       </Specimen>
 
-      <Specimen id="settings" title="Settings" use="Grouped rows, as in System Settings. On/off settings are switches; anything else is a row with its control on the right." code={'<Group label="Capture">\n  <Switch label="Open Avanzel at login" … />\n  <GroupRow label="Shortcut"><Kbd>⌥Space</Kbd></GroupRow>\n</Group>'}>
+      <Specimen id="settings" title="Settings" use="Grouped rows, as in System Settings. On/off settings are switches; anything else is a row with its control on the right." code={'<Group label="Capture">\n  <Switch label="Open Avanzel at login" … />\n  <GroupRow label="Key"><PopUp label="Key" value="Right Option" … /></GroupRow>\n</Group>'}>
         {() => (
-          <Group label="Capture" note="Avanzel keeps the audio only until it becomes text.">
-            <Switch label="Open Avanzel at login" checked onChange={() => {}} />
-            <GroupRow label="Shortcut"><Kbd>⌥Space</Kbd><Button size="small">Change</Button></GroupRow>
-            <GroupRow label="Agent" description="Claude Code is signed in."><Button size="small" variant="quiet">Choose</Button></GroupRow>
-          </Group>
+          <Stack gap={12}>
+            <Toolbar
+              label="Section"
+              value="voice"
+              onChange={() => {}}
+              items={[
+                { value: "general", label: "General", icon: "settings" },
+                { value: "voice", label: "Voice", icon: "mic" },
+                { value: "agents", label: "Agents", icon: "person" },
+                { value: "privacy", label: "Privacy", icon: "lock" },
+              ]}
+            />
+            <Group label="Capture" note="Avanzel keeps the audio only until it becomes text.">
+              <Switch label="Open Avanzel at login" checked onChange={() => {}} />
+              <GroupRow label="Record a thought"><ShortcutField label="Record a thought" value="⌥Space" recording={false} onClick={() => {}} /></GroupRow>
+              <GroupRow label="Ask your library"><ShortcutField label="Ask your library" value="⌥⇧A" recording onClick={() => {}} /></GroupRow>
+              <GroupRow label="Microphone" description="Only while it listens."><PopUp label="Microphone" value="System default" onClick={() => {}} /></GroupRow>
+              <GroupRow label="Key"><PopUp label="Key" value="Right Option" disabled onClick={() => {}} /></GroupRow>
+            </Group>
+          </Stack>
         )}
       </Specimen>
 

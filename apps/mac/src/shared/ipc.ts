@@ -6,6 +6,9 @@ import type { AgentFailure, PartialEdits, TooBroad } from "./problems.ts";
 export type { CursorKey } from "../main/tap-detector.ts";
 export type { CursorPermissionState } from "../main/cursor-helper.ts";
 
+/** A permission that dictating into any app needs, as System Settings names its place. */
+export type CursorPermission = "input-monitoring" | "accessibility";
+
 export interface FiledPage {
   title: string;
   /** First folder of the page path, e.g. "goals". */
@@ -35,7 +38,7 @@ export type SettingsPane = (typeof SETTINGS_PANES)[number];
 export const isSettingsPane = (value: unknown): value is SettingsPane => SETTINGS_PANES.some((pane) => pane === value);
 
 /**
- * One dictation at the cursor, as the Dictations pane shows it. The words are cut to a preview (`previewOf`): the whole text stays in
+ * One dictation at the cursor, as the Dictation pane shows it. The words are cut to a preview (`previewOf`): the whole text stays in
  * main, and Copy asks for it by `id`. The pane writes the time out itself, from `at`.
  */
 export interface DictationRow {
@@ -60,7 +63,7 @@ export type DeleteDictationResult = { ok: true } | { ok: false; message: string;
 /**
  * A forgotten dictation left the history, but the library's day file of dictations (`raw/dictations/`) couldn't be updated: what
  * happened, what remains, and the one fix. `library` names the folder of the library the dictation was kept in, when that is not the
- * one open (null: the open one). Told by the Dictations pane after a Delete and by the capsule after the menu's "Forget the last
+ * one open (null: the open one). Told by the Dictation pane after a Delete and by the capsule after the menu's "Forget the last
  * dictation".
  */
 export function dayFileNotUpdated(library: string | null): { title: string; body: string } {
@@ -476,7 +479,7 @@ export interface SettingsSnapshot {
   opensInObsidian: boolean;
 }
 
-/** One choice of a native pop-up menu, as Settings' Choose… offers it. */
+/** One choice of a native pop-up menu, as Settings' pop-up buttons offer it. */
 export interface PickOption { label: string; value: string; checked: boolean }
 
 /**
@@ -869,7 +872,7 @@ export interface AvanzelBridge {
     keepOpen(keep: boolean): void;
     /**
      * An error card's one button, or a notice's Open Settings (see CardAction). The Ask window's Open Settings uses it too,
-     * with "open-settings:agents", when the library's agent isn't installed, and setup's does, with "open-settings:voice".
+     * with "open-settings:agents", when the library's agent isn't installed, and setup's does, with "open-settings:general".
      * The card it was pressed on goes (an error card, or a taken shortcut's notice); whatever else the capsule shows, a
      * recording or a note being edited, stays as it is.
      */
@@ -898,13 +901,13 @@ export interface AvanzelBridge {
      */
     cursorPermissions(): Promise<CursorPermissionState>;
     /**
-     * Has macOS ask for both permissions, and opens System Settings at the one still missing (Input Monitoring first, as the key
-     * can't be seen without it). Resolves with what was granted at the time it asked.
+     * Has macOS ask for both permissions, and opens System Settings at `permission` if it is missing; with none named, at the one still
+     * missing (Input Monitoring first, as the key can't be seen without it). Resolves with what was granted at the time it asked.
      */
-    askCursorPermissions(): Promise<CursorPermissionState>;
+    askCursorPermissions(permission?: CursorPermission): Promise<CursorPermissionState>;
     /**
      * The newest `limit` dictations at the cursor (DICTATION_PAGE when it is not a whole number above 0), newest first, each as the
-     * Dictations pane shows it, with the total the history holds. Needs no library.
+     * Dictation pane shows it, with the total the history holds. Needs no library.
      */
     listDictations(limit?: number): Promise<DictationList>;
     /** Dictation `id`'s whole words go on the clipboard. False when there is no such dictation or the clipboard refused. */
@@ -937,10 +940,12 @@ export interface AvanzelBridge {
      */
     relaunch(): void;
     requestPermission(kind: "microphone" | "screen"): Promise<SettingsSnapshot>;
-    /** Choose…: a native menu of `options` pops up at `at` (window points; null: at the pointer). Resolves with the
+    /** A pop-up button: a native menu of `options` pops up at `at` (window points; null: at the pointer). Resolves with the
         value picked, or null when the menu closes without one. Only the Settings window's own page is answered: sent from any
         other window, it resolves null and shows no menu. */
     pick(options: readonly PickOption[], at: { x: number; y: number } | null): Promise<string | null>;
+    /** What the pane in view needs, in px: the window takes that height, within the screen, smoothly when `animate` says so. Only the Settings window's own page is heard. */
+    fit(height: number, animate: boolean): void;
   };
   quick: {
     submit(text: string): Promise<void>;

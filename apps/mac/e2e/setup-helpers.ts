@@ -6,11 +6,15 @@ import type { SettingsSnapshot, SetupSnapshot } from "../src/shared/ipc.ts";
 import { agentCalls, call, filesUnder, launch, throughFound, typeFirstThought } from "./helpers.ts";
 
 /**
- * How many windows have `title` ("Set up Avanzel", "Avanzel Settings"), shown or not. A window has its title from the
- * moment it is made, while its address is "" until its page starts loading, so this counts one made a moment ago.
+ * How many windows have `title` ("Set up Avanzel"), shown or not. A window has its title from the moment it is made, while its address is
+ * "" until its page starts loading, so this counts one made a moment ago.
  */
 export const windowsTitled = (app: ElectronApplication, title: string) =>
   app.evaluate(({ BrowserWindow }, wanted) => BrowserWindow.getAllWindows().filter((w) => w.getTitle() === wanted).length, title);
+
+/** How many Settings windows there are, shown or not: by the title it is made with, or by its page, which titles it for its pane once that has loaded. */
+export const settingsWindows = (app: ElectronApplication) =>
+  app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.getTitle() === "Avanzel Settings" || w.webContents.getURL().includes("/renderer/settings/")).length);
 
 /** Whether Avanzel shows its Dock icon now. */
 export const dockShown = (app: ElectronApplication) => app.evaluate(({ app: electronApp }) => electronApp.dock?.isVisible() ?? false);

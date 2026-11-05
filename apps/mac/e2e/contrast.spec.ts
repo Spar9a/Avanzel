@@ -6,7 +6,7 @@ import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
 import type { CapsuleState } from "../src/shared/ipc.ts";
 import { filedFromTheCapsule, launchOn } from "./capsule-helpers.ts";
-import { call, filesUnder, filingClaude, firstRun, launch, makeLibrary, screenshotFixture, windowFor } from "./helpers.ts";
+import { call, filesUnder, filingClaude, firstRun, launch, makeLibrary, screenshotFixture, settingsRow, toolbarItem, windowFor } from "./helpers.ts";
 
 type Appearance = "light" | "dark";
 type RGB = [number, number, number];
@@ -424,15 +424,15 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   // The window is opaque: its page draws the window's own surface, so what lies under it doesn't show through.
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  for (const pane of ["General", "Voice", "Agents", "Reviews", "Privacy"]) {
-    await settings.getByRole("radio", { name: pane, exact: true }).click();
+  for (const pane of ["General", "Voice", "Dictation", "Agents", "Reviews", "Privacy"]) {
+    await toolbarItem(settings, pane).click();
     await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
     if (pane === "Reviews") await expect(settings.getByText(/Unknown schedule "sometimes"/)).toBeVisible();
     // launch()'s stand-ins for Claude Code and Codex read their sign-in as the pane opens: read the pane once both
     // are done, not while a Check button spins.
     if (pane === "Agents") {
       for (const name of ["Claude Code", "Codex"]) {
-        await expect(settings.getByRole("group", { name }).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 40_000 });
+        await expect(settingsRow(settings, name).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 40_000 });
       }
     }
     found.push(...(await readable(app, settings, `Settings › ${pane}`, desktops)));

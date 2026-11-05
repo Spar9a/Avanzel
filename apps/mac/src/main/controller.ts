@@ -109,6 +109,7 @@ import type {
   CapsuleMode,
   CapsuleState,
   CardAction,
+  CursorPermission,
   FiledPage,
   LibraryPatch,
   ModelStatus,
@@ -193,6 +194,7 @@ import {
   createCapsuleWindow,
   createQuickWindow,
   createSettingsWindow,
+  fitSettings,
   isPageOf,
   placeCapsule,
   placeQuick,
@@ -2087,25 +2089,27 @@ export class Controller {
 
   /**
    * Has macOS ask for the permissions (its prompts come up once; after a refusal only System Settings can grant), and opens System
-   * Settings at the one still missing: Input Monitoring first, as without it the key is never seen.
+   * Settings at `permission` when it is missing, as a row of Privacy asks; with none named, at the one still missing, Input Monitoring first,
+   * as without it the key is never seen.
    */
-  async askCursorPermissions(): Promise<CursorPermissionState> {
+  async askCursorPermissions(permission?: CursorPermission): Promise<CursorPermissionState> {
     const state = await cursorPermissionsOf(this.cursorHelper, true);
     if (!state.available) return state;
-    const missing = !state.inputMonitoring ? "input-monitoring" : !state.accessibility ? "accessibility" : null;
+    const lacks: Record<CursorPermission, boolean> = { "input-monitoring": !state.inputMonitoring, accessibility: !state.accessibility };
+    const missing = permission ? (lacks[permission] ? permission : null) : lacks["input-monitoring"] ? "input-monitoring" : lacks.accessibility ? "accessibility" : null;
     if (missing) this.openPane(missing);
     return state;
   }
 
   /**
-   * The newest `limit` dictations of the history, for Settings → Dictations (`pageOf`): newest first, each as the pane shows it (the words
+   * The newest `limit` dictations of the history, for Settings → Dictation (`pageOf`): newest first, each as the pane shows it (the words
    * cut to a preview), with how many the history holds. It needs no library: the history is the app's own.
    */
   listDictations(limit?: number): DictationList {
     return pageOf(this.dictations.list(), limit);
   }
 
-  /** Copy, in the Dictations pane: dictation `id`'s whole words go on the clipboard. False when it has gone, or the clipboard refused. */
+  /** Copy, in the Dictation pane: dictation `id`'s whole words go on the clipboard. False when it has gone, or the clipboard refused. */
   async copyDictation(id: string): Promise<boolean> {
     const entry = this.dictations.list().find((each) => each.id === id);
     if (!entry) return false;
@@ -2129,7 +2133,7 @@ export class Controller {
   }
 
   /**
-   * Delete, in the Dictations pane: ok once the dictation is gone; else a calm sentence for the pane's Notice, with the dictation kept,
+   * Delete, in the Dictation pane: ok once the dictation is gone; else a calm sentence for the pane's Notice, with the dictation kept,
    * or, when it left the history but the day file couldn't be updated, where its words may still be (`DAY_FILE_NOT_UPDATED`).
    */
   deleteDictation(id: string): Promise<DeleteDictationResult> {
@@ -2160,7 +2164,7 @@ export class Controller {
 
   /**
    * The history changed, by a dictation that ended or by one forgotten: the menu is built again, with or without "Forget the last
-   * dictation", and an open Settings is told, so that its Dictations pane lists the history again.
+   * dictation", and an open Settings is told, so that its Dictation pane lists the history again.
    */
   private dictationsChanged(): void {
     this.hasDictation = null;
@@ -2336,7 +2340,7 @@ export class Controller {
     console.error("cursor helper", message);
     if (message !== CURSOR_HELPER_GAVE_UP || this.cursorHelperStoppedTold) return;
     this.cursorHelperStoppedTold = true;
-    this.showCursorCard("helper", () => this.fail(CURSOR_HELPER_STOPPED, "open-settings:voice", "Open Settings"));
+    this.showCursorCard("helper", () => this.fail(CURSOR_HELPER_STOPPED, "open-settings:dictations", "Open Settings"));
   }
 
   /** The refusal's bar, for a moment. */
@@ -4224,7 +4228,7 @@ export class Controller {
 
   // ---------------------------------------------------------------- settings
 
-  /** With a `pane`, a new window opens on it and an open one moves to it; without, a new one opens on General and an open one stays put. */
+  /** With a `pane`, a new window opens on it and an open one moves to it; without, a new one opens on the pane it showed last and an open one stays put. */
   showSettings(pane?: SettingsPane): void {
     if (!this.settingsWindow || this.settingsWindow.isDestroyed()) {
       this.settingsWindow = createSettingsWindow(pane);
@@ -4249,7 +4253,7 @@ export class Controller {
   }
 
   /**
-   * Choose…, in Settings: a native menu of the page's `options` pops up over the Settings window, at `at`. Resolves with
+   * A pop-up button, in Settings: a native menu of the page's `options` pops up over the Settings window, at `at`. Resolves with
    * the value picked; null when the menu closes without one, and without an open Settings window or a request that can
    * be read. Only the Settings window's own page is answered: `sender` is the page the message came from (`event.sender`),
    * and a menu is not popped up over Settings for any other window's.
@@ -4259,6 +4263,16 @@ export class Controller {
     const request = pickRequest(options, at);
     if (!win || !isPageOf(sender, win) || !request) return Promise.resolve(null);
     return popupChoice(win, request.options, request.at);
+  }
+
+  /**
+   * The Settings page says what its pane needs, and its window takes that height (`fitSettings` in windows.ts). Only its own page is heard, and
+   * only a height that reads. An animated resize holds this process until it ends, which tests have no use for.
+   */
+  fitSettings(sender: WebContents, height: unknown, animate: unknown): void {
+    const win = this.settingsWindow;
+    if (!win || !isPageOf(sender, win) || typeof height !== "number" || !Number.isFinite(height)) return;
+    fitSettings(win, height, animate === true && process.env.AVANZEL_TEST !== "1");
   }
 
   /** Settings' Show in Finder: the library's folder opens in Finder. Nothing without a library. */

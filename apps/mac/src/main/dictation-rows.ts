@@ -1,4 +1,4 @@
-// What the Dictations pane is told about the history, and how an entry is forgotten. Kept apart from the controller, which needs
+// What the Dictation pane is told about the history, and how an entry is forgotten. Kept apart from the controller, which needs
 // Electron, so that the cut of a long text and the way a failed delete is told can be tested on their own.
 import { dayFileNotUpdated, DELETE_FAILED_BODY, DICTATION_PAGE, type DeleteDictationResult, type DictationList, type DictationRow } from "../shared/ipc.ts";
 import type { DictationEntry, DictationHistory } from "./dictation-history.ts";

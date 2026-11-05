@@ -19,7 +19,7 @@ import {
   validTime,
   whenLine,
 } from "../copy.ts";
-import { attemptChange, ChooseButton, type PaneProps } from "../parts.tsx";
+import { attemptChange, PickButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
 
@@ -72,9 +72,8 @@ export interface SaveFailure {
 }
 
 /**
- * What Settings keeps of the reviews whichever pane shows: leaving the pane, or moving along the toolbar with the arrow
- * keys, which shows each pane passed, then keeps what the open editor holds, what it still knows of a save on its way, and
- * the save that failed.
+ * What Settings keeps of the reviews whichever pane shows: leaving the pane keeps what the open editor holds, what it still
+ * knows of a save on its way, and the save that failed.
  */
 export interface ReviewEdits {
   /** The open editor's draft, by its review's id. One editor is open at a time, so it holds one at most. */
@@ -137,7 +136,7 @@ export function useReviewEdits(library: string | null, onChange: PaneProps["onCh
   return { drafts, setDrafts, saving, failure, clearFailure, save };
 }
 
-/** Choose…'s menu for a review's agent: the library's own, then each agent installed, with the review's checked. */
+/** The pop-up menu of a review's agent: the library's own, then each agent installed, with the review's checked. */
 function agentOptions(agent: string, harnesses: readonly HarnessInfo[]): PickOption[] {
   return [
     { label: LIBRARY_AGENT, value: "auto", checked: agent === "auto" },
@@ -173,10 +172,9 @@ function Editor({ draft, harnesses, saving, onDraft, onSave, onCancel }: EditorP
       </GroupRow>
       {draft.every === "weekly" && (
         <GroupRow label="Day">
-          <Text as="span">{day}</Text>
-          <ChooseButton
+          <PickButton
             label="Day"
-            valueLabel={day}
+            value={day}
             options={DAYS.map((each) => ({ ...each, checked: each.value === draft.day }))}
             onChoose={(value) => onDraft((now) => ({ ...now, day: value }))}
           />
@@ -188,8 +186,7 @@ function Editor({ draft, harnesses, saving, onDraft, onSave, onCancel }: EditorP
         </div>
       </GroupRow>
       <GroupRow label="Agent">
-        <Text as="span">{agent}</Text>
-        <ChooseButton label="Agent" valueLabel={agent} options={agentOptions(draft.agent, harnesses)} onChoose={(value) => onDraft((now) => ({ ...now, agent: value }))} />
+        <PickButton label="Agent" value={agent} options={agentOptions(draft.agent, harnesses)} onChoose={(value) => onDraft((now) => ({ ...now, agent: value }))} />
       </GroupRow>
       {/* Not rows: a field of several lines, and the editor's buttons, each in a box padded as a row is. */}
       <div className="settings-editor">

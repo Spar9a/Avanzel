@@ -168,7 +168,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: readonly numb
       );
     }
     case "shortcut-taken": {
-      // The best one is the primary, so it goes last; with none free, Settings → Voice has the way out.
+      // The best one is the primary, so it goes last; with none free, Settings → General has the way out.
       const uses = state.alternatives
         .map((alternative, i) => (
           <Button key={alternative} size="small" variant={i === 0 ? "primary" : "secondary"} onClick={() => api.useShortcut(state.key, alternative)}>
@@ -183,7 +183,7 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: readonly numb
             actions={
               <Actions align="start">
                 <Button size="small" variant="quiet" onClick={() => api.dismiss()}>Hide</Button>
-                {uses.length ? uses : <Button size="small" variant="primary" onClick={() => api.openSettingsFor("open-settings:voice")}>Open Settings</Button>}
+                {uses.length ? uses : <Button size="small" variant="primary" onClick={() => api.openSettingsFor("open-settings:general")}>Open Settings</Button>}
               </Actions>
             }
           >

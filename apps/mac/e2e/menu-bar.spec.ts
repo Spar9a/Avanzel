@@ -67,6 +67,7 @@ import {
   toDone,
   typeFirstThought,
   windowFor,
+  toolbarItem,
 } from "./helpers.ts";
 import { reduceMotion, settingsSnap, setupSnap } from "./setup-helpers.ts";
 
@@ -1004,7 +1005,7 @@ test("a failed speech-model download is named in the menu", async () => {
   // Its action is the capsule card's own path: Settings opens on Voice, which tells it in the same words.
   await call(app, "menuAction", "open-settings:voice");
   const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("radio", { name: "Voice", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
   await expect(settings.getByRole("alert").getByText("The speech model didn't finish downloading.")).toBeVisible();
   await app.close();
 });
@@ -1047,7 +1048,7 @@ test("choosing the voice settings problem in the menu reads them again, so Setti
   saveSettings(library, config);
   await call(app, "menuAction", "open-settings:voice");
   const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("radio", { name: "Voice", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
   await expect(settings.getByText("Speech model", { exact: true })).toBeVisible(); // the pane has read what is now
   await expect(settings.getByText(title)).toHaveCount(0);
   expect((await menuOf(app))[1]).toEqual({ type: "separator" });
@@ -2802,7 +2803,7 @@ for (const card of [
     await call(app, "menuAction", "open-settings:voice");
     // Settings opens on Voice, where the fix is. The card is about something else, and stays.
     const settings = await windowFor(app, "settings");
-    await expect(settings.getByRole("radio", { name: "Voice", exact: true })).toHaveAttribute("aria-checked", "true");
+    await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
     expect(await call(app, "capsuleStateForTests")).toEqual(card);
     await app.close();
   });
@@ -2930,7 +2931,7 @@ test("Settings' Run now asks first, as a sheet on Settings, and runs the review 
   await expect.poll(() => dialogsAsked(app)).toHaveLength(1);
   expect(await dialogsAsked(app)).toEqual([
     {
-      sheetOn: "Avanzel Settings",
+      sheetOn: "Reviews", // Settings, called by its pane
       options: {
         type: "question",
         buttons: ["Run Now", "Cancel"],

@@ -23,7 +23,7 @@ import {
   typeFirstThought,
   windowFor,
 } from "./helpers.ts";
-import { closeSetup, dockShown, filedFirstThought, reduceMotion, settingsSnap, windowsTitled, zel } from "./setup-helpers.ts";
+import { closeSetup, dockShown, filedFirstThought, reduceMotion, settingsSnap, settingsWindows, windowsTitled, zel } from "./setup-helpers.ts";
 
 test.afterEach(closeModelHubs);
 
@@ -133,7 +133,7 @@ test("Start using Avanzel closes the window, and the menu bar is where Avanzel l
   expect(menu).toContainEqual(expect.objectContaining({ type: "item", label: "Record a thought", action: "dictate" }));
   // Opening Avanzel again opens Settings now, as it does once there is a library, rather than setup.
   await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
-  expect(await windowsTitled(app, "Avanzel Settings")).toBe(1);
+  expect(await settingsWindows(app)).toBe(1);
   expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
   await app.close();
 });
@@ -396,7 +396,7 @@ test("with the menu bar icon hidden, the window just closes, and no bubble point
   expect(await windowsTitled(app, "Avanzel")).toBe(titled);
   // Opening Avanzel again finds it: Settings, now that there is a library.
   await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
-  expect(await windowsTitled(app, "Avanzel Settings")).toBe(1);
+  expect(await settingsWindows(app)).toBe(1);
   await app.close();
 });
 

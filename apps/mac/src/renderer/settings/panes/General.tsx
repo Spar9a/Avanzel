@@ -1,12 +1,13 @@
-// Settings → General: the library, where it is and what it holds, with its six shelves under it; when a thought is
-// filed; and opening at login. Without a library, the Notice that says why stands where the library would be,
-// and the other groups follow as usual. Each control applies at once.
+// Settings → General: the library, where it is and what it holds, with its six shelves under it; when a thought is filed; the
+// shortcuts; and opening at login. Without a library, the Notice that says why stands where the library would be, and the other
+// groups follow as usual. Each control applies at once.
 import { Actions, Button, Group, GroupRow, Notice, Row, Segmented, ShelfDrawer, Stack, Switch, type SegmentedOption } from "@avanzel/ui";
 import type { ReactNode } from "react";
 import type { FileMode } from "../../../shared/ipc.ts";
 import { fileModeLine, libraryLine } from "../copy.ts";
 import { attemptChange, NoLibrary, type PaneProps } from "../parts.tsx";
 import type { ReviewEdits } from "./Reviews.tsx";
+import { Shortcuts } from "./Shortcuts.tsx";
 
 const api = window.avanzel.settings;
 
@@ -27,6 +28,8 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
   const lib = snap.library;
   // The evening review, as the Reviews pane tells it from the others: by its kind. Tonight files only while it is on.
   const evening = snap.tasks.find((task) => task.kind === "evening-review") ?? null;
+  // Tonight waits for a review that is off: new thoughts would wait in the inbox until someone runs it.
+  const reviewOff = snap.app.fileMode === "evening" && evening !== null && !evening.enabled;
   return (
     <Stack gap={20}>
       {lib?.exists ? (
@@ -54,8 +57,7 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
           <Segmented label="When to file" options={FILE_MODES} value={snap.app.fileMode} onChange={(fileMode) => attemptChange(props, () => api.setApp({ fileMode }))} />
         </GroupRow>
       </Group>
-      {/* Tonight waits for a review that is off: new thoughts would wait in the inbox until someone runs it. */}
-      {snap.app.fileMode === "evening" && evening && !evening.enabled && (
+      {reviewOff && evening && (
         <Notice
           title="The evening review is off, so new thoughts stay in the inbox."
           actions={
@@ -78,6 +80,8 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
           They're safe there.
         </Notice>
       )}
+      {/* The pane has one primary button: the library's fix or the review's come first, and a shortcut's fix is the primary only without them. */}
+      <Shortcuts {...props} primary={Boolean(lib?.exists) && !reviewOff} />
       <Group label="Startup">
         <Switch
           label="Open Avanzel when you log in"

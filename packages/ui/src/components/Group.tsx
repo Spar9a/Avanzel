@@ -24,16 +24,18 @@ export function Group({ label, note, children }: GroupProps) {
 
 export interface GroupRowProps {
   label: string;
-  description?: string;
+  description?: ReactNode;
+  /** A screen reader is told when `description` changes, with `label` so that it knows whose it is. Only once the person has asked for what changes it. */
+  live?: boolean;
   /** The control on the right: a <Segmented>, a <Button>, a <Kbd>. */
   children?: ReactNode;
 }
 
 /** One row of a Group. For an on/off setting, put a <Switch> in the group instead. */
-export function GroupRow({ label, description, children }: GroupRowProps) {
+export function GroupRow({ label, description, live, children }: GroupRowProps) {
   return (
     <div className="av-group-row">
-      <div className="av-group-row-text">
+      <div className="av-group-row-text" role={live ? "status" : undefined} aria-atomic={live ? true : undefined}>
         <span>{label}</span>
         {description && <small>{description}</small>}
       </div>

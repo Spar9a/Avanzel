@@ -1,6 +1,6 @@
 // Settings → Agents lists every agent, says whether each installed one can work, lets the person choose which one files,
 // and names the model of the one in use. The library's agent is the fake one: a custom harness with no sign-in command,
-// so its check is one short prompt, which runs only when Check is clicked. Claude Code and Codex are launch()'s
+// so its check is one short prompt, which runs only when Check agents is clicked. Claude Code and Codex are launch()'s
 // stand-ins, which read as signed in when the pane opens.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -8,11 +8,29 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, writeWav } from "../../../packages/engine/src/index.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { agentCalls, agentPath, alive, call, capsuleKind, filesUnder, launch, makeLibrary, noAgents, openSettings, SIGNED_OUT_CLAUDE, snap, UNREADABLE_CLAUDE, windowFor } from "./helpers.ts";
+import {
+  agentCalls,
+  agentPath,
+  alive,
+  call,
+  capsuleKind,
+  filesUnder,
+  launch,
+  makeLibrary,
+  noAgents,
+  openSettings,
+  settingsRow,
+  SIGNED_OUT_CLAUDE,
+  snap,
+  stopFittingSettings,
+  toolbarItem,
+  UNREADABLE_CLAUDE,
+  windowFor,
+} from "./helpers.ts";
 import { expectProblem } from "./capsule-helpers.ts";
 
-/** Opens Settings → Agents and returns the fake agent's row, a group named for its agent. */
-const fakeAgentRow = async (app: ElectronApplication) => (await openSettings(app, "Agents")).getByRole("group", { name: "fake" });
+/** The one button that checks every installed agent. */
+const checkAgents = (settings: Page) => settings.getByRole("button", { name: "Check agents", exact: true });
 
 /** What the agent's last check found, as the controller keeps it (null: not checked, or the check couldn't tell). */
 const statusOf = async (app: ElectronApplication, name: string) =>
@@ -34,14 +52,15 @@ test("Settings → Agents checks the fake agent with one prompt and shows how lo
   const library = await makeLibrary();
   const record = recordFile();
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_RECORD: record });
-  const row = await fakeAgentRow(app);
-  // Nobody has asked about this agent yet, so its status isn't announced: it has no live region until Check.
+  const settings = await openSettings(app, "Agents");
+  const row = settingsRow(settings, "fake");
+  // Nobody has asked about this agent yet, so its status isn't announced: it has no live region until Check agents.
   await expect(row.getByText("Installed", { exact: true })).toBeVisible();
   await expect(row.getByRole("status")).toHaveCount(0);
-  await row.getByRole("button", { name: "Check", exact: true }).click();
-  await expect(row.getByRole("status")).toHaveText(/^Replied in \d+\.\d s$/, { timeout: 20_000 });
-  await expect(row.getByRole("button", { name: "Check again" })).toBeEnabled();
-  // Opening the pane asked the fake agent nothing; Check asked it once.
+  await checkAgents(settings).click();
+  await expect(row.getByRole("status")).toHaveText(/^fake.*Replied in \d+\.\d s$/, { timeout: 20_000 }); // by the agent's name
+  await expect(checkAgents(settings)).toBeEnabled();
+  // Opening the pane asked the fake agent nothing; Check agents asked it once.
   const prompts = readFileSync(record, "utf8").trim().split("\n").map((line) => (JSON.parse(line) as { prompt: string }).prompt);
   expect(prompts).toEqual(["Reply with the single word: ready."]);
   await app.close();
@@ -50,8 +69,9 @@ test("Settings → Agents checks the fake agent with one prompt and shows how lo
 test("an agent whose reply asks to sign in says how, then what it said", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_MODE: "fail-signin" });
-  const row = await fakeAgentRow(app);
-  await row.getByRole("button", { name: "Check", exact: true }).click();
+  const settings = await openSettings(app, "Agents");
+  const row = settingsRow(settings, "fake");
+  await checkAgents(settings).click();
   // The fake agent draws a logged-out Cursor Agent's banner: its line ends in "Press any key to sign in...".
   await expect(row.getByText(/^Not signed in\. Sign in to fake in Terminal\. .*Press any key to sign in\.\.\.$/)).toBeVisible({ timeout: 20_000 });
   await app.close();
@@ -61,18 +81,18 @@ test("a problem is red only for the agent in use; a failure loses its Error labe
   // The fake agent, the library's, fails as Codex does: "ERROR: the model is not supported with this account".
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), FAKE_AGENT_MODE: "fail-noisy", PATH: agentPath({ claude: SIGNED_OUT_CLAUDE }) });
   const settings = await openSettings(app, "Agents");
-  const claude = settings.getByRole("group", { name: "Claude Code" }).getByText("Not signed in.", { exact: false });
+  const claude = settingsRow(settings, "Claude Code").getByText("Not signed in.", { exact: false });
   await expect(claude).toHaveText("Not signed in. Run claude once in Terminal and sign in.", { timeout: 20_000 });
   await expect(claude).toHaveAttribute("data-tone", "secondary"); // Claude Code isn't the agent in use
-  const fake = settings.getByRole("group", { name: "fake" });
-  await fake.getByRole("button", { name: "Check", exact: true }).click();
+  const fake = settingsRow(settings, "fake");
+  await checkAgents(settings).click();
   const failure = fake.getByText("The model is not supported with this account.");
   await expect(failure).toHaveText("The model is not supported with this account.", { timeout: 20_000 });
   await expect(failure).toHaveAttribute("data-tone", "danger");
   await app.close();
 });
 
-test("Use Codex makes Codex the agent that files, Use automatic hands the choice back, and the agent in use names its model", async () => {
+test("Use on Codex's row makes Codex the agent that files, Use on the last row hands the choice back, and the agent in use names its model", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Agents");
@@ -81,32 +101,32 @@ test("Use Codex makes Codex the agent that files, Use automatic hands the choice
   const automatic = settings.getByRole("group", { name: "Choose automatically", exact: true });
   // The library's own agent is the one chosen, and so the one in use: it names its model, which saves on Return.
   await expect(fake.getByRole("img", { name: "Chosen" })).toBeVisible();
-  await expect(automatic.getByRole("button", { name: "Use automatic" })).toBeVisible();
+  await expect(automatic.getByRole("button", { name: "Use", exact: true })).toBeVisible();
   const model = settings.getByRole("textbox", { name: "fake model" });
   await model.fill("small");
   await model.press("Enter");
   await expect.poll(() => loadSettings(library).models).toEqual({ fake: "small" });
 
-  // Use Codex files with Codex from now on. Its row is chosen, the fake agent's offers to be, and Codex has the model group.
-  await codex.getByRole("button", { name: "Use Codex" }).click();
+  // Use, on Codex's row, files with Codex from now on. Its row is chosen, the fake agent's offers to be, and Codex has the model group.
+  await codex.getByRole("button", { name: "Use", exact: true }).click();
   await expect.poll(() => loadSettings(library).harness).toBe("codex");
   await expect(codex.getByRole("img", { name: "Chosen" })).toBeVisible();
   await expect(fake.getByRole("img", { name: "Chosen" })).toHaveCount(0);
-  await expect(fake.getByRole("button", { name: "Use fake" })).toBeVisible();
-  await expect(codex.getByRole("button", { name: "Use Codex" })).toHaveCount(0);
+  await expect(fake.getByRole("button", { name: "Use", exact: true })).toBeVisible();
+  await expect(codex.getByRole("button", { name: "Use", exact: true })).toHaveCount(0);
   await expect(settings.getByRole("heading", { name: "Codex", exact: true })).toBeVisible();
   await expect(settings.getByRole("textbox", { name: "Codex model" })).toHaveValue("");
   await expect(settings.getByRole("textbox", { name: "fake model" })).toHaveCount(0);
   expect(loadSettings(library).models).toEqual({ fake: "small" }); // the fake agent's model is kept
 
-  // Use automatic hands the choice back: the last row is chosen, no agent's is, and the agent in use is the one Automatic
+  // Use, on the last row, hands the choice back: the last row is chosen, no agent's is, and the agent in use is the one Automatic
   // picks, which is Claude Code's stand-in.
-  await automatic.getByRole("button", { name: "Use automatic" }).click();
+  await automatic.getByRole("button", { name: "Use", exact: true }).click();
   await expect.poll(() => loadSettings(library).harness).toBe("auto");
   await expect(automatic.getByRole("img", { name: "Chosen" })).toBeVisible();
-  await expect(automatic.getByRole("button", { name: "Use automatic" })).toHaveCount(0);
+  await expect(automatic.getByRole("button", { name: "Use", exact: true })).toHaveCount(0);
   await expect(codex.getByRole("img", { name: "Chosen" })).toHaveCount(0);
-  await expect(codex.getByRole("button", { name: "Use Codex" })).toBeVisible();
+  await expect(codex.getByRole("button", { name: "Use", exact: true })).toBeVisible();
   await expect(settings.getByRole("heading", { name: "Claude Code", exact: true })).toBeVisible();
   await expect(settings.getByRole("textbox", { name: "Claude Code model" })).toBeVisible();
   await app.close();
@@ -135,22 +155,19 @@ test("the model starts from the one saved, saves when the focus leaves the field
   await app.close();
 });
 
-test("an agent's name stays on one line at the window's least width, beside the longest status", async () => {
-  // Claude Code is signed out and isn't the agent chosen: its row holds the longest status, "Best results", Use and Check.
+test("an agent's name stays on one line beside its controls, with its status under it, in a pane that scrolls", async () => {
+  // Claude Code is signed out and isn't the agent chosen: its row holds the longest status, "Best results" and Use.
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), PATH: agentPath({ claude: SIGNED_OUT_CLAUDE }) });
   const settings = await openSettings(app, "Agents");
-  const least = await app.evaluate(({ BrowserWindow }) => {
-    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))!;
-    const [width = 0] = win.getMinimumSize();
-    win.setSize(width, 500); // short enough that the pane scrolls
-    return width;
+  await stopFittingSettings(app);
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.setSize(680, 400); // short enough that the pane scrolls
   });
-  await expect.poll(() => settings.evaluate(() => window.innerWidth)).toBe(least);
+  await expect.poll(() => settings.evaluate(() => window.innerHeight)).toBe(400);
   // Whether a scrolling pane gives 15 px of every row to a classic scrollbar depends on how this Mac shows scrollbars.
   // Make it the narrower case, whatever the setting.
   await settings.addStyleTag({ content: "main::-webkit-scrollbar { width: 15px; }" });
-  const claude = settings.getByRole("group", { name: "Claude Code", exact: true });
-  await expect(claude.getByText("Not signed in.", { exact: false })).toBeVisible({ timeout: 20_000 });
+  await expect(settingsRow(settings, "Claude Code").getByText("Not signed in.", { exact: false })).toBeVisible({ timeout: 20_000 });
   // The pane scrolls and the page doesn't. A field's hidden label is placed against the page unless the pane holds it, so
   // one below the pane's fold stretched the page: a second scrollbar, which took another 15 px from every row.
   expect(await settings.evaluate(() => document.documentElement.scrollHeight - window.innerHeight), "the page doesn't scroll").toBeLessThanOrEqual(0);
@@ -175,22 +192,24 @@ test("with no agent installed, every row says so, and Claude Code and Codex offe
   const emptyBin = mkdtempSync(path.join(tmpdir(), "avz-e2e-bin-"));
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_EXACT_PATH: "1", PATH: `${emptyBin}:/usr/bin:/bin:/usr/sbin:/sbin` });
   const settings = await openSettings(app, "Agents");
-  const row = (name: string) => settings.getByRole("group", { name, exact: true });
+  const row = (name: string) => settingsRow(settings, name);
   for (const name of ["Claude Code", "Codex", "OpenCode", "Cursor Agent", "Gemini CLI"]) {
-    await expect(row(name).getByText("Not installed", { exact: true })).toBeVisible();
-    await expect(row(name).getByRole("button", { name: /^(Use|Check)/ })).toHaveCount(0); // nothing to use or check
+    await expect(row(name).getByText(/^(Experimental\. )?Not installed$/)).toBeVisible();
+    await expect(row(name).getByRole("button", { name: /^Use/ })).toHaveCount(0); // nothing to use
   }
+  await expect(checkAgents(settings)).toHaveCount(0); // nothing to check
   await expect(row("Claude Code").getByText("Not installed", { exact: true })).toHaveAttribute("data-tone", "danger"); // the agent in use
   await expect(row("Codex").getByText("Not installed", { exact: true })).toHaveAttribute("data-tone", "secondary");
   await expect(row("Claude Code").getByRole("img", { name: "Chosen" })).toBeVisible(); // chosen, installed or not
   await expect(settings.getByRole("img", { name: "Chosen" })).toHaveCount(1);
   await expect(settings.getByText("Best results", { exact: true })).toHaveCount(1);
-  await expect(settings.getByText("Experimental", { exact: true })).toHaveCount(1); // Gemini CLI's description
+  await expect(settings.getByText(/^Experimental\. /)).toHaveCount(1); // Gemini CLI's description
   await snap(settings, "settings-agents-none");
 
   // Only Claude Code and Codex have an install command. Main copies the one it holds for the agent, and the button says so for 2 s.
   await expect(settings.getByRole("button", { name: "Copy install command" })).toHaveCount(2);
   await expect(row("OpenCode").getByRole("button")).toHaveCount(0);
+  await expect(row("OpenCode").getByRole("group")).toHaveCount(0); // nothing to choose or press: no empty group to hear
   await row("Claude Code").getByRole("button", { name: "Copy install command" }).click();
   await expect(row("Claude Code").getByRole("button", { name: "Copied" })).toBeVisible();
   await expect.poll(() => call(app, "copiedForTests")).toEqual(["curl -fsSL https://claude.ai/install.sh | bash"]);
@@ -203,7 +222,7 @@ test("the free checks read launch()'s stand-ins for Claude Code and Codex, and a
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app, "Agents");
   for (const name of ["Claude Code", "Codex"]) {
-    await expect(settings.getByRole("group", { name }).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(settingsRow(settings, name).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 20_000 });
   }
   // Nobody asked for these reads, so VoiceOver isn't told of them: no row's status is a live region.
   await expect(settings.getByRole("status")).toHaveCount(0);
@@ -212,18 +231,18 @@ test("the free checks read launch()'s stand-ins for Claude Code and Codex, and a
   await app.close();
 });
 
-test("a free check that can't read the sign-in leaves the agent unchecked, and Check then asks its one question", async () => {
+test("a free check that can't read the sign-in leaves the agent unchecked, and Check agents then asks its one question", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), PATH: agentPath({ claude: UNREADABLE_CLAUDE }) });
   const settings = await openSettings(app, "Agents");
-  await expect(settings.getByRole("group", { name: "Codex" }).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 20_000 });
-  const claude = settings.getByRole("group", { name: "Claude Code" });
+  await expect(settingsRow(settings, "Codex").getByText("Signed in", { exact: true })).toBeVisible({ timeout: 20_000 });
+  const claude = settingsRow(settings, "Claude Code");
   await expect.poll(() => agentCalls(app), { timeout: 20_000 }).toContain("claude auth status");
   await expect(claude.getByText("Installed", { exact: true })).toBeVisible();
-  await expect(claude.getByRole("button", { name: "Check", exact: true })).toBeVisible();
+  await expect(checkAgents(settings)).toBeVisible();
   expect(await statusOf(app, "claude")).toBeNull();
   expect((await agentCalls(app)).filter((line) => line.startsWith("claude"))).toEqual(["claude auth status"]); // no prompt
-  await claude.getByRole("button", { name: "Check", exact: true }).click();
-  await expect(claude.getByRole("status")).toHaveText(/^Replied in \d+\.\d s$/, { timeout: 20_000 });
+  await checkAgents(settings).click();
+  await expect(claude.getByRole("status")).toHaveText(/^Claude Code.*Replied in \d+\.\d s$/, { timeout: 20_000 });
   expect((await agentCalls(app)).filter((line) => line.startsWith("claude -p"))).toHaveLength(1);
   await app.close();
 });
@@ -233,10 +252,11 @@ test("a free check that can't read the sign-in leaves the agent unchecked, and C
 test("quitting while an agent check hangs stops the agent", async () => {
   const record = recordFile();
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), FAKE_AGENT_RECORD: record, FAKE_AGENT_DELAY_MS: "60000" });
-  const row = await fakeAgentRow(app);
-  const check = row.getByRole("button", { name: "Check", exact: true });
+  const settings = await openSettings(app, "Agents");
+  const row = settingsRow(settings, "fake");
+  const check = checkAgents(settings);
   await check.click();
-  await expect(row.getByRole("status")).toHaveText("Checking…");
+  await expect(row.getByRole("status")).toContainText("Checking…");
   // Busy, not disabled: the button keeps the focus while it checks.
   await expect(check).toHaveAttribute("aria-busy", "true");
   await expect(check).toBeFocused();
@@ -264,8 +284,7 @@ test("a check stopped for quitting leaves no result, and no check starts while A
   saveSettings(library, { ...settings, harnesses: { ...settings.harnesses, other: { ...settings.harnesses.fake!, name: "other" } } });
   const record = recordFile();
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_RECORD: record, FAKE_AGENT_DELAY_MS: "60000" });
-  const row = await fakeAgentRow(app);
-  await row.getByRole("button", { name: "Check", exact: true }).click();
+  await checkAgents(await openSettings(app, "Agents")).click();
   const pid = await firstAgentPid(record);
   await call(app, "stopForQuit"); // what quitting runs while a filing is under way
   await expect.poll(() => alive(pid), { timeout: 5_000 }).toBe(false);
@@ -277,9 +296,8 @@ test("a check stopped for quitting leaves no result, and no check starts while A
   await app.close();
 });
 
-// An error card's "Open Settings" opens the pane where the problem is fixed, not always General. Each pane is a radio on
-// the window's toolbar.
-const paneRadio = (settings: Page, name: string) => settings.getByRole("radio", { name, exact: true });
+// An error card's "Open Settings" opens the pane where the problem is fixed, not always General. Each pane is an item on
+// the window's toolbar, marked as the page in view.
 
 test("Open Settings on a filing with no agent to run opens Settings → Agents", async () => {
   // The library picks its agent by itself, and this Mac has none: exactly the system folders and an empty one are on PATH.
@@ -301,7 +319,7 @@ test("Open Settings on a filing with no agent to run opens Settings → Agents",
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "error", action: "open-settings:agents", actionLabel: "Open Settings" });
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings"); // a new window: it opens on the pane its address names
-  await expect(paneRadio(settings, "Agents")).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
   await app.close();
 });
 
@@ -309,25 +327,25 @@ test("Open Settings moves a Settings window that is open to the pane, and a pane
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   await call(app, "showSettings", "no-such-pane"); // an address that names a pane the page doesn't have
   const settings = await windowFor(app, "settings");
-  await expect(paneRadio(settings, "General")).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
   await call(app, "openSettingsFor", "open-settings:voice");
-  await expect(paneRadio(settings, "Voice")).toHaveAttribute("aria-checked", "true");
-  await expect(paneRadio(settings, "General")).not.toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
+  await expect(toolbarItem(settings, "General")).not.toHaveAttribute("aria-current", "page");
   await call(app, "openSettingsFor", "open-settings:no-such-pane");
-  await expect(paneRadio(settings, "General")).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
   await call(app, "openSettingsFor", "open-settings:privacy");
-  await expect(paneRadio(settings, "Privacy")).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Privacy")).toHaveAttribute("aria-current", "page");
   await call(app, "openSettingsFor", "open-settings:tools"); // a pane Settings had once: its toolbar has no place for it
-  await expect(paneRadio(settings, "General")).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
   await call(app, "openSettingsFor", "open-settings:tasks"); // the scheduled reviews' pane, named Reviews
-  await expect(paneRadio(settings, "Reviews")).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Reviews")).toHaveAttribute("aria-current", "page");
   await call(app, "openSettingsFor", "open-settings"); // an action that names no pane
-  await expect(paneRadio(settings, "General")).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
   // The open window gets settings:show-pane with whatever pane it is asked for; one it doesn't have means General.
   await call(app, "openSettingsFor", "open-settings:privacy");
-  await expect(paneRadio(settings, "Privacy")).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Privacy")).toHaveAttribute("aria-current", "page");
   await call(app, "showSettings", "no-such-pane");
-  await expect(paneRadio(settings, "General")).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
   await expect(settings.getByRole("heading", { name: "General" })).toBeVisible();
   await app.close();
 });
@@ -359,7 +377,7 @@ test("a recording too short to hold speech says nothing was heard or saved, and 
   await expectProblem(capsule, { title: "Nothing was heard.", lines: ["Is the right microphone selected? Nothing was saved."], fix: "Choose microphone" });
   await capsule.getByRole("button", { name: "Choose microphone", exact: true }).click();
   const settings = await windowFor(app, "settings");
-  await expect(paneRadio(settings, "Voice")).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
   await app.close();
 });
 
@@ -419,7 +437,7 @@ test("a microphone that didn't start says why and that nothing was recorded, and
   });
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings");
-  await expect(paneRadio(settings, "Voice")).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
   // The old way out, System Settings, is not what the card opens any more.
   expect(await call(app, "openedForTests")).toEqual([]);
   await app.close();

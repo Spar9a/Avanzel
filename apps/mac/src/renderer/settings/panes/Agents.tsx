@@ -1,8 +1,8 @@
-// Settings → Agents: every agent Avanzel knows, listed as setup lists them, with what its check found. Use makes an agent
-// the one that files and answers, Check asks it again, and an agent this Mac doesn't have offers its install command,
-// where it has one. The last row hands the choice back to Avanzel, and the agent in use names its model. Each control
-// applies at once. The pane needs a library: without one the shell draws NoLibrary in its place.
-import { Button, ChoiceRow, Group, GroupRow, Icon, Stack, Text, TextField } from "@avanzel/ui";
+// Settings → Agents: every agent Avanzel knows, listed as setup lists them, with what its check found under its name. Use makes an
+// agent the one that files and answers, and an agent this Mac doesn't have offers its install command, where it has one. The last row
+// hands the choice back to Avanzel, one Check agents asks all of them again, and the agent in use names its model. Each control applies at
+// once. The pane needs a library: without one the shell draws NoLibrary in its place.
+import { Actions, Button, ChoiceRow, Group, GroupRow, Stack, Text, TextField } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { harnessName } from "../../../main/jobs.ts";
 import { AGENT_INSTALLS, isAgentProblem, type AgentInstall, type HarnessInfo } from "../../../shared/ipc.ts";
@@ -44,53 +44,42 @@ interface AgentRowProps {
   chosen: boolean;
   /** This is the agent that files and answers, which a problem is red for. */
   inUse: boolean;
-  /** Its check has had a result, so its button reads "Check again", also while it is checked again. */
-  checked: boolean;
-  /** The person has pressed its Check, so VoiceOver hears its status as it changes. */
+  /** The person has pressed Check agents, so VoiceOver hears its status as it changes. */
   asked: boolean;
   /** Its install command was copied a moment ago. */
   copied: boolean;
   onUse(): void;
-  onCheck(): void;
   onCopy(agent: AgentInstall): void;
 }
 
 /**
- * One agent's row: its status, "Best results" for Claude Code, Chosen or Use, then Check (installed) or Copy install
- * command (not installed, with a command to give). The controls are one group named for the agent, so VoiceOver says
- * whose Check it is and tests find the row's buttons by it. The library's own agent is Chosen even when it isn't installed,
- * so its "Not installed" shows as its problem.
+ * One agent's row: its status under its name, "Best results" for Claude Code, Chosen or Use, and Copy install command where it isn't
+ * installed and has a command to give. The controls are one group named for the agent, so VoiceOver says whose Use it is and tests find
+ * the row's buttons by it. The library's own agent is Chosen even when it isn't installed, so its "Not installed" shows as its problem.
  */
-function AgentRow({ agent, chosen, inUse, checked, asked, copied, onUse, onCheck, onCopy }: AgentRowProps): ReactNode {
+function AgentRow({ agent, chosen, inUse, asked, copied, onUse, onCopy }: AgentRowProps): ReactNode {
   const { name, available } = agent;
-  const label = harnessName(name);
-  const checking = available && agent.status?.kind === "checking";
-  const checkedBefore = checked || (available && agent.status !== null && !checking);
   const problem = !available || isAgentProblem(agent.status);
   const tone: ProblemTone = inUse && problem ? "danger" : "secondary";
   return (
     <ChoiceRow
-      label={label}
-      description={agent.experimental ? "Experimental" : undefined}
-      lead={
-        // Once the person has pressed Check, VoiceOver hears each change of it as the check runs and ends. The sign-in
-        // reads the pane makes by itself as it opens are news nobody asked for, so until then it says nothing.
-        <span className="settings-status" role={asked ? "status" : undefined}>
-          <Text variant="footnote" tone={tone} as="span">{statusWords(agent, tone)}</Text>
-        </span>
+      label={harnessName(name)}
+      description={
+        <Text variant="footnote" tone={tone} as="span">
+          {agent.experimental && "Experimental. "}
+          {statusWords(agent, tone)}
+        </Text>
       }
+      // Once the person has pressed Check agents, VoiceOver hears each agent by name as its check runs and ends. The sign-in reads the
+      // pane makes by itself as it opens are news nobody asked for, so until then it says nothing.
+      live={asked}
       badge={name === "claude" ? "Best results" : undefined}
       chosen={chosen}
       unavailable={!available}
-      chooseLabel={`Use ${label}`}
+      chooseLabel="Use"
       onChoose={onUse}
     >
-      {available ? (
-        // Busy rather than disabled while it checks, so it keeps the focus.
-        <Button size="small" variant="secondary" busy={checking} onClick={onCheck}>{checkedBefore ? "Check again" : "Check"}</Button>
-      ) : (
-        isInstallable(name) && <Button size="small" variant="secondary" onClick={() => onCopy(name)}>{copied ? "Copied" : "Copy install command"}</Button>
-      )}
+      {!available && isInstallable(name) && <Button size="small" variant="secondary" onClick={() => onCopy(name)}>{copied ? "Copied" : "Copy install command"}</Button>}
     </ChoiceRow>
   );
 }
@@ -138,12 +127,8 @@ function ModelGroup({ agent, models, onChange, attempt }: ModelGroupProps): Reac
 export function Agents(props: PaneProps): ReactNode {
   const { snap, onChange, attempt } = props;
   const lib = snap.library;
-  // Agents whose check has had a result: while one is checked again, its button still reads "Check again".
-  const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
-  const results = snap.harnesses.filter((h) => h.status && h.status.kind !== "checking" && !checked.has(h.name));
-  if (results.length) setChecked(new Set([...checked, ...results.map((h) => h.name)]));
-  // Agents whose Check the person has pressed, the way `checked` keeps those with a result: only their statuses are announced.
-  const [asked, setAsked] = useState<ReadonlySet<string>>(() => new Set());
+  // The person has pressed Check agents: only then are the agents' statuses announced.
+  const [asked, setAsked] = useState(false);
   // The agent whose install command was copied, for COPIED_MS.
   const [copied, setCopied] = useState<AgentInstall | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -158,6 +143,14 @@ export function Agents(props: PaneProps): ReactNode {
   const inUse = lib.harness === "auto" ? snap.selectedHarness : lib.harness;
 
   const use = (harness: string) => attemptChange(props, () => api.setLibrary({ harness }));
+  const installed = snap.harnesses.filter((agent) => agent.available);
+  // Busy for what the person asked. The sign-in reads the pane makes as it opens don't hold the button up: a press meanwhile leaves those to finish and asks the others.
+  const checking = asked && installed.some((agent) => agent.status?.kind === "checking");
+  // Each installed agent, one by one, as a press of it alone was: a check that can't start is told, and the others still run.
+  const checkAll = () => {
+    setAsked(true);
+    for (const agent of installed) void attemptChange(props, () => api.checkAgent(agent.name), agentNotChecked(harnessName(agent.name)));
+  };
   // Main copies the command it holds for the agent named: the page never says what goes on the clipboard.
   const copy = (agent: AgentInstall) => {
     window.avanzel.setup.copy(agent);
@@ -177,27 +170,26 @@ export function Agents(props: PaneProps): ReactNode {
             agent={agent}
             chosen={lib.harness === agent.name}
             inUse={agent.name === inUse}
-            checked={checked.has(agent.name)}
-            asked={asked.has(agent.name)}
+            asked={asked}
             copied={copied === agent.name}
             onUse={() => void use(agent.name)}
-            onCheck={async () => {
-              setAsked((last) => new Set(last).add(agent.name));
-              await attemptChange(props, () => api.checkAgent(agent.name), agentNotChecked(harnessName(agent.name)));
-            }}
             onCopy={copy}
           />
         ))}
-        <GroupRow label="Choose automatically" description="Avanzel uses the best agent installed: Claude Code first.">
-          <div role="group" aria-label="Choose automatically">
-            {lib.harness === "auto" ? (
-              <Icon name="check" label="Chosen" />
-            ) : (
-              <Button size="small" variant="secondary" onClick={() => void use("auto")}>Use automatic</Button>
-            )}
-          </div>
-        </GroupRow>
+        <ChoiceRow
+          label="Choose automatically"
+          description="Avanzel uses the best agent installed: Claude Code first."
+          chosen={lib.harness === "auto"}
+          chooseLabel="Use"
+          onChoose={() => void use("auto")}
+        />
       </Group>
+      {installed.length > 0 && (
+        <Actions>
+          {/* Busy rather than disabled while they check, so it keeps the focus. */}
+          <Button size="small" variant="secondary" busy={checking} onClick={checkAll}>Check agents</Button>
+        </Actions>
+      )}
       {inUse && <ModelGroup key={inUse} agent={inUse} models={lib.models} onChange={onChange} attempt={attempt} />}
     </Stack>
   );

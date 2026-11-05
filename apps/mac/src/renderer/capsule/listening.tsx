@@ -14,7 +14,7 @@ import { ScreenshotCard } from "./screenshot.tsx";
  * (`fileModeLabel`); a screen comment, a dictation and setup's first spoken thought have none to switch (`fileMode` is null), and a panel
  * with nothing to press lets the pointer through to the app below. Above the row, the words as they are said, the newest in view; before
  * there are any, for the first recordings, the keys that finish and give up a recording (owner item 1). A dictation never has those: the
- * owner took out its line on how it ends, as it only took room, and Settings → Voice says. A screen comment's card leaves room for two
+ * owner took out its line on how it ends, as it only took room, and Settings → Dictation says. A screen comment's card leaves room for two
  * lines of words. The time is the recording's own, counted from when it began (`startedAt`), whatever is pressed.
  */
 export function listeningScene(state: StateOf<"listening">, levels: readonly number[]): Scene {
