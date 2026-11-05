@@ -402,10 +402,12 @@ export async function capsuleKind(app: ElectronApplication): Promise<string> {
   return state.kind;
 }
 
+/** Every row of the menu bar menu now, wherever it lives, with what is in a submenu in its place. */
+export const menuRowsOf = (app: ElectronApplication) => call(app, "menuRowsForTests") as Promise<Extract<MenuItemModel, { type: "item" }>[]>;
+
 /** The titles under "Recently filed" in the menu bar menu. */
 export async function recentlyFiled(app: ElectronApplication): Promise<string[]> {
-  const menu = (await call(app, "menuForTests")) as MenuItemModel[];
-  return menu.flatMap((item) => (item.type === "item" && item.action.startsWith("open:") ? [item.label] : []));
+  return (await menuRowsOf(app)).flatMap((item) => (item.action.startsWith("open:") ? [item.label] : []));
 }
 
 export async function windowFor(app: ElectronApplication, name: string): Promise<Page> {

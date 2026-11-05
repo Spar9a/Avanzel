@@ -241,11 +241,13 @@ describe("MenuBar's menu", () => {
     undoableFiling: false,
     showableReceipt: false,
     hasReceipt: false,
-    forgettableDictation: false,
+    recentDictations: [],
+    cursorDictation: null,
   });
-  type Item = { label?: string; sublabel?: string; icon?: { template: boolean; representations: { scaleFactor: number; buffer: Buffer }[] } };
-  /** The items of the menu built last. */
-  const itemsOf = (): Item[] => (electron.menus.at(-1)?.template ?? []) as Item[];
+  type Item = { label?: string; sublabel?: string; submenu?: Item[]; icon?: { template: boolean; representations: { scaleFactor: number; buffer: Buffer }[] } };
+  const withSubmenus = (items: Item[]): Item[] => items.flatMap((item) => [item, ...withSubmenus(item.submenu ?? [])]);
+  /** The items of the menu built last, with what is in a submenu after it. */
+  const itemsOf = (): Item[] => withSubmenus((electron.menus.at(-1)?.template ?? []) as Item[]);
   /** The item whose label is the page's title. */
   const itemFor = (shelf: string) => itemsOf().find((item) => item.label === page(shelf).title);
   const glyphPng = (shelf: string, scale: 1 | 2) => {
@@ -343,11 +345,36 @@ describe("MenuBar's menu", () => {
     expect(itemsOf().some((item) => item.label === "Show the last receipt")).toBe(false);
   });
 
+  it("gives a submenu its rows, each of which asks for its action", () => {
+    const asked: string[] = [];
+    const bar = new MenuBar((action) => asked.push(action));
+    bar.update({ ...menuInput([page("goals")]), recentDictations: [{ id: "a", at: "not a time", text: "Hello there", app: "Mail" }] });
+    const top = electron.menus.at(-1)?.template as (Item & { type?: string })[];
+    const recent = top.find((item) => item.label === "Recent dictations");
+    expect(recent?.submenu?.map((item) => item.label ?? "--")).toEqual(["Hello there", "--", "Forget the last dictation", "Open history…"]);
+    expect(recent?.submenu?.[0]).toMatchObject({ sublabel: "Mail" });
+    (recent?.submenu?.[0] as Item & { click?: () => void }).click?.();
+    expect(asked).toEqual(["copy-dictation:a"]);
+  });
+
+  it("makes Dictate into any app a checkbox with its key in its words, and no other row one", () => {
+    const asked: string[] = [];
+    const bar = new MenuBar((action) => asked.push(action));
+    bar.update({ ...menuInput([page("goals")]), cursorDictation: { enabled: true, key: "Right Option" } });
+    const boxes = itemsOf().filter((item) => (item as { type?: string }).type === "checkbox") as (Item & { checked?: boolean; click?: () => void })[];
+    expect(boxes.map((item) => item.label)).toEqual(["Dictate into any app (Right Option)"]);
+    expect(boxes[0]?.checked).toBe(true);
+    boxes[0]?.click?.();
+    expect(asked).toEqual(["toggle-dictation"]);
+    bar.update({ ...menuInput([page("goals")]), cursorDictation: { enabled: false, key: "Right Option" } });
+    expect(itemsOf().find((item) => item.label === "Dictate into any app (Right Option)")).toMatchObject({ type: "checkbox", checked: false });
+  });
+
   it("passes each item's sublabel on, and sets the menu on the tray once for each update", () => {
     const bar = new MenuBar(() => {});
     const [tray] = electron.trays;
     bar.update({ ...menuInput([page("goals")]), inbox: 1 });
-    expect(itemsOf()[0]).toMatchObject({ label: "3 thoughts filed today.", sublabel: "1 note in the inbox" });
+    expect(itemsOf()[0]).toMatchObject({ label: "3 thoughts filed today", sublabel: "1 in the inbox" });
     expect(itemFor("goals")).toMatchObject({ sublabel: "Goals" });
     expect(tray?.told.filter((told) => told === "setContextMenu")).toHaveLength(1);
     expect(tray?.menu).toBe(electron.menus.at(-1));

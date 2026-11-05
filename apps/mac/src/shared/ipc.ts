@@ -81,6 +81,10 @@ export function dayFileNotUpdated(library: string | null): { title: string; body
 /** `dayFileNotUpdated` for the open library. */
 export const DAY_FILE_NOT_UPDATED = dayFileNotUpdated(null);
 
+/** The Notice or notification for a Copy the clipboard refused: what happened, what is safe, and the one fix. Settings' pane and the menu both tell it. */
+export const DICTATION_NOT_COPIED = "Those words couldn't be copied.";
+export const DICTATION_NOT_COPIED_BODY = "They are still in the history. Try copying them again.";
+
 /**
  * What the pane says under "That dictation couldn't be deleted.": what is safe, and the one fix. Main sends it as a failed Delete's
  * message, and the pane tells it itself when the call can't be made at all, so it is defined once, here. The system's own words are
@@ -160,7 +164,7 @@ export type CapsuleState =
       review: string | null;
       /**
        * The shortcut that finishes this recording, for the card to name while the first recordings teach the keys: Record a
-       * thought's, or Capture screen with a comment's for a screen comment. Set until the controller's `HINT_CAPTURES` recordings
+       * thought's, or Capture screen's for a screen comment. Set until the controller's `HINT_CAPTURES` recordings
        * have been kept, and while that shortcut is registered; null otherwise.
        */
       hint: string | null;

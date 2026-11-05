@@ -7,6 +7,7 @@ import { chmodSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync,
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, localDate, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
+import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { FilingReceipt } from "../src/main/undo-records.ts";
 import {
   agentMode,
@@ -822,18 +823,14 @@ test("quitting on either path stops the count where it was", async () => {
 /** The default evening review's next run as the status line says it: tomorrow once 21:00 has passed today. */
 const eveningWhen = () => (new Date().getHours() >= 21 ? "tomorrow at 21:00" : "at 21:00");
 
-/** The words of the menu's head now. */
+/** The words of the menu's head now: how today went, and what waits under it. */
 const headOf = async (app: ElectronApplication) => {
   const [head] = await menuOf(app);
-  return head?.type === "item" ? head.label : "";
+  return head?.type === "item" ? [head.label, head.sublabel].filter(Boolean).join(" · ") : "";
 };
 
-/** The items right under the Recently filed header, up to the next separator. */
-const recentOf = async (app: ElectronApplication) => {
-  const items = await menuOf(app);
-  const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
-  return items.slice(at + 1, items.findIndex((item, i) => i > at && item.type === "separator"));
-};
+/** What is in the Recently filed submenu. */
+const recentOf = async (app: ElectronApplication) => ((await call(app, "menuForTests")) as MenuItemModel[]).flatMap((item) => (item.type === "submenu" && item.label === "Recently filed" ? item.items : []));
 
 /** A library whose log says three thoughts were filed today, each into a page on its own shelf, the last off the shelves, and one yesterday. */
 async function shelved(): Promise<string> {
@@ -855,29 +852,30 @@ test("the status line counts today's filings", async () => {
   vault.appendLog("ask", "what did I file → [[old-page]]");
   const { app } = await hearing({}, library);
   // Nothing waits in the inbox, so the head's words don't mention it, and the click opens the library instead.
-  expect(await menuOf(app)).toContainEqual({ type: "item", label: `Nothing filed today. Evening review ${eveningWhen()}.`, action: "open-library" });
+  expect(await menuOf(app)).toContainEqual({ type: "item", label: "Nothing filed today", action: "open-library", sublabel: `Evening review ${eveningWhen()}` });
   // A fake filing: the count goes up, and the evening review's time is said as the clock says it.
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
-  expect(await headOf(app)).toBe(`1 thought filed today. Evening review ${eveningWhen()}.`);
+  expect(await headOf(app)).toBe(`1 thought filed today · Evening review ${eveningWhen()}`);
   await dictate(app);
-  await expect.poll(() => headOf(app), { timeout: 30_000 }).toBe(`2 thoughts filed today. Evening review ${eveningWhen()}.`);
+  await expect.poll(() => headOf(app), { timeout: 30_000 }).toBe(`2 thoughts filed today · Evening review ${eveningWhen()}`);
   // The menu the tray holds says the same, with the notes in the inbox under it (none: both are filed).
   const [held] = await heldMenu(app);
-  expect(held).toEqual({ label: `2 thoughts filed today. Evening review ${eveningWhen()}.`, sublabel: "", icon: null });
+  expect(held).toEqual({ label: "2 thoughts filed today", sublabel: `Evening review ${eveningWhen()}`, icon: null });
   await app.close();
 });
 
 test("the head opens the inbox while a note waits in it and its words say so, and the library when none does", async () => {
   const { app } = await withNote("12");
   // A note waits: the second line names the inbox, and the click opens the inbox.
-  expect((await menuOf(app))[0]).toMatchObject({ type: "item", action: "open-inbox", sublabel: "1 note in the inbox" });
-  expect((await heldMenu(app))[0]).toMatchObject({ sublabel: "1 note in the inbox" });
+  expect((await menuOf(app))[0]).toMatchObject({ type: "item", action: "open-inbox", sublabel: `1 in the inbox · Evening review ${eveningWhen()}` });
+  expect((await heldMenu(app))[0]).toMatchObject({ sublabel: `1 in the inbox · Evening review ${eveningWhen()}` });
   // The review files it: the second line goes with the note, and the click goes to the library, where the page is.
   await reviewed(app);
   await expect.poll(async () => (await menuOf(app))[0], { timeout: 10_000 }).toMatchObject({ type: "item", action: "open-library" });
-  expect((await menuOf(app))[0]).not.toHaveProperty("sublabel");
-  expect((await heldMenu(app))[0]).toMatchObject({ sublabel: "" });
+  // What is under it no longer names the inbox.
+  expect((await menuOf(app))[0]).toMatchObject({ sublabel: `Evening review ${eveningWhen()}` });
+  expect((await heldMenu(app))[0]).toMatchObject({ sublabel: `Evening review ${eveningWhen()}` });
   await app.close();
 });
 
@@ -886,10 +884,10 @@ test("Undo takes a filing off the count", async () => {
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
   await dictate(app);
-  await expect.poll(() => headOf(app), { timeout: 30_000 }).toBe(`2 thoughts filed today. Evening review ${eveningWhen()}.`);
+  await expect.poll(() => headOf(app), { timeout: 30_000 }).toBe(`2 thoughts filed today · Evening review ${eveningWhen()}`);
   await call(app, "undo");
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");
-  await expect.poll(() => headOf(app), { timeout: 30_000 }).toBe(`1 thought filed today. Evening review ${eveningWhen()}.`);
+  await expect.poll(() => headOf(app), { timeout: 30_000 }).toBe(`1 thought filed today · 1 in the inbox · Evening review ${eveningWhen()}`);
   await app.close();
 });
 
@@ -897,11 +895,11 @@ test("the status line names the evening review by its own name, and leaves it ou
   const { app } = await hearing();
   const saved = (name: string, enabled: boolean) =>
     call(app, "saveTaskFromSettings", { id: "evening-review", name, schedule: "daily 21:00", agent: "auto", enabled, instructions: "Sort the inbox." });
-  expect(await headOf(app)).toBe(`Nothing filed today. Evening review ${eveningWhen()}.`);
+  expect(await headOf(app)).toBe(`Nothing filed today · Evening review ${eveningWhen()}`);
   await saved("Nightly sweep", true);
-  await expect.poll(() => headOf(app)).toBe(`Nothing filed today. Nightly sweep ${eveningWhen()}.`);
+  await expect.poll(() => headOf(app)).toBe(`Nothing filed today · Nightly sweep ${eveningWhen()}`);
   await saved("Nightly sweep", false);
-  await expect.poll(() => headOf(app)).toBe("Nothing filed today.");
+  await expect.poll(() => headOf(app)).toBe("Nothing filed today");
   expect(JSON.stringify(await menuOf(app))).not.toMatch(/letter/i); // there is no letter yet
   await app.close();
 });
@@ -909,7 +907,7 @@ test("the status line names the evening review by its own name, and leaves it ou
 test("Recently filed shows each page's shelf", async () => {
   const { app } = await hearing({}, await shelved());
   // Read from the log as the library opened: three thoughts today (yesterday's is not counted).
-  expect(await headOf(app)).toBe(`3 thoughts filed today. Evening review ${eveningWhen()}.`);
+  expect(await headOf(app)).toBe(`3 thoughts filed today · Evening review ${eveningWhen()}`);
   // The shelf's name as the design system names it, or the folder's name for a page the person put elsewhere.
   expect(await recentOf(app)).toEqual([
     { type: "item", label: "Trip to Lisbon", action: "open:projects/trip.md", shelf: "projects", sublabel: "projects" },
@@ -919,28 +917,29 @@ test("Recently filed shows each page's shelf", async () => {
   // A fake filing: its page comes first, on the ideas shelf, and the count goes on from the log.
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
-  // The section ends with the receipt of that filing, which can be shown again: a library without git has one all the same.
+  // The submenu ends with the receipt of that filing, which can be shown again: a library without git has one all the same.
   expect(await recentOf(app)).toMatchObject([
     { label: "Plant tulips in October", shelf: "ideas", sublabel: "Ideas" },
     { label: "Trip to Lisbon", sublabel: "projects" },
     { label: "Maya", sublabel: "People" },
+    { type: "separator" },
     { label: "Show the last receipt", action: "show-receipt" },
   ]);
-  expect(await headOf(app)).toBe(`4 thoughts filed today. Evening review ${eveningWhen()}.`);
+  expect(await headOf(app)).toBe(`4 thoughts filed today · Evening review ${eveningWhen()}`);
   await app.close();
 });
 
 test("a library that opens brings the count of its own log, and its own pages", async () => {
   const { app } = await hearing(); // an empty library to begin with
-  expect(await headOf(app)).toBe(`Nothing filed today. Evening review ${eveningWhen()}.`);
+  expect(await headOf(app)).toBe(`Nothing filed today · Evening review ${eveningWhen()}`);
   await call(app, "createLibrary", await shelved()); // opens at once: no minute has come round to count it
-  expect(await headOf(app)).toBe(`3 thoughts filed today. Evening review ${eveningWhen()}.`);
+  expect(await headOf(app)).toBe(`3 thoughts filed today · Evening review ${eveningWhen()}`);
   expect((await recentOf(app)).map((item) => item.type === "item" && [item.label, item.sublabel])).toEqual([
     ["Trip to Lisbon", "projects"],
     ["Maya", "People"],
     ["Finish the prototype", "Goals"],
   ]);
-  expect((await heldMenu(app))[0]).toMatchObject({ label: `3 thoughts filed today. Evening review ${eveningWhen()}.` });
+  expect((await heldMenu(app))[0]).toMatchObject({ label: "3 thoughts filed today", sublabel: `Evening review ${eveningWhen()}` });
   await app.close();
 });
 
@@ -1001,7 +1000,7 @@ test("a failed speech-model download is named in the menu", async () => {
   });
   expect(after).toEqual({ type: "separator" });
   // The menu the tray holds has it right after the head.
-  expect((await heldMenu(app)).slice(0, 2).map((item) => item.label)).toEqual([await headOf(app), "The speech model didn't finish downloading."]);
+  expect((await heldMenu(app)).slice(0, 2).map((item) => item.label)).toEqual(["Nothing filed today", "The speech model didn't finish downloading."]);
   // Its action is the capsule card's own path: Settings opens on Voice, which tells it in the same words.
   await call(app, "menuAction", "open-settings:voice");
   const settings = await windowFor(app, "settings");
@@ -1061,17 +1060,17 @@ test("the count is read from the log once, and again when the day turns", async 
   const kept = (day: string, count: number) =>
     app.evaluate((_electron, cache) => void ((globalThis as unknown as { __avanzel: { filed: unknown } }).__avanzel.filed = cache), { day, count });
   const when = eveningWhen();
-  expect(await headOf(app)).toBe(`Nothing filed today. Evening review ${when}.`);
+  expect(await headOf(app)).toBe(`Nothing filed today · Evening review ${when}`);
   // The menu is built from what was counted, not from the log, at every rebuild and every tick: a count planted for today stands.
   await kept(localDate(new Date()), 7);
   await call(app, "refreshMenu");
   await call(app, "tick");
-  expect(await headOf(app)).toBe(`7 thoughts filed today. Evening review ${when}.`);
-  expect((await heldMenu(app))[0]).toMatchObject({ label: `7 thoughts filed today. Evening review ${when}.` });
+  expect(await headOf(app)).toBe(`7 thoughts filed today · Evening review ${when}`);
+  expect((await heldMenu(app))[0]).toMatchObject({ label: "7 thoughts filed today", sublabel: `Evening review ${when}` });
   // A count for a day that has passed is read again, from the log, by the next tick: nothing was filed today.
   await kept("2000-01-01", 7);
   await call(app, "tick");
-  expect(await headOf(app)).toBe(`Nothing filed today. Evening review ${when}.`);
+  expect(await headOf(app)).toBe(`Nothing filed today · Evening review ${when}`);
   await app.close();
 });
 
@@ -1156,7 +1155,7 @@ test("Undo from the menu takes the last filing back and says so once", async () 
   // The menu offers it, in the model and in the menu the tray holds, with the filing counted.
   expect(await undoItem(app)).toEqual(UNDO_ITEM);
   expect(await trayOffersUndo(app)).toBe(true);
-  expect(await headOf(app)).toBe(`1 thought filed today. Evening review ${eveningWhen()}.`);
+  expect(await headOf(app)).toBe(`1 thought filed today · Evening review ${eveningWhen()}`);
   await call(app, "dismiss"); // the card is hidden: the menu is all that offers Undo now
   expect(await capsuleKind(app)).toBe("hidden");
   await pressUndo(app);
@@ -1167,8 +1166,8 @@ test("Undo from the menu takes the last filing back and says so once", async () 
   // One notification says so, and nothing else was said.
   expect(await said(app)).toEqual([{ title: "Undone", body: UNDONE_NOTE }]);
   // The status line has nothing filed, and the item is gone, in the model and in the menu the tray holds.
-  expect(await headOf(app)).toBe(`Nothing filed today. Evening review ${eveningWhen()}.`);
-  expect((await heldMenu(app))[0]).toMatchObject({ label: `Nothing filed today. Evening review ${eveningWhen()}.` });
+  expect(await headOf(app)).toBe(`Nothing filed today · 1 in the inbox · Evening review ${eveningWhen()}`);
+  expect((await heldMenu(app))[0]).toMatchObject({ label: "Nothing filed today", sublabel: `1 in the inbox · Evening review ${eveningWhen()}` });
   expect(await undoItem(app)).toBeUndefined();
   expect(await trayOffersUndo(app)).toBe(false);
   // A second press takes nothing back: the filing was taken back once, and nobody is told again.
@@ -1191,7 +1190,7 @@ test("Undo from the menu turns the showing filed card to Undone", async () => {
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(inbox(library)).toHaveLength(1);
   expect(await undoItem(app)).toBeUndefined();
-  expect(await headOf(app)).toBe(`Nothing filed today. Evening review ${eveningWhen()}.`);
+  expect(await headOf(app)).toBe(`Nothing filed today · 1 in the inbox · Evening review ${eveningWhen()}`);
   await app.close();
 });
 
@@ -1236,7 +1235,7 @@ for (const showing of [true, false]) {
     // The filing stands: its page is where the agent wrote it, and the menu still counts it.
     expect(filesUnder(library, "ideas")).toHaveLength(1);
     expect(inbox(library)).toEqual([]);
-    expect(await headOf(app)).toBe(`1 thought filed today. Evening review ${eveningWhen()}.`);
+    expect(await headOf(app)).toBe(`1 thought filed today · Evening review ${eveningWhen()}`);
     // It was asked of the library once, and the menu doesn't offer it again.
     expect(await undoCalls(app)).toBe(1);
     expect(await undoItem(app)).toBeUndefined();
@@ -1279,7 +1278,7 @@ test("an Undo from the card that lands under a newer card is told by notificatio
   expect(await said(app)).toEqual([{ title: "Undone", body: UNDONE_NOTE, silent: true }]);
   expect(await capsuleKind(app)).toBe("listening");
   // A notification was all that answered, and the menu the tray holds counts what is left all the same.
-  expect((await heldMenu(app))[0]).toMatchObject({ label: `Nothing filed today. Evening review ${eveningWhen()}.` });
+  expect((await heldMenu(app))[0]).toMatchObject({ label: "Nothing filed today", sublabel: `1 in the inbox · Evening review ${eveningWhen()}` });
   await call(app, "cancelRecording");
   await app.close();
 });
@@ -1323,7 +1322,7 @@ test("Undo from the menu follows the last filing: a note filed in the background
   expect(await notified(app, "Undone")).toEqual([{ title: "Undone", body: UNDONE_NOTE }]);
   expect(await undoItem(app)).toBeUndefined();
   expect(await receiptItem(app), "its receipt went with the take-back of its filing").toBeUndefined();
-  expect(await headOf(app)).toBe(`1 thought filed today. Evening review ${eveningWhen()}.`);
+  expect(await headOf(app)).toBe(`1 thought filed today · 1 in the inbox · Evening review ${eveningWhen()}`);
   await app.close();
 });
 
@@ -2220,8 +2219,8 @@ for (const showing of [true, false]) {
     expect(filesUnder(library, "ideas")).toHaveLength(1);
     // The run stopped before it counted its filing, and the take-back that was refused leaves it in the log: the menu reads it again,
     // and the menu the tray holds is built again for it, though a notification builds nothing.
-    expect(await headOf(app)).toBe(`1 thought filed today. Evening review ${eveningWhen()}.`);
-    expect((await heldMenu(app))[0]).toMatchObject({ label: `1 thought filed today. Evening review ${eveningWhen()}.` });
+    expect(await headOf(app)).toBe(`1 thought filed today · Evening review ${eveningWhen()}`);
+    expect((await heldMenu(app))[0]).toMatchObject({ label: "1 thought filed today", sublabel: `Evening review ${eveningWhen()}` });
     expect((await recentOf(app)).map((item) => item.type === "item" && item.label)).toEqual(["Plant tulips in October"]);
     // A filing Stop stopped is none to undo from the menu.
     expect(await undoItem(app)).toBeUndefined();
@@ -2834,12 +2833,14 @@ async function watchReview(app: ElectronApplication): Promise<void> {
   await call(app, "capsuleStateForTests");
   await app.evaluate(() => {
     type Item = { type: string; action?: string; detail?: string };
-    type Bar = { menu: { items: { label: string }[] } | null; update(input: unknown, now?: Date): void };
-    const controller = (globalThis as unknown as { __avanzel: { menuForTests(): Item[]; menuBar: Bar } }).__avanzel;
+    type Held = { label: string; submenu?: { items: Held[] } | null };
+    type Bar = { menu: { items: Held[] } | null; update(input: unknown, now?: Date): void };
+    const controller = (globalThis as unknown as { __avanzel: { menuRowsForTests(): Item[]; menuBar: Bar } }).__avanzel;
     const seen: ReviewSaid[] = [];
     const note = () => {
-      const item = controller.menuForTests().find((candidate) => candidate.type === "item" && candidate.action === "task:evening-review");
-      seen.push({ detail: item?.detail, held: controller.menuBar.menu?.items.find((held) => /^Evening review( \(|$)/.test(held.label))?.label });
+      const item = controller.menuRowsForTests().find((candidate) => candidate.action === "task:evening-review");
+      const reviews = controller.menuBar.menu?.items.find((held) => held.label === "Scheduled reviews")?.submenu?.items ?? [];
+      seen.push({ detail: item?.detail, held: reviews.find((held) => /^Evening review( \(|$)/.test(held.label))?.label });
     };
     Object.assign(globalThis, { reviewSeen: seen });
     note();

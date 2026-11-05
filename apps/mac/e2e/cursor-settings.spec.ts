@@ -1,12 +1,13 @@
 // Settings → Dictation: the switch, the key, and the line that says which permission is missing, and Settings → Privacy, which lists
 // them all. The Mac's side (the permissions) is the fake cursor helper (AVANZEL_FAKE_CURSOR), whose script says what macOS has granted.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CursorHelper } from "../src/main/cursor-helper.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { answerMenus, call, launch, makeLibrary, openSettings, shownMenus, toolbarItem } from "./helpers.ts";
+import { notified } from "./capsule-helpers.ts";
+import { answerMenus, call, launch, makeLibrary, openSettings, shown, shownMenus, toolbarItem, windowFor } from "./helpers.ts";
 
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
 
@@ -155,6 +156,63 @@ test("with both missing the pane says both in one sentence, turning dictating on
   // Input Monitoring is asked for first: the key can't be seen without it.
   await group(settings).getByRole("button", { name: "Open System Settings" }).click();
   await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Input Monitoring"]);
+  await app.close();
+});
+
+/** The menu the tray holds, its Dictate into any app row as macOS was given it: its words, and whether it has a check. */
+const toggleRow = (app: ElectronApplication) =>
+  app.evaluate(() => {
+    type Item = { label: string; type: string; checked: boolean };
+    const bar = (globalThis as unknown as { __avanzel: { menuBar: { menu: { items: Item[] } | null } } }).__avanzel.menuBar;
+    const row = bar.menu?.items.find((item) => item.label.startsWith("Dictate into any app"));
+    return row ? { label: row.label, type: row.type, checked: row.checked } : null;
+  });
+
+test("the menu's row turns dictating on and off with a check, names the key, and leaves Settings shut when nothing is missing", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: true }) });
+  await call(app, "snapshot"); // it has started
+  expect(await toggleRow(app)).toEqual({ label: "Dictate into any app (Right Option)", type: "checkbox", checked: false });
+  await call(app, "menuAction", "toggle-dictation");
+  await expect.poll(async () => (await snapshot(app)).app.cursorDictation.enabled).toBe(true);
+  await expect.poll(() => toggleRow(app)).toMatchObject({ checked: true });
+  await call(app, "menuAction", "toggle-dictation");
+  await expect.poll(async () => (await snapshot(app)).app.cursorDictation.enabled).toBe(false);
+  await expect.poll(() => toggleRow(app)).toMatchObject({ checked: false });
+  expect(await shown(app, "settings")).toBe(false);
+  // Another key, chosen in Settings: the row says so.
+  await call(app, "setCursorDictation", { key: "left-option" });
+  await expect.poll(() => toggleRow(app)).toMatchObject({ label: "Dictate into any app (Left Option)" });
+  await app.close();
+});
+
+test("turned on from the menu with a permission missing, Settings opens on Dictation, which says which; turned off, it doesn't", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: false, inputMonitoring: true }) });
+  await call(app, "snapshot");
+  await call(app, "menuAction", "toggle-dictation");
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("heading", { name: "Dictation", exact: true })).toBeVisible();
+  await expect(group(settings).getByText("Avanzel needs Accessibility to paste for you.", { exact: true })).toBeVisible();
+  expect((await snapshot(app)).app.cursorDictation.enabled).toBe(true);
+  const closed = settings.waitForEvent("close");
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes("/renderer/settings/"))?.close());
+  await closed;
+  await call(app, "menuAction", "toggle-dictation");
+  await expect.poll(async () => (await snapshot(app)).app.cursorDictation.enabled).toBe(false);
+  expect(await shown(app, "settings")).toBe(false);
+  await app.close();
+});
+
+test("a setting the disk won't take is said in a notification, and the menu's row goes back to what is", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData, AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: true }) });
+  await call(app, "snapshot");
+  mkdirSync(path.join(userData, "settings.json.tmp")); // the app can't write its settings when a folder stands where the temporary file it writes first would go
+  await call(app, "menuAction", "toggle-dictation");
+  await expect
+    .poll(() => notified(app, "That change wasn't saved."))
+    .toEqual([{ title: "That change wasn't saved.", body: "Dictating into any app stays as it was." }]);
+  expect((await snapshot(app)).app.cursorDictation.enabled).toBe(false);
+  expect(await toggleRow(app)).toMatchObject({ checked: false });
   await app.close();
 });
 

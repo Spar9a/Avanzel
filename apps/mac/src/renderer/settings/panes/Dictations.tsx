@@ -2,8 +2,8 @@
 // its fix while macOS lacks a permission (Privacy lists them all). Then what was dictated, newest first, each on a card with the app it
 // went to, when, the words (a preview of a long text) and Copy and Delete: words that are kept go on paper. The history is the app's own,
 // not the library's, so the pane works with no library open and is never behind NoLibrary. It lists the history again when main says it
-// changed (a dictation ended, or one was forgotten from the menu). Once a dictation has ended its words are shown here and nowhere else, and
-// they are never logged.
+// changed (a dictation ended, or one was forgotten from the menu). Once a dictation has ended its words are shown here and in the menu's Recent
+// dictations, and they are never logged.
 import { Actions, Button, Card, Group, GroupRow, Notice, Stack, Switch, Text } from "@avanzel/ui";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { DICTATION_PAGE, type CursorKey, type DictationRow } from "../../../shared/ipc.ts";

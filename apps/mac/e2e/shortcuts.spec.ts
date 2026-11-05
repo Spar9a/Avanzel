@@ -63,7 +63,7 @@ test("the picked shortcut's bar is a piece of the stack: as wide as the others, 
   const PICKED_MS = 3_000; // the bar's own time: the pointer must be on it before its first look, which leaves room under load
   // The longest name an action has, with the longest shortcut: nothing of the line is cut off.
   await call(app, "setCapsule", { kind: "shortcut-picked", key: "capture", accelerator: "Control+Alt+Shift+Command+Space" }, PICKED_MS);
-  const line = bar.getByText("Capture screen with a comment now uses ⌃⌥⇧⌘Space", { exact: true });
+  const line = bar.getByText("Capture screen now uses ⌃⌥⇧⌘Space", { exact: true });
   await expect(line).toBeVisible();
   expect(await line.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
   expect((await bar.boundingBox())!.width).toBeCloseTo(420, 0); // as wide as the other bars of the stack
@@ -194,7 +194,7 @@ test("Settings → General offers the free ones under the taken shortcut's probl
 /**
  * Settings → General of a library whose speech model fails to download at once (an empty cache, so that this Mac's own copy
  * stays out of it, and launch()'s dead port), with the `taken` shortcuts held by other apps. Its Notices come in the
- * menu's order: Record a thought's, then Capture screen with a comment's. The speech model's is on Voice.
+ * menu's order: Record a thought's, then Capture screen's. The speech model's is on Voice.
  */
 async function generalWithProblems(taken: string): Promise<{ app: ElectronApplication; settings: Page }> {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_TAKEN_SHORTCUTS: taken, HF_HUB_CACHE: emptyHfCache() });
@@ -212,7 +212,7 @@ const tryAgain = (settings: Page) =>
 const TAKEN_TITLES = [/^⌥Space is used by another app.* Pick another shortcut\.$/, /^⌥⇧S is used by another app.* Pick another shortcut\.$/];
 
 test("with more than one shortcut problem, the best free shortcut of the first Notice is the pane's only primary", async () => {
-  // Record a thought and Capture screen with a comment are both taken, and each has two free shortcuts to offer.
+  // Record a thought and Capture screen are both taken, and each has two free shortcuts to offer.
   const { app, settings } = await generalWithProblems("Alt+Space,Alt+Shift+S");
   await expect(settings.getByRole("button", { name: /^Use / })).toHaveText(["Use ⌃⌥R", "Use ⌃⇧Space", "Use ⌃⌥C", "Use ⌃⌥S"]);
   await expect(settings.getByRole("button", { name: "Use ⌃⇧Space" })).toHaveAttribute("data-variant", "primary");

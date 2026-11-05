@@ -17,7 +17,6 @@ import {
   openSettings,
   read,
   settingsRow,
-  shown,
   shownMenus,
   snap,
   stopFittingSettings,
@@ -144,24 +143,25 @@ test("Settings grows for what opens in a pane and for a Notice over it, and goes
 test("Settings opens on the pane it showed last, unless it is asked for another", async () => {
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
   const env = { AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData };
-  const closeSettings = (app: ElectronApplication) =>
-    app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes("/renderer/settings/"))?.close());
+  const closeSettings = async (app: ElectronApplication, page: Page) => {
+    const closed = page.waitForEvent("close");
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes("/renderer/settings/"))?.close());
+    await closed;
+  };
   const app = await launch(env);
   await call(app, "showSettings"); // never opened before: General
   let settings = await windowFor(app, "settings");
   await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
   await toolbarItem(settings, "Agents").click();
   await expect(settings.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
-  await closeSettings(app);
-  await expect.poll(() => shown(app, "settings")).toBe(false);
+  await closeSettings(app, settings);
 
   // Opened as the menu opens it: where it was.
   await call(app, "showSettings");
   settings = await windowFor(app, "settings");
   await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
   await expect.poll(async () => (await settingsWindow(app)).title).toBe("Agents");
-  await closeSettings(app);
-  await expect.poll(() => shown(app, "settings")).toBe(false);
+  await closeSettings(app, settings);
 
   // A card asks for the pane its fix is on: that one, and it is what is shown last from then on.
   await call(app, "openSettingsFor", "open-settings:privacy");
@@ -232,7 +232,7 @@ test("the Reviews pane names the evening review's Undo as the menu bar menu does
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app, "Reviews");
   const evening = settings.getByRole("group", { name: "Evening review", exact: true });
-  await expect(evening.getByText("Undo the last evening review, in the menu bar menu, takes back its last run.", { exact: true })).toBeVisible();
+  await expect(evening.getByText("Undo the last evening review, under Scheduled reviews in the menu bar menu, takes back its last run.", { exact: true })).toBeVisible();
   await app.close();
 });
 

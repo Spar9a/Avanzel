@@ -68,7 +68,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { DAY_FILE_NOT_UPDATED, isSettingsPane, noSuchReview, type DeleteDictationResult, type DictationList } from "../shared/ipc.ts";
+import { DAY_FILE_NOT_UPDATED, DICTATION_NOT_COPIED, DICTATION_NOT_COPIED_BODY, isSettingsPane, noSuchReview, type DeleteDictationResult, type DictationList } from "../shared/ipc.ts";
 import {
   ANOTHER_LIBRARY,
   avanzelFailure,
@@ -100,6 +100,7 @@ import {
   type PartialEdits,
   type Problem,
 } from "../shared/problems.ts";
+import { cursorKeyName } from "../shared/transcribing.ts";
 import type {
   AgentStatus,
   AppSettings,
@@ -154,7 +155,7 @@ import {
 } from "./library-info.ts";
 import { forgetKept, logDictation } from "./library-log.ts";
 import { LiveWords } from "./live-words.ts";
-import { buildMenuModel, reviewProgress, speechProblemOf, type MenuInput, type MenuItemModel } from "./menu-model.ts";
+import { buildMenuModel, MENU_DICTATIONS, menuRows, reviewProgress, speechProblemOf, type MenuDictation, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
 import { pickRequest, popupChoice, trayChoice } from "./popup.ts";
@@ -433,10 +434,10 @@ export class Controller {
   /** The history of dictations, in the app's own data (`<userData>/dictations.jsonl`), never in the library. */
   private readonly dictations: DictationHistory;
   /**
-   * Whether the history holds a dictation, for the menu, which is built often: null until it is asked, and again after every change to
+   * The newest dictations of the history, for the menu, which is built often: null until it is asked, and again after every change to
    * the history (`dictationsChanged`), so that the file is not read at each build.
    */
-  private hasDictation: boolean | null = null;
+  private menuDictations: MenuDictation[] | null = null;
   /**
    * Called with the entry that "Forget the last dictation" or a pane's Delete has just taken out of the history (`forgetDictation`).
    * It exists so that whatever else keeps a copy of a dictation can drop it too: the open library's day file (`forgetFromLibrary`).
@@ -931,7 +932,10 @@ export class Controller {
       this.rereadVoiceSettings();
       return this.showSettings("voice");
     }
+    if (action === "open-settings:dictations") return this.showSettings("dictations");
     if (action === "forget-dictation") return this.forgetLastDictation();
+    if (action === "toggle-dictation") return this.toggleDictationFromMenu();
+    if (action.startsWith("copy-dictation:")) return this.copyDictationFromMenu(action.slice("copy-dictation:".length));
     if (action === "show-receipt") return this.showLastReceipt();
     if (action === "undo-filing") return this.undoLastFiling();
     if (action === "undo-review") return void this.undoEveningReview();
@@ -976,7 +980,8 @@ export class Controller {
       undoableFiling: this.undoableFiling(),
       showableReceipt: this.receiptShowable(),
       hasReceipt: this.lastReceipt !== null && this.undoChecked(),
-      forgettableDictation: (this.hasDictation ??= this.dictations.last() !== null),
+      recentDictations: (this.menuDictations ??= this.dictations.list().slice(0, MENU_DICTATIONS)),
+      cursorDictation: CursorHelper.available() ? { enabled: this.store.get().cursorDictation.enabled, key: cursorKeyName(this.store.get().cursorDictation.key) } : null,
     };
   }
 
@@ -1613,7 +1618,7 @@ export class Controller {
 
   /**
    * The shortcut that finishes a recording in `mode`, for the listening card to name while the first recordings teach the keys:
-   * Record a thought's, or Capture screen with a comment's for a screen comment. Null once HINT_CAPTURES recordings have been kept
+   * Record a thought's, or Capture screen's for a screen comment. Null once HINT_CAPTURES recordings have been kept
    * (`captureCount`), and while that shortcut isn't registered (`shortcutProblems` names it: another app holds it, or it can't
    * work): there is no key to name then.
    */
@@ -2140,6 +2145,31 @@ export class Controller {
     return deleteDictationResult(() => this.forgetDictation(id));
   }
 
+  /** A dictation's row in the menu: its whole words go on the clipboard, and macOS's closing menu is all that says so. A clipboard that refuses says so in a notification. */
+  private async copyDictationFromMenu(id: string): Promise<void> {
+    if (!(await this.copyDictation(id))) this.notify(DICTATION_NOT_COPIED, DICTATION_NOT_COPIED_BODY);
+  }
+
+  /**
+   * "Dictate into any app", in the menu: on or off. A setting the disk won't take is said in a notification, and the menu goes back to what is,
+   * since macOS has ticked its row already. Turned on while macOS lacks a permission it would do nothing, with nothing in the menu to say why, so
+   * Settings opens on Dictation, which says which and has the button that asks.
+   */
+  private async toggleDictationFromMenu(): Promise<void> {
+    const on = !this.store.get().cursorDictation.enabled;
+    try {
+      await this.setCursorDictation({ enabled: on });
+    } catch (error) {
+      console.error("dictate into any app", error);
+      this.refreshMenu();
+      this.notify("That change wasn't saved.", "Dictating into any app stays as it was.");
+      return;
+    }
+    if (!on) return;
+    const state = await this.cursorPermissions();
+    if (state.available && (!state.accessibility || !state.inputMonitoring)) this.showSettings("dictations");
+  }
+
   /**
    * "Forget the last dictation", in the menu: the newest dictation goes. A history that can't be rewritten says so in a notification;
    * a day file that couldn't be updated is told on the capsule's card, as the person must act on it.
@@ -2163,11 +2193,11 @@ export class Controller {
   }
 
   /**
-   * The history changed, by a dictation that ended or by one forgotten: the menu is built again, with or without "Forget the last
-   * dictation", and an open Settings is told, so that its Dictation pane lists the history again.
+   * The history changed, by a dictation that ended or by one forgotten: the menu is built again, with what it now lists under Recent
+   * dictations, and an open Settings is told, so that its Dictation pane lists the history again.
    */
   private dictationsChanged(): void {
-    this.hasDictation = null;
+    this.menuDictations = null;
     this.refreshMenu();
     const win = this.settingsWindow;
     if (win && !win.isDestroyed()) win.webContents.send("settings:dictations-changed");
@@ -5168,6 +5198,11 @@ export class Controller {
 
   menuForTests(): MenuItemModel[] {
     return buildMenuModel(this.menuInput(), new Date());
+  }
+
+  /** Every row of the menu, wherever it lives: what tests look for a row in. */
+  menuRowsForTests(): ReturnType<typeof menuRows> {
+    return menuRows(this.menuForTests());
   }
 
   /**

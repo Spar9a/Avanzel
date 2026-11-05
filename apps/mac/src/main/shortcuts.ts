@@ -14,7 +14,7 @@ export interface ShortcutApi {
  */
 export const ACTION_NAMES: Readonly<Record<keyof Shortcuts, string>> = {
   dictate: "Record a thought",
-  capture: "Capture screen with a comment",
+  capture: "Capture screen",
   type: "Type a thought",
   ask: "Ask your library",
   undo: "Undo the last filing",

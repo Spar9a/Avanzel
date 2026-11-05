@@ -8,8 +8,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { DictationEntry } from "../src/main/dictation-history.ts";
 import type { Target } from "../src/main/cursor-helper.ts";
-import { menuOf } from "./capsule-helpers.ts";
-import { call, firstRun, launch, makeLibrary, openSettings, snap, speechWav, windowFor } from "./helpers.ts";
+import type { MenuItemModel } from "../src/main/menu-model.ts";
+import { heldMenu, notified } from "./capsule-helpers.ts";
+import { call, firstRun, launch, makeLibrary, menuRowsOf, openSettings, snap, speechWav, windowFor } from "./helpers.ts";
 
 const WORDS = "hello Kowalczyk";
 
@@ -46,7 +47,7 @@ async function launchOn(userData: string, env: Record<string, string> = {}): Pro
 
 const cards = (settings: Page) => settings.getByRole("article");
 const clipboardText = (app: ElectronApplication) => app.evaluate(({ clipboard }) => clipboard.readText());
-const forgetItem = async (app: ElectronApplication) => (await menuOf(app)).find((item) => item.type === "item" && item.action === "forget-dictation");
+const forgetItem = async (app: ElectronApplication) => (await menuRowsOf(app)).find((item) => item.action === "forget-dictation");
 
 // Copy uses the Mac's real clipboard: its text is put back when the tests are done.
 let ownersClipboard = "";
@@ -106,6 +107,63 @@ test("a long dictation shows its first 400 characters, and Copy puts all of it o
   // Copying another one copies that one.
   await cards(settings).nth(1).getByRole("button", { name: "Copy", exact: true }).click();
   await expect.poll(() => clipboardText(app)).toBe("a short one");
+  await app.close();
+});
+
+test("the menu's Recent dictations lists the newest three, and a click copies all the words of one; Open history… opens Settings on Dictation", async () => {
+  const long = `${"word ".repeat(30).trim()} and the end`;
+  const userData = userDataWith([
+    entry("fourth", { at: ago(40), text: "the oldest of them" }),
+    entry("third", { at: ago(3), text: "the third", app: "" }),
+    entry("second", { at: ago(2), text: "the second" }),
+    entry("first", { at: ago(0.01), text: long, app: "Slack" }),
+  ]);
+  const app = await launchOn(userData);
+  const menu = (await call(app, "menuForTests")) as MenuItemModel[];
+  const recent = menu.find((item) => item.type === "submenu" && item.label === "Recent dictations");
+  expect(recent).toBeDefined();
+  const rows = (recent as { items: MenuItemModel[] }).items;
+  expect(rows.flatMap((item) => (item.type === "item" ? [item.action] : ["--"]))).toEqual([
+    "copy-dictation:first",
+    "copy-dictation:second",
+    "copy-dictation:third",
+    "--",
+    "forget-dictation",
+    "open-settings:dictations",
+  ]);
+  // A long one is cut, on one line, with where it went and when under it.
+  expect(rows[0]).toMatchObject({ label: `${"word ".repeat(9)}…`.replace(" …", "…"), sublabel: expect.stringMatching(/^Slack · \d\d:\d\d$/) });
+  // What macOS is given is that too, inside the submenu.
+  const held = await heldMenu(app);
+  expect(held.map((item) => item.label)).toContain("Recent dictations");
+  expect(held.map((item) => item.label)).toContain("Forget the last dictation");
+
+  await app.evaluate(({ clipboard }) => clipboard.writeText("what was there before"));
+  await call(app, "menuAction", "copy-dictation:first");
+  await expect.poll(() => clipboardText(app)).toBe(long); // all of it, though the row was cut
+  await call(app, "menuAction", "copy-dictation:second");
+  await expect.poll(() => clipboardText(app)).toBe("the second");
+  expect(await notified(app, "Those words couldn't be copied.")).toEqual([]);
+
+  // One that has gone since: the clipboard stays as it was, and a notification says so.
+  await call(app, "menuAction", "copy-dictation:gone");
+  await expect.poll(() => notified(app, "Those words couldn't be copied.")).toEqual([{ title: "Those words couldn't be copied.", body: "They are still in the history. Try copying them again." }]);
+  expect(await clipboardText(app)).toBe("the second");
+
+  await call(app, "menuAction", "open-settings:dictations");
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("heading", { name: "Dictation", exact: true })).toBeVisible();
+  await expect(cards(settings)).toHaveCount(4);
+  await app.close();
+});
+
+test("the menu's Recent dictations follows the history, and has nothing to show for an empty one", async () => {
+  const app = await launchOn(userDataWith([entry("only", { at: ago(1), text: "the only one" })]));
+  const titles = async () => (await menuRowsOf(app)).flatMap((item) => (item.action.startsWith("copy-dictation:") ? [item.label] : []));
+  expect(await titles()).toEqual(["the only one"]);
+  await call(app, "menuAction", "forget-dictation");
+  await expect.poll(titles).toEqual([]);
+  expect(((await call(app, "menuForTests")) as MenuItemModel[]).some((item) => item.type === "submenu" && item.label === "Recent dictations")).toBe(false);
   await app.close();
 });
 

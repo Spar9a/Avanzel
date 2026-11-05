@@ -63,10 +63,10 @@ doesn't yet notice a call by itself, read calendar titles or tell the other side
 
 Good to know:
 
-- **Dictate into any app**: tap Right Option (settable in Settings → Dictation) to dictate into the app that has
+- **Dictate into any app**: tap Right Option (settable in Settings → Dictation, and turned on or off there or in the menu bar menu) to dictate into the app that has
   focus; the capsule shows a preview of the words as you speak, then the words are pasted at the cursor through
   the clipboard, and what you had on the clipboard (copied files and other formats included) is put back after,
-  unless you copied something meanwhile. The words are marked so clipboard managers skip them. Every dictation is kept in a history in Settings → Dictation, and an optional
+  unless you copied something meanwhile. The words are marked so clipboard managers skip them. Every dictation is kept in a history in Settings → Dictation, the last three can be copied again from Recent dictations in the menu bar menu, and an optional
   library log keeps them in `raw/dictations/` with the app and window; nothing is kept from password managers,
   password fields, Chrome-family private windows or the apps and sites you list in Settings → Privacy (Safari and Firefox private windows can't be told apart).
 - **A dictionary** in Settings → Voice lists the names and terms you use, one per line. What the speech model
@@ -95,7 +95,7 @@ Good to know:
   and reopening Avanzel, and each library keeps its own; one whose commit has left the library's
   history (after a reset, say) is dropped quietly. **⌥⇧Z** does the same from any app, and says so
   once; with nothing to undo, the capsule says "There's no filing to undo." It is a shortcut like
-  the other four: Settings → General records it. **Show the last receipt**, right above Undo, reopens
+  the other four: Settings → General records it. **Show the last receipt**, under Recently filed in the same menu, reopens
   the last filing's card (filed, or noted) with the pages that are still there, Open, and Undo while
   that filing can still be taken back, also after a restart. Its stamp is still and dated the day
   the thought was filed. It and ⌥⇧Z's "no filing" bar come only when the

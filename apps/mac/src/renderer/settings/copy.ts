@@ -169,9 +169,8 @@ export const olderDictationsLine = (older: number): string =>
 /** The button that lists another page of older dictations. */
 export const SHOW_MORE_DICTATIONS = `Show ${DICTATION_PAGE} more`;
 
-/** The Notice for a Copy the clipboard refused: what happened, what is safe, and the one fix. */
-export const DICTATION_NOT_COPIED = "Those words couldn't be copied.";
-export const DICTATION_NOT_COPIED_BODY = "They are still in the history. Try copying them again.";
+/** The Notice for a Copy the clipboard refused. Defined in shared/ipc.ts, as the menu tells it too; re-exported for the pane. */
+export { DICTATION_NOT_COPIED, DICTATION_NOT_COPIED_BODY } from "../../shared/ipc.ts";
 
 /**
  * When a dictation was said, in this Mac's time: "09:05" today, "Yesterday 23:59", "3 Nov 14:03" before that, and with the year

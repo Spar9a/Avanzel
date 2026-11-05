@@ -2,7 +2,7 @@
 // changes, and where the icon is on screen.
 import type { MenuBarState } from "@avanzel/ui/menu-bar";
 import { Menu, Tray, nativeImage, type MenuItemConstructorOptions, type NativeImage, type Rectangle } from "electron";
-import { buildMenuModel, menuLabel, type MenuInput } from "./menu-model.ts";
+import { buildMenuModel, menuLabel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { encodePng, faceIcon, type Bitmap } from "./png.ts";
 import { isShelf, shelfGlyph, type Shelf } from "./shelf-glyphs.ts";
 import { trayTooltip, type TrayView } from "./tray-state.ts";
@@ -94,10 +94,17 @@ export class MenuBar {
    * itself, so the menu needs no building again when the appearance turns.
    */
   update(input: MenuInput, now = new Date()): void {
-    const template: MenuItemConstructorOptions[] = buildMenuModel(input, now).map((item) => {
+    this.built = Menu.buildFromTemplate(this.template(buildMenuModel(input, now)));
+    this.tray.setContextMenu(this.built);
+  }
+
+  /** The rows of a menu or a submenu as Electron takes them. A row with `checked` is a checkbox, whose click also ticks it, until the next `update` says what is. */
+  private template(items: readonly MenuItemModel[]): MenuItemConstructorOptions[] {
+    return items.map((item) => {
       if (item.type === "separator") return { type: "separator" };
-      if (item.type === "header") return { type: "header", label: item.label }; // a macOS 14+ section header
+      if (item.type === "submenu") return { label: item.label, submenu: this.template(item.items) };
       return {
+        ...(item.checked === undefined ? {} : { type: "checkbox" as const, checked: item.checked }),
         label: menuLabel(item),
         sublabel: item.sublabel,
         accelerator: item.accelerator,
@@ -107,8 +114,6 @@ export class MenuBar {
         click: () => this.onAction(item.action),
       };
     });
-    this.built = Menu.buildFromTemplate(template);
-    this.tray.setContextMenu(this.built);
   }
 
   /**

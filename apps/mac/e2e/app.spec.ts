@@ -3,7 +3,6 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileS
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { git, loadSettings, saveSettings, writeWav } from "../../../packages/engine/src/index.ts";
-import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import {
   agentStubs,
@@ -18,6 +17,7 @@ import {
   launch,
   limitedClaude,
   makeLibrary,
+  menuRowsOf,
   onceMarker,
   onlyAgentsIn,
   openedWith,
@@ -395,13 +395,10 @@ test("the menu's Recently filed invites a first thought while nothing is filed, 
     AVANZEL_FAKE_AUDIO: speechWav("hello"),
     AVANZEL_FAKE_TRANSCRIPT: "Say hello to the garden",
   });
-  const menu = async () => (await call(app, "menuForTests")) as MenuItemModel[];
-  const items = await menu();
-  const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
-  expect(at).toBeGreaterThan(-1);
+  const menu = () => menuRowsOf(app);
+  const invite = (await menu()).find((item) => item.label.startsWith("Nothing filed yet"));
   // An enabled item, since macOS draws a disabled one too dim to read, that does what Record a thought does. It is no page:
   // the pages the menu lists open one, and this opens none.
-  const invite = items[at + 1]!;
   expect(invite).toEqual({ type: "item", label: "Nothing filed yet. Press ⌥Space and say hello.", action: "dictate" });
   expect(await recentlyFiled(app)).toEqual([]);
   // Clicking it records, as the menu's own Record a thought does; clicking again stops, and the note is filed.
@@ -411,15 +408,13 @@ test("the menu's Recently filed invites a first thought while nothing is filed, 
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   // Something is filed now, so the pages take the invitation's place.
   await expect.poll(() => recentlyFiled(app)).toHaveLength(1);
-  expect((await menu()).some((item) => item.type === "item" && item.label.startsWith("Nothing filed yet"))).toBe(false);
+  expect((await menu()).some((item) => item.label.startsWith("Nothing filed yet"))).toBe(false);
   await app.close();
 });
 
 test("the menu's invitation says to record a thought when the dictate shortcut is another app's", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
-  const items = (await call(app, "menuForTests")) as MenuItemModel[];
-  const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
-  expect(items[at + 1]).toEqual({ type: "item", label: "Nothing filed yet. Record a thought and say hello.", action: "dictate" });
+  expect((await menuRowsOf(app)).find((item) => item.label.startsWith("Nothing filed yet"))).toEqual({ type: "item", label: "Nothing filed yet. Record a thought and say hello.", action: "dictate" });
   await app.close();
 });
 
@@ -1670,7 +1665,7 @@ test("the card names no key for a shortcut that isn't registered", async () => {
   await startListening(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "listening", mode: "dictate", hint: null });
   await call(app, "cancelRecording");
-  // Capture screen with a comment's shortcut works, and is the key that finishes a screen comment.
+  // Capture screen's shortcut works, and is the key that finishes a screen comment.
   await call(app, "toggleCapture");
   await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("listening");
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ mode: "comment", hint: "Alt+Shift+S" });
