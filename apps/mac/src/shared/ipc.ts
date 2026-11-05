@@ -153,12 +153,8 @@ export type CapsuleState =
        * have been kept, and while that shortcut is registered; null otherwise.
        */
       hint: string | null;
-      /**
-       * Set only for a dictation into another app (the controller's `startCursorRecording`): the key that ends it, as the setting
-       * chose it, which the card names (`dictationListeningLine`).
-       */
+      /** Set only for a dictation into another app (the controller's `startCursorRecording`). */
       dictation?: {
-        key: CursorKey;
         /** The words so far, while they are said (`LiveWords`): a preview, shown on a card and kept nowhere. Absent until there are some. */
         words?: string;
       };

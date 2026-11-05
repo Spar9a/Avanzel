@@ -497,7 +497,7 @@ describe("a scheduled review's copy", () => {
   });
 
   it("the dictation switch says in one calm sentence how it works", () => {
-    expect(CURSOR_DICTATION_DESCRIPTION).toBe("Tap the key once to start and once to finish. The words go where the cursor is.");
+    expect(CURSOR_DICTATION_DESCRIPTION).toBe("Tap the key to start and again to finish, or press Esc to cancel. The words go where the cursor is.");
   });
 
   it("the library log's switch says where the words go, that they stay out of git, and that sync tools' copies are outside it", () => {

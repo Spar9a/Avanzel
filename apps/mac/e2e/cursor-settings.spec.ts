@@ -26,7 +26,7 @@ test("the switch is off to begin with, turns dictating on at once, and is still 
   const settings = await openSettings(app, "Voice");
   const toggle = settings.getByRole("switch", { name: "Dictate into any app" });
   await expect(toggle).not.toBeChecked();
-  await expect(settings.getByText("Tap the key once to start and once to finish. The words go where the cursor is.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Tap the key to start and again to finish, or press Esc to cancel. The words go where the cursor is.", { exact: true })).toBeVisible();
   await toggle.click();
   await expect(toggle).toBeChecked();
   await expect.poll(async () => (await snapshot(app)).app.cursorDictation).toEqual({ enabled: true, key: "right-option" });

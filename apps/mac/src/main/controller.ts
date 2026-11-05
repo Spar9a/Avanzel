@@ -1584,7 +1584,7 @@ export class Controller {
       fileMode: recording.fileMode,
       review: reviewTime(this.openReview()),
       hint: forCursor ? null : this.hintFor(mode),
-      ...(forCursor ? { dictation: { key: this.store.get().cursorDictation.key } } : {}),
+      ...(forCursor ? { dictation: {} } : {}),
       ...(shot ? { thumbnail: shot.thumbnail, context: shot.context } : {}),
     });
     this.capsuleCommand("start");
@@ -1836,7 +1836,7 @@ export class Controller {
       show: (words) => {
         const state = this.capsuleState;
         if (this.recording !== recording || state.kind !== "listening" || !state.dictation) return;
-        this.capsuleState = { ...state, dictation: words ? { ...state.dictation, words } : { key: state.dictation.key } };
+        this.capsuleState = { ...state, dictation: words ? { words } : {} };
         this.capsule.webContents.send("capsule:state", this.capsuleState);
       },
     });

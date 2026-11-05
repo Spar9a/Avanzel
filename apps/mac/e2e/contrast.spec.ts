@@ -181,12 +181,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
       { kind: "listening", mode: "comment", startedAt: Date.now(), fakeMic: true, microphoneId: null, thumbnail, context, fileMode: null, hint: "Alt+Shift+S", review: "at 21:00" },
       "Safari",
     ],
-    // A dictation into another app: the card that says how it ends, with no file mode to switch, and above it the words as they are said.
-    [
-      "listening, a dictation",
-      { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: null, hint: null, review: null, dictation: { key: "right-option" } },
-      "Dictating into another app.",
-    ],
+    // A dictation into another app: no file mode to switch, and above the bar the words as they are said.
     [
       "listening, a dictation's words",
       {
@@ -198,7 +193,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
         fileMode: null,
         hint: null,
         review: null,
-        dictation: { key: "right-option", words: "Ask Dana about the launch checklist before Friday" },
+        dictation: { words: "Ask Dana about the launch checklist before Friday" },
       },
       "Ask Dana about the launch checklist",
     ],

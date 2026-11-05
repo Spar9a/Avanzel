@@ -82,7 +82,7 @@ export function cursorKeyOptions(chosen: CursorKey): PickOption[] {
 }
 
 /** The "Dictate into any app" switch's description: how it works, in one sentence. */
-export const CURSOR_DICTATION_DESCRIPTION = "Tap the key once to start and once to finish. The words go where the cursor is.";
+export const CURSOR_DICTATION_DESCRIPTION = "Tap the key to start and again to finish, or press Esc to cancel. The words go where the cursor is.";
 
 /**
  * The library log's switch: the person speaking ("I"), and where the words go. It says what the app does today: the agent can read

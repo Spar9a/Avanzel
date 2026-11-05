@@ -16,14 +16,6 @@ export const CURSOR_KEYS: readonly { key: CursorKey; name: string }[] = [
 export const cursorKeyName = (key: CursorKey): string => CURSOR_KEYS.find((entry) => entry.key === key)?.name ?? "the key";
 
 /**
- * The listening card of a dictation into another app: what it is doing, and how it ends, with the key the person chose (`key`, from the
- * setting). Esc gives it up.
- */
-export function dictationListeningLine(key: CursorKey): string {
-  return `Dictating into another app. Tap ${cursorKeyName(key)} again to finish, or press Esc.`;
-}
-
-/**
  * The file-mode button of a recording: what its words will do, in words that promise only what the app keeps. "Files now" when
  * they are filed at the stop. Saved for the evening review, they name when it files them (`review`, the review's words from
  * `reviewTime`: "at 21:00", "on Sundays at 18:00"): "Files at 21:00", "Files on Sundays at 18:00"; "Files at the evening review" for a

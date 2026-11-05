@@ -58,17 +58,16 @@ test("the microphone's audio reaches main as it is said: the words show on a car
     "--use-fake-ui-for-media-stream",
   ]);
   const capsule = await windowFor(app, "capsule");
-  await call(app, "setCursorDictation", { enabled: true, key: "right-command" });
+  await call(app, "setCursorDictation", { enabled: true });
   await call(app, "pressCursorDictation");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
-  // Until there are words, the card that says how a dictation ends is all there is above the bar.
-  const hint = capsule.getByText("Dictating into another app. Tap Right Command again to finish, or press Esc.", { exact: true });
-  await expect(hint).toBeVisible();
   const words = liveWords(capsule).getByText(WORDS, { exact: true });
   await expect(words).toBeVisible({ timeout: 15_000 });
   await expect(liveWords(capsule).getByText("Dictation", { exact: true })).toBeVisible();
   await expect(liveWords(capsule).getByText("Preview", { exact: true })).toBeVisible();
-  await expect(hint).toBeVisible();
+  // The card and the bar are all there is: no line on how a dictation ends takes room above the bar.
+  await expect(capsule.locator(".hint")).toHaveCount(0);
+  expect(await capsule.evaluate(() => document.querySelector(".stack")!.children.length)).toBe(2);
   // None of it is in the bar's live region, so a screen reader doesn't read the words out at each change.
   expect(await words.evaluate((el) => el.closest('[role="status"],[aria-live]')?.tagName ?? null)).toBeNull();
   await snap(capsule, "live-words");
@@ -85,7 +84,10 @@ test("the words grow on the card as more is said, and the newest stay in view wh
   const { script } = fakeCursor();
   const { app, capsule } = await launchWith(script);
   await dictating(app);
+  // Until there are words, the bar is all there is.
   await expect(liveWords(capsule)).toHaveCount(0);
+  await expect(capsule.locator(".hint")).toHaveCount(0);
+  expect(await capsule.evaluate(() => document.querySelector(".stack")!.children.length)).toBe(1);
   await call(app, "hearLiveForTests", 1);
   await expect(liveWords(capsule).getByText(WORDS, { exact: true })).toBeVisible();
 

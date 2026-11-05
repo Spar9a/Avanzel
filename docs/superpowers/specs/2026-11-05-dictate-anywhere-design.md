@@ -56,7 +56,7 @@ Success: the owner goes a week without opening FluidVoice.
 ## Design
 
 ### 1. Trigger
-A tap of **Right Option** (press and release with no other key between, and no hold-time limit beyond that) starts dictation; another tap ends it. **Esc** cancels and inserts nothing, as in the existing recording. The key is a setting with Right Option as the default. **(my call)** The capsule shows the same listening state it already shows for a thought, with a clear "dictating" wording so the owner can tell which kind of recording is running.
+A tap of **Right Option** (press and release with no other key between, and no hold-time limit beyond that) starts dictation; another tap ends it. **Esc** cancels and inserts nothing, as in the existing recording. The key is a setting with Right Option as the default. **(my call)** The capsule shows the same listening state it already shows for a thought, with a clear "dictating" wording so the owner can tell which kind of recording is running. The owner took that wording out on 5 Nov, once using it (see 8).
 
 ### 2. Speech
 The same recorder and Parakeet model. The result goes through the whole dictionary, sound-alike included: this text has a trail (the history keeps `heard`, the text before the dictionary), so the caution that made calls aliases-only does not apply. **(my call)** If nothing was recognised, nothing is inserted and the capsule says so plainly.
@@ -95,12 +95,14 @@ The owner asked to see what is being recognised, "kind of like subtitles", and a
 
 **(my call)** Measured on the owner's Mac with the real Parakeet model and synthesised speech fed at real time, 31 s of it: about 200 ms per update (median), about 90% of one core during the dictation, and the last preview differed from the final text by 2 words in 119. The newest words can change for a second as more audio arrives; three small tricks against that (padding silence, hiding the last word, showing only what two recognitions agree on) showed no clear gain, and the last of them put the text about 11 words behind on one of the two samples, so none is used.
 
-**(my call)** Where they show: a paper card labelled "Dictation", marked "Preview", above the card that says how the dictation ends, with its newest four lines in view. Paper because the design system keeps a person's words off the glass, and outside the bar because the bar is a live region. The pointer goes through the card. `CapsuleBar`'s own line was designed for "the words as they are heard" and takes less room, but shows about five words and would be read out at each change until owner item 5 narrows its live region; it's the alternative if the card proves too big.
+**(my call)** Where they show: a paper card labelled "Dictation", marked "Preview", above the bar, with its newest four lines in view. Paper because the design system keeps a person's words off the glass, and outside the bar because the bar is a live region. The pointer goes through the card. `CapsuleBar`'s own line was designed for "the words as they are heard" and takes less room, but shows about five words and would be read out at each change until owner item 5 narrows its live region; it's the alternative if the card proves too big.
 
 **(my call)** When they don't show:
 - In a password field or an app on the skip list, as anyone who can see the screen would read them. This is looked at when the dictation starts, so a field the person moves to afterwards isn't seen. When it can't be told, they don't show.
 - When the library's speech-to-text is a command, which can run anywhere and cost anything, and isn't to be asked once a second.
 - For anything but a dictation into another app: a thought, a question for Ask and a call show none. There is no setting to turn them off.
+
+The owner, trying it: took out the line "Dictating into another app. Tap Right Option again to finish, or press Esc.", as it only took room. A dictation now shows the bar alone until there are words. How it ends is said in Settings → Voice, whose line now names Esc too.
 
 ## Order of work
 
