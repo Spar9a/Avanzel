@@ -101,6 +101,22 @@ function useWindowFit(pane: SettingsPane, ready: boolean, scrolls: RefObject<HTM
   return { holds, problemRow };
 }
 
+/**
+ * Tells the window the colour the page is drawn on, now and when the appearance changes. The window and the page are two processes, so when the window
+ * grows, what it grew by is the window's own for the frame before the page draws there, and left alone that is white, a bright block in dark mode.
+ */
+function useWindowSurface(): void {
+  useEffect(() => {
+    const tell = () => api.surface(getComputedStyle(document.body).backgroundColor);
+    tell();
+    const changes = [matchMedia("(prefers-color-scheme: dark)"), matchMedia("(prefers-contrast: more)")];
+    for (const change of changes) change.addEventListener("change", tell);
+    return () => {
+      for (const change of changes) change.removeEventListener("change", tell);
+    };
+  }, []);
+}
+
 /** A call main refused, as the Notice tells it. `id` is new for each, so a second refusal is told afresh, in the same words too. */
 interface Problem {
   id: number;
@@ -202,6 +218,7 @@ function App() {
     if (short > 0) scroller.scrollTop += short; // the pane's end is as far as it goes
   }, [problem?.id]);
   const { holds, problemRow } = useWindowFit(pane, snap !== null, scrolls);
+  useWindowSurface();
   if (!snap) return null;
   return (
     <div className="settings">

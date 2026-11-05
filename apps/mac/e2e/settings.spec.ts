@@ -147,6 +147,34 @@ test("a new pane moves the window once and at once: no animation, and no second 
   await app.close();
 });
 
+test("the window fills with the page's own colour, so what it grows by is never white, in light or in dark", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app);
+  const windowColour = () =>
+    app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))!.getBackgroundColor().toLowerCase());
+  const pageColour = () =>
+    settings.evaluate(() => {
+      const [r = 0, g = 0, b = 0] = (getComputedStyle(document.body).backgroundColor.match(/\d+/g) ?? []).map(Number);
+      return `#${[r, g, b].map((part) => part.toString(16).padStart(2, "0")).join("")}`;
+    });
+  await expect.poll(windowColour).toBe(await pageColour());
+  expect(await pageColour()).not.toBe("#ffffff");
+  // Dark, and the window follows.
+  const light = await pageColour();
+  await settings.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(pageColour).not.toBe(light);
+  await expect.poll(windowColour).toBe(await pageColour());
+  // Only the Settings window's own page is heard, and only a colour.
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  const dark = await windowColour();
+  await ask.evaluate(() => window.avanzel.settings.surface("rgb(1, 2, 3)"));
+  await settings.evaluate(() => window.avanzel.settings.surface("url(javascript:alert(1))"));
+  await settings.evaluate(() => window.avanzel.settings.get()); // main has heard both by now
+  expect(await windowColour()).toBe(dark);
+  await app.close();
+});
+
 test("Settings grows for what opens in a pane and for a Notice over it, and goes back when they go", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });

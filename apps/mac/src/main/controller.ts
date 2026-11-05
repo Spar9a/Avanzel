@@ -4302,6 +4302,13 @@ export class Controller {
     fitSettings(win, height);
   }
 
+  /** The Settings page says what colour it is drawn on, and its window fills with that where the page hasn't drawn yet. Only its own page is heard, and only a colour as a page computes it. */
+  settingsSurface(sender: WebContents, color: unknown): void {
+    const win = this.settingsWindow;
+    if (!win || !isPageOf(sender, win) || typeof color !== "string" || !/^rgb\(\d{1,3}, \d{1,3}, \d{1,3}\)$/.test(color)) return;
+    win.setBackgroundColor(color);
+  }
+
   /** Settings' Show in Finder: the library's folder opens in Finder. Nothing without a library. */
   showLibraryInFinder(): void {
     const vault = this.vault;

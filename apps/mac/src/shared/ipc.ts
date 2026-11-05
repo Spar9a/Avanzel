@@ -950,6 +950,8 @@ export interface AvanzelBridge {
     pick(options: readonly PickOption[], at: { x: number; y: number } | null): Promise<string | null>;
     /** What the pane in view needs, in px: the window takes that height, within the screen, at once. Only the Settings window's own page is heard. */
     fit(height: number): void;
+    /** The colour the page is drawn on, as the page computes it ("rgb(35, 34, 40)"): the window fills with it where the page hasn't drawn yet. Only the Settings window's own page is heard. */
+    surface(color: string): void;
   };
   quick: {
     submit(text: string): Promise<void>;

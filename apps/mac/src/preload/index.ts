@@ -63,6 +63,7 @@ const bridge: AvanzelBridge = {
     requestPermission: (kind) => ipcRenderer.invoke("settings:request-permission", kind),
     pick: (options, at) => ipcRenderer.invoke("settings:pick", options, at),
     fit: (height) => ipcRenderer.send("settings:fit", height),
+    surface: (color) => ipcRenderer.send("settings:surface", color),
   },
   quick: {
     submit: (text) => ipcRenderer.invoke("quick:submit", text),

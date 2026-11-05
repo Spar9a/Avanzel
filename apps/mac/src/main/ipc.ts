@@ -62,6 +62,7 @@ export function registerIpc(controller: Controller): void {
   // window has the same bridge, so it also hands over the page that sent it: only the Settings window's own is answered.
   handle("settings:pick", (e, options: unknown, at: unknown) => controller.pickFromSettings(e.sender, options, at));
   on("settings:fit", (e, height: unknown) => controller.fitSettings(e.sender, height));
+  on("settings:surface", (e, color: unknown) => controller.settingsSurface(e.sender, color));
   on("settings:open-library", () => controller.openLibraryFolder());
   on("settings:show-library", () => controller.showLibraryInFinder());
   on("settings:open-setup", () => controller.openSetupFromSettings());
