@@ -15,9 +15,8 @@ body {
 }
 
 /* The panel is click-through where nothing is drawn: the window takes the pointer, and holds a card up, only while it is over a piece
-   that is (the page's wrapper hears it enter and leave). The wrapper takes no pointer itself, and nor does the stack, which is wider
-   than some of what is in it (the hint takes only the room of its words) and has gaps between its pieces; each piece, and each notice,
-   takes its own. Pointer events are inherited, so a piece's own parts take them with it. */
+   that is (the page's wrapper hears it enter and leave). The wrapper takes no pointer itself, and nor does the stack, which has gaps
+   between its pieces; each piece, and each notice, takes its own. Pointer events are inherited, so a piece's own parts take them with it. */
 .app {
   pointer-events: none;
 }
@@ -25,8 +24,8 @@ body {
 .slot {
   pointer-events: auto;
 }
-/* A dictation's words as they are said have nothing to press, and may stand over the very box they are said to: the pointer goes through. */
-.stack > .live-words {
+/* A recording's panel with nothing to press may stand over the very box a dictation goes into: the pointer goes through. */
+.stack > .through {
   pointer-events: none;
 }
 
@@ -38,10 +37,6 @@ body {
   gap: var(--av-space-8);
   width: 420px;
   max-width: 100%;
-}
-/* The hint of the first recordings takes only the room of its words, over the middle of the bar. */
-.hint {
-  align-self: center;
 }
 /* The person's words are cut off after four lines of the card's ruling (4lh, whatever its line pitch is): the panel is 300 px
    tall, and a card with its footer's four lines, the bar and the gaps leave room for no more. They are clipped, not hidden: a
@@ -60,12 +55,6 @@ body {
 }
 .words.lines-2 {
   max-height: 2lh;
-}
-/* Words still being said sit at the bottom of their room, so what is cut off is the top: the oldest. */
-.words.latest {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
 }
 /* The filed card's pages, a row each, in three columns that line up from row to row: the shelf (a chip, or the folder's name, which
    is cut off at 96 px), the title, which takes the free width, and whether the page is new or updated. The columns are 2 px apart

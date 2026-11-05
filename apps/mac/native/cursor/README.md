@@ -27,7 +27,8 @@ In (stdin):
   the tap once the permission is there (a tap made without it is dropped, so no restart is needed).
 - `{"id":2,"cmd":"permissions","prompt":bool}` replies `ok:true`, `accessibility` and `inputMonitoring` (`ready` computes
   `inputMonitoring` the same way). `prompt:true` asks macOS for both. Start-up itself never raises a dialog.
-- `{"id":3,"cmd":"inspect","keep":bool}` replies `ok:true`, `app` (`name`, `bundleId`, `pid`; name and bundleId can be
+- `{"id":3,"cmd":"inspect","keep":bool,"icon":bool}` replies `ok:true`, `app` (`name`, `bundleId`, `pid`, and with `icon` its icon
+  as a 64 px PNG in base64, null otherwise or when it has none; name and bundleId can be
   null), `window` (`title`, or `null` when there is no focused window or it cannot be read) and `element` (`role`, `secure`,
   `takesText`; `null` when Accessibility is not granted or nothing could be read). `role` can be null.
   The app is the one the keys go to: Accessibility's focused application, which also finds non-activating panels

@@ -1416,29 +1416,30 @@ test("a dictation listens on a bar whose one button is its file mode, and the fi
   await app.close();
 });
 
-test("the capsule's corners beside the hint catch no pointer: only what is drawn takes it, and gives it back", async () => {
+test("the capsule's corners around its panel catch no pointer: only what is drawn takes it, and gives it back", async () => {
   const library = await makeLibrary();
   const { app, capsule } = await launchHearing(library, newUserData());
   await startListening(app);
-  const hint = (await capsule.locator(".hint").boundingBox())!;
+  const panel = (await capsule.locator(".stack .av-hud").boundingBox())!;
   const bar = (await capsule.getByRole("status").boundingBox())!;
-  const stack = (await capsule.locator(".stack").boundingBox())!;
-  // The hint takes only the room of its words, over the middle of a bar as wide as the stack: there is room beside it.
-  const beside = { x: hint.x - 20, y: hint.y + hint.height / 2 };
-  const between = { x: bar.x + bar.width / 2, y: hint.y + hint.height + 4 }; // the gap under the hint, over the bar
+  // The first recordings' hint stands inside the panel, above its row, on the same glass.
+  const hint = (await capsule.locator(".av-capsule-hint").boundingBox())!;
+  expect(hint.y).toBeGreaterThanOrEqual(panel.y);
+  expect(hint.y + hint.height).toBeLessThanOrEqual(bar.y);
+  const beside = { x: panel.x - 8, y: panel.y + panel.height / 2 };
+  const above = { x: panel.x + panel.width / 2, y: panel.y - 20 };
   const onHint = { x: hint.x + hint.width / 2, y: hint.y + hint.height / 2 };
   const onBar = { x: bar.x + bar.width / 2, y: bar.y + bar.height / 2 };
-  expect(beside.x).toBeGreaterThan(stack.x + 8);
-  expect(between.y).toBeLessThan(bar.y);
-  // What is under each point to the pointer: the pieces that are drawn answer, and the rest of the stack, which is wider than some of
-  // them, and the gaps between them, let it through to the panel.
+  expect(beside.x).toBeGreaterThan(0);
+  expect(above.y).toBeGreaterThan(0);
+  // What is under each point to the pointer: what is drawn answers, and the rest of the window lets it through to the app below.
   const under = (at: { x: number; y: number }) =>
     capsule.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest(".stack"), at);
   expect(await under(onHint)).toBe(true);
   expect(await under(onBar)).toBe(true);
   expect(await under(beside)).toBe(false);
-  expect(await under(between)).toBe(false);
-  // The window takes the pointer, to be clicked and to keep its card up, only while it is over one of them.
+  expect(await under(above)).toBe(false);
+  // The window takes the pointer, to be clicked and to keep its card up, only while it is over what is drawn.
   await app.evaluate(() => {
     const controller = (globalThis as unknown as { __avanzel: { setInteractive(interactive: boolean): void } }).__avanzel;
     const asked: boolean[] = [];
@@ -1450,14 +1451,14 @@ test("the capsule's corners beside the hint catch no pointer: only what is drawn
     };
   });
   const asked = () => app.evaluate(() => (globalThis as { interactiveAsked?: boolean[] }).interactiveAsked ?? []);
-  // The lists below are exact, and the pointer visits the corner and the gap before the hint, so a call from either shows: a corner that
-  // had caught the pointer would not give it back at the second visit to it.
+  // The lists below are exact, and the pointer visits both corners before the panel, so a call from either shows: a corner that had
+  // caught the pointer would not give it back at the second visit to it.
   await capsule.mouse.move(beside.x, beside.y);
-  await capsule.mouse.move(beside.x + 6, beside.y);
-  await capsule.mouse.move(between.x, between.y);
+  await capsule.mouse.move(beside.x + 2, beside.y);
+  await capsule.mouse.move(above.x, above.y);
   await capsule.mouse.move(onHint.x, onHint.y);
   await expect.poll(asked).toEqual([true]);
-  await capsule.mouse.move(beside.x, beside.y);
+  await capsule.mouse.move(above.x, above.y);
   await expect.poll(asked).toEqual([true, false]);
   await capsule.mouse.move(onBar.x, onBar.y);
   await expect.poll(asked).toEqual([true, false, true]);

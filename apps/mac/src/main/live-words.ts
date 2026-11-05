@@ -1,5 +1,5 @@
-// The words of a dictation while it is said, for the capsule to show. They are a preview and go nowhere else: the words that are pasted
-// and kept come from the one recognition of the whole recording, when it ends (`heardForCursor`), and may differ a little from these.
+// A recording's words while they are said, for the capsule to show. They are a preview and go nowhere else: the words that are pasted or
+// filed come from the one recognition of the whole recording, when it ends, and may differ a little from these.
 
 const SAMPLE_RATE = 16000;
 /** 20 ms: long enough to span one wave of a voice, short enough to fit in the gap between two words. */
@@ -43,9 +43,9 @@ export interface LiveWordsOptions {
 }
 
 /**
- * One dictation's words as they come. Each block of audio starts a recognition of what is not yet settled, unless one is still running: the
- * next block starts the next, so a slow Mac shows the words less often and is not kept busy. Nothing is recognised until `allow`, as the
- * person may be dictating into a password field. A recognition that fails ends it quietly: the dictation's own words are not affected.
+ * One recording's words as they come. Each block of audio starts a recognition of what is not yet settled, unless one is still running: the
+ * next block starts the next, so a slow Mac shows the words less often and is not kept busy. Nothing is recognised until `allow`, as a
+ * dictation may be going into a password field. A recognition that fails ends it quietly: the recording's own words are not affected.
  */
 export class LiveWords {
   private audio: Float32Array = new Float32Array(0);

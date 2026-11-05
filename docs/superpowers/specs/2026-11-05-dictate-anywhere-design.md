@@ -95,12 +95,12 @@ The owner asked to see what is being recognised, "kind of like subtitles", and a
 
 **(my call)** Measured on the owner's Mac with the real Parakeet model and synthesised speech fed at real time, 31 s of it: about 200 ms per update (median), about 90% of one core during the dictation, and the last preview differed from the final text by 2 words in 119. The newest words can change for a second as more audio arrives; three small tricks against that (padding silence, hiding the last word, showing only what two recognitions agree on) showed no clear gain, and the last of them put the text about 11 words behind on one of the two samples, so none is used.
 
-**(my call)** Where they show: a paper card labelled "Dictation", marked "Preview", above the bar, with its newest four lines in view. Paper because the design system keeps a person's words off the glass, and outside the bar because the bar is a live region. The pointer goes through the card. `CapsuleBar`'s own line was designed for "the words as they are heard" and takes less room, but shows about five words and would be read out at each change until owner item 5 narrows its live region; it's the alternative if the card proves too big.
+Where they show: first a paper card above the bar. The owner, comparing it with FluidVoice, asked for one unified panel, so they now stay on the capsule's glass: one panel, the words above a row of the app they go to, the voice and the time, with the newest three lines in view. The rule is glass while the words are in the air, paper once they are kept. The live region is the row alone, so a screen reader doesn't read the words out. The pointer goes through a panel with nothing to press. The design and its reasons are in `reports/Avanzel voice capsule redesign.md`.
 
 **(my call)** When they don't show:
-- In a password field or an app on the skip list, as anyone who can see the screen would read them. This is looked at when the dictation starts, so a field the person moves to afterwards isn't seen. When it can't be told, they don't show.
+- In a password field or an app on the skip list, as anyone who can see the screen would read them. What has focus is looked at as the dictation starts and about once a second after that. Once words may not show they stay off for the rest of that dictation. When the first look can't tell, they don't show.
 - When the library's speech-to-text is a command, which can run anywhere and cost anything, and isn't to be asked once a second.
-- For anything but a dictation into another app: a thought, a question for Ask and a call show none. There is no setting to turn them off.
+- For a call and for setup's first spoken thought, which have their own displays. A dictation, a thought, a question for Ask and a screen comment all show them. There is no setting to turn them off.
 
 The owner, trying it: took out the line "Dictating into another app. Tap Right Option again to finish, or press Esc.", as it only took room. A dictation now shows the bar alone until there are words. How it ends is said in Settings → Voice, whose line now names Esc too.
 

@@ -195,7 +195,31 @@ var keptPid: pid_t? = nil
 
 /// Where the cursor of the focused app is. Whatever macOS will not say comes back as null or "unknown", never as an error. `keep`
 /// remembers the focused window (or that it couldn't be read) for `same`.
-func inspect(keep: Bool) -> [String: Any] {
+// The icons given so far, by bundle id: `inspect` with `icon` is asked about once a second while a dictation listens.
+// Touched only on the thread that reads the commands.
+var icons: [String: String] = [:]
+
+/// The app's icon as a 64 px square PNG in base64, or null when it has none to give.
+func iconOf(_ app: NSRunningApplication) -> Any {
+    let key = app.bundleIdentifier ?? String(app.processIdentifier)
+    if let known = icons[key] { return known }
+    let encoded: String? = DispatchQueue.main.sync {
+        guard let image = app.icon,
+              let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64, bitsPerSample: 8, samplesPerPixel: 4,
+                                            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64))
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.representation(using: .png, properties: [:])?.base64EncodedString()
+    }
+    guard let encoded else { return NSNull() }
+    icons[key] = encoded
+    return encoded
+}
+
+func inspect(keep: Bool, icon: Bool = false) -> [String: Any] {
     if keep {
         keptWindow = nil
         keptPid = nil
@@ -208,7 +232,7 @@ func inspect(keep: Bool) -> [String: Any] {
     let unreadableButSecure: [String: Any] = ["role": NSNull(), "secure": true, "takesText": "unknown"]
     var reply: [String: Any] = [
         "ok": true,
-        "app": ["name": front.localizedName ?? NSNull(), "bundleId": front.bundleIdentifier ?? NSNull(), "pid": Int(front.processIdentifier)] as [String: Any],
+        "app": ["name": front.localizedName ?? NSNull(), "bundleId": front.bundleIdentifier ?? NSNull(), "pid": Int(front.processIdentifier), "icon": icon ? iconOf(front) : NSNull()] as [String: Any],
         "window": NSNull(),
         "element": secureInput ? unreadableButSecure : NSNull(),
     ]
@@ -388,7 +412,7 @@ func run(_ command: String, _ request: [String: Any]) -> [String: Any] {
         }
         return DispatchQueue.main.sync { permissionState() }.merging(["ok": true]) { a, _ in a }
     case "inspect":
-        return inspect(keep: request["keep"] as? Bool == true)
+        return inspect(keep: request["keep"] as? Bool == true, icon: request["icon"] as? Bool == true)
     case "same":
         return same()
     case "paste":

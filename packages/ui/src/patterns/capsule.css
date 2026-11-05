@@ -1,5 +1,24 @@
+/* The row, the capsule's live region: Zel or the app at the start, the line and the voice in the middle, the time and the buttons at the end. */
+.av-capsule-row {
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-10);
+  min-height: var(--av-size-capsule);
+  padding: 6px 8px 6px 6px;
+  box-sizing: border-box;
+}
+/* The middle is the row's own: it takes the room between the ends, and the line in it takes what the voice leaves. */
+.av-capsule-middle { display: flex; flex: 1; align-items: center; gap: var(--av-space-10); min-width: 0; }
+.av-capsule-end { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: var(--av-space-10); }
+/* Centred, the two ends take equal room, so the middle stands in the middle unless an end is too long to leave it there. */
+.av-capsule-row[data-centred] { display: grid; grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr); }
+.av-capsule-row[data-centred] > .av-capsule-middle { grid-column: 2; justify-content: center; }
+.av-capsule-row[data-centred] > .av-capsule-end { grid-column: 3; }
+.av-capsule-row[data-centred] .av-capsule-live { flex: none; color: var(--av-ink-secondary); }
+.av-capsule-row .av-wave > i { background: var(--av-ink); }
 .av-capsule-zel { position: relative; flex: none; width: 34px; height: 38px; margin-top: -6px; }
 .av-capsule-zel .av-zel { position: absolute; left: 0; top: 0; }
+.av-capsule-app { display: block; flex: none; width: 26px; height: 26px; margin-left: 12px; }
 .av-capsule-live {
   display: flex;
   flex: 1;
@@ -9,14 +28,31 @@
   font: var(--av-text-body);
   color: var(--av-ink);
 }
-/* While listening, the newest words stay at the right edge and the oldest fade out at the left. */
-.av-capsule-live[data-flow="stream"] {
-  justify-content: flex-end;
-  -webkit-mask-image: linear-gradient(90deg, transparent, var(--av-ink) 28%);
-  mask-image: linear-gradient(90deg, transparent, var(--av-ink) 28%);
-}
 .av-capsule-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.av-capsule-live[data-flow="stream"] .av-capsule-text { flex: none; overflow: visible; }
+/* The words as they are heard sit at the bottom of their room, so it is the oldest that are cut off. A strip of the line above the room
+   stays, fading out, so that there being more shows; words that fit have no line there, and nothing fades. Two lines are for where a card
+   above leaves little room, so they go without the strip. */
+.av-capsule-words {
+  --_lines: 3;
+  --_strip: 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-height: calc(var(--_lines) * 1lh + var(--_strip));
+  margin: 12px 18px 0;
+  overflow: clip;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font: var(--av-text-callout);
+  line-height: 20px; /* whole pixels, so the panel's height is too and its text stays on the pixel grid */
+  color: var(--av-ink);
+}
+.av-capsule-words[data-lines="2"] { --_lines: 2; --_strip: 0px; }
+.av-capsule-words > div {
+  -webkit-mask-image: linear-gradient(to top, var(--av-ink) calc(var(--_lines) * 1lh), transparent calc(var(--_lines) * 1lh + var(--_strip)));
+  mask-image: linear-gradient(to top, var(--av-ink) calc(var(--_lines) * 1lh), transparent calc(var(--_lines) * 1lh + var(--_strip)));
+}
+.av-capsule-hint { display: flex; align-items: center; height: 18px; margin: 12px 18px 0; }
 .av-capsule-time {
   flex: none;
   min-width: 30px;

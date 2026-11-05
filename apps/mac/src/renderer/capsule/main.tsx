@@ -20,8 +20,8 @@ import { recordedScene, stoppedScene } from "./stopped.tsx";
 import { transcribingScene } from "./transcribing.tsx";
 import "./styles.css";
 
-const BARS = 16;
-/** How often a dictation's microphone is sent to main while it listens, and so about how often its words on the card change. */
+const BARS = 24;
+/** How often a recording's microphone is sent to main while it listens, and so about how often its words on the panel change. */
 const LIVE_BLOCK_MS = 1000;
 /** How often a call's microphone is sent to main, as a block, while the call runs. */
 const CALL_BLOCK_MS = 5_000;
@@ -80,7 +80,7 @@ function dictationRefusedScene(): Scene {
 }
 
 /**
- * What each stacked state draws, from the top of its stack: its card, the hint, and its bar. Every kind of state is here: a kind added
+ * What each stacked state draws, from the top of its stack: its card and its bar. Every kind of state is here: a kind added
  * without a scene is a type error, not a blank panel, as `cancelled` and `recorded` were for two tasks.
  */
 function sceneOf(state: Stacked, levels: readonly number[]): Scene {
@@ -193,14 +193,17 @@ function Capsule({ state, levels }: { state: CapsuleState; levels: readonly numb
       );
     }
     default: {
-      // The stack: a card if the state has one, the hint, and ONE bar, drawn in the same place for every state that has a bar, so that its
-      // live region stays mounted from listening through filing to filed. `key` keeps the stack from being taken for the notice above.
-      const { card, hint, bar } = sceneOf(state, levels);
+      // The stack: a card if the state has one, and ONE bar, drawn in the same place for every state that has a bar, so that its live
+      // region stays mounted from listening through filing to filed. `key` keeps the stack from being taken for the notice above.
+      const { card, bar, through } = sceneOf(state, levels);
       return (
         <div className="stack" key="stack">
           {card}
-          {hint}
-          {bar && <Bar kind={state.kind} {...bar} />}
+          {bar && (
+            <div className={through ? "bar through" : "bar"}>
+              <Bar kind={state.kind} {...bar} />
+            </div>
+          )}
         </div>
       );
     }
@@ -215,7 +218,7 @@ function App() {
   const recorder = useRef(new Recorder((level) => push(level)));
   /** While a call runs: the timer that sends its microphone to main in blocks. */
   const callBlocks = useRef<ReturnType<typeof setInterval> | null>(null);
-  /** While a dictation listens: the timer that sends main what its microphone has just heard, for its words as they are said. */
+  /** While a recording listens: the timer that sends main what its microphone has just heard, for its words as they are said. */
   const liveBlocks = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -237,7 +240,7 @@ function App() {
     }
     if (command === "start" && current.kind === "listening" && !fake) {
       // Set before the microphone opens, as for a call: a stop that comes while it opens finds it, and clears it. `fresh` is empty till then.
-      if (current.dictation) {
+      if (current.live) {
         liveBlocks.current = setInterval(() => {
           const block = recorder.current.fresh();
           if (block.length > 0) api.sendLiveAudio(block);

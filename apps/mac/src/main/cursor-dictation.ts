@@ -22,8 +22,11 @@ export interface CursorHost {
   startListening(): Promise<boolean>;
   /** Asks for the audio; it arrives at `heard`. */
   stopListening(): void;
-  /** Whether the words may show as they are said (`LiveWords`). Told once for each dictation that goes on listening until the answer comes. */
-  allowLiveWords(allowed: boolean): void;
+  /**
+   * What has focus while the dictation listens, as it starts and each time `CursorDictation.look` is called: the app the words would go to,
+   * null when it couldn't be told, and whether they may show as they are said (`LiveWords`).
+   */
+  dictatingInto(focus: { wordsMayShow: boolean; app: { name: string; icon?: string } | null }): void;
   /**
    * Drops the recording. Called after `stopListening()` too (Esc while the words are being recognised): then it ALSO drops
    * the recognition still in flight, so `heard` does not arrive for it.
@@ -83,6 +86,10 @@ export class CursorDictation {
   /** The target fixed at the second tap; null when it could not be read. */
   private target: Target | null = null;
   private browserLook: Promise<BrowserLook> = Promise.resolve({ ok: true, value: null });
+  /** The dictation whose `look` is out: a helper that is slow to answer isn't asked again meanwhile. */
+  private lookingIn: number | null = null;
+  /** A look has worked for this dictation, so one that fails later is one slow moment, not an unknown target. */
+  private lookedIn: number | null = null;
   /**
    * Set when a dictation was cancelled while its words were being recognised. `heard()` carries no id, so late words from
    * that recognition could not be told from the next dictation's. The rule: until the host calls `heard()` once more (those
@@ -222,26 +229,37 @@ export class CursorDictation {
     }
     this.state = "listening";
     this.startedAt = this.host.now();
-    void this.decideLiveWords(session);
+    void this.look();
   }
 
   /**
-   * Whether the words may show as they are said: not in a password field or an app on the skip list, where anyone who can see the screen
-   * would read what the person meant to keep from it, nor when it can't be told. It is looked at as the dictation starts, as the second
-   * tap's target isn't known until the words are finished; a field the person moves to after that isn't seen. The browser isn't asked: a
-   * private window or a skipped site keeps words from being stored, not from being read. Not awaited, so the look doesn't hold up the
-   * recording.
+   * Looks at what has focus and tells the host (`dictatingInto`): as the dictation starts, and about once a second after that, as its audio
+   * comes, since the words go wherever focus is at the second tap. The words may not show in a password field or an app on the skip
+   * list, where anyone who can see the screen would read what the person meant to keep from it, nor when it can't be told. The browser
+   * isn't asked: a private window or a skipped site keeps words from being stored, not from being read. Nothing here holds up the
+   * recording, and a look that fails once one has worked changes nothing.
    */
-  private async decideLiveWords(session: number): Promise<void> {
-    let allowed = false;
+  async look(): Promise<void> {
+    const session = this.session;
+    if (this.state !== "listening" || this.lookingIn === session) return;
+    this.lookingIn = session;
+    let focus: Parameters<CursorHost["dictatingInto"]>[0] | null = null;
     try {
-      allowed = storagePolicy(await this.host.helper.look(), null, this.host.skip()).store;
+      const target = await this.host.helper.look();
+      focus = {
+        wordsMayShow: storagePolicy(target, null, this.host.skip()).store,
+        app: { name: target.app.name, ...(target.app.icon ? { icon: target.app.icon } : {}) },
+      };
+      if (session === this.session) this.lookedIn = session;
     } catch (error) {
       console.error("cursor dictation", error);
+      if (this.lookedIn !== session) focus = { wordsMayShow: false, app: null };
+    } finally {
+      if (this.lookingIn === session) this.lookingIn = null;
     }
-    if (session !== this.session || this.state !== "listening") return;
+    if (!focus || session !== this.session || this.state !== "listening") return;
     try {
-      this.host.allowLiveWords(allowed);
+      this.host.dictatingInto(focus);
     } catch (error) {
       console.error("cursor dictation", error);
     }

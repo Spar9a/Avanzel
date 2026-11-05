@@ -39,6 +39,10 @@ const COLOURS: [string, string[]][] = [
 ];
 
 const LEVELS = [0.1, 0.25, 0.5, 0.35, 0.7, 0.9, 0.6, 0.4, 0.75, 0.5, 0.3, 0.55, 0.8, 0.45, 0.2, 0.1];
+/** A stand-in for an app's icon, as the helper gives one: a plain rounded square. */
+const APP_ICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='gray'/%3E%3C/svg%3E";
+const LONG_WORDS =
+  "Okay, so tell me why the hint moves when the words arrive. First read the design document, then check how the listening scene builds its card, and after that run the end to end tests for the dictation feature on a quiet desktop.";
 const MOODS: [ZelMood, string, string][] = [
   ["idle", "Idle", "Ready in the menu bar."],
   ["listening", "Listening", "The microphone is on."],
@@ -220,10 +224,14 @@ export function Gallery() {
         )}
       </Specimen>
 
-      <Specimen id="capsule" title="The capsule" use="Dark glass in light and dark mode, because it floats over any desktop. The live line shows what is really happening." code={'<CapsuleBar mood="listening" levels={levels} time="0:07">…and book the room</CapsuleBar>'}>
+      <Specimen id="capsule" title="The capsule" use="Dark glass in light and dark mode, because it floats over any desktop. One panel: the words above a row." code={'<CapsuleBar mood="listening" levels={levels} centred words="…and book the room" />'}>
         {() => (
           <Stack gap={12}>
-            <CapsuleBar mood="listening" levels={LEVELS} time="0:07">Ask Dana about the launch checklist before Friday</CapsuleBar>
+            <CapsuleBar mood="listening" levels={LEVELS} time="0:01" centred hint={<Text variant="footnote" tone="secondary"><Kbd>⌥Space</Kbd> to finish, <Kbd>Esc</Kbd> to cancel</Text>} />
+            <CapsuleBar mood="listening" levels={LEVELS} time="0:07" centred words="Ask Dana about the launch checklist before Friday" />
+            <CapsuleBar mood="listening" levels={LEVELS} time="0:31" centred app={{ icon: APP_ICON, label: "Dictating into Slack" }} words={LONG_WORDS} />
+            <CapsuleBar mood="thinking" centred app={{ icon: APP_ICON, label: "Dictating into Slack" }} words={LONG_WORDS}>Transcribing on this Mac…</CapsuleBar>
+            <CapsuleBar mood="listening" levels={LEVELS} time="0:12">Taking notes on the call</CapsuleBar>
             <CapsuleBar mood="thinking" time="0:04"><Text tone="secondary" as="span" truncate>Reading Ideas/Launch checklist.md</Text></CapsuleBar>
             <CapsuleBar mood="filed" actions={<><Button size="small">Undo</Button><Button size="small" variant="primary">Open</Button></>}>Filed on 2 pages</CapsuleBar>
             <CapsuleBar mood="needs-you" actions={<Button size="small" variant="primary">Answer</Button>}>Claude Code has a question</CapsuleBar>

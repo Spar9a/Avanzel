@@ -181,9 +181,9 @@ function capsuleStates(): [string, CapsuleState, string][] {
       { kind: "listening", mode: "comment", startedAt: Date.now(), fakeMic: true, microphoneId: null, thumbnail, context, fileMode: null, hint: "Alt+Shift+S", review: "at 21:00" },
       "Safari",
     ],
-    // A dictation into another app: no file mode to switch, and above the bar the words as they are said.
+    // A recording's words on the panel's glass as they are said, the newest in view and older ones fading out, and a dictation's app in Zel's place.
     [
-      "listening, a dictation's words",
+      "listening, the words as they are said",
       {
         kind: "listening",
         mode: "dictate",
@@ -193,12 +193,14 @@ function capsuleStates(): [string, CapsuleState, string][] {
         fileMode: null,
         hint: null,
         review: null,
-        dictation: { words: "Ask Dana about the launch checklist before Friday" },
+        dictation: { app: { name: "Slack", icon: thumbnail } },
+        words: "Ask Dana about the launch checklist before Friday, and tell her the page goes out after the signed build, not before it, whatever else happens this week.",
       },
       "Ask Dana about the launch checklist",
     ],
     ["transcribing", { kind: "transcribing", mode: "dictate", onThisMac: true }, "Transcribing on this Mac…"],
     ["transcribing, slow", { kind: "transcribing", mode: "dictate", onThisMac: true, slow: true }, "Still transcribing…"],
+    ["transcribing, with the words said so far", { kind: "transcribing", mode: "dictate", onThisMac: true, words: "Ask Dana about the launch checklist before Friday" }, "Transcribing on this Mac…"],
     // A screen comment keeps the screenshot's card, labelled with the app, over the bar while its words are made.
     ["transcribing, a screen comment", { kind: "transcribing", mode: "comment", onThisMac: true, thumbnail, context }, "Safari"],
     [
@@ -469,15 +471,15 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
     await expect(capsule.getByText(shows)).toBeVisible();
     // Every piece the page draws takes the pointer. The page's wrapper and the stack take none (the transparent corners pass it to the
     // apps below), so a state whose root were a bare piece, and not a notice or a stack, could not be hovered, and would be put away
-    // under the pointer: each state's pieces are the stack's children, or the notice itself. A dictation's words alone take none: they
-    // have nothing to press, may stand over the box they are said to, and a recording that listens is not put away.
+    // under the pointer: each state's pieces are the stack's children, or the notice itself. A recording's panel with nothing to press alone
+    // takes none: it may stand over the box a dictation goes into, and a recording that listens is not put away.
     const pieces = await capsule.evaluate(() =>
       [...document.querySelectorAll(".app > *")]
         .flatMap((root) => (root.matches(".stack") ? [...root.children] : [root]))
         .map((piece) => ({ piece: piece.className || piece.tagName.toLowerCase(), pointerEvents: getComputedStyle(piece).pointerEvents })),
     );
     expect(pieces.length, `capsule ${name}: pieces`).toBeGreaterThan(0);
-    for (const { piece, pointerEvents } of pieces) expect(pointerEvents, `capsule ${name}: ${piece}`).toBe(piece === "live-words" ? "none" : "auto");
+    for (const { piece, pointerEvents } of pieces) expect(pointerEvents, `capsule ${name}: ${piece}`).toBe(piece.includes("through") ? "none" : "auto");
     found.push(...(await readable(app, capsule, `capsule ${name}`, desktops)));
   }
   await app.close();

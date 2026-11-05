@@ -125,6 +125,14 @@ export type CardAction =
  * What main tells the capsule page's microphone: a recording's start, stop (its samples go back by `sendAudio`) and cancel; and a call's
  * start and stop, between which its blocks go back by `sendCallAudio` with the call's id (`call`).
  */
+/**
+ * A dictation into another app, on its capsule. `app`: what has focus, which the words would go to, shown where Zel is for a recording that
+ * goes to the library. Absent until it has been looked at, null when it couldn't be told. `icon`: the app's icon, as a PNG's data URL.
+ */
+export interface DictationState {
+  app?: { name: string; icon?: string } | null;
+}
+
 export type CapsuleCommand = "start" | "stop" | "cancel" | { kind: "call-start" | "call-stop"; call: number };
 
 export type CapsuleState =
@@ -153,11 +161,12 @@ export type CapsuleState =
        * have been kept, and while that shortcut is registered; null otherwise.
        */
       hint: string | null;
+      /** The page sends main its microphone as it hears it (`sendLiveAudio`), for the words as they are said and to look at what has focus. */
+      live?: true;
+      /** The words so far, while they are said (`LiveWords`): a preview, kept nowhere. Absent until there are some, and where they may not show. */
+      words?: string;
       /** Set only for a dictation into another app (the controller's `startCursorRecording`). */
-      dictation?: {
-        /** The words so far, while they are said (`LiveWords`): a preview, shown on a card and kept nowhere. Absent until there are some. */
-        words?: string;
-      };
+      dictation?: DictationState;
     }
   /**
    * `onThisMac`: the library's speech-to-text runs on this Mac, which the card then says; a command can run anywhere. `slow`: it has run
@@ -166,7 +175,7 @@ export type CapsuleState =
    * a screen comment's screenshot and what it is of, as it had them while it listened, so that the card above the bar stays while the
    * words are made and the saved card that follows does not come after a gap.
    */
-  | { kind: "transcribing"; mode: CapsuleMode; onThisMac: boolean; slow?: true; thumbnail?: string; context?: ScreenContext }
+  | { kind: "transcribing"; mode: CapsuleMode; onThisMac: boolean; slow?: true; thumbnail?: string; context?: ScreenContext; words?: string; dictation?: DictationState }
   | {
       kind: "filing";
       text: string;

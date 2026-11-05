@@ -1,50 +1,40 @@
-// The capsule while a recording listens: a bar (Zel listening, the wave, the time) and, above it, what a card of paper or glass adds. The
-// bar is a live region and has no line while listening, so its time and its one button are all it holds: the design system draws the
-// ticking time inside the region, which VoiceOver may read each second (owner item 5).
-import { Button, Card, Hud, Kbd, Text } from "@avanzel/ui";
+// The capsule while a recording listens: one panel of glass, with the words as they are said above a row of Zel or the app, the voice and the
+// time. The row is a live region and has no line while listening, so its one button is all a screen reader hears of it. A card of paper
+// goes above the panel only for a screen comment's screenshot: paper is for what is kept, and these words are still in the air.
+import { Button, Kbd, Text } from "@avanzel/ui";
 import { prettyAccelerator } from "../../main/shortcuts.ts";
 import { CALL_LISTENING_LINE, fileModeLabel } from "../../shared/transcribing.ts";
 import { api, type StateOf } from "./api.ts";
+import { appOf, type Scene } from "./scene.tsx";
 import { ScreenshotCard } from "./screenshot.tsx";
-import type { Scene } from "./scene.tsx";
-import { Words } from "./words.tsx";
 
 /**
- * The bar's one button is this capture's file mode, which a press switches between now and the evening review, worded from the
- * review (`fileModeLabel`); a screen comment and setup's first spoken thought have none to switch (`fileMode` is null). Above the
- * bar, for a screen comment, its screenshot on a card labelled with the app; and, for the first recordings, the keys that finish
- * and give up a recording, on a small card of the capsule's glass (owner item 1). The time is the recording's own, counted from when
- * it began (`startedAt`), whatever is pressed. A dictation has no hint, and no card until there are words (the owner took out the line
- * on how it ends, as it only took room; Settings → Voice says): then the newest of them go on a card above the bar, as they are said,
- * marked as a preview, since those that are pasted come from a recognition of their own. It has nothing to press, so the pointer goes
- * through it to the app they are said to (`.live-words`). It stands apart from the bar, whose live region would have a screen reader
- * read the words out at each change: the bar's own line is not used for them for that reason.
+ * The row's one button is this capture's file mode, which a press switches between now and the evening review, worded from the review
+ * (`fileModeLabel`); a screen comment, a dictation and setup's first spoken thought have none to switch (`fileMode` is null), and a panel
+ * with nothing to press lets the pointer through to the app below. Above the row, the words as they are said, the newest in view; before
+ * there are any, for the first recordings, the keys that finish and give up a recording (owner item 1). A dictation never has those: the
+ * owner took out its line on how it ends, as it only took room, and Settings → Voice says. A screen comment's card leaves room for two
+ * lines of words. The time is the recording's own, counted from when it began (`startedAt`), whatever is pressed.
  */
 export function listeningScene(state: StateOf<"listening">, levels: readonly number[]): Scene {
   if (state.mode === "call") return callScene(state, levels);
+  const comment = state.mode === "comment" && state.thumbnail;
   return {
-    card: state.dictation?.words ? (
-      <div className="live-words">
-        <Card label="Dictation" meta="Preview">
-          <Words latest>{state.dictation.words}</Words>
-        </Card>
-      </div>
-    ) : state.mode === "comment" && state.thumbnail ? (
-      <ScreenshotCard thumbnail={state.thumbnail} context={state.context} />
-    ) : undefined,
-    hint: state.hint ? (
-      <div className="hint">
-        <Hud>
-          <Text variant="footnote">
-            <Kbd>{prettyAccelerator(state.hint)}</Kbd> to finish, <Kbd>Esc</Kbd> to cancel
-          </Text>
-        </Hud>
-      </div>
-    ) : undefined,
+    card: comment ? <ScreenshotCard thumbnail={state.thumbnail!} context={state.context} /> : undefined,
+    through: !state.fileMode,
     bar: {
       mood: "listening",
       levels,
       startedAt: state.startedAt,
+      centred: true,
+      words: state.words,
+      wordLines: comment ? 2 : 3,
+      app: appOf(state.dictation),
+      hint: state.hint ? (
+        <Text variant="footnote" tone="secondary">
+          <Kbd>{prettyAccelerator(state.hint)}</Kbd> to finish, <Kbd>Esc</Kbd> to cancel
+        </Text>
+      ) : undefined,
       actions: state.fileMode && (
         <Button size="small" onClick={() => api.toggleFileMode()}>
           {fileModeLabel(state.fileMode, state.review)}
@@ -55,15 +45,16 @@ export function listeningScene(state: StateOf<"listening">, levels: readonly num
 }
 
 /**
- * Notes on a call: the bar alone, with its line (the same for the whole call, so the live region says it once), the voice, the call's
+ * Notes on a call: the row alone, with its line (the same for the whole call, so the live region says it once), the voice, the call's
  * time and Stop, which ends the call and makes its notes. No card, no hint and no file-mode switch: a call is filed as the setting says.
+ * The voice is the last 16 of its levels, which leaves its line room to be read whole beside Stop.
  */
 function callScene(state: StateOf<"listening">, levels: readonly number[]): Scene {
   return {
     bar: {
       mood: "listening",
       line: CALL_LISTENING_LINE,
-      levels,
+      levels: levels.slice(-16),
       startedAt: state.startedAt,
       actions: <Button size="small" onClick={() => api.stopCall()}>Stop</Button>,
     },

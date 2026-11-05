@@ -1,5 +1,5 @@
-// A dictation's words on the capsule while they are said. The first test sends audio the whole way, from Chromium's fake capture device
-// through the capsule's page to main; the others hand main its blocks (`hearLiveForTests`), since the fake microphone sends none. The
+// A recording's words on the capsule's one panel while they are said. The first test sends audio the whole way, from Chromium's fake capture
+// device through the capsule's page to main; the others hand main its blocks (`hearLiveForTests`), since the fake microphone sends none. The
 // speech model is AVANZEL_FAKE_TRANSCRIPT, which gives the same words for any audio, and the Mac's side is the fake cursor helper.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -7,12 +7,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Target } from "../src/main/cursor-helper.ts";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { call, capsuleKind, launch, makeLibrary, snap, speechWav, windowFor } from "./helpers.ts";
+import { expectInPanel } from "./capsule-helpers.ts";
+import { call, capsuleKind, launch, makeLibrary, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
 
 const WORDS = "hello Kowalczyk";
+/** One transparent pixel, standing in for an app's icon as the helper gives it: a PNG in base64. */
+const ICON = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 const slack: Target = {
-  app: { name: "Slack", bundleId: "com.tinyspeck.slackmacgap", pid: 501 },
+  app: { name: "Slack", bundleId: "com.tinyspeck.slackmacgap", pid: 501, icon: ICON },
   window: { title: "#general" },
   element: { role: "AXTextArea", secure: false, takesText: "yes" },
 };
@@ -47,10 +50,10 @@ async function dictating(app: ElectronApplication): Promise<void> {
 }
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const liveWords = (capsule: Page) => capsule.locator(".live-words");
-const wordsInState = async (app: ElectronApplication) => ((await call(app, "capsuleStateForTests")) as { dictation?: { words?: string } }).dictation?.words;
+const heard = (capsule: Page) => capsule.locator(".av-capsule-words");
+const wordsInState = async (app: ElectronApplication) => ((await call(app, "capsuleStateForTests")) as { words?: string }).words;
 
-test("the microphone's audio reaches main as it is said: the words show on a card above the bar, and go when the dictation ends", async () => {
+test("the microphone's audio reaches main as it is said: the words show on the panel's glass, with no card, and go when the dictation ends", async () => {
   const { script, pasteOut } = fakeCursor();
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_FAKE_CURSOR: script, AVANZEL_FAKE_TRANSCRIPT: WORDS }, [
@@ -61,60 +64,100 @@ test("the microphone's audio reaches main as it is said: the words show on a car
   await call(app, "setCursorDictation", { enabled: true });
   await call(app, "pressCursorDictation");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
-  const words = liveWords(capsule).getByText(WORDS, { exact: true });
+  const words = heard(capsule).getByText(WORDS, { exact: true });
   await expect(words).toBeVisible({ timeout: 15_000 });
-  await expect(liveWords(capsule).getByText("Dictation", { exact: true })).toBeVisible();
-  await expect(liveWords(capsule).getByText("Preview", { exact: true })).toBeVisible();
-  // The card and the bar are all there is: no line on how a dictation ends takes room above the bar.
-  await expect(capsule.locator(".hint")).toHaveCount(0);
-  expect(await capsule.evaluate(() => document.querySelector(".stack")!.children.length)).toBe(2);
-  // None of it is in the bar's live region, so a screen reader doesn't read the words out at each change.
+  // One piece of glass: no card of paper, and nothing else above the row.
+  await expect(capsule.getByRole("article")).toHaveCount(0);
+  await expect(capsule.locator(".stack > *")).toHaveCount(1);
+  // None of it is in the row's live region, so a screen reader doesn't read the words out at each change.
   expect(await words.evaluate((el) => el.closest('[role="status"],[aria-live]')?.tagName ?? null)).toBeNull();
   await snap(capsule, "live-words");
 
   // Words can show from the first moment of audio, and a recording that short has none to paste, so this one runs on a little.
   await wait(1_500);
   await call(app, "pressCursorDictation");
-  await expect(liveWords(capsule)).toHaveCount(0);
   await expect.poll(() => pasted(pasteOut), { timeout: 30_000 }).toBe(WORDS);
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await app.close();
 });
 
-test("the words grow on the card as more is said, and the newest stay in view when they no longer fit", async () => {
+test("the panel is one row until there are words and grows upward as they come, the row staying where it is and the newest words in view", async () => {
   const { script } = fakeCursor();
   const { app, capsule } = await launchWith(script);
   await dictating(app);
-  // Until there are words, the bar is all there is.
-  await expect(liveWords(capsule)).toHaveCount(0);
-  await expect(capsule.locator(".hint")).toHaveCount(0);
-  expect(await capsule.evaluate(() => document.querySelector(".stack")!.children.length)).toBe(1);
+  const row = capsule.getByRole("status");
+  const panel = capsule.locator(".stack .av-hud");
+  const before = (await row.boundingBox())!;
+  await expect(heard(capsule)).toHaveCount(0);
+  expect((await panel.boundingBox())!.height).toBe(before.height);
+  await snap(capsule, "live-words-started");
+
   await call(app, "hearLiveForTests", 1);
-  await expect(liveWords(capsule).getByText(WORDS, { exact: true })).toBeVisible();
+  await expect(heard(capsule).getByText(WORDS, { exact: true })).toBeVisible();
+  expect((await panel.boundingBox())!.height).toBeGreaterThan(before.height);
+  expect((await row.boundingBox())!.y).toBe(before.y);
 
   // Each 12 s is settled, and what is said after it follows it.
   await call(app, "hearLiveForTests", 12);
-  await expect(liveWords(capsule).getByText(`${WORDS} ${WORDS}`, { exact: true })).toBeVisible();
+  await expect(heard(capsule).getByText(`${WORDS} ${WORDS}`, { exact: true })).toBeVisible();
   for (let i = 0; i < 24; i++) {
     await call(app, "hearLiveForTests", 12);
     await wait(20);
   }
   await expect.poll(async () => (await wordsInState(app))?.length ?? 0).toBeGreaterThan(300);
   const fit = await capsule.evaluate(() => {
-    const clip = document.querySelector(".words.latest")!;
-    const words = clip.firstElementChild!;
-    const lineHeight = parseFloat(getComputedStyle(clip).lineHeight);
+    const room = document.querySelector(".av-capsule-words")!;
+    const words = room.firstElementChild!;
+    const lineHeight = parseFloat(getComputedStyle(room).lineHeight);
     const of = (element: Element) => element.getBoundingClientRect();
     return {
-      lines: of(clip).height / lineHeight,
-      overflowsAbove: of(words).top < of(clip).top - 1,
-      newestAtBottom: Math.abs(of(words).bottom - of(clip).bottom) < 1,
-      cardInPanel: of(document.querySelector(".live-words")!).top >= 0,
-      pointerOnCard: getComputedStyle(document.querySelector(".live-words")!).pointerEvents,
-      pointerOnBar: getComputedStyle(document.querySelector(".stack")!.lastElementChild!).pointerEvents,
+      // Three lines, and the strip of the fourth that shows there is more above.
+      lines: Math.floor(of(room).height / lineHeight),
+      overflowsAbove: of(words).top < of(room).top - 1,
+      newestAtBottom: Math.abs(of(words).bottom - of(room).bottom) < 1,
+      inWindow: of(document.querySelector(".stack")!).top >= 0,
+      pointer: getComputedStyle(document.querySelector(".stack")!.lastElementChild!).pointerEvents,
     };
   });
-  expect(fit).toEqual({ lines: 4, overflowsAbove: true, newestAtBottom: true, cardInPanel: true, pointerOnCard: "none", pointerOnBar: "auto" });
+  expect(fit).toEqual({ lines: 3, overflowsAbove: true, newestAtBottom: true, inWindow: true, pointer: "none" });
+  expect((await row.boundingBox())!.y).toBe(before.y);
   await snap(capsule, "live-words-long");
+  await app.close();
+});
+
+test("a dictation shows the app its words are going to, in Zel's place, and Zel where it has no icon", async () => {
+  const withIcon = fakeCursor();
+  const first = await launchWith(withIcon.script);
+  await dictating(first.app);
+  const icon = first.capsule.getByRole("img", { name: "Dictating into Slack", exact: true });
+  await expect(icon).toBeVisible();
+  expect(await icon.getAttribute("src")).toBe(`data:image/png;base64,${ICON}`);
+  await expect(first.capsule.locator("svg[data-mood]")).toHaveCount(0);
+  await first.app.close();
+
+  const noIcon = fakeCursor({ ...slack, app: { name: "Slack", bundleId: "com.tinyspeck.slackmacgap", pid: 501 } });
+  const second = await launchWith(noIcon.script);
+  await dictating(second.app);
+  await expect(second.capsule.locator("svg[data-mood]")).toHaveAttribute("data-mood", "listening");
+  await expect(second.capsule.locator(".av-capsule-app")).toHaveCount(0);
+  await second.app.close();
+});
+
+test("the words said so far stay on the panel while the final words are made, with the line in the voice's place, and go when they are pasted", async () => {
+  const { script, pasteOut } = fakeCursor();
+  const { app, capsule } = await launchWith(script, { AVANZEL_FAKE_TRANSCRIPT_DELAY_MS: "1200" });
+  await dictating(app);
+  await call(app, "hearLiveForTests", 1);
+  await expect(heard(capsule).getByText(WORDS, { exact: true })).toBeVisible({ timeout: 10_000 });
+  await call(app, "pressCursorDictation");
+  await expect.poll(() => capsuleKind(app)).toBe("transcribing");
+  await expect(heard(capsule).getByText(WORDS, { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("status").getByText("Transcribing on this Mac…", { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("img", { name: "Dictating into Slack", exact: true })).toBeVisible();
+  await expect(capsule.locator(".av-wave")).toHaveCount(0);
+  await snap(capsule, "live-words-finishing");
+  await expect.poll(() => pasted(pasteOut), { timeout: 30_000 }).toBe(WORDS);
+  await expect(heard(capsule)).toHaveCount(0);
   await app.close();
 });
 
@@ -129,7 +172,7 @@ for (const [where, target] of OFF_THE_SCREEN) {
     await dictating(app);
     await call(app, "hearLiveForTests", 2);
     await wait(300);
-    await expect(liveWords(capsule)).toHaveCount(0);
+    await expect(heard(capsule)).toHaveCount(0);
     expect(await wordsInState(app)).toBeUndefined();
     await call(app, "pressCursorDictation");
     await expect.poll(() => pasted(pasteOut), { timeout: 30_000 }).toBe(WORDS);
@@ -150,21 +193,62 @@ test("Esc takes the words with it: a recognition still running shows nothing, an
   await call(app, "pressCursorDictation");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await wait(500);
-  await expect(liveWords(capsule)).toHaveCount(0);
+  await expect(heard(capsule)).toHaveCount(0);
   expect(await wordsInState(app)).toBeUndefined();
   expect(pasted(pasteOut)).toBe("");
   await app.close();
 });
 
-test("a thought that is recorded shows no words as it is said", async () => {
+test("a thought shows its words too, in place of the first recordings' hint, with Zel, and its button still takes the pointer", async () => {
   const { script } = fakeCursor();
   const { app, capsule } = await launchWith(script);
-  await call(app, "setCursorDictation", { enabled: true });
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await expect(capsule.getByText("⌥Space to finish, Esc to cancel", { exact: true })).toBeVisible();
+  await expect(capsule.locator("svg[data-mood]")).toHaveAttribute("data-mood", "listening");
   await call(app, "hearLiveForTests", 2);
-  await wait(300);
-  await expect(liveWords(capsule)).toHaveCount(0);
+  await expect(heard(capsule).getByText(WORDS, { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(capsule.getByText("⌥Space to finish, Esc to cancel", { exact: true })).toHaveCount(0);
+  await expect(capsule.locator("svg[data-mood]")).toHaveAttribute("data-mood", "listening");
+  const button = capsule.getByRole("status").getByRole("button");
+  await expect(button).toBeVisible();
+  expect(await button.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe("auto");
+  await snap(capsule, "live-words-thought");
+  await app.close();
+});
+
+test("a screen comment's screenshot and two lines of its words fit the panel together", async () => {
+  const { script } = fakeCursor();
+  const { app, capsule } = await launchWith(script);
+  const thumbnail = `data:image/png;base64,${readFileSync(screenshotFixture()).toString("base64")}`;
+  await call(app, "setCapsule", {
+    kind: "listening",
+    mode: "comment",
+    startedAt: Date.now(),
+    fakeMic: true,
+    microphoneId: null,
+    thumbnail,
+    context: { app: "Safari" },
+    fileMode: null,
+    hint: null,
+    review: null,
+    words: "This page is the one I meant, and the button at the top of it is the one that does nothing when you press it on the second visit, which is what I keep running into every single time.",
+  });
+  await expect(capsule.locator(".av-capsule-words")).toHaveAttribute("data-lines", "2");
+  await expectInPanel(capsule);
+  await snap(capsule, "live-words-comment");
+  await app.close();
+});
+
+test("a call's row keeps its line whole, beside a shorter voice and Stop", async () => {
+  const { script } = fakeCursor();
+  const { app, capsule } = await launchWith(script);
+  await call(app, "setCapsule", { kind: "listening", mode: "call", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: null, hint: null, review: null });
+  const line = capsule.locator(".av-capsule-text");
+  await expect(line).toHaveText("Taking notes on the call");
+  expect(await line.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await expect(capsule.locator(".av-wave > i")).toHaveCount(16);
+  await expect(capsule.getByRole("status").getByRole("button", { name: "Stop", exact: true })).toBeVisible();
   await app.close();
 });
 
@@ -177,7 +261,7 @@ test("a library whose speech-to-text is a command isn't asked once a second, and
   await dictating(app);
   await call(app, "hearLiveForTests", 2);
   await wait(300);
-  await expect(liveWords(capsule)).toHaveCount(0);
+  await expect(heard(capsule)).toHaveCount(0);
   await call(app, "pressCursorDictation");
   await expect.poll(() => pasted(pasteOut), { timeout: 30_000 }).toBe(WORDS);
   await app.close();

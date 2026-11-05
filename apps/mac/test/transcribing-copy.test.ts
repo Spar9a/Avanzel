@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cursorKeyName, fileModeLabel, filingMeta, transcribedLine, transcribingLine } from "../src/shared/transcribing.ts";
+import { cursorKeyName, dictatingIntoLabel, fileModeLabel, filingMeta, transcribedLine, transcribingLine } from "../src/shared/transcribing.ts";
 
 // The capsule's words about turning a recording into text. The engine's own model runs on this Mac; the command in a library's
 // [voice] settings can run anywhere, so for it the words don't say where. And the card's: the file-mode button of a recording,
@@ -121,6 +121,11 @@ describe("filingMeta: the filing card's seconds", () => {
 });
 
 describe("the keys a dictation can listen to", () => {
+  it("names the app a dictation goes to, when it is known", () => {
+    expect(dictatingIntoLabel("Slack")).toBe("Dictating into Slack");
+    expect(dictatingIntoLabel("")).toBe("Dictating");
+  });
+
   it("names each key as the Settings menu does", () => {
     expect(cursorKeyName("right-option")).toBe("Right Option");
     expect(cursorKeyName("right-control")).toBe("Right Control");

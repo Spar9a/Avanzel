@@ -13,6 +13,9 @@ export const CURSOR_KEYS: readonly { key: CursorKey; name: string }[] = [
   { key: "right-control", name: "Right Control" },
 ];
 
+/** What a screen reader hears of the icon that stands for the app a dictation's words are going to. */
+export const dictatingIntoLabel = (app: string): string => (app ? `Dictating into ${app}` : "Dictating");
+
 export const cursorKeyName = (key: CursorKey): string => CURSOR_KEYS.find((entry) => entry.key === key)?.name ?? "the key";
 
 /**

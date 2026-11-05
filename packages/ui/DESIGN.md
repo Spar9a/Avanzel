@@ -7,6 +7,8 @@ Avanzel looks like **paper cards on glass**:
 - Zel, a rubber-stamp librarian, who stamps each thought when it is filed.
 - Violet ink.
 
+Glass while the words are in the air, paper once they are kept: a recording stays on the capsule's one panel of glass, and a thought becomes a card when it is filed.
+
 `@avanzel/ui` is the only place this look is made. It holds the tokens, the components and the gallery, which shows every component in light and dark. To see the gallery, run `npm run ui:gallery` and open `packages/ui/gallery/dist/index.html`.
 
 The design rationale is in `reports/Avanzel UX and first-run design.md`. This file is the contract for building to it.
@@ -59,9 +61,9 @@ If nothing fits, add a component or a variant in `packages/ui` (see "When someth
 | `ShelfGlyph`, `ShelfMark` | A shelf's glyph or mini tab next to its visible name | Without the name |
 | `Zel` | The librarian: six moods (`idle`, `listening`, `thinking`, `filed`, `needs-you`, `asleep`) at four sizes | Anywhere outside Avanzel's own windows |
 | `Bubble` | Zel speaking, when asked or when something needs the person, such as a permission request | Tooltips and help text |
-| `Hud` | The capsule's dark glass, the only glass there is | Windows or content |
+| `Hud` | The capsule's dark glass, the only glass there is. Words go on it only while they are heard (`CapsuleBar`'s `words`): once they are kept, they go on paper | Windows or other content |
 | `Wave` | Voice levels | Progress |
-| `CapsuleBar` | The capsule's bar: `listening`, `thinking`, `filed`, `needs-you` | Messages longer than a line |
+| `CapsuleBar` | The capsule's panel: a row for `listening`, `thinking`, `filed`, `needs-you`, with the words as they are heard above it, and the app they go to in Zel's place | Messages longer than a line in the row. Words that are kept: use `Card`. Words as they are heard in the row's line: it is a live region |
 | `CapsuleNotice` | A problem in the capsule: worried Zel, what happened, what's safe, one fix | Success: use `CapsuleBar mood="filed"` |
 | `Receipt` | What a filing changed: each page and its shelf | Other lists |
 | `Letter` | The evening letter, signed and stamped | Other documents |

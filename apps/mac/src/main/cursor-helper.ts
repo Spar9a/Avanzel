@@ -13,8 +13,8 @@ export type { CursorKey } from "./tap-detector.ts";
 
 /** What the helper saw in front: the app, its window, and the focused element. Nulls are what it could not read. */
 export interface Target {
-  /** The helper may not know an app's name or bundle id; they are then empty strings. */
-  app: { name: string; bundleId: string; pid: number };
+  /** The helper may not know an app's name or bundle id; they are then empty strings. `icon`, a PNG in base64, comes only with `look`. */
+  app: { name: string; bundleId: string; pid: number; icon?: string };
   window: { title: string } | null;
   /** Null when Accessibility is not granted or nothing could be read; `role` is null when the element had none. */
   element: { role: string | null; secure: boolean; takesText: "yes" | "no" | "unknown" } | null;
@@ -92,7 +92,12 @@ function targetFrom(reply: Record<string, unknown>): Target {
   const window = reply.window as Record<string, unknown> | null | undefined;
   const element = reply.element as Record<string, unknown> | null | undefined;
   return {
-    app: { name: text(app.name, ""), bundleId: text(app.bundleId, ""), pid: typeof app.pid === "number" ? app.pid : 0 },
+    app: {
+      name: text(app.name, ""),
+      bundleId: text(app.bundleId, ""),
+      pid: typeof app.pid === "number" ? app.pid : 0,
+      ...(typeof app.icon === "string" && app.icon ? { icon: app.icon } : {}),
+    },
     window: window ? { title: text(window.title, "") } : null,
     element: element
       ? {
@@ -194,8 +199,8 @@ export class CursorHelper {
   }
 
   /**
-   * What has focus now, as `inspect` answers, for a look that changes nothing: no window is kept, and the fake's script doesn't move on,
-   * so that a test's targets stay those of the second tap and of the paste. Rejects when no app is in front.
+   * What has focus now, as `inspect` answers, with the app's icon, for a look that changes nothing: no window is kept, and the fake's
+   * script doesn't move on, so that a test's targets stay those of the second tap and of the paste. Rejects when no app is in front.
    */
   async look(): Promise<Target> {
     const fake = this.fakeIfOn();
@@ -205,7 +210,7 @@ export class CursorHelper {
       if (!target) throw new Error("The fake cursor helper has no targets.");
       return target;
     }
-    return targetFrom(await this.request({ cmd: "inspect" }));
+    return targetFrom(await this.request({ cmd: "inspect", icon: true }));
   }
 
   /**

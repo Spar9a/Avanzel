@@ -19,14 +19,8 @@
   backdrop-filter: blur(20px) saturate(1.4);
   box-shadow: var(--av-shadow-hud);
 }
-.av-hud[data-shape="pill"] {
-  display: flex;
-  align-items: center;
-  gap: var(--av-space-10);
-  min-height: var(--av-size-capsule);
-  padding: 6px 8px 6px 6px;
-  border-radius: var(--av-radius-pill);
-}
+/* The same corners as a capsule card, at every height, so one row grows into a panel with no change of shape. */
+.av-hud[data-shape="capsule"] { display: flow-root; border-radius: var(--av-radius-hud); }
 .av-hud[data-shape="card"] { padding: 14px 16px; border-radius: var(--av-radius-hud); }
 @media (prefers-reduced-transparency: reduce) {
   .av-hud { background: var(--av-hud-surface-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
