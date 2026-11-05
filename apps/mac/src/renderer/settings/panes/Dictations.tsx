@@ -1,7 +1,7 @@
 // Settings → Dictations: what was dictated into other apps, newest first, each on a card with the app it went to, when, the words
 // (a preview of a long text) and Copy and Delete. The history is the app's own, not the library's, so the pane works with no library
 // open and is never behind NoLibrary. It lists the history again when main says it changed (a dictation ended, or one was forgotten
-// from the menu). The words are shown here and nowhere else, and are never logged.
+// from the menu). Once a dictation has ended its words are shown here and nowhere else, and they are never logged.
 import { Actions, Button, Card, Notice, Stack, Text } from "@avanzel/ui";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { DICTATION_PAGE, type DictationRow } from "../../../shared/ipc.ts";

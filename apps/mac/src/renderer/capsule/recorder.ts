@@ -15,6 +15,8 @@ export class Recorder {
   private stream: MediaStream | null = null;
   private node: AudioWorkletNode | null = null;
   private chunks: Float32Array[] = [];
+  /** How many of `chunks` have been given out by `fresh`. */
+  private given = 0;
   /** Counts starts, stops and cancels: a start overtaken by a stop or cancel lets go of what it opens. */
   private generation = 0;
 
@@ -24,6 +26,7 @@ export class Recorder {
     const generation = ++this.generation;
     const overtaken = () => generation !== this.generation; // stopped or cancelled meanwhile
     this.chunks = [];
+    this.given = 0;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { deviceId: deviceId ? { exact: deviceId } : undefined, channelCount: 1, echoCancellation: false, noiseSuppression: false },
@@ -71,6 +74,14 @@ export class Recorder {
   drain(): Float32Array {
     const chunks = this.chunks;
     this.chunks = [];
+    this.given = 0;
+    return joined(chunks);
+  }
+
+  /** What was recorded since the last `fresh`, which stays for `stop`: a dictation's live words hear it as it comes. */
+  fresh(): Float32Array {
+    const chunks = this.chunks.slice(this.given);
+    this.given = this.chunks.length;
     return joined(chunks);
   }
 
@@ -88,5 +99,6 @@ export class Recorder {
     this.stream = null;
     this.context = null;
     this.chunks = [];
+    this.given = 0;
   }
 }

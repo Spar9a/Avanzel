@@ -152,6 +152,7 @@ import {
   savedPage,
 } from "./library-info.ts";
 import { forgetKept, logDictation } from "./library-log.ts";
+import { LiveWords } from "./live-words.ts";
 import { buildMenuModel, reviewProgress, speechProblemOf, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
@@ -436,6 +437,8 @@ export class Controller {
    * its words are thrown away if it has moved on, so they can't be pasted into the next dictation.
    */
   private cursorGeneration = 0;
+  /** The words of the dictation that listens, as they are said, when they can be made on this Mac (`liveWordsFor`). */
+  private liveWords: LiveWords | null = null;
   /** A dictation's words are being made (`heardForCursor`), so dropping it must tell the session that they won't come. */
   private cursorRecognising = false;
   /** The words of the last copy prompt, which its Copy button copies (`copy-dictation`). */
@@ -1570,6 +1573,7 @@ export class Controller {
       }, maxSeconds * 1000),
     };
     this.recording = recording;
+    if (forCursor) this.liveWords = this.liveWordsFor(recording);
     this.wake(); // the next capture wakes Zel
     this.setCapsule({
       kind: "listening",
@@ -1628,6 +1632,7 @@ export class Controller {
     recording.stopping = true;
     clearTimeout(recording.maxTimer);
     shortcutApi().unregister("Escape");
+    this.endLiveWords();
     const onThisMac = this.transcribesOnThisMac();
     // This card is the capsule's now: an older transcription still running no longer has it, so neither its slow state nor Stop can
     // reach this recording's card (`slowTranscription`, `stopTranscribing`).
@@ -1695,6 +1700,7 @@ export class Controller {
     clearTimeout(recording.maxTimer);
     this.clearAudioTimeout();
     shortcutApi().unregister("Escape");
+    this.endLiveWords();
     if (recording.shot) rmSync(recording.shot.path, { force: true });
     if (this.recording === recording) this.recording = null;
     this.capsuleCommand("cancel");
@@ -1815,6 +1821,35 @@ export class Controller {
       console.error("question", error);
       this.recordingFailed(recording, { problem: "unheard" }, unheardProblem(errorMessage(error), null, reasonMax(error)));
     }
+  }
+
+  /**
+   * The words of `recording`, a dictation into any app, for its listening card while they are said. Null when the library's speech-to-text
+   * is a command, which can run anywhere and cost anything, and is not to be asked once a second. The state goes straight to the page: this
+   * is the same card with more words on it, and once a second is too often for all that `setCapsule` does for a new card, such as
+   * building the menu again.
+   */
+  private liveWordsFor(recording: Recording): LiveWords | null {
+    if (!this.transcribesOnThisMac()) return null;
+    return new LiveWords({
+      recognise: async (samples) => (await this.transcribe(samples)).text,
+      show: (words) => {
+        const state = this.capsuleState;
+        if (this.recording !== recording || state.kind !== "listening" || !state.dictation) return;
+        this.capsuleState = { ...state, dictation: words ? { ...state.dictation, words } : { key: state.dictation.key } };
+        this.capsule.webContents.send("capsule:state", this.capsuleState);
+      },
+    });
+  }
+
+  private endLiveWords(): void {
+    this.liveWords?.stop();
+    this.liveWords = null;
+  }
+
+  /** A block of the listening dictation's microphone, from the capsule's own page. */
+  onLiveAudio(sender: WebContents, samples: Float32Array): void {
+    if (isPageOf(sender, this.capsule)) this.liveWords?.add(samples);
   }
 
   /**
@@ -2136,10 +2171,14 @@ export class Controller {
       return this.cursorHelper;
     };
     return {
-      helper: { inspect: (keep) => helper().inspect(keep), sameWindow: () => helper().sameWindow(), paste: (text) => helper().paste(text) },
+      helper: { look: () => helper().look(), inspect: (keep) => helper().inspect(keep), sameWindow: () => helper().sameWindow(), paste: (text) => helper().paste(text) },
       clipboard: electronClipboard,
       startListening: () => this.startCursorRecording(),
       stopListening: () => this.stopCursorRecording(),
+      allowLiveWords: (allowed) => {
+        if (allowed) this.liveWords?.allow();
+        else this.endLiveWords();
+      },
       cancelListening: () => this.cancelCursorRecording(),
       // One microphone: a thought recording or a call refuses a dictation. A thought being transcribed or filed holds no microphone.
       busy: () => (this.recording !== null && !this.recording.forCursor) || this.calls.running,
@@ -5030,6 +5069,11 @@ export class Controller {
   }
 
   /** Whether no dictation into another app is under way: the last one's words have been pasted and kept (or not kept) by now. */
+  /** `seconds` of silence for the listening dictation's words, as its microphone's blocks would bring: the fake microphone sends none. */
+  hearLiveForTests(seconds: number): void {
+    this.liveWords?.add(new Float32Array(Math.round(seconds * 16000)));
+  }
+
   cursorIdleForTests(): boolean {
     return this.cursor.idle();
   }

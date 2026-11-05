@@ -64,9 +64,9 @@ doesn't yet notice a call by itself, read calendar titles or tell the other side
 Good to know:
 
 - **Dictate into any app**: tap Right Option (settable in Settings → Voice) to dictate into the app that has
-  focus; the words are pasted at the cursor through the clipboard, and what you had on the clipboard (copied
-  files and other formats included) is put back after, unless you copied something meanwhile. The words are
-  marked so clipboard managers skip them. Every dictation is kept in a history in Settings, and an optional
+  focus; the capsule shows a preview of the words as you speak, then the words are pasted at the cursor through
+  the clipboard, and what you had on the clipboard (copied files and other formats included) is put back after,
+  unless you copied something meanwhile. The words are marked so clipboard managers skip them. Every dictation is kept in a history in Settings, and an optional
   library log keeps them in `raw/dictations/` with the app and window; nothing is kept from password managers,
   password fields, Chrome-family private windows or the apps and sites you list (Safari and Firefox private windows can't be told apart).
 - **A dictionary** in Settings → Voice lists the names and terms you use, one per line. What the speech model

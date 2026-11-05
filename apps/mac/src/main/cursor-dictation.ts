@@ -10,7 +10,7 @@ import type { DictationEntry, DictationHistory } from "./dictation-history.ts";
 
 export interface CursorHost {
   /** The helper pastes through the clipboard itself, and gives the person's clipboard back (`CursorHelper.paste`). */
-  helper: Pick<CursorHelper, "inspect" | "sameWindow" | "paste">;
+  helper: Pick<CursorHelper, "look" | "inspect" | "sameWindow" | "paste">;
   /**
    * The clipboard, for words that were NOT pasted: they are left on it, so the person can paste them by hand. Electron's clipboard is
    * asynchronous (from Electron 44 it has only promises), so the call may return one, and is awaited.
@@ -22,6 +22,8 @@ export interface CursorHost {
   startListening(): Promise<boolean>;
   /** Asks for the audio; it arrives at `heard`. */
   stopListening(): void;
+  /** Whether the words may show as they are said (`LiveWords`). Told once for each dictation that goes on listening until the answer comes. */
+  allowLiveWords(allowed: boolean): void;
   /**
    * Drops the recording. Called after `stopListening()` too (Esc while the words are being recognised): then it ALSO drops
    * the recognition still in flight, so `heard` does not arrive for it.
@@ -220,6 +222,29 @@ export class CursorDictation {
     }
     this.state = "listening";
     this.startedAt = this.host.now();
+    void this.decideLiveWords(session);
+  }
+
+  /**
+   * Whether the words may show as they are said: not in a password field or an app on the skip list, where anyone who can see the screen
+   * would read what the person meant to keep from it, nor when it can't be told. It is looked at as the dictation starts, as the second
+   * tap's target isn't known until the words are finished; a field the person moves to after that isn't seen. The browser isn't asked: a
+   * private window or a skipped site keeps words from being stored, not from being read. Not awaited, so the look doesn't hold up the
+   * recording.
+   */
+  private async decideLiveWords(session: number): Promise<void> {
+    let allowed = false;
+    try {
+      allowed = storagePolicy(await this.host.helper.look(), null, this.host.skip()).store;
+    } catch (error) {
+      console.error("cursor dictation", error);
+    }
+    if (session !== this.session || this.state !== "listening") return;
+    try {
+      this.host.allowLiveWords(allowed);
+    } catch (error) {
+      console.error("cursor dictation", error);
+    }
   }
 
   private async fix(): Promise<void> {

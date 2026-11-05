@@ -157,7 +157,11 @@ export type CapsuleState =
        * Set only for a dictation into another app (the controller's `startCursorRecording`): the key that ends it, as the setting
        * chose it, which the card names (`dictationListeningLine`).
        */
-      dictation?: { key: CursorKey };
+      dictation?: {
+        key: CursorKey;
+        /** The words so far, while they are said (`LiveWords`): a preview, shown on a card and kept nowhere. Absent until there are some. */
+        words?: string;
+      };
     }
   /**
    * `onThisMac`: the library's speech-to-text runs on this Mac, which the card then says; a command can run anywhere. `slow`: it has run
@@ -826,6 +830,8 @@ export interface AvanzelBridge {
     ready(): void;
     onCommand(callback: (command: CapsuleCommand) => void): () => void;
     sendAudio(samples: Float32Array): Promise<void>;
+    /** What a dictation's microphone has heard since the last block, about every second while it listens: for its words as they are said. */
+    sendLiveAudio(samples: Float32Array): void;
     /**
      * A block of the microphone of the call `call` (the id its call-start command gave), about every 5 s while the call runs; `last` once
      * its microphone has stopped.

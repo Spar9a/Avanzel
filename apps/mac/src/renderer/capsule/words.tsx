@@ -8,8 +8,16 @@
  * three on the card that has, and a limit of two ended them in the middle of a word as the stamp landed. A card that has still more
  * under them, a screen comment's screenshot and the line about its recording, which may take two lines of its own, leaves two: the
  * panel has no room for a third beside them. The words are cut here, not the whole card, so that its footer, which holds what the agent
- * is doing or what is safe, always shows. All the words are in the page, for a screen reader and for selecting.
+ * is doing or what is safe, always shows. All the words are in the page, for a screen reader and, where the card takes the pointer, for
+ * selecting. `latest`: words still being said, of which it is the oldest that are cut off, so that the newest stay in view.
  */
-export function Words({ children, lines = 4 }: { children: string; lines?: 2 | 3 | 4 }) {
+export function Words({ children, lines = 4, latest = false }: { children: string; lines?: 2 | 3 | 4; latest?: boolean }) {
+  if (latest) {
+    return (
+      <div className="words latest">
+        <div>{children}</div>
+      </div>
+    );
+  }
   return <div className={lines === 4 ? "words" : `words lines-${lines}`}>{children}</div>;
 }

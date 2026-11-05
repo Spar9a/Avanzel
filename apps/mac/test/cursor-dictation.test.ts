@@ -17,6 +17,8 @@ const SAID_AT = new Date(2026, 10, 5, 14, 3, 12);
 function stubHost(
   over: {
     targets?: Array<Target | Error>;
+    /** What has focus as the dictation starts (`helper.look`), or a look that fails, or one the test answers itself. */
+    look?: Target | Error | (() => Promise<Target>);
     /** What the helper says, in turn, when asked whether the window is still the kept one; null (can't tell) once these run out. */
     same?: Array<boolean | null | Error>;
     busy?: boolean;
@@ -44,11 +46,17 @@ function stubHost(
   const said: string[] = [];
   const pasted: Array<string | undefined> = [];
   const unasked: Array<{ app: { name: string; bundleId: string }; inserted: boolean }> = [];
+  const liveWords: boolean[] = [];
   const state = { clip: BEFORE, now: SAID_AT };
   let ids = 0;
 
   const host: CursorHost = {
     helper: {
+      async look() {
+        const look = over.look ?? target();
+        if (look instanceof Error) throw look;
+        return typeof look === "function" ? look() : look;
+      },
       async inspect(keep?: boolean) {
         calls.push(keep ? "inspect:keep" : "inspect");
         const next = targets.shift();
@@ -83,6 +91,9 @@ function stubHost(
     },
     stopListening() {
       calls.push("stopListening");
+    },
+    allowLiveWords(allowed) {
+      liveWords.push(allowed);
     },
     cancelListening() {
       calls.push("cancelListening");
@@ -138,7 +149,7 @@ function stubHost(
       return `id-${++ids}`;
     },
   };
-  return { host, calls, added, written, prompts, said, pasted, unasked, state };
+  return { host, calls, added, written, prompts, said, pasted, unasked, liveWords, state };
 }
 
 /** Two taps then the words: one whole dictation. */
@@ -385,6 +396,74 @@ describe("a dictation that can't paste", () => {
     expect(stub.added[0]).toMatchObject({ inserted: false });
     await dictation.tap();
     expect(stub.calls.filter((call) => call === "startListening")).toHaveLength(2);
+  });
+});
+
+describe("the words as they are said", () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("may show them, once it has looked at what has focus", async () => {
+    const stub = stubHost();
+    await new CursorDictation(stub.host).tap();
+    await flush();
+    expect(stub.liveWords).toEqual([true]);
+  });
+
+  it("may not show them in a password field", async () => {
+    const stub = stubHost({ look: target({ element: { role: "AXTextField", secure: true, takesText: "yes" } }) });
+    await new CursorDictation(stub.host).tap();
+    await flush();
+    expect(stub.liveWords).toEqual([false]);
+  });
+
+  it("may not show them in an app on the skip list", async () => {
+    const stub = stubHost({ look: target({ bundleId: "com.1password.1password" }), skip: { apps: ["com.1Password.1Password"], sites: [] } });
+    await new CursorDictation(stub.host).tap();
+    await flush();
+    expect(stub.liveWords).toEqual([false]);
+  });
+
+  it("may not show them when it can't tell what has focus, and the dictation still goes on", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stub = stubHost({ look: new Error("no app in front") });
+    const dictation = new CursorDictation(stub.host);
+    await dictate(dictation);
+    expect(stub.liveWords).toEqual([false]);
+    expect(stub.pasted).toEqual(["milk and eggs"]);
+    logged.mockRestore();
+  });
+
+  it("may not show them when the skip list can't be read", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stub = stubHost({ skipFails: true });
+    await new CursorDictation(stub.host).tap();
+    await flush();
+    expect(stub.liveWords).toEqual([false]);
+    logged.mockRestore();
+  });
+
+  it("says nothing once the dictation has gone on without an answer: cancelled, or ended by the second tap", async () => {
+    let answer!: (target: Target) => void;
+    const stub = stubHost({ look: () => new Promise<Target>((resolve) => (answer = resolve)) });
+    const dictation = new CursorDictation(stub.host);
+    await dictation.tap();
+    dictation.cancel();
+    answer(target());
+    await flush();
+    expect(stub.liveWords).toEqual([]);
+
+    await dictation.tap();
+    await dictation.tap();
+    answer(target());
+    await flush();
+    expect(stub.liveWords).toEqual([]);
+  });
+
+  it("doesn't use up a target: the second tap and the paste read their own", async () => {
+    const stub = stubHost();
+    const dictation = new CursorDictation(stub.host);
+    await dictate(dictation);
+    expect(stub.calls.filter((call) => call.startsWith("inspect"))).toEqual(["inspect:keep", "inspect"]);
   });
 });
 

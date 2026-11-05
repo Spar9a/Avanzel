@@ -194,6 +194,21 @@ export class CursorHelper {
   }
 
   /**
+   * What has focus now, as `inspect` answers, for a look that changes nothing: no window is kept, and the fake's script doesn't move on,
+   * so that a test's targets stay those of the second tap and of the paste. Rejects when no app is in front.
+   */
+  async look(): Promise<Target> {
+    const fake = this.fakeIfOn();
+    if (fake) {
+      const { targets = [] } = fake.script;
+      const target = targets[Math.min(fake.targetsGiven, targets.length - 1)];
+      if (!target) throw new Error("The fake cursor helper has no targets.");
+      return target;
+    }
+    return targetFrom(await this.request({ cmd: "inspect" }));
+  }
+
+  /**
    * Whether the window that has focus now is the very one the last `inspect(true)` kept (the same Accessibility element, in the same
    * app): two windows with one title are told apart, and a title that changed by itself is no move. Null when the helper can't tell
    * (nothing was kept, or the window in focus can't be read).

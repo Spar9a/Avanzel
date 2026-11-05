@@ -21,6 +21,8 @@ import { transcribingScene } from "./transcribing.tsx";
 import "./styles.css";
 
 const BARS = 16;
+/** How often a dictation's microphone is sent to main while it listens, and so about how often its words on the card change. */
+const LIVE_BLOCK_MS = 1000;
 /** How often a call's microphone is sent to main, as a block, while the call runs. */
 const CALL_BLOCK_MS = 5_000;
 
@@ -213,6 +215,8 @@ function App() {
   const recorder = useRef(new Recorder((level) => push(level)));
   /** While a call runs: the timer that sends its microphone to main in blocks. */
   const callBlocks = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** While a dictation listens: the timer that sends main what its microphone has just heard, for its words as they are said. */
+  const liveBlocks = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const off = api.onState((next) => {
@@ -226,7 +230,19 @@ function App() {
   useEffect(() => api.onCommand(async (command) => {
     const current = stateRef.current;
     const fake = current.kind === "listening" && current.fakeMic;
+    // A recording's end stops the blocks of its words before anything else, so that none goes after its last audio.
+    if (command === "stop" || command === "cancel") {
+      if (liveBlocks.current) clearInterval(liveBlocks.current);
+      liveBlocks.current = null;
+    }
     if (command === "start" && current.kind === "listening" && !fake) {
+      // Set before the microphone opens, as for a call: a stop that comes while it opens finds it, and clears it. `fresh` is empty till then.
+      if (current.dictation) {
+        liveBlocks.current = setInterval(() => {
+          const block = recorder.current.fresh();
+          if (block.length > 0) api.sendLiveAudio(block);
+        }, LIVE_BLOCK_MS);
+      }
       try {
         await recorder.current.start(current.microphoneId);
       } catch (error) {
