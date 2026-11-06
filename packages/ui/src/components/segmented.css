@@ -29,6 +29,14 @@
   box-shadow: 0 1px 2px var(--av-line-control);
 }
 .av-segmented > button:disabled { opacity: 0.45; }
+.av-segmented[data-size="large"] { padding: 3px; border-radius: var(--av-radius-pill); }
+.av-segmented[data-size="large"] > button {
+  height: calc(var(--av-size-control-xlarge) - 6px);
+  padding: 0 14px;
+  gap: 7px;
+  border-radius: var(--av-radius-pill);
+  font: var(--av-text-button-xlarge);
+}
 /* On the capsule's glass the track and a control share one fill, so the chosen choice is lifted with the glass's own ink. */
 .av-hud .av-segmented > button[aria-checked="true"] {
   background: color-mix(in srgb, var(--av-hud-ink) 22%, transparent);

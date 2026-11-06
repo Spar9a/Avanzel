@@ -1,0 +1,75 @@
+/* A list of short items: the field and Add on top, like a field's box, and the items under it in rows of a soft panel, each with
+   its own Remove. A new row slides in. */
+.av-list-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--av-space-6);
+  min-width: 0;
+  width: 100%;
+}
+.av-list-field-add {
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-6);
+  min-height: var(--av-size-control);
+  padding: 2px 3px 2px var(--av-space-10);
+  border-radius: var(--av-radius-control);
+  background: var(--av-surface-control);
+  box-shadow: inset 0 0 0 0.5px var(--av-line-control);
+}
+.av-list-field-add:focus-within { outline: 2px solid var(--av-accent-focus); outline-offset: 1px; }
+.av-list-field-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--av-ink);
+  font: var(--av-text-body);
+  user-select: text;
+}
+.av-list-field-input:focus-visible { outline: none; }
+.av-list-field-input::placeholder { color: color-mix(in srgb, var(--av-ink) 72%, transparent); }
+
+.av-list-field-items {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 2px;
+  list-style: none;
+  border-radius: var(--av-radius-control);
+  background: var(--av-surface-fill);
+}
+.av-list-field-item {
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-6);
+  min-height: var(--av-size-control);
+  padding: 0 2px 0 var(--av-space-10);
+  border-radius: var(--av-radius-tab);
+  animation: av-list-field-in var(--av-duration-base) var(--av-ease-land) backwards;
+  transition: background var(--av-duration-quick) var(--av-ease-out);
+}
+.av-list-field-item:hover { background: var(--av-surface-control); }
+.av-list-field-item + .av-list-field-item { box-shadow: 0 -0.5px 0 var(--av-line-hair); }
+@keyframes av-list-field-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+.av-list-field-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--av-text-body);
+  letter-spacing: var(--av-text-body-tracking);
+  color: var(--av-ink);
+}
+.av-list-field-empty {
+  margin: 0;
+  padding: 0 var(--av-space-4);
+  font: var(--av-text-footnote);
+  color: var(--av-ink-secondary);
+}

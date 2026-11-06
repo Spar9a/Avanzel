@@ -17,10 +17,12 @@ export interface SegmentedProps<T extends string> {
   value: T;
   onChange: (value: T) => void;
   disabled?: boolean;
+  /** large: beside a recording's xlarge controls, 40 px tall with 16 px words. */
+  size?: "regular" | "large";
 }
 
 /** Two to five short, mutually exclusive choices. The arrow keys move between them. */
-export function Segmented<T extends string>({ label, options, value, onChange, disabled }: SegmentedProps<T>) {
+export function Segmented<T extends string>({ label, options, value, onChange, disabled, size = "regular" }: SegmentedProps<T>) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
   const selected = Math.max(0, options.findIndex((o) => o.value === value));
   const move = (from: number, step: number) => {
@@ -31,7 +33,7 @@ export function Segmented<T extends string>({ label, options, value, onChange, d
     buttons.current[next]?.focus();
   };
   return (
-    <div className="av-segmented" role="radiogroup" aria-label={label} aria-disabled={disabled || undefined}>
+    <div className="av-segmented" data-size={size} role="radiogroup" aria-label={label} aria-disabled={disabled || undefined}>
       {options.map((option, i) => (
         <button
           key={option.value}
@@ -47,7 +49,7 @@ export function Segmented<T extends string>({ label, options, value, onChange, d
             if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); move(i, -1); }
           }}
         >
-          {option.icon && <Icon name={option.icon} size={12} />}
+          {option.icon && <Icon name={option.icon} size={size === "large" ? 16 : 12} />}
           {option.label}
         </button>
       ))}

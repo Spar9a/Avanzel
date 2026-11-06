@@ -1,0 +1,82 @@
+/* The recording stage: two layers in one place. What the place shows sinks and fades as a recording starts; the recording rises
+   into its place a moment later, and leaves the other way when it ends. */
+.av-rec-stage {
+  position: relative;
+  display: grid;
+  min-height: 100%;
+}
+.av-rec-idle,
+.av-rec-live {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+.av-rec-idle {
+  transition:
+    opacity var(--av-duration-base) var(--av-ease-land) var(--av-duration-base),
+    transform var(--av-duration-card) var(--av-ease-land) var(--av-duration-base),
+    filter var(--av-duration-base) var(--av-ease-land) var(--av-duration-base);
+}
+.av-rec-stage[data-active] .av-rec-idle {
+  opacity: 0;
+  transform: translateY(16px) scale(0.98);
+  filter: blur(2px);
+  pointer-events: none;
+  transition: opacity var(--av-duration-base) var(--av-ease-leave), transform var(--av-duration-base) var(--av-ease-leave), filter var(--av-duration-base) var(--av-ease-leave);
+}
+
+.av-rec-live {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 16px;
+  opacity: 0;
+  transform: translateY(-12px) scale(0.98);
+  pointer-events: none;
+  transition: opacity var(--av-duration-base) var(--av-ease-leave), transform var(--av-duration-base) var(--av-ease-leave);
+}
+.av-rec-stage[data-active] .av-rec-live {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  transition:
+    opacity var(--av-duration-card) var(--av-ease-land) var(--av-duration-quick),
+    transform var(--av-duration-card) var(--av-ease-land) var(--av-duration-quick);
+}
+
+.av-rec-line {
+  font: var(--av-text-button-xlarge);
+  letter-spacing: var(--av-text-button-xlarge-tracking);
+  color: var(--av-ink-secondary);
+}
+.av-rec-zel { display: inline-flex; }
+
+/* The wave: wide bars, the newest in the middle, spreading out to both sides. */
+.av-rec-wave {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 72px;
+}
+.av-rec-wave > i {
+  width: 5px;
+  height: calc(var(--_h) * 100%);
+  min-height: 6px;
+  border-radius: var(--av-radius-pill);
+  background: linear-gradient(var(--av-accent-fill), var(--av-shelf-people));
+  transition: height var(--av-duration-quick) var(--av-ease-out);
+}
+
+.av-rec-time {
+  font: var(--av-text-clock);
+  letter-spacing: var(--av-text-clock-tracking);
+  font-variant-numeric: tabular-nums;
+  color: var(--av-ink);
+}
+.av-rec-stage[data-paused] .av-rec-time { animation: av-rec-blink 1.2s steps(2, start) infinite; }
+@keyframes av-rec-blink { 50% { opacity: 0.35; } }
+
+.av-rec-controls { display: flex; justify-content: center; width: 100%; padding-top: 4px; }

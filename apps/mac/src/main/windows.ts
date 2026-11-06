@@ -26,7 +26,8 @@ export function isPageOf(sender: WebContents, win: BrowserWindow | null): boolea
   return win !== null && !win.isDestroyed() && sender === win.webContents;
 }
 
-export const CAPSULE_SIZE = { width: 480, height: 300 };
+/** Wide enough for a recording's bar with its controls at full size (44 px buttons, 16 px words) and room at its ends. */
+export const CAPSULE_SIZE = { width: 600, height: 320 };
 
 /** A non-activating panel above the Dock: it never takes focus from the app you are typing in. */
 export function createCapsuleWindow(): BrowserWindow {

@@ -2,9 +2,9 @@
 // over a quiet moving aura, Library runs the reviews and lists the library's pages (sorted and filtered as the person picks), each
 // folding open in place, and Settings is Settings. It arranges @avanzel/ui's parts and paints nothing of its own.
 import "@avanzel/ui/base.css";
-import { ActionTile, Aura, Button, CapsuleBar, Notice, PageRow, Progress, Row, SHELF_NAMES, SHELVES, Stack, TabPanel, Tabs, Text, type Shelf } from "@avanzel/ui";
-import { ListeningControls } from "../capsule/listening.tsx";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ActionTile, Aura, Button, Notice, PageRow, Progress, RecordingStage, Row, Select, SHELF_NAMES, SHELVES, Stack, TabPanel, Tabs, Text, type Shelf } from "@avanzel/ui";
+import { ListeningControls } from "../common/listening-controls.tsx";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { prettyAccelerator } from "../../main/shortcuts.ts";
 import { isSettingsPane, type AvanzelBridge, type PanelPage, type PanelReview, type PanelSnapshot, type PanelTab, type SettingsPane, type Shortcuts } from "../../shared/ipc.ts";
@@ -66,34 +66,28 @@ const LISTENING_LINES: Record<NonNullable<PanelSnapshot["listening"]>["mode"], s
  * The recording that listens now, as the capsule shows it: its bar, with Zel listening, the voice and the time, and under it what
  * the capsule offers for it: when it is filed, Stop and Cancel. A dictation into another app ends only by its own key, so it has neither.
  */
-function Listening({ snap, listening }: { snap: PanelSnapshot; listening: NonNullable<PanelSnapshot["listening"]> }) {
-  const levels = useLevels(listening.pausedAt === null);
-  const time = useElapsed(listening.startedAt, listening.pausedAt);
+/**
+ * The recording that listens now takes the whole of Capture (`RecordingStage`): Zel over a wide wave of the voice, the time, and
+ * under them what the capsule offers for it, and nothing else until it ends. A call has its own Stop; a dictation into another app
+ * ends only by its own key, which the stage says instead of offering buttons.
+ */
+function listeningControls(listening: NonNullable<PanelSnapshot["listening"]> | null): ReactNode {
+  if (!listening) return null;
+  if (listening.mode === "call") {
+    return <Button size="xlarge" variant="primary" icon="stop" onClick={() => act("call-notes-stop")}>Stop taking notes</Button>;
+  }
+  if (listening.ownKey) return <Text variant="callout" tone="secondary">The key you dictate with ends it.</Text>;
   return (
-    <Stack gap={10}>
-      <CapsuleBar mood="listening" levels={listening.pausedAt ? FLAT : levels} time={time}>
-        {listening.pausedAt ? "Paused" : LISTENING_LINES[listening.mode]}
-      </CapsuleBar>
-      {listening.mode === "call" ? (
-        <Row gap={8} justify="end">
-          <Button size="small" variant="primary" icon="stop" onClick={() => act("call-notes-stop")}>Stop taking notes</Button>
-        </Row>
-      ) : listening.ownKey ? (
-        <Text variant="footnote" tone="secondary">The key you dictate with ends it.</Text>
-      ) : (
-        <Row gap={8} justify="end">
-          <ListeningControls
-            fileMode={listening.fileMode}
-            review={listening.review}
-            paused={listening.pausedAt !== null}
-            onFileMode={(next) => act(`file-mode:${next}`)}
-            onCancel={() => act("cancel-recording")}
-            onPause={() => act("pause-recording")}
-            onStop={() => act("stop-recording")}
-          />
-        </Row>
-      )}
-    </Stack>
+    <ListeningControls
+      stacked
+      fileMode={listening.fileMode}
+      review={listening.review}
+      paused={listening.pausedAt !== null}
+      onFileMode={(next) => act(`file-mode:${next}`)}
+      onCancel={() => act("cancel-recording")}
+      onPause={() => act("pause-recording")}
+      onStop={() => act("stop-recording")}
+    />
   );
 }
 
@@ -104,8 +98,23 @@ function Capture({ snap }: { snap: PanelSnapshot }) {
     setAskArea(false);
     act(action);
   };
+  const listening = snap.listening;
+  // The last recording is kept while the stage leaves, so what it shows doesn't vanish before it has faded.
+  const shownRef = useRef(listening);
+  if (listening) shownRef.current = listening;
+  const shown = shownRef.current;
+  const paused = !!shown?.pausedAt;
+  const levels = useLevels(!!listening && !paused);
+  const time = useElapsed(shown?.startedAt ?? null, shown?.pausedAt ?? null);
   return (
-    <Aura fill mood={snap.listening ? "listening" : "calm"}>
+    <RecordingStage
+      active={!!listening}
+      paused={paused}
+      line={paused ? "Paused" : shown ? LISTENING_LINES[shown.mode] : ""}
+      time={time}
+      levels={paused ? FLAT : levels}
+      controls={listeningControls(shown)}
+    >
       <div className="panel-pad">
         <Stack gap={16}>
           {!snap.libraryReady && (
@@ -117,7 +126,7 @@ function Capture({ snap }: { snap: PanelSnapshot }) {
               Thoughts wait in the inbox until there is one.
             </Notice>
           )}
-          {snap.listening ? <Listening snap={snap} listening={snap.listening} /> : <Text variant="headline">{snap.headline}</Text>}
+          <Text variant="headline">{snap.headline}</Text>
           {snap.speechProblem && (
             <Notice
               tone="error"
@@ -136,9 +145,9 @@ function Capture({ snap }: { snap: PanelSnapshot }) {
             <ActionTile
               order={0}
               tone={snap.libraryReady && !snap.speechProblem ? "primary" : "secondary"}
-              icon={snap.recording ? "stop" : "mic"}
-              label={snap.recording ? "Stop recording" : "Record a thought"}
-              hint={snap.recording ? "Your words are filed when you stop." : "Speak, and your agent files it."}
+              icon="mic"
+              label="Record a thought"
+              hint="Speak, and your agent files it."
               shortcut={keyOf(snap, "dictate")}
               onClick={() => act("dictate")}
             />
@@ -189,7 +198,7 @@ function Capture({ snap }: { snap: PanelSnapshot }) {
           </Stack>
         </Stack>
       </div>
-    </Aura>
+    </RecordingStage>
   );
 }
 
@@ -230,9 +239,6 @@ function PageDetails({ page }: { page: PanelPage }) {
   );
 }
 
-/** The native menu that Sort and Filter pop up: Settings' Choose… menu, which the panel's page may ask for, as it is Settings' page. */
-const pick = (options: { label: string; value: string; checked: boolean }[]) => window.avanzel.settings.pick(options, null);
-
 function Library({ snap, pages }: { snap: PanelSnapshot; pages: PanelPage[] }) {
   const [open, setOpen] = useState<string | null>(null);
   const [sort, setSort] = useState<PageSort>("changed");
@@ -246,18 +252,14 @@ function Library({ snap, pages }: { snap: PanelSnapshot; pages: PanelPage[] }) {
     pages.filter((p) => (live.kind === "shelf" ? p.shelf === live.shelf : live.kind === "status" ? p.status === live.status : true)),
     sort,
   );
-  const chooseSort = async () => {
-    const picked = await pick(SORTS.map((value) => ({ label: sortLabel(value), value, checked: value === sort })));
-    if (picked && (SORTS as readonly string[]).includes(picked)) setSort(picked as PageSort);
-  };
-  const chooseFilter = async () => {
-    const options = [
-      { label: "All pages", value: "all", checked: live.kind === "all" },
-      ...shelves.map((shelf) => ({ label: SHELF_NAMES[shelf], value: `shelf:${shelf}`, checked: live.kind === "shelf" && live.shelf === shelf })),
-      ...statuses.map((status) => ({ label: `Status: ${status}`, value: `status:${status}`, checked: live.kind === "status" && live.status === status })),
-    ];
-    const picked = await pick(options);
-    if (!picked) return;
+  // The filter's choices, under their headings: every page, a shelf, a status.
+  const filterOptions = [
+    { value: "all", label: "All pages" },
+    ...shelves.map((shelf, i) => ({ value: `shelf:${shelf}`, label: SHELF_NAMES[shelf], ...(i === 0 ? { section: "Shelves" } : {}) })),
+    ...statuses.map((status, i) => ({ value: `status:${status}`, label: status, ...(i === 0 ? { section: "Status" } : {}) })),
+  ];
+  const filterValue = live.kind === "all" ? "all" : live.kind === "shelf" ? `shelf:${live.shelf}` : `status:${live.status}`;
+  const chooseFilter = (picked: string) => {
     if (picked === "all") setFilter({ kind: "all" });
     else if (picked.startsWith("shelf:") && isShelf(picked.slice(6))) setFilter({ kind: "shelf", shelf: picked.slice(6) as Shelf });
     else if (picked.startsWith("status:")) setFilter({ kind: "status", status: picked.slice(7) });
@@ -278,10 +280,20 @@ function Library({ snap, pages }: { snap: PanelSnapshot; pages: PanelPage[] }) {
           <Row gap={8} justify="between">
             <Text variant="footnote" tone="secondary">{live.kind === "all" ? pagesLabel(shown.length) : `${pagesLabel(shown.length)}, ${filterLabel(live)}`}</Text>
             <Row gap={6}>
-              <Button size="small" variant="secondary" icon="settings" onClick={() => void chooseFilter()}>
-                {live.kind === "all" ? "Filter" : filterLabel(live)}
-              </Button>
-              <Button size="small" variant="secondary" icon="chevron" onClick={() => void chooseSort()}>{sortLabel(sort)}</Button>
+              <Select
+                label="Filter"
+                icon="settings"
+                options={filterOptions}
+                value={filterValue}
+                buttonLabel={live.kind === "all" ? "Filter" : filterLabel(live)}
+                onChange={chooseFilter}
+              />
+              <Select
+                label="Sort by"
+                options={SORTS.map((value) => ({ value, label: sortLabel(value) }))}
+                value={sort}
+                onChange={(next) => setSort(next)}
+              />
             </Row>
           </Row>
           {shown.length === 0 && (
@@ -349,7 +361,9 @@ function App() {
     if (version !== undefined) readPages();
   }, [version, readPages]);
   if (!snap) return null;
+  // The aura is behind the whole panel, every tab and its foot, and stirs while a recording listens.
   return (
+    <Aura fill mood={snap.listening && snap.listening.pausedAt === null ? "listening" : "calm"}>
     <div className="panel">
       <header className="panel-head">
         <Tabs
@@ -383,6 +397,7 @@ function App() {
         </Row>
       </footer>
     </div>
+    </Aura>
   );
 }
 

@@ -341,6 +341,9 @@
     "control-large": {
       "$value": "36px"
     },
+    "control-xlarge": {
+      "$value": "44px"
+    },
     "capsule": {
       "$value": "48px"
     }
@@ -537,6 +540,24 @@
         "fontWeight": 600,
         "lineHeight": 1,
         "letterSpacing": "0px"
+      }
+    },
+    "button-xlarge": {
+      "$value": {
+        "fontFamily": "{font.ui}",
+        "fontSize": "16px",
+        "fontWeight": 600,
+        "lineHeight": 1,
+        "letterSpacing": "0px"
+      }
+    },
+    "clock": {
+      "$value": {
+        "fontFamily": "{font.ui}",
+        "fontSize": "44px",
+        "fontWeight": 600,
+        "lineHeight": 1,
+        "letterSpacing": "-0.02em"
       }
     },
     "key": {

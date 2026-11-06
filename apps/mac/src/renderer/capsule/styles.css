@@ -32,15 +32,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--av-space-8);
-  width: 420px;
+  /* As wide as a recording's bar with its controls at full size, inside the 600 px panel and its 16 px margins. */
+  width: 560px;
   max-width: 100%;
 }
 /* A recording's controls on one line: when it is filed, then Cancel, Pause and Stop. */
-.listening-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--av-space-6);
-}
 /* The hint of the first recordings takes only the room of its words, over the middle of the bar. */
 .hint {
   align-self: center;
@@ -116,5 +112,5 @@ body {
 }
 /* A notice or a card from @avanzel/ui in a state that isn't one of the above (a problem, preparing, a failed download, a taken
    shortcut), as wide as the cards above; .fill takes the rest of its row. */
-.slot { width: 420px; max-width: 100%; }
+.slot { width: 560px; max-width: 100%; }
 .slot .fill { flex: 1; min-width: 0; }

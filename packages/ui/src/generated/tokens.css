@@ -28,6 +28,7 @@
   --av-size-control-small: 26px;
   --av-size-control: 30px;
   --av-size-control-large: 36px;
+  --av-size-control-xlarge: 44px;
   --av-size-capsule: 48px;
   --av-font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --av-font-voice: "Avanzel Voice", "Nunito", ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
@@ -63,6 +64,10 @@
   --av-text-button-small-tracking: 0px;
   --av-text-button-large: 600 14px/1 var(--av-font-ui);
   --av-text-button-large-tracking: 0px;
+  --av-text-button-xlarge: 600 16px/1 var(--av-font-ui);
+  --av-text-button-xlarge-tracking: 0px;
+  --av-text-clock: 600 44px/1 var(--av-font-ui);
+  --av-text-clock-tracking: -0.02em;
   --av-text-key: 600 11.5px/1.4 var(--av-font-ui);
   --av-text-key-tracking: 0px;
   --av-text-stamp: 900 16px/1.05 var(--av-font-voice);

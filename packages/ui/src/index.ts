@@ -8,6 +8,8 @@ export { Badge, type BadgeProps } from "./components/Badge.tsx";
 export { Actions, type ActionsProps } from "./components/Actions.tsx";
 export { Switch, type SwitchProps } from "./components/Switch.tsx";
 export { Segmented, type SegmentedProps, type SegmentedOption } from "./components/Segmented.tsx";
+export { Select, type SelectProps, type SelectOption } from "./components/Select.tsx";
+export { ListField, type ListFieldProps } from "./components/ListField.tsx";
 export { Tabs, tabId, type TabsProps, type TabOption } from "./components/Tabs.tsx";
 export { TabPanel, type TabPanelProps, type TabPage } from "./components/TabPanel.tsx";
 export { Aura, type AuraProps } from "./components/Aura.tsx";
@@ -35,5 +37,6 @@ export { CapsuleBar, type CapsuleBarProps, type CapsuleMood } from "./patterns/C
 export { CapsuleNotice, type CapsuleNoticeProps } from "./patterns/CapsuleNotice.tsx";
 export { Receipt, type ReceiptPage } from "./patterns/Receipt.tsx";
 export { Letter, type LetterProps } from "./patterns/Letter.tsx";
+export { RecordingStage, type RecordingStageProps } from "./patterns/RecordingStage.tsx";
 export { PermissionPrimer, type PermissionPrimerProps, type PermissionKind } from "./patterns/PermissionPrimer.tsx";
 export { SHELVES, SPACE, type Shelf, type Space } from "./generated/tokens.ts";

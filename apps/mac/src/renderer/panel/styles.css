@@ -8,6 +8,7 @@
 .panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr); /* one column, as wide as the window and no wider, whatever is in it */
   height: 100vh;
   overflow: clip; /* nothing in the panel moves it sideways: it can't be scrolled, only its pages scroll up and down */
 }
@@ -19,6 +20,7 @@
 }
 .panel-body {
   min-height: 0;
+  min-width: 0;
 }
 .panel-pad {
   padding: var(--av-space-16);

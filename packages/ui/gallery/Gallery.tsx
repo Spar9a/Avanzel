@@ -6,7 +6,7 @@ import { useState, type CSSProperties, type ReactNode } from "react";
 import {
   ActionTile, Actions, Badge, Bubble, Button, CapsuleBar, CapsuleNotice, Card, ChoiceRow, Group, GroupRow, Hud, Icon, ICON_NAMES, Kbd, Letter, Link, Notice,
   PermissionPrimer, Progress, Receipt, Row, Segmented, SHELVES, SHELF_NAMES, ShelfDrawer, ShelfGlyph, ShelfMark, ShelfTag, Spacer, Spinner,
-  Aura, Stack, Stage, Stamp, Switch, TabPanel, Tabs, Text, TextArea, TextField, Wave, Zel, PageRow, type ZelMood,
+  Aura, ListField, RecordingStage, Select, Stack, Stage, Stamp, Switch, TabPanel, Tabs, Text, TextArea, TextField, Wave, Zel, PageRow, type ZelMood,
 } from "../src/index.ts";
 import "./gallery.css";
 
@@ -336,8 +336,30 @@ function PanelSpecimen() {
   const [tab, setTab] = useState<PanelTab>("library");
   const [part, setPart] = useState<PanelPart>("all");
   const [open, setOpen] = useState<string | null>("onboarding");
+  const [sort, setSort] = useState<"changed" | "title">("changed");
+  const [skip, setSkip] = useState(["com.lastpass.LastPass", "com.dashlane.Dashlane"]);
   return (
     <Stack gap={12}>
+      <Row gap={6} justify="end">
+        <Select label="Filter" icon="settings" buttonLabel="Filter" options={[{ value: "all", label: "All pages" }, { value: "ideas", label: "Ideas", section: "Shelves" }]} value="all" onChange={() => {}} />
+        <Select label="Sort by" options={[{ value: "changed", label: "Newest change" }, { value: "title", label: "Title" }]} value={sort} onChange={setSort} />
+      </Row>
+      <ListField label="Apps to skip" items={skip} onChange={setSkip} placeholder="com.apple.Passwords" />
+      <RecordingStage
+        active
+        line="Recording a thought"
+        time="0:12"
+        levels={LEVELS}
+        controls={
+          <Row gap={8}>
+            <Button size="xlarge" icon="close" label="Cancel the recording" />
+            <Button size="xlarge" icon="pause" label="Pause" />
+            <Button size="xlarge" variant="primary" icon="stop" badge="spark" label="Stop, and your agent files it now" />
+          </Row>
+        }
+      >
+        <Text variant="callout" tone="secondary">The ways to start something new.</Text>
+      </RecordingStage>
       <Tabs
         label="Sections"
         controls="g-panel-tab"

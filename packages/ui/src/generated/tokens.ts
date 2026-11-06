@@ -14,7 +14,7 @@ export type Radius = (typeof RADII)[number];
 export const LAYERS = ["base", "raised", "sticky", "overlay", "popover"] as const;
 export type Layer = (typeof LAYERS)[number];
 
-export const TEXT_STYLES = ["body", "callout", "footnote", "caption", "headline", "title", "heading", "voice", "words", "words-small", "code", "field-large", "button", "button-small", "button-large", "key", "stamp", "stamp-date", "tab"] as const;
+export const TEXT_STYLES = ["body", "callout", "footnote", "caption", "headline", "title", "heading", "voice", "words", "words-small", "code", "field-large", "button", "button-small", "button-large", "button-xlarge", "clock", "key", "stamp", "stamp-date", "tab"] as const;
 export type TextStyle = (typeof TEXT_STYLES)[number];
 
 /** Every CSS custom property the token build writes. */
@@ -43,6 +43,7 @@ export const TOKEN_NAMES = [
   "--av-size-control-small",
   "--av-size-control",
   "--av-size-control-large",
+  "--av-size-control-xlarge",
   "--av-size-capsule",
   "--av-font-ui",
   "--av-font-voice",
@@ -78,6 +79,10 @@ export const TOKEN_NAMES = [
   "--av-text-button-small-tracking",
   "--av-text-button-large",
   "--av-text-button-large-tracking",
+  "--av-text-button-xlarge",
+  "--av-text-button-xlarge-tracking",
+  "--av-text-clock",
+  "--av-text-clock-tracking",
   "--av-text-key",
   "--av-text-key-tracking",
   "--av-text-stamp",

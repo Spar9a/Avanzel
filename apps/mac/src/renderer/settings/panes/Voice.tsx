@@ -1,8 +1,8 @@
 // Settings → Voice: the shortcuts, with a Notice for each one that has a problem; dictating into any app, its key, the permission it
 // lacks, and the library's log of it and skip lists; the microphone Avanzel listens with; the speech model that turns what it hears
 // into text; and the library's dictionary of names and terms. Each control applies at once, a field of lines when the focus leaves it.
-import { Actions, Button, Group, GroupRow, Kbd, Notice, Progress, Row, Stack, Switch, Text, TextArea } from "@avanzel/ui";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Actions, Button, Group, GroupRow, Kbd, ListField, Notice, Progress, Row, Stack, Switch, Text, TextArea } from "@avanzel/ui";
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, inMenuLine, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { CursorKey, CursorPermissionState, LibraryPatch, ModelStatus, SettingsSnapshot, Shortcuts } from "../../../shared/ipc.ts";
 import { downloadFailedProblem, voiceSettingsProblem } from "../../../shared/problems.ts";
@@ -25,7 +25,7 @@ import {
   type InputDevice,
 } from "../copy.ts";
 import { failed, followSnapshot, saved, sent, startDraft, toSend, typed, type TextDraft } from "../dictionary-draft.ts";
-import { attemptChange, ChooseButton, type PaneProps } from "../parts.tsx";
+import { attemptChange, ChooseButton, EmbeddedSettings, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
 
@@ -229,11 +229,36 @@ export function useVoiceDrafts(snap: SettingsSnapshot | null, onChange: PaneProp
   };
 }
 
+/** What each list's field shows while empty, as an example of what goes in it. */
+const LIST_PLACEHOLDERS: Record<string, string> = {
+  "Apps to skip": "com.apple.Passwords",
+  "Sites to skip": "bank.example.com",
+  Dictionary: "Avanzel = avant cell",
+};
+
 /**
  * A field of lines in a row of a Group, saved when the focus leaves it. TextArea takes no onBlur, so the box around it hears the focus
  * leave (React's onBlur bubbles).
  */
 function LinesField({ label, edit, rows }: { label: string; edit: TextEdit; rows: number }): ReactNode {
+  const embedded = useContext(EmbeddedSettings);
+  // In the menu bar panel: one item at a time, each with its own Remove; each change is saved at once.
+  if (embedded) {
+    const items = edit.draft.split("\n").map((line) => line.trim()).filter(Boolean);
+    return (
+      <div className="settings-lines">
+        <ListField
+          label={label}
+          items={items}
+          placeholder={LIST_PLACEHOLDERS[label]}
+          onChange={(next) => {
+            edit.setDraft(next.join("\n"));
+            void edit.save();
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <div className="settings-lines" onBlur={() => void edit.save()}>
       <TextArea label={label} labelHidden rows={rows} value={edit.draft} onChange={edit.setDraft} />

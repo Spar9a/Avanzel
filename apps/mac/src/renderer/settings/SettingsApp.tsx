@@ -14,7 +14,7 @@ import { General } from "./panes/General.tsx";
 import { Privacy } from "./panes/Privacy.tsx";
 import { Reviews, useReviewEdits, type ReviewEdits } from "./panes/Reviews.tsx";
 import { useVoiceDrafts, Voice, type VoiceDrafts } from "./panes/Voice.tsx";
-import { NoLibrary, type PaneProps } from "./parts.tsx";
+import { EmbeddedSettings, NoLibrary, type PaneProps } from "./parts.tsx";
 import "./styles.css";
 
 declare global {
@@ -155,6 +155,7 @@ export function SettingsApp({ embedded = false, startPane }: { embedded?: boolea
   const props: PaneProps = { snap, onChange: draw, attempt };
   const content = paneContent(pane, props, edits, drafts);
   return (
+    <EmbeddedSettings.Provider value={embedded}>
     <div className="settings" data-embedded={embedded ? "" : undefined}>
       {!embedded && <div className="settings-drag" />}
       {/* A press on the toolbar is the person moving on: it takes away the problem they have seen, at once. */}
@@ -203,5 +204,6 @@ export function SettingsApp({ embedded = false, startPane }: { embedded?: boolea
         </main>
       )}
     </div>
+    </EmbeddedSettings.Provider>
   );
 }

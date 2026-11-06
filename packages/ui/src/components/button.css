@@ -68,6 +68,8 @@
 
 .av-button[data-size="small"] { height: var(--av-size-control-small); padding: 0 11px; font: var(--av-text-button-small); }
 .av-button[data-size="large"] { height: var(--av-size-control-large); padding: 0 18px; font: var(--av-text-button-large); }
+/* xlarge: the controls of a recording, in the capsule and the panel, big enough to hit without looking. */
+.av-button[data-size="xlarge"] { height: var(--av-size-control-xlarge); padding: 0 20px; font: var(--av-text-button-xlarge); }
 .av-button[data-icon-only] { width: var(--av-size-control); padding: 0; }
 
 /* A badge at an icon-only button's corner: a second icon on a dark disc ringed in the button's surroundings. When the badge changes
@@ -80,8 +82,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
   border-radius: var(--av-radius-pill);
   background: var(--av-hud-surface-solid);
   box-shadow: 0 0 0 1.5px var(--av-hud-surface-solid);
@@ -89,7 +91,7 @@
   pointer-events: none;
   animation: av-button-badge-in var(--av-duration-base) var(--av-ease-stamp) backwards;
 }
-.av-button-badge .av-icon { width: 9px; height: 9px; }
+.av-button-badge .av-icon { width: 11px; height: 11px; }
 .av-button-badge[data-badge="spark"] { color: var(--av-shelf-ideas); }
 @keyframes av-button-badge-in {
   from { opacity: 0; transform: scale(0.4) rotate(-40deg); }
@@ -97,3 +99,4 @@
 }
 .av-button[data-icon-only][data-size="small"] { width: var(--av-size-control-small); }
 .av-button[data-icon-only][data-size="large"] { width: var(--av-size-control-large); }
+.av-button[data-icon-only][data-size="xlarge"] { width: var(--av-size-control-xlarge); }

@@ -17,6 +17,7 @@
 /* In the menu bar panel: no strip to drag by, and the panes' row at the left, under the panel's own tabs. */
 .settings[data-embedded] {
   grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 .settings[data-embedded] .settings-toolbar {
   justify-content: flex-start;

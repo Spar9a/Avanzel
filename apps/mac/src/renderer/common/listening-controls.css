@@ -1,0 +1,19 @@
+/* A recording's controls. They only arrange: what they look like comes from @avanzel/ui. In the capsule's bar, all in one line; in
+   the panel, when it is filed on a line of its own over the buttons, with room between them. */
+.listening-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--av-space-8);
+  padding-right: var(--av-space-4);
+}
+.listening-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--av-space-8);
+}
+.listening-controls[data-stacked] {
+  flex-direction: column;
+  gap: var(--av-space-16);
+  padding-right: 0;
+}
+.listening-controls[data-stacked] .listening-buttons { gap: var(--av-space-16); }

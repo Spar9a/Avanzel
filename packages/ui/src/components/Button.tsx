@@ -7,7 +7,8 @@ import "./button.css";
     "Not now". link: an action inside text. danger: an action that deletes or can't be undone.
     page: opens a page of the library, as the sources under an answer do, so it reads as a page and not as a link. */
 export type ButtonVariant = "primary" | "secondary" | "quiet" | "link" | "danger" | "page";
-export type ButtonSize = "small" | "regular" | "large";
+/** xlarge: a recording's controls, in the capsule and the panel: 44 px, with 16 px words. */
+export type ButtonSize = "small" | "regular" | "large" | "xlarge";
 
 interface Common {
   variant?: ButtonVariant;
@@ -62,7 +63,7 @@ export function Button(props: ButtonProps) {
       autoFocus={autoFocus}
       onClick={busy ? undefined : onClick}
     >
-      {busy ? <Spinner size="small" /> : icon && <Icon name={icon} size={size === "large" ? 16 : 12} />}
+      {busy ? <Spinner size="small" /> : icon && <Icon name={icon} size={size === "xlarge" ? 20 : size === "large" ? 16 : 12} />}
       {children}
       {badge && (
         <span key={badge} className="av-button-badge" data-badge={badge}>

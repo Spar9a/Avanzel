@@ -2,7 +2,7 @@
 // the words and puts the panel away; when they can't be saved (the capsule says why) they stay in the field for another
 // try. Esc puts the panel away from wherever the focus is.
 import "@avanzel/ui/base.css";
-import { Kbd, Text, TextField } from "@avanzel/ui";
+import { Button, TextField } from "@avanzel/ui";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AvanzelBridge } from "../../shared/ipc.ts";
@@ -54,7 +54,8 @@ function Quick() {
       <div className="quick-field">
         <TextField ref={field} label="Type a thought" labelHidden size="large" variant="bare" icon="waveform" placeholder="Type a thought…" value={text} onChange={setText} autoFocus disabled={busy} onEnter={submit} />
       </div>
-      <Text variant="footnote" tone="secondary" as="span"><Kbd>↩</Kbd> to save</Text>
+      {/* A plain Save, as every save is: Return does the same, and its tooltip says so. */}
+      <Button variant="primary" disabled={!text.trim()} busy={busy} onClick={() => void submit()}>Save</Button>
     </div>
   );
 }
