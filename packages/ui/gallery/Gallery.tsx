@@ -4,9 +4,9 @@
 // main.tsx mounts it in a browser; static.tsx renders it to plain HTML for a preview.
 import { useState, type CSSProperties, type ReactNode } from "react";
 import {
-  Actions, Badge, Bubble, Button, CapsuleBar, CapsuleNotice, Card, ChoiceRow, Group, GroupRow, Hud, Icon, ICON_NAMES, Kbd, Letter, Link, Notice,
+  ActionTile, Actions, Badge, Bubble, Button, CapsuleBar, CapsuleNotice, Card, ChoiceRow, Group, GroupRow, Hud, Icon, ICON_NAMES, Kbd, Letter, Link, Notice,
   PermissionPrimer, Progress, Receipt, Row, Segmented, SHELVES, SHELF_NAMES, ShelfDrawer, ShelfGlyph, ShelfMark, ShelfTag, Spacer, Spinner,
-  Stack, Stage, Stamp, Switch, Text, TextArea, TextField, Wave, Zel, type ZelMood,
+  Aura, Stack, Stage, Stamp, Switch, TabPanel, Tabs, Text, TextArea, TextField, Wave, Zel, PageRow, type ZelMood,
 } from "../src/index.ts";
 import "./gallery.css";
 
@@ -321,7 +321,113 @@ export function Gallery() {
           </Stack>
         )}
       </Specimen>
+
+      <Specimen id="panel" title="The menu bar panel" use="Tabs move between the panel's places, with a quieter row for the parts of one. Action tiles start something new. A page row folds open in place to show more." code={'<Tabs label="Sections" controls="panel" options={…} value={tab} onChange={setTab} />\n<TabPanel id="panel" value={tab} pages={[{ value: "capture", content: … }, …]} />\n<Aura><ActionTile icon="mic" label="Record a thought" … /></Aura>\n<PageRow title="Fix the light in graphics" shelf="problems" status="open" date="6 Nov" expanded={open} onToggle={…} actions={…} />'}>
+        {() => <PanelSpecimen />}
+      </Specimen>
     </main>
+  );
+}
+
+type PanelTab = "capture" | "library" | "settings";
+type PanelPart = "all" | "ideas" | "problems";
+
+function PanelSpecimen() {
+  const [tab, setTab] = useState<PanelTab>("library");
+  const [part, setPart] = useState<PanelPart>("all");
+  const [open, setOpen] = useState<string | null>("onboarding");
+  return (
+    <Stack gap={12}>
+      <Tabs
+        label="Sections"
+        controls="g-panel-tab"
+        options={[{ value: "capture", label: "Capture" }, { value: "library", label: "Library", count: 12, countLabel: "12 pages" }, { value: "settings", label: "Settings" }]}
+        value={tab}
+        onChange={setTab}
+      />
+      <Tabs
+        level="secondary"
+        label="Shelves"
+        options={[{ value: "all", label: "All" }, { value: "ideas", label: "Ideas", shelf: "ideas", count: 1, countLabel: "1 page" }, { value: "problems", label: "Problems", shelf: "problems", count: 1, countLabel: "1 page" }]}
+        value={part}
+        onChange={setPart}
+        controls="g-panel-shelves"
+      />
+      <CapsuleBar mood="listening" levels={LEVELS} time="0:11">
+        {null}
+      </CapsuleBar>
+      <Row gap={6} justify="end">
+        <Segmented
+          label="When your agent files this recording"
+          options={[{ value: "now", label: "Now", icon: "spark" }, { value: "evening", label: "21:00", icon: "moon" }]}
+          value="now"
+          onChange={() => {}}
+        />
+        <Button size="small" icon="close" label="Cancel the recording" />
+        <Button size="small" icon="pause" label="Pause" />
+        <Button size="small" variant="primary" icon="stop" badge="spark" label="Stop, and your agent files it now" />
+        <Button size="small" variant="primary" icon="stop" badge="moon" label="Stop, and file it at the evening review at 21:00" />
+      </Row>
+      <Aura>
+        <Stack gap={8}>
+          <ActionTile tone="primary" icon="mic" label="Record a thought" hint="Speak, and your agent files it." shortcut="⌥Space" onClick={() => {}} />
+          <ActionTile
+            icon="screen"
+            label="Capture the screen"
+            hint="With a comment on what is on it."
+            open
+            choices={
+              <>
+                <Button size="small" variant="primary" icon="screen">Capture the whole screen</Button>
+                <Button size="small">Pick a part</Button>
+              </>
+            }
+            onClick={() => {}}
+          />
+        </Stack>
+      </Aura>
+      <TabPanel
+        id="g-panel-tab"
+        value={tab}
+        pages={[
+          { value: "capture", content: <Text variant="callout" tone="secondary">The ways to start something new.</Text> },
+          {
+            value: "library",
+            content: (
+              <Stack gap={8}>
+                <PageRow
+                  title="Fix the light in graphics"
+                  shelf="problems"
+                  status="open"
+                  tags={["work", "graphics"]}
+                  date="6 Nov"
+                  summary="A short voice note about a work task: fix the lighting in the graphics."
+                  expanded={open === "light"}
+                  onToggle={() => setOpen(open === "light" ? null : "light")}
+                  actions={<><Button size="small" icon="open">.md</Button><Button size="small" icon="open">Obsidian</Button></>}
+                />
+                <PageRow
+                  title="An easier first run"
+                  shelf="ideas"
+                  tags={["product"]}
+                  date="5 Nov"
+                  summary="Show the shortcut on the first card, so people learn it by using it."
+                  expanded={open === "onboarding"}
+                  onToggle={() => setOpen(open === "onboarding" ? null : "onboarding")}
+                  actions={<><Button size="small" icon="open">.md</Button><Button size="small" icon="open">Obsidian</Button></>}
+                >
+                  <Stack gap={4}>
+                    <Text variant="footnote" tone="secondary">Next steps</Text>
+                    <Text variant="callout">Try it with three people this week.</Text>
+                  </Stack>
+                </PageRow>
+              </Stack>
+            ),
+          },
+          { value: "settings", content: <Text variant="callout" tone="secondary">Settings, pane by pane.</Text> },
+        ]}
+      />
+    </Stack>
   );
 }
 

@@ -35,6 +35,12 @@ body {
   width: 420px;
   max-width: 100%;
 }
+/* A recording's controls on one line: when it is filed, then Cancel, Pause and Stop. */
+.listening-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--av-space-6);
+}
 /* The hint of the first recordings takes only the room of its words, over the middle of the bar. */
 .hint {
   align-self: center;

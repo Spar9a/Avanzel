@@ -1,0 +1,107 @@
+/* Tabs: the primary row names a window's places, with a violet line under the chosen one that slides to the next; the
+   secondary row under it is quieter, and its chosen part is brighter and bolder. */
+.av-tabs {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  min-width: 0;
+  padding: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.av-tabs::-webkit-scrollbar { display: none; }
+
+.av-tabs-tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: none;
+  margin: 0;
+  border: 0;
+  border-radius: var(--av-radius-tab);
+  background: transparent;
+  color: var(--av-ink-secondary);
+  white-space: nowrap;
+  cursor: default;
+  transition: color var(--av-duration-base) var(--av-ease-out), background var(--av-duration-base) var(--av-ease-out);
+}
+/* The ring is drawn inside the tab: the row scrolls sideways, which would cut a ring drawn outside it. */
+.av-tabs-tab:focus-visible { outline-offset: -2px; }
+.av-tabs-tab:hover { color: var(--av-ink); }
+.av-tabs-tab[aria-selected="true"] { color: var(--av-ink); }
+
+.av-tabs[data-level="primary"] {
+  gap: 4px;
+  box-shadow: inset 0 -0.5px 0 var(--av-line-hair);
+}
+.av-tabs[data-level="primary"] .av-tabs-tab {
+  padding: 8px 10px 10px;
+  font: var(--av-text-headline);
+  letter-spacing: var(--av-text-headline-tracking);
+}
+.av-tabs[data-level="secondary"] { gap: 2px; }
+.av-tabs[data-level="secondary"] .av-tabs-tab {
+  padding: 4px 8px;
+  font: var(--av-text-footnote);
+  letter-spacing: var(--av-text-footnote-tracking);
+}
+.av-tabs[data-level="secondary"] .av-tabs-tab:hover { background: var(--av-surface-fill); }
+.av-tabs[data-level="secondary"] .av-tabs-tab[aria-selected="true"] { font-weight: 600; background: var(--av-surface-fill); }
+
+/* A shelf's tab: its glyph in the shelf's colour before the name. */
+.av-tabs-shelf { display: inline-flex; align-self: center; color: var(--_shelf); }
+
+.av-tabs-count {
+  font: var(--av-text-caption);
+  letter-spacing: var(--av-text-caption-tracking);
+  font-variant-numeric: tabular-nums;
+  color: var(--av-ink-secondary);
+  transition: color var(--av-duration-base) var(--av-ease-out);
+}
+.av-tabs-tab[aria-selected="true"] .av-tabs-count { color: var(--av-ink-accent); }
+
+/* What the tabs show: the pages side by side in a row that slides along to the chosen one. The page going out dims and shrinks a
+   little as it leaves, and the one coming in grows back to full as it lands. */
+/* Clipped, not hidden: a hidden box can still be scrolled, and the browser scrolls it sideways to bring a focused control into view,
+   which leaves the pages half off the panel. A clipped one can't be scrolled at all. */
+.av-tab-panel { min-width: 0; min-height: 0; overflow: clip; }
+.av-tab-panel[data-height="fill"] { height: 100%; }
+.av-tab-panel[data-height="auto"] { flex: none; }
+.av-tab-track {
+  display: flex;
+  align-items: flex-start;
+  transform: translateX(calc(var(--_index) * -100%));
+  transition: transform var(--av-duration-card) var(--av-ease-land);
+}
+.av-tab-page {
+  flex: 0 0 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  opacity: 0.2;
+  transform: scale(0.97);
+  transition: opacity var(--av-duration-card) var(--av-ease-leave), transform var(--av-duration-card) var(--av-ease-leave);
+}
+.av-tab-page[data-current] {
+  opacity: 1;
+  transform: none;
+  transition: opacity var(--av-duration-card) var(--av-ease-land), transform var(--av-duration-card) var(--av-ease-land);
+}
+.av-tab-page:focus-visible { outline-offset: -2px; }
+.av-tab-panel[data-height="fill"] .av-tab-track { height: 100%; }
+.av-tab-panel[data-height="fill"] .av-tab-page { height: 100%; overflow-y: auto; }
+
+/* The line under the chosen primary tab: it slides and stretches to the next one. */
+.av-tabs-line {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: var(--_width);
+  height: 2px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-accent-fill);
+  transform: translateX(var(--_x));
+  transition: transform var(--av-duration-card) var(--av-ease-land), width var(--av-duration-card) var(--av-ease-land);
+  pointer-events: none;
+}

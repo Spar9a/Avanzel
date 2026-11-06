@@ -125,14 +125,17 @@ export type CardAction =
  * What main tells the capsule page's microphone: a recording's start, stop (its samples go back by `sendAudio`) and cancel; and a call's
  * start and stop, between which its blocks go back by `sendCallAudio` with the call's id (`call`).
  */
-export type CapsuleCommand = "start" | "stop" | "cancel" | { kind: "call-start" | "call-stop"; call: number };
+export type CapsuleCommand = "start" | "stop" | "cancel" | "pause" | "resume" | { kind: "call-start" | "call-stop"; call: number };
 
 export type CapsuleState =
   | { kind: "hidden" }
   | {
       kind: "listening";
       mode: CapsuleMode;
+      /** Date.now() when it began, moved on by each pause's length, so that now less it is how long it has listened. */
       startedAt: number;
+      /** Date.now() when it was paused, while it is: the microphone keeps nothing, and the time stands still. */
+      pausedAt?: number;
       fakeMic: boolean;
       microphoneId: string | null;
       /** A screen comment's screenshot, small: the card above the bar shows it. */
@@ -844,6 +847,14 @@ export interface AvanzelBridge {
     cancelFiling(): void;
     /** The file-mode switch, while a recording listens. The controller's `toggleFileMode` tells what it does and when it is heard. */
     toggleFileMode(): void;
+    /** The microphone's level now, 0 to 1, while a recording listens: passed on to the menu bar panel for its wave. */
+    level(level: number): void;
+    /** The bar's Stop: the recording ends and is kept, as its shortcut ends it. */
+    stop(): void;
+    /** The bar's Cancel: the recording is given up, as Esc gives it up. */
+    cancel(): void;
+    /** The bar's Pause and Resume. */
+    pause(): void;
     /** Stop, on the card of a transcription that has run long (`slow`). The controller's `stopTranscribing` tells what it does. */
     stopTranscribing(): void;
     undo(): void;
@@ -1074,4 +1085,98 @@ export interface AvanzelBridge {
     /** Not now, or Esc: the bubble goes, and nothing brings it back. */
     close(): void;
   };
+  /** The panel under the menu bar icon: Capture, Library and Settings (Settings' own calls are `settings`). */
+  panel: {
+    get(): Promise<PanelSnapshot>;
+    onChanged(callback: (snapshot: PanelSnapshot) => void): () => void;
+    /** The library's pages, newest change first (PANEL_PAGES at most). Empty without a library. */
+    pages(): Promise<PanelPage[]>;
+    /** Something the menu could do (`PanelAction`): the panel hides first when it starts something elsewhere. */
+    act(action: string): void;
+    /** The panel came up: on `tab` when something asked for one (Settings from an error card), else where it was. */
+    onShown(callback: (tab: PanelTab | null) => void): () => void;
+    /** Esc: the panel hides. */
+    hide(): void;
+    /** The microphone's level, 0 to 1, as the capsule hears it, while a recording listens and the panel is up. */
+    onLevel(callback: (level: number) => void): () => void;
+  };
+}
+
+/** The menu bar panel's places, in the order of its tabs. */
+export const PANEL_TABS = ["capture", "library", "settings"] as const;
+export type PanelTab = (typeof PANEL_TABS)[number];
+
+/** How many pages the panel's Library lists at most. */
+export const PANEL_PAGES = 300;
+
+/** A page of the library as the panel's Library lists it, read from its front matter and its text. */
+export interface PanelPage {
+  /** Library-relative, e.g. "problems/fix-light.md". */
+  path: string;
+  title: string;
+  /** The shelf it is on: the front matter's, else its folder's; null for neither. */
+  shelf: string | null;
+  status: string | null;
+  tags: string[];
+  /** YYYY-MM-DD from the front matter, else the file's own dates. */
+  created: string | null;
+  updated: string | null;
+  /** The page's first paragraph, with links as plain words. */
+  summary: string;
+  /** Its `##` sections, each with its lines (list items without their marks), for the open row. */
+  sections: { heading: string; lines: string[] }[];
+}
+
+/** A scheduled review as the panel shows it, with how its last run ended. */
+export interface PanelReview {
+  id: string;
+  name: string;
+  /** "evening-review", "review" or "custom". */
+  kind: string;
+  enabled: boolean;
+  /** ISO: its next run, while it is on. */
+  next: string | null;
+  /** ISO: when it last began. */
+  lastRun: string | null;
+  running: boolean;
+  /** "Filing 2 of 5", while an evening review runs. */
+  progress: string | null;
+  /** How its last run in this app run ended, as its notification said it. */
+  outcome: { at: string; title: string; body: string } | null;
+}
+
+/** Everything the panel shows but the pages and Settings, in one snapshot (panel:changed). */
+export interface PanelSnapshot {
+  libraryReady: boolean;
+  /** Why there is no library, when there is none: what the menu's head says. */
+  libraryProblem: string | null;
+  inbox: number;
+  filedToday: number;
+  /** The menu's head: "1 thought filed today. Evening review at 21:00." (`statusLine`). */
+  headline: string;
+  /** Why speech can't be turned into words, and where the fix is, as the menu says it; null when nothing is wrong. */
+  speechProblem: { title: string; line: string } | null;
+  /** Take notes on a call: "ready" offers it, "running" offers to stop, "off" is a Mac or a library that can't. */
+  callNotesOffer: "off" | "ready" | "running";
+  /** Calls whose notes were cut short and can be finished. */
+  cutShortCalls: number;
+  /** The history of dictations holds one, which Forget the last dictation forgets. */
+  forgettableDictation: boolean;
+  /** The pages' list changed since this number was last seen: read `pages()` again. */
+  pagesVersion: number;
+  shortcuts: Shortcuts;
+  unregisteredShortcuts: (keyof Shortcuts)[];
+  recording: boolean;
+  /**
+   * The recording that listens now, as the capsule shows it: what kind, when it began (Date.now()), and its file mode and review as
+   * the capsule's switch has them (null where there is none to switch). Null while nothing listens. `ownKey`: a dictation into
+   * another app, which only its own key ends, so the panel offers no Stop for it.
+   */
+  listening: { mode: "dictate" | "comment" | "call"; startedAt: number; pausedAt: number | null; fileMode: FileMode | null; review: string | null; ownKey: boolean } | null;
+  callNotes: boolean;
+  reviews: PanelReview[];
+  undoableFiling: boolean;
+  showableReceipt: boolean;
+  undoableReview: boolean;
+  opensInObsidian: boolean;
 }

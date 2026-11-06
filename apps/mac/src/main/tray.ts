@@ -28,9 +28,26 @@ export class MenuBar {
   private words = trayTooltip("idle");
   private built: Menu | null = null;
 
-  constructor(private readonly onAction: (action: string) => void) {
+  /**
+   * `onAction`: a menu item was picked. `onClick`: the icon was clicked, which brings up the panel; its menu then comes only with a
+   * right click or a Control-click, for the times the panel can't (and to quit). Without `onClick` every click shows the menu, as
+   * before the panel.
+   */
+  constructor(private readonly onAction: (action: string) => void, private readonly onClick?: () => void) {
     this.tray = new Tray(this.faceImage("idle"));
     this.tray.setToolTip(this.words);
+    if (onClick) {
+      this.tray.on("click", (event) => {
+        if (event.ctrlKey) this.popUp();
+        else onClick();
+      });
+      this.tray.on("right-click", () => this.popUp());
+    }
+  }
+
+  /** The menu, at the icon. */
+  private popUp(): void {
+    if (this.built && !this.tray.isDestroyed()) this.tray.popUpContextMenu(this.built);
   }
 
   /** What the icon and its title show now (`show`). */
@@ -108,7 +125,7 @@ export class MenuBar {
       };
     });
     this.built = Menu.buildFromTemplate(template);
-    this.tray.setContextMenu(this.built);
+    if (!this.onClick) this.tray.setContextMenu(this.built);
   }
 
   /**

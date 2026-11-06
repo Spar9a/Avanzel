@@ -1,0 +1,120 @@
+/* A page in a list: a rounded raised row with a hairline border, which lifts a little under the pointer and turns violet
+   when open. The rows come in one after another as the list first shows. */
+.av-page-row {
+  position: relative;
+  border-radius: var(--av-radius-group);
+  background: var(--av-surface-group);
+  box-shadow: inset 0 0 0 0.5px var(--av-line-hair);
+  color: var(--av-ink);
+  transition:
+    box-shadow var(--av-duration-base) var(--av-ease-out),
+    background var(--av-duration-base) var(--av-ease-out);
+  animation: av-page-row-in var(--av-duration-card) var(--av-ease-land) backwards;
+  animation-delay: calc(var(--_order, 0) * var(--av-duration-quick) / 3);
+}
+@keyframes av-page-row-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.av-page-row:hover {
+  background: var(--av-surface-raised);
+  box-shadow: inset 0 0 0 0.5px var(--av-line-control), var(--av-shadow-button);
+}
+.av-page-row[data-expanded] {
+  background: var(--av-surface-raised);
+  box-shadow: inset 0 0 0 1px var(--av-accent-fill), var(--av-shadow-card);
+}
+
+/* The row's top: the part a click opens and folds, and its buttons beside the title. */
+.av-page-row-top {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+}
+.av-page-row-head {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 10px 8px 10px 12px;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+}
+.av-page-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.av-page-row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--av-text-headline);
+  letter-spacing: var(--av-text-headline-tracking);
+  color: var(--av-ink);
+}
+.av-page-row-summary {
+  margin: 0 0 10px;
+  font: var(--av-text-callout);
+  letter-spacing: var(--av-text-callout-tracking);
+  color: var(--av-ink);
+}
+.av-page-row[data-expanded] .av-page-row-name { white-space: normal; }
+.av-page-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+  font: var(--av-text-caption);
+  letter-spacing: var(--av-text-caption-tracking);
+  color: var(--av-ink-secondary);
+}
+.av-page-row-tags { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.av-page-row-date { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.av-page-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 8px 8px 0 0;
+}
+
+/* The details fold open: the height grows from nothing, and what is inside fades in a moment after. Folding is quicker. */
+.av-page-row-details {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--av-duration-base) var(--av-ease-leave);
+}
+.av-page-row[data-expanded] .av-page-row-details {
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--av-duration-card) var(--av-ease-land);
+}
+.av-page-row-fold { min-height: 0; overflow: hidden; }
+
+/* Reduce Motion: the rows don't wait their turn and the details don't wait to show; everything is at once where it rests. */
+@media (prefers-reduced-motion: reduce) {
+  .av-page-row { animation-delay: 0s; }
+  .av-page-row[data-expanded] .av-page-row-inner { transition-delay: 0s; }
+}
+.av-page-row-inner {
+  padding: 0 12px 12px;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity var(--av-duration-quick) var(--av-ease-leave), transform var(--av-duration-quick) var(--av-ease-leave);
+}
+.av-page-row[data-expanded] .av-page-row-inner {
+  opacity: 1;
+  transform: none;
+  transition: opacity var(--av-duration-base) var(--av-ease-land) var(--av-duration-quick), transform var(--av-duration-base) var(--av-ease-land) var(--av-duration-quick);
+}

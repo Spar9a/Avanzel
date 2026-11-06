@@ -69,5 +69,31 @@
 .av-button[data-size="small"] { height: var(--av-size-control-small); padding: 0 11px; font: var(--av-text-button-small); }
 .av-button[data-size="large"] { height: var(--av-size-control-large); padding: 0 18px; font: var(--av-text-button-large); }
 .av-button[data-icon-only] { width: var(--av-size-control); padding: 0; }
+
+/* A badge at an icon-only button's corner: a second icon on a dark disc ringed in the button's surroundings. When the badge changes
+   it pops in, so the eye catches that what the button does has changed. ✦ is warm, as a spark; ☾ is the cool lilac of the evening. */
+.av-button[data-icon-only] { position: relative; overflow: visible; }
+.av-button-badge {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-hud-surface-solid);
+  box-shadow: 0 0 0 1.5px var(--av-hud-surface-solid);
+  color: var(--av-hud-ink-accent);
+  pointer-events: none;
+  animation: av-button-badge-in var(--av-duration-base) var(--av-ease-stamp) backwards;
+}
+.av-button-badge .av-icon { width: 9px; height: 9px; }
+.av-button-badge[data-badge="spark"] { color: var(--av-shelf-ideas); }
+@keyframes av-button-badge-in {
+  from { opacity: 0; transform: scale(0.4) rotate(-40deg); }
+  to { opacity: 1; transform: none; }
+}
 .av-button[data-icon-only][data-size="small"] { width: var(--av-size-control-small); }
 .av-button[data-icon-only][data-size="large"] { width: var(--av-size-control-large); }

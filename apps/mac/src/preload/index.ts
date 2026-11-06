@@ -1,6 +1,6 @@
 // The only door between the renderers and the main process: a typed, minimal `window.avanzel`.
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { AvanzelBridge, CapsuleCommand, CapsuleState, SettingsPane, SettingsSnapshot, SetupSnapshot } from "../shared/ipc.ts";
+import type { AvanzelBridge, CapsuleCommand, CapsuleState, PanelSnapshot, PanelTab, SettingsPane, SettingsSnapshot, SetupSnapshot } from "../shared/ipc.ts";
 
 function listen<T>(channel: string, callback: (value: T) => void): () => void {
   const handler = (_event: IpcRendererEvent, value: T) => callback(value);
@@ -24,6 +24,10 @@ const bridge: AvanzelBridge = {
     cancelEdit: () => ipcRenderer.send("capsule:cancel-edit"),
     cancelFiling: () => ipcRenderer.send("capsule:cancel-filing"),
     toggleFileMode: () => ipcRenderer.send("capsule:toggle-file-mode"),
+    level: (level) => ipcRenderer.send("capsule:level", level),
+    stop: () => ipcRenderer.send("capsule:stop"),
+    cancel: () => ipcRenderer.send("capsule:cancel"),
+    pause: () => ipcRenderer.send("capsule:pause"),
     stopTranscribing: () => ipcRenderer.send("capsule:stop-transcribing"),
     undo: () => ipcRenderer.send("capsule:undo"),
     open: () => ipcRenderer.send("capsule:open"),
@@ -108,6 +112,15 @@ const bridge: AvanzelBridge = {
     tryIt: () => ipcRenderer.send("up-here:try-it"),
     typeIt: () => ipcRenderer.send("up-here:type-it"),
     close: () => ipcRenderer.send("up-here:close"),
+  },
+  panel: {
+    get: () => ipcRenderer.invoke("panel:get"),
+    onChanged: (callback) => listen<PanelSnapshot>("panel:changed", callback),
+    pages: () => ipcRenderer.invoke("panel:pages"),
+    act: (action) => ipcRenderer.send("panel:act", action),
+    onShown: (callback) => listen<PanelTab | null>("panel:shown", callback),
+    hide: () => ipcRenderer.send("panel:hide"),
+    onLevel: (callback) => listen<number>("panel:level", callback),
   },
 };
 

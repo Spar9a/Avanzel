@@ -1,4 +1,8 @@
 // A screenshot of the display under the pointer (or a fixture image in tests).
+import { execFile } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { desktopCapturer, nativeImage, screen, type NativeImage } from "electron";
 
 export async function captureDisplay(): Promise<NativeImage> {
@@ -12,6 +16,27 @@ export async function captureDisplay(): Promise<NativeImage> {
   const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: size });
   const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0];
   return source?.thumbnail ?? nativeImage.createEmpty();
+}
+
+/**
+ * A part of the screen the person picks: macOS's own crosshair (`screencapture -i`), which also lets them press Space to pick a
+ * window. Null when they press Esc, or the picture can't be made. In tests, the fixture image, as `captureDisplay` gives it.
+ */
+export async function captureRegion(): Promise<NativeImage | null> {
+  const fake = process.env.AVANZEL_FAKE_SCREEN;
+  if (fake) return nativeImage.createFromPath(fake);
+  const dir = mkdtempSync(path.join(tmpdir(), "avanzel-shot-"));
+  const file = path.join(dir, "region.png");
+  try {
+    await new Promise<void>((resolve) => {
+      execFile("/usr/sbin/screencapture", ["-i", "-x", "-t", "png", file], () => resolve());
+    });
+    if (!existsSync(file)) return null; // Esc: nothing was picked
+    const image = nativeImage.createFromPath(file);
+    return image.isEmpty() ? null : image;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** macOS hands back an empty or all-black picture when Screen Recording is not allowed. */

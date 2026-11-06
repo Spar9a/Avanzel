@@ -18,10 +18,23 @@ export class Recorder {
   /** Counts starts, stops and cancels: a start overtaken by a stop or cancel lets go of what it opens. */
   private generation = 0;
 
+  /** While paused, the microphone stays open (so resuming is instant) but nothing it hears is kept. */
+  private paused = false;
+
   constructor(private readonly onLevel: (level: number) => void) {}
+
+  pause(): void {
+    this.paused = true;
+    this.onLevel(0);
+  }
+
+  resume(): void {
+    this.paused = false;
+  }
 
   async start(deviceId: string | null): Promise<void> {
     const generation = ++this.generation;
+    this.paused = false;
     const overtaken = () => generation !== this.generation; // stopped or cancelled meanwhile
     this.chunks = [];
     try {
@@ -45,6 +58,7 @@ export class Recorder {
     let sum = 0;
     let count = 0;
     this.node.port.onmessage = (event: MessageEvent<Float32Array>) => {
+      if (this.paused) return; // paused: what the microphone hears now is not kept, and draws no level
       const block = event.data;
       this.chunks.push(block);
       for (const v of block) sum += v * v;

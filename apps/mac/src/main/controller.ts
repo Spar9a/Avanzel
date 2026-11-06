@@ -152,7 +152,7 @@ import {
   savedPage,
 } from "./library-info.ts";
 import { forgetKept, logDictation } from "./library-log.ts";
-import { buildMenuModel, reviewProgress, speechProblemOf, type MenuInput, type MenuItemModel } from "./menu-model.ts";
+import { buildMenuModel, reviewProgress, speechProblemOf, statusLine, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
 import { pickRequest, popupChoice, trayChoice } from "./popup.ts";
@@ -177,7 +177,7 @@ import {
   withWait,
   type RunState,
 } from "./schedule.ts";
-import { captureDisplay, looksBlank } from "./screenshot.ts";
+import { captureDisplay, captureRegion, looksBlank } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
 import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
@@ -190,12 +190,29 @@ import { UndoRecordStore, type FilingReceipt } from "./undo-records.ts";
 import {
   createAskWindow,
   createCapsuleWindow,
+  createPanelWindow,
   createQuickWindow,
   createSettingsWindow,
   isPageOf,
   placeCapsule,
+  placePanel,
   placeQuick,
 } from "./windows.ts";
+import { libraryPages } from "./library-pages.ts";
+import type { FileMode, PanelPage, PanelSnapshot, PanelTab } from "../shared/ipc.ts";
+
+/**
+ * The panel under the menu bar icon stands in for the menu and for the Settings window: a click on the icon brings it up, and
+ * Settings is its third tab. The e2e tests drive the menu and the Settings window as they were, so with AVANZEL_TEST=1 the
+ * icon keeps its menu and Settings its own window.
+ */
+const USE_PANEL = process.env.AVANZEL_TEST !== "1";
+
+/** What the panel may ask for (`panel:act`): the menu's own actions, and a page to open by its path. */
+const PANEL_ACTIONS = new Set([
+  "dictate", "capture", "capture-region", "call-notes", "call-notes-stop", "type", "ask", "open-library", "open-inbox", "show-receipt", "undo-filing",
+  "undo-review", "quit", "setup", "finish-cut-short", "forget-dictation", "open-settings:voice",
+]);
 
 /** A recording's words: its text, the engine that made it, and `heard`, what was recognised, when the dictionary corrected it. */
 type Heard = Pick<Transcript, "text" | "engine" | "heard">;
@@ -375,7 +392,16 @@ export class Controller {
   private readonly modelsDir: string;
   private vault: Vault | null = null;
   private capsule!: BrowserWindow;
+  /** The Settings window's page; with the panel (`USE_PANEL`), the panel itself, whose Settings tab is that page. */
   private settingsWindow: BrowserWindow | null = null;
+  /** The panel under the menu bar icon, made at its first click and hidden, never closed, after. */
+  private panelWindow: BrowserWindow | null = null;
+  /** While a dialog the panel opened is up (Run Now?, Choose a folder), losing the keyboard to it doesn't hide the panel. */
+  private panelHeld = 0;
+  /** Counts each read of the log, so the panel knows to list the pages again (`PanelSnapshot.pagesVersion`). */
+  private pagesVersion = 0;
+  /** How each review's last run in this app run ended, as its notification told it: for the panel's Library. */
+  private reviewOutcomes = new Map<string, { at: string; title: string; body: string }>();
   private quickWindow: BrowserWindow | null = null;
   private askWindow: BrowserWindow | null = null;
   /** Gives up the Ask window's question being answered or answer being saved, as closing that window does: Stop calls it (cancelAsk). */
@@ -637,7 +663,7 @@ export class Controller {
       this.capsuleListening = false;
     });
     this.capsule.on("closed", () => app.quit());
-    this.menuBar = new MenuBar((action) => void this.menuAction(action));
+    this.menuBar = new MenuBar((action) => void this.menuAction(action), USE_PANEL ? () => this.togglePanel() : undefined);
     const envLibrary = process.env.AVANZEL_LIBRARY;
     if (envLibrary) this.store.update({ libraryPath: envLibrary });
     this.openLibrary(this.store.get().libraryPath);
@@ -901,6 +927,7 @@ export class Controller {
   private async menuAction(action: string): Promise<void> {
     if (action === "dictate") return this.toggleDictate();
     if (action === "capture") return this.toggleCapture();
+    if (action === "capture-region") return this.toggleCapture("region");
     if (action === "call-notes") return this.pickCall();
     if (action === "call-notes-stop") return this.stopCallNotes();
     if (action === "finish-cut-short") return this.calls.finishOldestCutShort();
@@ -1154,6 +1181,7 @@ export class Controller {
       console.warn("recent pages", error);
     }
     this.askChanged(); // a take-back or a review ended: the shelves may hold fewer pages, or more
+    this.pagesVersion += 1;
   }
 
   refreshMenu(): void {
@@ -1163,6 +1191,7 @@ export class Controller {
       console.error("menu", error);
     }
     this.refreshTray();
+    this.refreshPanel();
   }
 
   // ---------------------------------------------------------------- menu bar icon
@@ -1291,6 +1320,8 @@ export class Controller {
     const was = this.capsuleState;
     const wasEditing = was.kind === "editing";
     this.capsuleState = state;
+    // The panel shows a recording as the capsule does: it follows as one starts, switches or ends.
+    if ((was.kind === "listening") !== (state.kind === "listening") || state.kind === "listening") this.refreshPanel();
     this.cardCapture = capture ?? null;
     this.reprint = null; // a reprint is the card of whoever puts one up (`showLastReceipt`), which sets it after this
     this.cardUnkept = null; // a card that has words without its promise sets them after (`fail`)
@@ -1430,7 +1461,11 @@ export class Controller {
     await this.startRecording("dictate");
   }
 
-  async toggleCapture(): Promise<void> {
+  /**
+   * Capture screen with a comment. `area`: "screen", the whole display under the pointer (the shortcut, the menu); "region", a part
+   * the person picks with macOS's crosshair first (the panel's Part of the screen). Esc there starts nothing.
+   */
+  async toggleCapture(area: "screen" | "region" = "screen"): Promise<void> {
     if (this.recording?.forCursor) return; // only the dictation's own key stops it
     if (this.recording) return this.stopRecording();
     if (this.calls.refuse()) return;
@@ -1446,7 +1481,9 @@ export class Controller {
     let shot: NonNullable<Recording["shot"]>;
     try {
       // Not asked yet: this capture is what makes macOS ask. Without the grant it comes back blank.
-      const [image, context] = await Promise.all([captureDisplay(), this.screenContext()]);
+      const [picked, context] = await Promise.all([area === "region" ? captureRegion() : captureDisplay(), this.screenContext()]);
+      if (picked === null) return; // the crosshair's Esc: nothing was picked, and nothing is said
+      const image = picked;
       if (looksBlank(image)) return this.cantSeeScreen();
       shotPath = vault.newAttachmentPath(new Date(), ".png");
       writeFileSync(shotPath, image.toPNG());
@@ -1551,7 +1588,17 @@ export class Controller {
     }
     this.clearAudioTimeout();
     const maxSeconds = this.vault ? loadSettings(this.vault.root).voice.maxRecordSeconds : 600;
+    const timeUp = () => {
+      if (this.recording !== recording) return;
+      // A dictation ends through its session, which pastes nothing without the person's own second tap: its words are offered on the
+      // copy card instead (`CursorDictation.timeUp`).
+      if (forCursor) this.cursor.timeUp();
+      else void this.stopRecording();
+    };
     const recording: Recording = {
+      limitMs: maxSeconds * 1000,
+      timeUp,
+      pausedAt: null,
       mode,
       fileMode: mode === "dictate" && !forSetup && askPage === null && !forCursor ? this.store.get().fileMode : null,
       forSetup,
@@ -1561,13 +1608,7 @@ export class Controller {
       startedAt: Date.now(),
       shot,
       stopping: false,
-      maxTimer: setTimeout(() => {
-        if (this.recording !== recording) return;
-        // A dictation ends through its session, which pastes nothing without the person's own second tap: its words are offered on the
-        // copy card instead (`CursorDictation.timeUp`).
-        if (forCursor) this.cursor.timeUp();
-        else void this.stopRecording();
-      }, maxSeconds * 1000),
+      maxTimer: setTimeout(timeUp, maxSeconds * 1000),
     };
     this.recording = recording;
     this.wake(); // the next capture wakes Zel
@@ -1615,10 +1656,71 @@ export class Controller {
    * (`sender` is the page the message came from, `event.sender`).
    */
   toggleFileMode(sender: WebContents): void {
+    if (!isPageOf(sender, this.capsule)) return;
+    this.switchFileMode();
+  }
+
+  /**
+   * The listening bar's own buttons, from the capsule's page only. Stop ends and keeps the recording as its shortcut does (a screen
+   * comment's is Capture's); Cancel gives it up as Esc does; Pause pauses it, or resumes it while it is paused. A call has its own
+   * Stop, and a dictation into another app ends only by its key, so neither is heard here.
+   */
+  barAction(sender: WebContents, action: "stop" | "cancel" | "pause"): void {
+    if (!isPageOf(sender, this.capsule)) return;
+    this.listeningAction(action);
+  }
+
+  /** Stop, Cancel or Pause for the recording that listens, from the capsule's bar or the panel. */
+  private listeningAction(action: "stop" | "cancel" | "pause"): void {
+    const recording = this.recording;
+    if (!recording || recording.forCursor || recording.mode === "call" || this.capsuleState.kind !== "listening") return;
+    if (action === "stop") void this.stopRecording();
+    else if (action === "cancel") this.cancelRecording();
+    else if (recording.pausedAt) this.resumeRecording();
+    else this.pauseRecording();
+  }
+
+  /** Pauses the recording that listens: the microphone keeps nothing, the time stands still, and the time limit waits. */
+  private pauseRecording(): void {
     const recording = this.recording;
     const state = this.capsuleState;
-    if (!isPageOf(sender, this.capsule) || !recording || recording.fileMode === null || state.kind !== "listening") return;
-    recording.fileMode = recording.fileMode === "now" ? "evening" : "now";
+    if (!recording || recording.pausedAt || recording.stopping || state.kind !== "listening") return;
+    recording.pausedAt = Date.now();
+    clearTimeout(recording.maxTimer);
+    this.capsuleCommand("pause");
+    this.setCapsule({ ...state, pausedAt: recording.pausedAt });
+  }
+
+  /** Resumes a paused recording: its start moves on by the pause, so its time goes on from where it stood, and so does its limit. */
+  private resumeRecording(): void {
+    const recording = this.recording;
+    const state = this.capsuleState;
+    if (!recording || !recording.pausedAt || state.kind !== "listening") return;
+    recording.startedAt += Date.now() - recording.pausedAt;
+    recording.pausedAt = null;
+    const left = Math.max(0, (recording.limitMs ?? 600_000) - (Date.now() - recording.startedAt));
+    if (recording.timeUp) recording.maxTimer = setTimeout(recording.timeUp, left);
+    this.capsuleCommand("resume");
+    const { pausedAt: _paused, ...listening } = state;
+    this.setCapsule({ ...listening, startedAt: recording.startedAt });
+  }
+
+  /** The capsule's microphone level, passed on to the panel while it is up and a recording listens, for its wave. */
+  capsuleLevel(sender: WebContents, level: unknown): void {
+    if (!isPageOf(sender, this.capsule) || typeof level !== "number" || !Number.isFinite(level)) return;
+    const win = this.panelWindow;
+    if (!win || win.isDestroyed() || !win.isVisible() || this.capsuleState.kind !== "listening") return;
+    win.webContents.send("panel:level", Math.min(1, Math.max(0, level)));
+  }
+
+  /** Switches the listening recording's file mode, from the capsule's switch or the panel's: the capsule and the panel both follow. */
+  private switchFileMode(to?: FileMode): void {
+    const recording = this.recording;
+    const state = this.capsuleState;
+    if (!recording || recording.fileMode === null || state.kind !== "listening") return;
+    const next = to ?? (recording.fileMode === "now" ? "evening" : "now");
+    if (next === recording.fileMode) return;
+    recording.fileMode = next;
     this.setCapsule({ ...state, fileMode: recording.fileMode });
   }
 
@@ -4102,6 +4204,18 @@ export class Controller {
     else void shell.openPath(path.join(vault.root, rel));
   }
 
+  /**
+   * The panel's two ways to open a page: "file", in the app this Mac opens Markdown files with; "obsidian", in Obsidian, when it
+   * can (installed, and the library is a vault), else as a file. Only a page inside the library, never through a link (`pageAt`).
+   */
+  openPageWith(rel: string, how: "file" | "obsidian"): void {
+    const vault = this.vault;
+    if (!vault || pageAt(vault.root, rel) !== "page") return;
+    const url = how === "obsidian" && this.obsidianInstalled() ? obsidianUrl(vault.root, rel) : null;
+    if (url) void shell.openExternal(url);
+    else void shell.openPath(path.join(vault.root, rel));
+  }
+
   openLibraryFolder(): void {
     const vault = this.vault;
     if (!vault) return this.showHome();
@@ -4135,8 +4249,194 @@ export class Controller {
 
   // ---------------------------------------------------------------- settings
 
+  // ---------------------------------------------------------------- panel
+
+  /** The panel's window, made the first time: Settings' page lives in its third tab, so it is Settings' window too. */
+  private panel(): BrowserWindow {
+    if (this.panelWindow && !this.panelWindow.isDestroyed()) return this.panelWindow;
+    const win = createPanelWindow();
+    this.panelWindow = win;
+    this.settingsWindow = win;
+    // Another window took the keyboard: the panel goes, as a popover does. Not while a dialog it asked for is up.
+    win.on("blur", () => {
+      if (this.panelHeld === 0 && !win.isDestroyed() && process.env.AVANZEL_QUIET_STAGE !== "1") win.hide();
+    });
+    // Back from System Settings or Terminal: Settings reads what is on this Mac again, as its own window did (`showSettings`).
+    win.on("focus", () => {
+      try {
+        if (!git.gitUsable()) git.resetGitUsable();
+        this.refreshSettings();
+      } catch (error) {
+        console.error("panel", error);
+      }
+    });
+    return win;
+  }
+
+  /** A click on the menu bar icon: the panel comes up under it, or goes if it is up. */
+  togglePanel(): void {
+    const win = this.panelWindow;
+    if (win && !win.isDestroyed() && win.isVisible()) {
+      win.hide();
+      return;
+    }
+    // While a recording listens the panel opens on it, on Capture, with what the capsule offers for it.
+    this.showPanel(this.capsuleState.kind === "listening" ? "capture" : null);
+  }
+
+  /** Brings up the panel under the icon, on `tab` (and Settings' `pane`) when given, else where it was. */
+  showPanel(tab: PanelTab | null, pane?: SettingsPane): void {
+    const win = this.panel();
+    placePanel(win, this.menuBar.bounds());
+    const show = () => {
+      if (win.isDestroyed()) return;
+      win.webContents.send("panel:shown", tab);
+      if (pane) win.webContents.send("settings:show-pane", pane);
+      this.refreshPanel();
+      this.refreshSettings();
+      bringForward(win);
+    };
+    if (win.webContents.isLoading()) win.webContents.once("did-finish-load", show);
+    else show();
+  }
+
+  /** The panel's Esc. */
+  hidePanel(): void {
+    const win = this.panelWindow;
+    if (win && !win.isDestroyed()) win.hide();
+  }
+
+  /** Whether `sender` is the panel's own page: the only one whose actions are heard. */
+  isPanelPage(sender: WebContents): boolean {
+    return isPageOf(sender, this.panelWindow);
+  }
+
+  /** Keeps the panel up while `run`, a dialog it asked for, is open; it would hide as the dialog takes the keyboard. */
+  private async holdingPanel<T>(run: () => Promise<T>): Promise<T> {
+    this.panelHeld += 1;
+    try {
+      return await run();
+    } finally {
+      this.panelHeld -= 1;
+    }
+  }
+
+  /** The panel asked for one of the menu's actions (`PANEL_ACTIONS`), a page (`open:`) or a review (`task:`). */
+  panelAction(action: unknown): void {
+    if (typeof action !== "string") return;
+    // The recording shown in the panel: its file mode switches as the capsule's does, and Cancel gives it up as Esc does.
+    if (action === "file-mode:now" || action === "file-mode:evening") return this.switchFileMode(action === "file-mode:now" ? "now" : "evening");
+    if (action === "cancel-recording") return this.listeningAction("cancel");
+    if (action === "pause-recording") return this.listeningAction("pause");
+    if (action === "stop-recording") {
+      this.hidePanel();
+      return this.listeningAction("stop");
+    }
+    if (action.startsWith("open-md:") || action.startsWith("open-obsidian:")) {
+      const md = action.startsWith("open-md:");
+      this.hidePanel();
+      return this.openPageWith(action.slice(md ? 8 : 14), md ? "file" : "obsidian");
+    }
+    const page = action.startsWith("open:");
+    const task = action.startsWith("task:");
+    if (!PANEL_ACTIONS.has(action) && !page && !task) return;
+    // What starts something elsewhere (a recording, Quick, Ask, a page) takes the panel away first; a review asks first, over it.
+    const staysUp = ["undo-filing", "undo-review", "forget-dictation", "open-settings:voice", "pause-recording", "cancel-recording"];
+    if (!task && !staysUp.includes(action)) this.hidePanel();
+    if (task) {
+      const id = action.slice(5);
+      void this.holdingPanel(() => this.confirmRun(id)).then((yes) => {
+        if (yes) void this.runTask(id);
+      });
+      return;
+    }
+    void this.menuAction(action);
+  }
+
+  /** The library's pages, for the panel's Library. */
+  panelPages(): PanelPage[] {
+    const vault = this.vault;
+    if (!vault) return [];
+    try {
+      return libraryPages(vault.root);
+    } catch (error) {
+      console.warn("panel pages", error);
+      return [];
+    }
+  }
+
+  panelSnapshot(): PanelSnapshot {
+    const input = this.menuInput();
+    const vault = this.vault;
+    const tasks = vault ? this.safeTasks(vault) : [];
+    const state = vault ? this.readRunState(vault) : null;
+    return {
+      libraryReady: input.libraryReady,
+      libraryProblem: input.problem ?? (input.missingLibrary ? `The library at ${input.missingLibrary} is missing.` : null),
+      inbox: input.inbox,
+      filedToday: input.filedToday,
+      headline: statusLine(
+        input.filedToday,
+        input.tasks
+          .filter((t) => t.kind === "evening-review" && t.enabled && t.at !== null)
+          .sort((a, b) => (a.at?.getTime() ?? 0) - (b.at?.getTime() ?? 0))[0],
+        new Date(),
+      ),
+      speechProblem: input.speechProblem ? { title: input.speechProblem, line: input.speechSublabel ?? "" } : null,
+      callNotesOffer: input.callNotes,
+      cutShortCalls: input.cutShortCalls,
+      forgettableDictation: input.forgettableDictation,
+      pagesVersion: this.pagesVersion,
+      shortcuts: input.shortcuts,
+      unregisteredShortcuts: [...input.unregisteredShortcuts],
+      recording: input.recording,
+      listening: this.capsuleState.kind === "listening"
+        ? {
+            mode: this.capsuleState.mode,
+            startedAt: this.capsuleState.startedAt,
+            pausedAt: this.capsuleState.pausedAt ?? null,
+            fileMode: this.capsuleState.fileMode,
+            review: this.capsuleState.review,
+            ownKey: !!this.recording?.forCursor,
+          }
+        : null,
+      callNotes: this.calls.running,
+      reviews: tasks.map((t) => {
+        const at = t.enabled ? nextRun(t.schedule, new Date()) : null;
+        const ran = state?.ran?.[t.id];
+        return {
+          id: t.id,
+          name: t.name,
+          kind: t.kind,
+          enabled: t.enabled,
+          next: at ? at.toISOString() : null,
+          lastRun: typeof ran === "string" ? ran : null,
+          running: this.running.has(t.id),
+          progress: this.reviewing.get(t.id) ?? null,
+          outcome: this.reviewOutcomes.get(t.id) ?? null,
+        };
+      }),
+      undoableFiling: input.undoableFiling,
+      showableReceipt: input.showableReceipt,
+      undoableReview: input.undoableReview,
+      opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
+    };
+  }
+
+  /** The panel, if it is up, is sent a fresh snapshot. */
+  private refreshPanel(): void {
+    const win = this.panelWindow;
+    if (!win || win.isDestroyed() || !win.isVisible()) return;
+    try {
+      win.webContents.send("panel:changed", this.panelSnapshot());
+    } catch (error) {
+      console.error("panel", error);
+    }
+  }
+
   /** With a `pane`, a new window opens on it and an open one moves to it; without, a new one opens on General and an open one stays put. */
   showSettings(pane?: SettingsPane): void {
+    if (USE_PANEL) return this.showPanel("settings", pane);
     if (!this.settingsWindow || this.settingsWindow.isDestroyed()) {
       this.settingsWindow = createSettingsWindow(pane);
       this.settingsWindow.once("ready-to-show", () => showWhenReady(this.settingsWindow));
@@ -4354,8 +4654,22 @@ export class Controller {
     return this.snapshot();
   }
 
-  async chooseLibrary(): Promise<SettingsSnapshot> {
-    const parent = this.settingsWindow && !this.settingsWindow.isDestroyed() ? this.settingsWindow : undefined;
+  /** Settings' Choose a folder…: the panel stays up while its dialogs are. */
+  chooseLibrary(): Promise<SettingsSnapshot> {
+    return this.holdingPanel(() => this.pickLibrary());
+  }
+
+  /**
+   * The window Settings' dialogs come up as sheets on: its own window. The panel is a popover, which a sheet doesn't suit, so its
+   * dialogs come up on their own (and hold it up, `holdingPanel`).
+   */
+  private settingsDialogParent(): BrowserWindow | undefined {
+    const win = this.settingsWindow;
+    return win && !win.isDestroyed() && win !== this.panelWindow ? win : undefined;
+  }
+
+  private async pickLibrary(): Promise<SettingsSnapshot> {
+    const parent = this.settingsDialogParent();
     const result = parent ? await dialog.showOpenDialog(parent, LIBRARY_PICKER) : await dialog.showOpenDialog(LIBRARY_PICKER);
     const chosen = result.filePaths[0];
     if (result.canceled || !chosen) return this.snapshot();
@@ -4861,8 +5175,7 @@ export class Controller {
 
   /** Settings' Run now: the question comes up as a sheet on Settings (`confirmRun`), and the review runs on Run Now. Cancel changes nothing. */
   async runTaskFromSettings(id: string): Promise<SettingsSnapshot> {
-    const win = this.settingsWindow;
-    const asked = await this.confirmRun(id, win && !win.isDestroyed() ? win : undefined);
+    const asked = await this.holdingPanel(() => this.confirmRun(id, this.settingsDialogParent()));
     return asked ? this.runTask(id) : this.snapshot();
   }
 
@@ -4927,6 +5240,12 @@ export class Controller {
 
   private async executeTask(task: ShadowTask): Promise<void> {
     const agent = this.agentName(task.agent);
+    // Each ending is told in a notification and kept for the panel's Library, which shows it under the review: a notification
+    // macOS doesn't show, or one missed, leaves the review's end in sight there.
+    const notify = (title: string, body: string, onClick?: () => void) => {
+      this.reviewOutcomes.set(task.id, { at: new Date().toISOString(), title, body });
+      return this.notify(title, body, onClick);
+    };
     try {
       // The weekly review appends to the log and commits as it runs: the filing before it is not the last any more, and a revert of it
       // would meet the review's later commit and be refused. The evening review writes to the library only if it files something, so it
@@ -4953,7 +5272,7 @@ export class Controller {
           filedNothing = !result.outcomes.length;
           this.fallAsleep(); // it ran to its end, whatever it found to file
           if (filedNothing) {
-            this.notify(task.name, nothingFiled(left.size));
+            notify(task.name, nothingFiled(left.size));
             return;
           }
           const filedIds = new Set(result.outcomes.filter((o) => o.ok).map((o) => o.captureId));
@@ -4963,7 +5282,7 @@ export class Controller {
           const failed = result.outcomes.filter((o) => !o.ok);
           const filed = result.outcomes.length - failed.length;
           const digest = result.digestPath;
-          this.notify(
+          notify(
             `${task.name}: ${filed} ${filed === 1 ? "thought" : "thoughts"} filed`,
             failed.length ? notFiled(failed, filed) : `${agent} sorted today's inbox. Click to read the summary.`,
             digest ? () => this.openPage(path.relative(this.requireVault().root, digest)) : undefined,
@@ -4978,16 +5297,16 @@ export class Controller {
       } else if (task.kind === "review") {
         const outcome = await this.withRun(async (signal) => (await this.librarian(task.agent)).review({ signal }));
         const report = outcome.report;
-        this.notify(
+        notify(
           outcome.result.ok ? `${task.name} is ready` : `${task.name} didn't finish`,
           outcome.result.ok ? `${agent} looked over your library. Click to read it.` : lastLines(outcome.result.stderr || outcome.result.output, 1),
           report ? () => this.openPage(path.relative(this.requireVault().root, report)) : undefined,
         );
       } else {
-        this.notify(task.name, "Avanzel doesn't run custom reviews yet, so this one was skipped.");
+        notify(task.name, "Avanzel doesn't run custom reviews yet, so this one was skipped.");
       }
     } catch (error) {
-      this.notify(`${task.name} didn't run`, errorMessage(error));
+      notify(`${task.name} didn't run`, errorMessage(error));
     }
   }
 

@@ -1,10 +1,13 @@
 import { useRef } from "react";
+import { Icon, type IconName } from "./Icon.tsx";
 import "../foundations.css";
 import "./segmented.css";
 
 export interface SegmentedOption<T extends string> {
   value: T;
   label: string;
+  /** An icon before the label, for a choice that has a sign of its own: ✦ for now, ☾ for the evening review. */
+  icon?: IconName;
 }
 
 export interface SegmentedProps<T extends string> {
@@ -44,6 +47,7 @@ export function Segmented<T extends string>({ label, options, value, onChange, d
             if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); move(i, -1); }
           }}
         >
+          {option.icon && <Icon name={option.icon} size={12} />}
           {option.label}
         </button>
       ))}

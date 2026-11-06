@@ -36,6 +36,30 @@ export function fileModeLabel(mode: FileMode, review: string | null): string {
   return review === "" ? "Files at the evening review" : `Files ${review}`;
 }
 
+/**
+ * The listening bar's file-mode switch: two choices beside the word "Filing", so it reads as a choice and not as a state. "Now"
+ * is the agent filing the words as soon as the recording stops; the other is the evening review, worded from its time as
+ * `reviewTime` gives it ("At 21:00", "On Sundays at 18:00"), "At the review" for a schedule that can't be read (""), and "Inbox"
+ * while the review is off (null), when the words wait in the inbox for the person.
+ */
+export function fileModeChoices(review: string | null): { now: string; evening: string } {
+  if (review === null) return { now: "Now", evening: "Inbox" };
+  if (review === "") return { now: "Now", evening: "Review" };
+  // As short as the bar can hold beside its buttons: "21:00" for a daily review, "Sundays 18:00" for a weekly one.
+  const daily = /^at (\d{1,2}:\d{2})$/.exec(review);
+  if (daily) return { now: "Now", evening: daily[1]! };
+  const weekly = /^on (\w+) at (\d{1,2}:\d{2})$/.exec(review);
+  if (weekly) return { now: "Now", evening: `${weekly[1]} ${weekly[2]}` };
+  return { now: "Now", evening: review.charAt(0).toUpperCase() + review.slice(1) };
+}
+
+/** What the bar's Stop does, as its label says it and its badge shows it: file now, or keep for the review or the inbox. */
+export function stopLabel(mode: FileMode | null, review: string | null): string {
+  if (mode === "now") return "Stop, and your agent files it now";
+  if (mode === "evening") return review === null ? "Stop, and keep it in the inbox" : `Stop, and file it at the evening review${review ? ` ${review}` : ""}`;
+  return "Stop";
+}
+
 /** The capsule's line while the words are made. */
 export function transcribingLine(onThisMac: boolean): string {
   return onThisMac ? "Transcribing on this Mac…" : "Transcribing…";

@@ -1,16 +1,17 @@
 // The capsule while a recording listens: a bar (Zel listening, the wave, the time) and, above it, what a card of paper or glass adds. The
 // bar is a live region and has no line while listening, so its time and its one button are all it holds: the design system draws the
 // ticking time inside the region, which VoiceOver may read each second (owner item 5).
-import { Button, Hud, Kbd, Text } from "@avanzel/ui";
+import { Button, Hud, Kbd, Segmented, Text } from "@avanzel/ui";
 import { prettyAccelerator } from "../../main/shortcuts.ts";
-import { CALL_LISTENING_LINE, dictationListeningLine, fileModeLabel } from "../../shared/transcribing.ts";
+import type { FileMode } from "../../shared/ipc.ts";
+import { CALL_LISTENING_LINE, dictationListeningLine, fileModeChoices, stopLabel } from "../../shared/transcribing.ts";
 import { api, type StateOf } from "./api.ts";
 import { ScreenshotCard } from "./screenshot.tsx";
 import type { Scene } from "./scene.tsx";
 
 /**
- * The bar's one button is this capture's file mode, which a press switches between now and the evening review, worded from the
- * review (`fileModeLabel`); a screen comment and setup's first spoken thought have none to switch (`fileMode` is null). Above the
+ * The bar's one control is this capture's file mode, a switch between now and the evening review, worded from the
+ * review (`fileModeChoices`); a screen comment and setup's first spoken thought have none to switch (`fileMode` is null). Above the
  * bar, for a screen comment, its screenshot on a card labelled with the app; and, for the first recordings, the keys that finish
  * and give up a recording, on a small card of the capsule's glass (owner item 1). The time is the recording's own, counted from when
  * it began (`startedAt`), whatever is pressed.
@@ -40,13 +41,66 @@ export function listeningScene(state: StateOf<"listening">, levels: readonly num
       mood: "listening",
       levels,
       startedAt: state.startedAt,
-      actions: state.fileMode && (
-        <Button size="small" onClick={() => api.toggleFileMode()}>
-          {fileModeLabel(state.fileMode, state.review)}
-        </Button>
+      ...(state.pausedAt ? { pausedAt: state.pausedAt, line: "Paused" } : {}),
+      // A dictation into another app ends only by its own key: its bar has none of these.
+      actions: state.dictation ? undefined : (
+        <ListeningControls
+          fileMode={state.fileMode}
+          review={state.review}
+          paused={!!state.pausedAt}
+          onFileMode={(next) => {
+            if (next !== state.fileMode) api.toggleFileMode();
+          }}
+          onCancel={() => api.cancel()}
+          onPause={() => api.pause()}
+          onStop={() => api.stop()}
+        />
       ),
     },
   };
+}
+
+/**
+ * A recording's controls, as recorders have them and the panel shows them too: when the agent files it (✦ now, or ☾ at the evening
+ * review), then ✕ to give it up, ❚❚ to pause (▶ to go on), and ■ to stop, which wears the chosen sign, so it shows what stopping will
+ * do. Choosing when starts nothing: the recording goes on, and only what happens after it stops changes.
+ */
+export function ListeningControls(props: {
+  fileMode: FileMode | null;
+  review: string | null;
+  paused: boolean;
+  onFileMode: (mode: FileMode) => void;
+  onCancel: () => void;
+  onPause: () => void;
+  onStop: () => void;
+}) {
+  const { fileMode, review, paused } = props;
+  const choices = fileModeChoices(review);
+  return (
+    <span className="listening-controls">
+      {fileMode && (
+        <Segmented
+          label="When your agent files this recording"
+          options={[
+            { value: "now", label: choices.now, icon: "spark" },
+            { value: "evening", label: choices.evening, icon: "moon" },
+          ]}
+          value={fileMode}
+          onChange={props.onFileMode}
+        />
+      )}
+      <Button size="small" variant="secondary" icon="close" label="Cancel the recording" onClick={props.onCancel} />
+      <Button size="small" variant="secondary" icon={paused ? "play" : "pause"} label={paused ? "Resume" : "Pause"} onClick={props.onPause} />
+      <Button
+        size="small"
+        variant="primary"
+        icon="stop"
+        label={stopLabel(fileMode, review)}
+        {...(fileMode ? { badge: fileMode === "now" ? ("spark" as const) : ("moon" as const) } : {})}
+        onClick={props.onStop}
+      />
+    </span>
+  );
 }
 
 /**

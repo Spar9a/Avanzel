@@ -34,12 +34,18 @@ interface IconOnly extends Common {
   icon: IconName;
   label: string;
   children?: never;
+  /**
+   * A small second icon at its corner, for what the button will do as well: the capsule's Stop wears ✦ while the agent files the
+   * recording at once and ☾ while it waits for the evening review. The label must say it too.
+   */
+  badge?: IconName;
 }
 
 export type ButtonProps = Labelled | IconOnly;
 
 export function Button(props: ButtonProps) {
   const { variant = "secondary", size = "regular", wrap, disabled, busy, type = "button", autoFocus, onClick, icon, children, label } = props;
+  const badge = "badge" in props ? props.badge : undefined;
   const iconOnly = children === undefined;
   return (
     <button
@@ -58,6 +64,11 @@ export function Button(props: ButtonProps) {
     >
       {busy ? <Spinner size="small" /> : icon && <Icon name={icon} size={size === "large" ? 16 : 12} />}
       {children}
+      {badge && (
+        <span key={badge} className="av-button-badge" data-badge={badge}>
+          <Icon name={badge} size={12} />
+        </span>
+      )}
     </button>
   );
 }

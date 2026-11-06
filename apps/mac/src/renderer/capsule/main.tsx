@@ -27,9 +27,20 @@ const CALL_BLOCK_MS = 5_000;
 /** Whole megabytes, as macOS counts them. */
 const mb = (bytes: number) => Math.round(bytes / 1e6);
 
+/** How often a level is passed on to main for the menu bar panel, which shows the recording too: often enough for its wave. */
+const LEVEL_SEND_MS = 60;
+
 function useLevels(listening: boolean, fake: boolean) {
   const [levels, setLevels] = useState<number[]>(() => Array(BARS).fill(0.08));
-  const push = (level: number) => setLevels((prev) => [...prev.slice(1), Math.max(0.08, level)]);
+  const sent = useRef(0);
+  const push = (level: number) => {
+    setLevels((prev) => [...prev.slice(1), Math.max(0.08, level)]);
+    const now = Date.now();
+    if (now - sent.current >= LEVEL_SEND_MS) {
+      sent.current = now;
+      api.level(level);
+    }
+  };
   useEffect(() => {
     if (!listening || !fake) return;
     const timer = setInterval(() => push(0.15 + Math.random() * 0.75), 60);
@@ -209,7 +220,7 @@ function App() {
   const [state, setState] = useState<CapsuleState>({ kind: "hidden" });
   const stateRef = useRef(state);
   const listening = state.kind === "listening";
-  const { levels, push } = useLevels(listening, listening && state.fakeMic);
+  const { levels, push } = useLevels(listening, listening && state.fakeMic && state.pausedAt === undefined);
   const recorder = useRef(new Recorder((level) => push(level)));
   /** While a call runs: the timer that sends its microphone to main in blocks. */
   const callBlocks = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -237,6 +248,10 @@ function App() {
       await api.sendAudio(samples);
     } else if (command === "cancel") {
       await recorder.current.cancel();
+    } else if (command === "pause") {
+      recorder.current.pause();
+    } else if (command === "resume") {
+      recorder.current.resume();
     } else if (typeof command === "string") {
       // a recording's start on a card that doesn't listen, or with the fake microphone: nothing to open
     } else if (command.kind === "call-start" && current.kind === "listening" && !fake) {

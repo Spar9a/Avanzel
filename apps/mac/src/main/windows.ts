@@ -170,6 +170,55 @@ export function placeQuick(win: BrowserWindow): void {
   win.setPosition(Math.round(workArea.x + (workArea.width - width) / 2), Math.round(workArea.y + workArea.height * 0.22));
 }
 
+export const PANEL_SIZE = { width: 520, height: 640 };
+
+/**
+ * The panel under the menu bar icon: Capture, Library and Settings. A popover macOS draws, with its material, corners and
+ * shadow, as Quick is; it takes the keyboard, and hides when another window does (`Controller.showPanel`).
+ */
+export function createPanelWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    ...PANEL_SIZE,
+    show: false,
+    title: "Avanzel",
+    frame: false,
+    vibrancy: "popover",
+    visualEffectState: "active",
+    backgroundColor: "#00000000",
+    roundedCorners: true,
+    hasShadow: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    ...panelOptions(),
+    type: "panel",
+    webPreferences,
+  });
+  floatOverSpaces(win);
+  void win.loadFile(pagePath("panel"));
+  return win;
+}
+
+/**
+ * Under the menu bar icon at `icon` (screen points), its middle under the icon's, kept inside the work area of the display the
+ * icon is on with a little room at the edges. With no icon to go by (hidden, or no bounds), at the top right of the display
+ * under the pointer.
+ */
+export function placePanel(win: BrowserWindow, icon: { x: number; y: number; width: number; height: number }): void {
+  const [width] = win.getSize() as [number, number];
+  const known = icon.width > 0 && icon.height > 0;
+  const point = known ? { x: Math.round(icon.x + icon.width / 2), y: Math.round(icon.y + icon.height / 2) } : screen.getCursorScreenPoint();
+  const { workArea } = screen.getDisplayNearestPoint(point);
+  const margin = 8;
+  const centred = known ? point.x - width / 2 : workArea.x + workArea.width - width - margin;
+  const x = Math.min(Math.max(centred, workArea.x + margin), workArea.x + workArea.width - width - margin);
+  const y = known ? Math.max(workArea.y, icon.y + icon.height) + 4 : workArea.y + 4;
+  win.setPosition(Math.round(x), Math.round(y));
+}
+
 export function createAskWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 700,

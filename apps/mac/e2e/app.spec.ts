@@ -855,7 +855,7 @@ test("Open Settings in the Ask window leaves a recording and a note being edited
   const settings = await windowFor(app, "settings");
   await expect(agents(settings)).toHaveAttribute("aria-checked", "true");
   expect(await capsuleKind(app)).toBe("listening"); // the recording goes on
-  await expect(capsule.getByRole("status").getByRole("button", { name: "Files now", exact: true })).toBeVisible();
+  await expect(capsule.getByRole("status").getByRole("radio", { name: "Now", exact: true })).toHaveAttribute("aria-checked", "true");
 
   // The words are filed, and Edit opens the box: Open Settings leaves it open, with what is typed in it.
   await call(app, "toggleDictate");
@@ -1303,7 +1303,7 @@ test("one bar serves a whole dictation: the same live region from listening thro
 
 /** The states the capsule draws a bar for, as main sends them, each with the line its bar says (or the button it holds, where it has no line). */
 const BAR_STATES: [string, Record<string, unknown>, string][] = [
-  ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", review: "at 21:00", hint: null }, "Files now"],
+  ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", review: "at 21:00", hint: null }, "21:00"],
   ["transcribing", { kind: "transcribing", mode: "dictate", onThisMac: true }, "Transcribing on this Mac…"],
   ["a slow transcription", { kind: "transcribing", mode: "dictate", onThisMac: true, slow: true }, "Still transcribing…"],
   [
@@ -1368,19 +1368,25 @@ test("every state that has a bar draws it in the one live region, and the editor
 
 // ---- The listening card: a bar whose one button is the file mode, with the hint above it ----
 
-test("a dictation listens on a bar whose one button is its file mode, and the first recordings' hint names the keys", async () => {
+test("a dictation listens on a bar with its file mode, Cancel, Pause and Stop, and the first recordings' hint names the keys", async () => {
   const library = await makeLibrary();
   const { app, capsule } = await launchHearing(library, newUserData());
   await startListening(app);
   await snap(capsule, "1-listening-bar");
-  // The bar is the card's one live region, with Zel listening. It has no line: its time and the file mode's button are all it holds.
+  // The bar is the card's one live region, with Zel listening. It has no line: its time and its controls are all it holds. When the
+  // recording is filed is a choice of two, ✦ now or ☾ at the review; then Cancel, Pause and Stop, which wears the chosen sign.
   const bar = capsule.getByRole("status");
   await expect(capsule.locator("svg[data-mood]")).toHaveAttribute("data-mood", "listening");
   await expect(bar.getByText(/^\d:\d\d$/)).toBeVisible();
-  const toggle = bar.getByRole("button", { name: "Files now", exact: true });
-  await expect(toggle).toHaveAttribute("data-variant", "secondary");
-  await expect(toggle).toHaveAttribute("data-size", "small");
-  await expect(capsule.getByRole("button")).toHaveCount(1); // no Hide: Esc is what gives a recording up
+  const choice = bar.getByRole("radiogroup", { name: "When your agent files this recording" });
+  const now = choice.getByRole("radio", { name: "Now", exact: true });
+  const atTheReview = choice.getByRole("radio", { name: "21:00", exact: true });
+  await expect(now).toHaveAttribute("aria-checked", "true");
+  await expect(atTheReview).toHaveAttribute("aria-checked", "false");
+  await expect(capsule.getByRole("button")).toHaveCount(3);
+  await expect(bar.getByRole("button", { name: "Cancel the recording", exact: true })).toBeVisible();
+  await expect(bar.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await expect(bar.getByRole("button", { name: "Stop, and your agent files it now", exact: true })).toBeVisible();
   // The hint above it is one sentence of plain text, with the keys as keys, outside the live region.
   await expect(capsule.getByText("⌥Space to finish, Esc to cancel", { exact: true })).toBeVisible();
   await expect(capsule.locator("kbd")).toHaveText(["⌥Space", "Esc"]);
@@ -1388,23 +1394,25 @@ test("a dictation listens on a bar whose one button is its file mode, and the fi
   // The recording has run a few seconds by the time the button is pressed: the time then shows that it isn't started over by a press.
   const { startedAt } = (await call(app, "capsuleStateForTests")) as { startedAt: number };
   await expect.poll(() => Date.now() - startedAt, { timeout: 10_000, intervals: [250] }).toBeGreaterThan(3_000);
-  // Pressing the button switches this capture between now and the evening review, and its label says which, and when that review
-  // files it (this library's runs daily at 21:00); the hint stays.
-  await toggle.click();
-  const atTheReview = bar.getByRole("button", { name: "Files at 21:00", exact: true });
-  await expect(atTheReview).toBeVisible();
-  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "listening", fileMode: "evening", hint: "Alt+Space", review: "at 21:00" });
-  await expect(capsule.getByText("⌥Space to finish, Esc to cancel", { exact: true })).toBeVisible();
+  // Choosing the review switches this capture to it, named by when it files (this library's runs daily at 21:00); the hint stays.
+  // Choosing the one already chosen changes nothing.
   await atTheReview.click();
-  await expect(bar.getByRole("button", { name: "Files now", exact: true })).toBeVisible();
+  await expect(atTheReview).toHaveAttribute("aria-checked", "true");
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "listening", fileMode: "evening", hint: "Alt+Space", review: "at 21:00" });
+  await atTheReview.click();
+  expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "listening", fileMode: "evening" });
+  await expect(capsule.getByText("⌥Space to finish, Esc to cancel", { exact: true })).toBeVisible();
+  await now.click();
+  await expect(now).toHaveAttribute("aria-checked", "true");
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "listening", fileMode: "now" });
-  // Stopped as it reads, the capture goes the way the button said: to the evening review, and nothing is filed.
-  await bar.getByRole("button", { name: "Files now", exact: true }).click();
-  await expect(atTheReview).toBeVisible();
+  // Stopped as it reads, the capture goes the way the switch said: to the evening review, and nothing is filed.
+  await atTheReview.click();
+  await expect(atTheReview).toHaveAttribute("aria-checked", "true");
+  await expect(bar.getByRole("button", { name: "Stop, and file it at the evening review at 21:00", exact: true })).toBeVisible();
   // The time is the recording's own, counted from the state's `startedAt`, which no press moved: it reads what has gone since then
   // (a second or so behind, as it counts in whole seconds), not what has gone since the last press, which is under a second.
   expect(((await call(app, "capsuleStateForTests")) as { startedAt: number }).startedAt).toBe(startedAt);
-  const shown = (await bar.getByText(/^\d+:\d\d$/).innerText()).split(":").reduce((minutes, seconds) => minutes * 60 + Number(seconds), 0);
+  const shown = (await bar.getByText(/^\d:\d\d$/).innerText()).split(":").reduce((minutes, seconds) => minutes * 60 + Number(seconds), 0);
   const elapsed = (Date.now() - startedAt) / 1000;
   expect(shown).toBeLessThanOrEqual(elapsed);
   expect(shown).toBeGreaterThanOrEqual(elapsed - 2);
@@ -1533,7 +1541,10 @@ test("a screen comment listens over a card of its screenshot, labelled with the 
   expect(picture.y - (head.y + head.height)).toBeGreaterThanOrEqual(7.9); // 8 px, to a rounding of the screen's pixels
   expect(paper.y + paper.height - (picture.y + picture.height)).toBeGreaterThanOrEqual(7.9);
   await expect(capsule.getByRole("status").getByText(/^\d:\d\d$/)).toBeVisible();
-  await expect(capsule.getByRole("button")).toHaveCount(0); // a screen comment is always saved: nothing to switch
+  // A screen comment is always saved: nothing to switch, so Cancel, Pause and Stop alone, and Stop wears no sign of when it is filed.
+  await expect(capsule.getByRole("radiogroup")).toHaveCount(0);
+  await expect(capsule.getByRole("button")).toHaveCount(3);
+  await expect(capsule.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
   // Capture screen's shortcut finishes it, not Record a thought's.
   await expect(capsule.getByText("⌥⇧S to finish, Esc to cancel", { exact: true })).toBeVisible();
   await expect(capsule.locator("kbd")).toHaveText(["⌥⇧S", "Esc"]);
@@ -1545,13 +1556,42 @@ test("a screen comment listens over a card of its screenshot, labelled with the 
   await app.close();
 });
 
+test("Pause holds a recording's time and its limit, Resume goes on from there, and Cancel gives it up", async () => {
+  const library = await makeLibrary();
+  const { app, capsule } = await launchHearing(library, newUserData());
+  await startListening(app);
+  const bar = capsule.getByRole("status");
+  const { startedAt } = (await call(app, "capsuleStateForTests")) as { startedAt: number };
+  await expect.poll(() => Date.now() - startedAt, { timeout: 10_000, intervals: [250] }).toBeGreaterThan(2_000);
+  // Paused: the bar says so, the time stands still, and Pause becomes Resume.
+  await bar.getByRole("button", { name: "Pause", exact: true }).click();
+  await expect(bar.getByText("Paused", { exact: true })).toBeVisible();
+  const paused = (await call(app, "capsuleStateForTests")) as { kind: string; pausedAt?: number };
+  expect(paused).toMatchObject({ kind: "listening" });
+  expect(paused.pausedAt).toBeGreaterThan(startedAt);
+  const held = await bar.getByText(/^\d:\d\d$/).innerText();
+  await new Promise((r) => setTimeout(r, 2_200));
+  await expect(bar.getByText(/^\d:\d\d$/)).toHaveText(held);
+  // Resumed: the start moves on by the pause, so the time goes on from where it stood.
+  await bar.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect(bar.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  const resumed = (await call(app, "capsuleStateForTests")) as { startedAt: number; pausedAt?: number };
+  expect(resumed.pausedAt).toBeUndefined();
+  expect(resumed.startedAt).toBeGreaterThanOrEqual(startedAt + 2_000);
+  // Cancel gives it up, as Esc does: nothing is kept.
+  await bar.getByRole("button", { name: "Cancel the recording", exact: true }).click();
+  await expect.poll(() => capsuleKind(app)).not.toBe("listening");
+  expect(inbox(library)).toHaveLength(0);
+  await app.close();
+});
+
 test("a recording that learned its keys has no hint, and a dictation has no screenshot card", async () => {
   const library = await makeLibrary();
   const userData = newUserData();
   keptAlready(userData, 10);
   const { app, capsule } = await launchHearing(library, userData);
   await startListening(app);
-  await expect(capsule.getByRole("status").getByRole("button", { name: "Files now", exact: true })).toBeVisible();
+  await expect(capsule.getByRole("status").getByRole("radio", { name: "Now", exact: true })).toHaveAttribute("aria-checked", "true");
   await expect(capsule.locator("kbd")).toHaveCount(0);
   await expect(capsule.getByRole("article")).toHaveCount(0);
   await expect(capsule.getByRole("img", { name: /^Screenshot/ })).toHaveCount(0);
@@ -1559,34 +1599,34 @@ test("a recording that learned its keys has no hint, and a dictation has no scre
   await app.close();
 });
 
-test("the file mode's button names when the evening review files the capture, and promises no review while it is off", async () => {
+test("the file mode's switch names when the evening review files the capture, and promises no review while it is off", async () => {
   const library = await makeLibrary();
   const review = path.join(library, "tasks", "evening-review.md");
   const { app, capsule } = await launchHearing(library, newUserData());
   await call(app, "setApp", { fileMode: "evening" }); // a capture starts as the setting says: here, with the evening review
-  const button = (name: string) => capsule.getByRole("status").getByRole("button", { name, exact: true });
+  const choice = (name: string) => capsule.getByRole("status").getByRole("radio", { name, exact: true });
   // A daily review: its time ...
   await startListening(app);
-  await expect(button("Files at 21:00")).toBeVisible();
+  await expect(choice("21:00")).toHaveAttribute("aria-checked", "true");
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ fileMode: "evening", review: "at 21:00" });
-  await button("Files at 21:00").click();
-  await expect(button("Files now")).toBeVisible(); // the review has no part in the other mode
+  await choice("Now").click();
+  await expect(choice("Now")).toHaveAttribute("aria-checked", "true");
   await call(app, "cancelRecording");
   // ... a weekly one: its day as well, since it isn't tonight's ...
   writeFileSync(review, readFileSync(review, "utf8").replace("schedule: daily 21:00", "schedule: weekly sun 18:00"));
   await startListening(app);
-  await expect(button("Files on Sundays at 18:00")).toBeVisible();
+  await expect(choice("Sundays 18:00")).toHaveAttribute("aria-checked", "true");
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ fileMode: "evening", review: "on Sundays at 18:00" });
   await call(app, "cancelRecording");
-  // ... and with the review off, nothing files the capture, so the button says only where it stays. Pressing it still switches.
+  // ... and with the review off, nothing files the capture, so the switch says only where it stays. It still switches.
   writeFileSync(review, readFileSync(review, "utf8").replace("enabled: true", "enabled: false"));
   await startListening(app);
-  await expect(button("Stays in the inbox")).toBeVisible();
+  await expect(choice("Inbox")).toHaveAttribute("aria-checked", "true");
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ fileMode: "evening", review: null });
-  await button("Stays in the inbox").click();
-  await expect(button("Files now")).toBeVisible();
-  await button("Files now").click();
-  await expect(button("Stays in the inbox")).toBeVisible();
+  await choice("Now").click();
+  await expect(choice("Now")).toHaveAttribute("aria-checked", "true");
+  await choice("Inbox").click();
+  await expect(choice("Inbox")).toHaveAttribute("aria-checked", "true");
   // Stopped so, it is saved as the card says: in the inbox, and nothing files it by itself.
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("saved");

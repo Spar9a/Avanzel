@@ -23,7 +23,12 @@ export function registerIpc(controller: Controller): void {
   on("capsule:submit-edit", (_e, text: string) => controller.submitEdit(text));
   on("capsule:cancel-edit", () => controller.cancelEdit());
   on("capsule:cancel-filing", (e) => controller.cancelFiling(e.sender)); // only the capsule's own page stops its filing
-  on("capsule:toggle-file-mode", (e) => controller.toggleFileMode(e.sender)); // only the capsule's own page switches its capture's mode
+  on("capsule:toggle-file-mode", (e) => controller.toggleFileMode(e.sender));
+  on("capsule:level", (e, level: unknown) => controller.capsuleLevel(e.sender, level)); // only the capsule's own page, and only a number
+  // the listening bar's own buttons: only the capsule's page is heard
+  on("capsule:stop", (e) => controller.barAction(e.sender, "stop"));
+  on("capsule:cancel", (e) => controller.barAction(e.sender, "cancel"));
+  on("capsule:pause", (e) => controller.barAction(e.sender, "pause")); // only the capsule's own page switches its capture's mode
   on("capsule:stop-transcribing", (e) => void controller.stopTranscribing(e.sender)); // only the capsule's own page stops its transcription
   on("capsule:undo", () => void controller.undo());
   on("capsule:open", () => controller.openFiled());
@@ -35,6 +40,16 @@ export function registerIpc(controller: Controller): void {
   on("capsule:retry-download", () => controller.retryDownload());
   on("capsule:type-instead", () => controller.typeInstead());
   on("capsule:use-shortcut", (_e, key: keyof Shortcuts, accelerator: string) => void controller.useShortcut(key, accelerator));
+
+  // the panel under the menu bar icon: only its own page is heard
+  handle("panel:get", () => controller.panelSnapshot());
+  handle("panel:pages", (e) => (controller.isPanelPage(e.sender) ? controller.panelPages() : []));
+  on("panel:act", (e, action: unknown) => {
+    if (controller.isPanelPage(e.sender)) controller.panelAction(action);
+  });
+  on("panel:hide", (e) => {
+    if (controller.isPanelPage(e.sender)) controller.hidePanel();
+  });
 
   // settings
   handle("settings:get", () => controller.snapshot());

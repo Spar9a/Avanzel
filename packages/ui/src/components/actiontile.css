@@ -1,0 +1,121 @@
+/* A large button to start something new: an icon in a soft square, the label and a line on what it does, and its shortcut on
+   the right. It lifts a little under the pointer and sinks as it is pressed. The tiles come in one after another. A tile that
+   asks how first folds its choices open under it. */
+.av-action-tile {
+  border-radius: var(--av-radius-group);
+  background: color-mix(in srgb, var(--av-surface-group) 82%, transparent);
+  box-shadow: inset 0 0 0 0.5px var(--av-line-hair);
+  color: var(--av-ink);
+  transition:
+    background var(--av-duration-base) var(--av-ease-out),
+    box-shadow var(--av-duration-base) var(--av-ease-out),
+    transform var(--av-duration-quick) var(--av-ease-out);
+  animation: av-action-tile-in var(--av-duration-card) var(--av-ease-land) backwards;
+  animation-delay: calc(var(--_order, 0) * var(--av-duration-quick) / 3);
+}
+@keyframes av-action-tile-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.av-action-tile:hover:has(.av-action-tile-button:not(:disabled)) {
+  background: var(--av-surface-raised);
+  box-shadow: inset 0 0 0 0.5px var(--av-line-control), var(--av-shadow-button);
+  transform: translateY(-1px);
+}
+.av-action-tile[data-open] {
+  background: var(--av-surface-raised);
+  box-shadow: inset 0 0 0 1px var(--av-accent-fill), var(--av-shadow-card);
+}
+
+.av-action-tile-button {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  padding: 10px 12px;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+  transition: transform var(--av-duration-quick) var(--av-ease-out);
+}
+.av-action-tile-button:active:not(:disabled) { transform: scale(0.99); }
+.av-action-tile-button:disabled { opacity: 0.45; }
+
+.av-action-tile-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--av-radius-control);
+  background: var(--av-surface-fill);
+  color: var(--av-ink-secondary);
+  transition: background var(--av-duration-base) var(--av-ease-out), color var(--av-duration-base) var(--av-ease-out);
+}
+.av-action-tile[data-tone="primary"] .av-action-tile-icon { background: var(--av-accent-fill); color: var(--av-ink-on-accent); }
+.av-action-tile[data-tone="secondary"]:hover .av-action-tile-icon,
+.av-action-tile[data-tone="secondary"][data-open] .av-action-tile-icon { color: var(--av-ink-accent); }
+
+.av-action-tile-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.av-action-tile-label {
+  font: var(--av-text-headline);
+  letter-spacing: var(--av-text-headline-tracking);
+}
+.av-action-tile-hint {
+  font: var(--av-text-footnote);
+  letter-spacing: var(--av-text-footnote-tracking);
+  color: var(--av-ink-secondary);
+}
+.av-action-tile-key { flex: none; }
+.av-action-tile-chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--av-ink-secondary);
+  transform: rotate(0deg);
+  transition: transform var(--av-duration-base) var(--av-ease-land);
+}
+.av-action-tile[data-open] .av-action-tile-chevron { transform: rotate(90deg); }
+
+/* The choices fold open under the tile: the height grows from nothing, and they rise in a moment after. */
+.av-action-tile-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--av-duration-base) var(--av-ease-leave);
+}
+.av-action-tile[data-open] .av-action-tile-fold {
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--av-duration-card) var(--av-ease-land);
+}
+.av-action-tile-clip { min-height: 0; overflow: hidden; }
+
+/* Reduce Motion: the tiles don't wait their turn and the choices don't wait to show. */
+@media (prefers-reduced-motion: reduce) {
+  .av-action-tile { animation-delay: 0s; }
+  .av-action-tile[data-open] .av-action-tile-choices { transition-delay: 0s; }
+}
+.av-action-tile-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 12px 12px 56px;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity var(--av-duration-quick) var(--av-ease-leave), transform var(--av-duration-quick) var(--av-ease-leave);
+}
+.av-action-tile[data-open] .av-action-tile-choices {
+  opacity: 1;
+  transform: none;
+  transition: opacity var(--av-duration-base) var(--av-ease-land) var(--av-duration-quick), transform var(--av-duration-base) var(--av-ease-land) var(--av-duration-quick);
+}

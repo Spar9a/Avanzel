@@ -1,0 +1,28 @@
+/* The panel's layout. It only arranges: everything you see comes from @avanzel/ui and the popover macOS draws under it. */
+#root {
+  height: 100%;
+}
+
+/* The tabs on top, the chosen tab's place under them, which scrolls (Settings scrolls its own pane), and a line of what is
+   always there at the foot. */
+.panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100vh;
+  overflow: clip; /* nothing in the panel moves it sideways: it can't be scrolled, only its pages scroll up and down */
+}
+.panel-head {
+  padding: var(--av-space-8) var(--av-space-12) 0;
+}
+.panel-filters {
+  padding: var(--av-space-8) 0 0;
+}
+.panel-body {
+  min-height: 0;
+}
+.panel-pad {
+  padding: var(--av-space-16);
+}
+.panel-foot {
+  padding: var(--av-space-6) var(--av-space-12) var(--av-space-8);
+}

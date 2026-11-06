@@ -14,6 +14,24 @@
 .settings-drag {
   -webkit-app-region: drag;
 }
+/* In the menu bar panel: no strip to drag by, and the panes' row at the left, under the panel's own tabs. */
+.settings[data-embedded] {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.settings[data-embedded] .settings-toolbar {
+  justify-content: flex-start;
+  padding: var(--av-space-8) var(--av-space-12) var(--av-space-12);
+}
+.settings[data-embedded] .settings-problem-box {
+  padding: 0 var(--av-space-16) var(--av-space-12);
+}
+.settings[data-embedded] .settings-pane {
+  overflow: hidden;
+  padding: 0;
+}
+.settings-page {
+  padding: 0 var(--av-space-16) var(--av-space-16);
+}
 .settings-toolbar {
   display: flex;
   justify-content: center;

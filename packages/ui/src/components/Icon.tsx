@@ -20,6 +20,11 @@ const ICONS = {
   clock: { d: "M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Z M8 5v3.2l2.1 1.3" },
   chevron: { d: "M6.5 4l4 4-4 4" },
   plus: { d: "M8 3.5v9M3.5 8h9" },
+  screen: { d: "M2 5V3a1 1 0 0 1 1-1h2 M11 2h2a1 1 0 0 1 1 1v2 M14 11v2a1 1 0 0 1-1 1h-2 M5 14H3a1 1 0 0 1-1-1v-2 M6.5 6.5h3v3h-3Z" },
+  pause: { d: "M4.5 3.5h2.5v9H4.5Z M9 3.5h2.5v9H9Z", fill: true },
+  spark: { d: "M8 1.8 9.2 6.8 14.2 8 9.2 9.2 8 14.2 6.8 9.2 1.8 8 6.8 6.8Z", fill: true },
+  moon: { d: "M12.6 10.3A5.3 5.3 0 0 1 5.7 3.4 5.3 5.3 0 1 0 12.6 10.3Z", fill: true },
+  call: { d: "M5.2 2.5 6.6 5.6 5.4 6.8a7.3 7.3 0 0 0 3.8 3.8l1.2-1.2 3.1 1.4-.4 2.1a1 1 0 0 1-1.1.8A10.5 10.5 0 0 1 2.6 4.1a1 1 0 0 1 .8-1.1Z" },
   play: { d: "M5 3.4v9.2L12.4 8Z", fill: true },
   stop: { d: "M4.5 4.5h7v7h-7Z", fill: true },
 } satisfies Record<string, { d: string; fill?: boolean }>;

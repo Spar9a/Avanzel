@@ -152,28 +152,28 @@ function capsuleStates(): [string, CapsuleState, string][] {
   const fourth = { title: "Indie game dev podcast", shelf: "ideas", path: "ideas/podcast.md", created: true };
   const context = { app: "Safari", title: "Shure MV7+ Podcast Microphone", url: "https://www.shure.com/mv7" };
   return [
-    // The hint's card above the bar, and the bar's one button: this capture's file mode, worded from the evening review.
+    // The hint's card above the bar, and the bar's one control: this capture's file mode, a switch of two worded from the evening review.
     [
       "listening",
       { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", hint: "Alt+Space", review: "at 21:00" },
-      "Files now",
+      "Now",
     ],
     [
       "listening, filing at the review",
       { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null, review: "at 21:00" },
-      "Files at 21:00",
+      "21:00",
     ],
     // The longest label: a weekly review's day and time.
     [
       "listening, filing at a weekly review",
       { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null, review: "on Sundays at 18:00" },
-      "Files on Sundays at 18:00",
+      "Sundays 18:00",
     ],
-    // With the review off nothing files the capture, so the button says where it stays.
+    // With the review off nothing files the capture, so the switch says where it stays.
     [
       "listening, review off",
       { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null, review: null },
-      "Stays in the inbox",
+      "Inbox",
     ],
     // A screen comment: the screenshot on a card labelled with the app, the key that finishes it, and no file mode to switch.
     [

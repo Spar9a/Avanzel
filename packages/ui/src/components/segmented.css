@@ -8,6 +8,9 @@
   box-shadow: inset 0 0 0 0.5px var(--av-line-hair);
 }
 .av-segmented > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   appearance: none;
   margin: 0;
   border: 0;
@@ -26,3 +29,8 @@
   box-shadow: 0 1px 2px var(--av-line-control);
 }
 .av-segmented > button:disabled { opacity: 0.45; }
+/* On the capsule's glass the track and a control share one fill, so the chosen choice is lifted with the glass's own ink. */
+.av-hud .av-segmented > button[aria-checked="true"] {
+  background: color-mix(in srgb, var(--av-hud-ink) 22%, transparent);
+  box-shadow: none;
+}

@@ -36,9 +36,16 @@ export interface Recording {
    * never reach the library (`heardForCursor`), it has no file mode and no shortcut hint, and only the dictation's own key stops it.
    */
   forCursor: boolean;
+  /** Date.now() when it began, moved on by each pause's length: now less it is how long it has listened. */
   startedAt: number;
   shot?: { path: string; thumbnail: string; context: ScreenContext };
   maxTimer: NodeJS.Timeout;
+  /** The time limit, in ms of listening: a pause doesn't count toward it (`Controller.pauseRecording`). */
+  limitMs?: number;
+  /** What the time limit does when it is reached: set again on each resume, for the listening left. */
+  timeUp?: () => void;
+  /** Date.now() when it was paused, while it is; null while it listens. */
+  pausedAt?: number | null;
   /** Asked to stop (the shortcut, the menu or the time limit); its audio is on the way. */
   stopping: boolean;
 }

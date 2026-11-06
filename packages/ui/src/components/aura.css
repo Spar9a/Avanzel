@@ -1,0 +1,33 @@
+/* The aura: a canvas of fine lines and soft strands behind what is in front, under a veil of the surface, so what is in front
+   reads as before. The drawing is done in Aura.tsx, from the tokens' colours, at 30 frames a second, only while it is in sight. */
+.av-aura {
+  position: relative;
+  isolation: isolate;
+}
+.av-aura[data-fill] { min-height: 100%; }
+.av-aura-back {
+  position: absolute;
+  inset: 0;
+  z-index: var(--av-layer-base);
+  overflow: hidden;
+  pointer-events: none;
+}
+.av-aura-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.av-aura-front {
+  position: relative;
+  z-index: var(--av-layer-raised);
+}
+
+/* The veil: the surface over the lines, so the words in front keep their contrast, a little thinner while a recording listens. */
+.av-aura-veil {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--av-surface-window) 35%, transparent);
+  transition: background var(--av-duration-drawer) var(--av-ease-out);
+}
+.av-aura[data-mood="listening"] .av-aura-veil { background: color-mix(in srgb, var(--av-surface-window) 20%, transparent); }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cursorKeyName, dictationListeningLine, fileModeLabel, filingMeta, transcribedLine, transcribingLine } from "../src/shared/transcribing.ts";
+import { cursorKeyName, dictationListeningLine, fileModeChoices, fileModeLabel, stopLabel, filingMeta, transcribedLine, transcribingLine } from "../src/shared/transcribing.ts";
 
 // The capsule's words about turning a recording into text. The engine's own model runs on this Mac; the command in a library's
 // [voice] settings can run anywhere, so for it the words don't say where. And the card's: the file-mode button of a recording,
@@ -31,6 +31,23 @@ describe("the capsule's words about turning a recording into text", () => {
         expect(line).not.toContain("...");
       }
     }
+  });
+});
+
+describe("fileModeChoices: the listening bar's file-mode switch", () => {
+  it("offers now and the review's time, or the inbox while the review is off", () => {
+    expect(fileModeChoices("at 21:00")).toEqual({ now: "Now", evening: "21:00" });
+    expect(fileModeChoices("on Sundays at 18:00")).toEqual({ now: "Now", evening: "Sundays 18:00" });
+    expect(fileModeChoices("")).toEqual({ now: "Now", evening: "Review" });
+    expect(fileModeChoices(null)).toEqual({ now: "Now", evening: "Inbox" });
+  });
+
+  it("names what Stop does, as its badge shows it", () => {
+    expect(stopLabel("now", "at 21:00")).toBe("Stop, and your agent files it now");
+    expect(stopLabel("evening", "at 21:00")).toBe("Stop, and file it at the evening review at 21:00");
+    expect(stopLabel("evening", "")).toBe("Stop, and file it at the evening review");
+    expect(stopLabel("evening", null)).toBe("Stop, and keep it in the inbox");
+    expect(stopLabel(null, "at 21:00")).toBe("Stop");
   });
 });
 
