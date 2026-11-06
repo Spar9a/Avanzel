@@ -2286,13 +2286,12 @@ test("Show the last receipt reopens the last filing's card as a reprint, with it
     reprint: { filedAt: expect.any(Number) },
     pages: [{ shelf: "ideas", created: true, path: `ideas/${page}` }],
   });
-  const card = capsule.getByRole("article");
-  const bar = capsule.getByRole("status");
+  const card = capsule.getByRole("article"); // the filed card has no bar: who filed it, Undo, Open and Hide are all on the card
   // Its stamp is Filed, with today's date (it was filed a moment ago), and it does not land.
   const stamp = card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true });
   await expect(stamp).toBeVisible();
   await expect(stamp).not.toHaveAttribute("data-animate");
-  await expect(bar.getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
+  await expect(card.getByRole("status").getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
   expect(await said(app), "a reprint tells nothing: the notifications are what the filing posted").toEqual(told);
   // It is no new filing: the face doesn't wear a stamp for it (`markFiled`), and the day's count is as it was.
   await sleep(500);
@@ -2311,14 +2310,14 @@ test("Show the last receipt reopens the last filing's card as a reprint, with it
   });
   expect(await openedWith(app)).toHaveLength(1);
   // Open opens the first page, and puts the card away.
-  await bar.getByRole("button", { name: "Open", exact: true }).click();
+  await card.getByRole("button", { name: "Open", exact: true }).click();
   await expect.poll(() => openedWith(app)).toHaveLength(2);
   expect(realpathSync((await openedWith(app))[1] ?? "")).toBe(realpathSync(path.join(library, "ideas", page ?? "")));
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   // Shown again, its Undo takes the filing back and the card says so, as the card of a filing does: no notification.
   await showReceipt(app);
   expect(await capsuleKind(app)).toBe("filed");
-  await bar.getByRole("button", { name: "Undo", exact: true }).click();
+  await card.getByRole("button", { name: "Undo", exact: true }).click();
   await expect
     .poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 })
     .toMatchObject({ kind: "saved", undone: true, text: "Plant tulips in October", note: UNDONE_NOTE });
@@ -2390,9 +2389,8 @@ test("a reprint lists only the pages that are still there, and has no Open once 
   expect(idea).toBeDefined();
   const listed = async () => ((await call(app, "capsuleStateForTests")) as { pages: { path: string }[] }).pages.map((page) => page.path);
   const card = capsule.getByRole("article");
-  const bar = capsule.getByRole("status");
   const title = (name: string) => card.getByRole("button", { name, exact: true });
-  const open = bar.getByRole("button", { name: "Open", exact: true });
+  const open = card.getByRole("button", { name: "Open", exact: true });
   // Both pages are there: the card lists both.
   await showReceipt(app);
   expect(await listed()).toEqual([`ideas/${idea}`, "topics/side-note.md"]);
@@ -2409,11 +2407,11 @@ test("a reprint lists only the pages that are still there, and has no Open once 
   await expect.poll(() => openedWith(app)).toHaveLength(1);
   expect(realpathSync((await openedWith(app))[0] ?? "")).toBe(realpathSync(path.join(library, "topics", "side-note.md")));
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
-  // The other is renamed: no page is left, and the card has no Open, as a filed card with no page has none. Hide is all its bar holds.
+  // The other is renamed: no page is left, and the card has no Open, as a filed card with no page has none. It keeps Hide, in its corner.
   renameSync(path.join(library, "topics", "side-note.md"), path.join(library, "topics", "renamed.md"));
   await showReceipt(app);
   expect(await listed()).toEqual([]);
-  await expect(bar.getByRole("button", { name: "Hide", exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Hide", exact: true })).toBeVisible();
   await expect(title("Side note")).toHaveCount(0);
   await expect(open).toHaveCount(0);
   await app.close();

@@ -199,7 +199,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
         estimate: 15,
         stepAt: Date.now(),
       },
-      "Filing with Claude Code…",
+      "Filing with Claude Code", // the card's status chip: the filing card has no bar
     ],
     // Mid-run: the newest step as the card's line, the seconds past the estimate, a note under the origin, and Stop under way.
     [
@@ -257,7 +257,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
       "Waiting for another Avanzel run to finish…",
     ],
     ["editing", { kind: "editing", text: said }, "Edit before filing"],
-    // The results: the words on paper, stamped, over a bar of one steady line.
+    // The results: the words on paper, stamped, with who filed them in the card's foot. A filed card has no bar.
     ["filed", { kind: "filed", text: said, agent: "Claude Code", seconds: 23, pages, canUndo: true, noted: false }, "Filed by Claude Code in 23 s"],
     // The engine put the words back after the agent changed them: the card's head says so, in its caption on the right.
     [

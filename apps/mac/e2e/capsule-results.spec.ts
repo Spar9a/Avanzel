@@ -19,6 +19,8 @@ import {
 } from "./helpers.ts";
 import {
   archived,
+  barOf,
+  cardButtons,
   claudeLibrary,
   dictate,
   expectInPanel,
@@ -37,12 +39,12 @@ import {
 } from "./capsule-helpers.ts";
 import { zel } from "./setup-helpers.ts";
 
-// ---- The result cards: paper over a bar ----
+// ---- The result cards ----
 //
-// A filing that ends well is the person's words on a card, stamped, over a bar that says who filed it and how long it took, with
-// Hide, Undo and Open. One that only noted its capture in the log says so. A thought saved for the evening review, a thought whose
-// filing was undone, and the two Stopped cards (a filing, and a transcription whose recording waits in the inbox) are paper over a
-// bar too. Hide is the bar's first button on every one of them. Most of these read what the page draws from a state put on the
+// A filing that ends well is the person's words on a card, stamped, and no bar: the card's foot says who filed it and how long it took,
+// with Undo and Open at its right, and Hide is the card's close button in its corner. One that only noted its capture in the log says so,
+// on the card too. A thought saved for the evening review, a thought whose filing was undone, and the two Stopped cards (a filing, and a
+// transcription whose recording waits in the inbox) are paper over a bar, whose first button is Hide. Most of these read what the page draws from a state put on the
 // capsule (`setCapsule`, as the filing card's do); the ones that need main to have a filing's pages run a filing.
 
 /** A page's left edge, to say what comes before what in a row. */
@@ -89,25 +91,26 @@ const cancelledCard = (over: Record<string, unknown> = {}) => ({
 /** A transcription Stop ended, as main sends it. */
 const recordedCard = (over: Record<string, unknown> = {}) => ({ kind: "recorded", review: "at 21:00", ...over });
 
-test("a filed card is the words stamped Filed over a bar that says who filed it and how long it took, with Hide, Undo and Open", async () => {
+test("a filed card is the words stamped Filed, with who filed them and how long it took in its foot, and Hide, Undo and Open", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
   await call(app, "setCapsule", filedCard());
   await snap(capsule, "3-filed-card");
-  const bar = capsule.getByRole("status");
   const card = capsule.getByRole("article");
-  // The bar: Zel glad, one line that names the agent and the whole seconds, and three small buttons. Hide is first, quiet and
-  // icon-only; Undo is secondary; Open is the moment's one primary, last.
-  await expect(zel(capsule)).toHaveAttribute("data-mood", "filed");
-  const line = bar.getByText("Filed by Claude Code in 23 s", { exact: true });
+  // No bar, and so no Zel: everything is on the card. Its foot's first line, a live region, names the agent and the whole seconds;
+  // Hide is the card's close button in its corner, quiet and icon-only; Undo (secondary) and Open (the moment's one primary, last) sit
+  // at the foot's right.
+  await expect(barOf(capsule)).toHaveCount(0);
+  await expect(zel(capsule)).toHaveCount(0);
+  const line = card.getByRole("status").getByText("Filed by Claude Code in 23 s", { exact: true });
   await expect(line).toBeVisible();
   expect(await line.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0); // the buttons leave it room: it is not cut off
-  expect(await namesOf(bar.getByRole("button"))).toEqual(["Hide", "Undo", "Open"]);
-  await expect(bar.getByRole("button", { name: "Hide", exact: true })).toHaveAttribute("data-variant", "quiet");
-  await expect(bar.getByRole("button", { name: "Hide", exact: true })).toHaveAttribute("data-icon-only", "");
-  await expect(bar.getByRole("button", { name: "Undo", exact: true })).toHaveAttribute("data-variant", "secondary");
-  await expect(bar.getByRole("button", { name: "Open", exact: true })).toHaveAttribute("data-variant", "primary");
-  for (const button of await bar.getByRole("button").all()) await expect(button).toHaveAttribute("data-size", "small");
-  // The card above it: the words of the thought, stamped Filed with today's date.
+  expect(await cardButtons(capsule)).toEqual(["Undo", "Open", "Hide"]);
+  await expect(card.getByRole("button", { name: "Hide", exact: true })).toHaveAttribute("data-variant", "quiet");
+  await expect(card.getByRole("button", { name: "Hide", exact: true })).toHaveAttribute("data-icon-only", "");
+  await expect(card.getByRole("button", { name: "Undo", exact: true })).toHaveAttribute("data-variant", "secondary");
+  await expect(card.getByRole("button", { name: "Open", exact: true })).toHaveAttribute("data-variant", "primary");
+  for (const name of ["Undo", "Open"]) await expect(card.getByRole("button", { name, exact: true })).toHaveAttribute("data-size", "regular");
+  // The card: the words of the thought, stamped Filed with today's date.
   await expect(card.getByText("Thought", { exact: true })).toBeVisible();
   await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
   await expect(card).toHaveAttribute("data-stamped", "");
@@ -154,10 +157,10 @@ test("a filed card is the words stamped Filed over a bar that says who filed it 
 
 test("a filed card counts whole seconds, and never says 0 s", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
-  const bar = capsule.getByRole("status");
+  const line = capsule.getByRole("article").getByRole("status");
   for (const [seconds, said] of [[0, "1 s"], [0.2, "1 s"], [1.4, "1 s"], [8.6, "9 s"], [23.4, "23 s"], [75, "75 s"]] as const) {
     await call(app, "setCapsule", filedCard({ seconds }));
-    await expect(bar.getByText(`Filed by Claude Code in ${said}`, { exact: true })).toBeVisible();
+    await expect(line.getByText(`Filed by Claude Code in ${said}`, { exact: true })).toBeVisible();
   }
   await app.close();
 });
@@ -176,7 +179,7 @@ test("a filed card lists three pages and counts the rest: four pages are three r
   await expect(card.getByText("and 2 more", { exact: true })).toBeVisible();
   await expect(card.getByText("and 1 more", { exact: true })).toHaveCount(0);
   // The pages Open and the titles open are the card's own: Open is still there, whatever the count.
-  expect(await namesOf(capsule.getByRole("status").getByRole("button"))).toEqual(["Hide", "Undo", "Open"]);
+  expect(await cardButtons(capsule)).toEqual(["Undo", "Open", "Hide"]);
   await app.close();
 });
 
@@ -227,9 +230,10 @@ test("a filed card clips long words to three lines while its pages show, and the
 
 test("a thought the filing card showed whole is shown whole on the card that is stamped: the stamp shortens the first line, so a third line is kept", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
-  // Two lines on the filing card, which has nothing in its corner. The filed card's stamp stands where the first line would run on, and the
-  // first line wraps around it: the same words need three lines, and a limit of two ended them at "...and ask Mark to co-" as the stamp landed.
-  const thought = "I want to launch my podcast about indie game development before the end of the year, and ask Mark to co-host.";
+  // Two lines on the filing card, which has no stamp. The filed card's stamp stands where the first line would run on, and the first line
+  // wraps around it: the same words need three lines, and a limit of two cut their end off as the stamp landed. The card is as wide as the
+  // 560 px stack, so the words fill the second line nearly to its end: shorter ones fit in two lines beside the stamp too.
+  const thought = "I want to launch my podcast about indie game development before the end of the year, and ask Mark to co-host it with me on Fridays and maybe Sundays too when he can.";
   const card = capsule.getByRole("article");
   const room = () => card.getByText(thought, { exact: true }).evaluate((el) => ({ shown: el.clientHeight, whole: el.scrollHeight, pitch: parseFloat(getComputedStyle(el).lineHeight) }));
   await call(app, "setCapsule", {
@@ -257,28 +261,29 @@ test("a thought the filing card showed whole is shown whole on the card that is 
   await app.close();
 });
 
-test("a filing that only noted its capture says so: the card is stamped Noted, and the bar offers Hide, and Undo while there is a commit", async () => {
+test("a filing that only noted its capture says so: the card is stamped Noted, and offers Hide, and Undo while there is a commit", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
-  const bar = capsule.getByRole("status");
   const card = capsule.getByRole("article");
+  const said = card.getByRole("status");
   await call(app, "setCapsule", filedCard({ noted: true, pages: [] }));
-  await expect(zel(capsule)).toHaveAttribute("data-mood", "filed");
-  await expect(bar.getByText("Nothing new to file", { exact: true })).toBeVisible();
-  expect(await namesOf(bar.getByRole("button"))).toEqual(["Hide", "Undo"]); // no pages: nothing to Open
-  await expect(bar.getByRole("button", { name: "Undo", exact: true })).toHaveAttribute("data-variant", "secondary");
+  await expect(barOf(capsule)).toHaveCount(0); // no bar: it is all on the card
+  await expect(said).toHaveText("Nothing new to file. Claude Code noted it in the log.");
+  expect(await cardButtons(capsule)).toEqual(["Undo", "Hide"]); // no pages: nothing to Open
+  await expect(card.getByRole("button", { name: "Undo", exact: true })).toHaveAttribute("data-variant", "secondary");
   await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
   await expect(card.getByRole("img", { name: `Noted, ${stampDay()}`, exact: true })).toBeVisible();
   await expect(card.getByRole("img", { name: `Noted, ${stampDay()}`, exact: true })).not.toHaveAttribute("data-animate"); // it doesn't land: nothing was filed
-  await expect(card.getByText("Claude Code noted it in the log.", { exact: true })).toBeVisible();
   await expect(card.getByRole("listitem")).toHaveCount(0);
   await expectInPanel(capsule);
   // Without a commit there is nothing to take back.
   await call(app, "setCapsule", filedCard({ noted: true, pages: [], canUndo: false }));
-  await expect(bar.getByText("Nothing new to file", { exact: true })).toBeVisible();
-  expect(await namesOf(bar.getByRole("button"))).toEqual(["Hide"]);
+  await expect(card.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
+  await expect(said).toHaveText("Nothing new to file. Claude Code noted it in the log.");
+  expect(await cardButtons(capsule)).toEqual(["Hide"]);
   // And a filing that wrote pages but left no commit offers Open and no Undo.
   await call(app, "setCapsule", filedCard({ canUndo: false }));
-  expect(await namesOf(bar.getByRole("button"))).toEqual(["Hide", "Open"]);
+  await expect(card.getByRole("button", { name: "Open", exact: true })).toBeVisible();
+  expect(await cardButtons(capsule)).toEqual(["Open", "Hide"]);
   await app.close();
 });
 
@@ -308,7 +313,7 @@ test("a filed card whose words the engine put back says so in its head: “Your 
   await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toBeVisible();
   // A filing that only noted its capture says it too, in the head and over the footer's sentence, which stays.
   await call(app, "setCapsule", filedCard({ noted: true, pages: [], restored: true }));
-  const noted = card.getByText("Claude Code noted it in the log.", { exact: true });
+  const noted = card.getByText("Nothing new to file. Claude Code noted it in the log.", { exact: true });
   await expect(noted).toBeVisible(); // the new card has been drawn: the line below is its own, not the previous card's
   await expect(line).toBeVisible();
   expect((await line.boundingBox())!.y).toBeLessThan((await noted.boundingBox())!.y);
@@ -329,7 +334,7 @@ test("a reprinted filed card is the same card, its stamp still and dated the day
   day.setHours(12, 0, 0, 0);
   expect(stampDay(day)).not.toBe(stampDay());
   const card = capsule.getByRole("article");
-  const bar = capsule.getByRole("status");
+  const said = card.getByRole("status");
   await call(app, "setCapsule", filedCard({ reprint: { filedAt: day.getTime() }, restored: true }));
   await snap(capsule, "3-filed-card-reprint");
   // The stamp is Filed, with the day the thought was filed and not today's, and it does not land: it is printed, not coming down.
@@ -337,16 +342,16 @@ test("a reprinted filed card is the same card, its stamp still and dated the day
   await expect(stamp).toBeVisible();
   await expect(stamp).not.toHaveAttribute("data-animate");
   await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toHaveCount(0);
-  // The rest is the card a filing puts up: the bar and its three buttons, the three rows, the words and the line that they are kept.
-  await expect(bar.getByText("Filed by Claude Code in 23 s", { exact: true })).toBeVisible();
-  expect(await namesOf(bar.getByRole("button"))).toEqual(["Hide", "Undo", "Open"]);
+  // The rest is the card a filing puts up: who filed it and its three buttons, the three rows, the words and the line that they are kept.
+  await expect(said).toHaveText("Filed by Claude Code in 23 s");
+  expect(await cardButtons(capsule)).toEqual(["Undo", "Open", "Hide"]);
   await expect(card.getByRole("listitem")).toHaveCount(3);
   await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
   await expect(card.locator("header").getByText("Your exact words are kept.", { exact: true })).toBeVisible();
   // A reprint of a filing that only noted its capture is stamped Noted, with its day.
   await call(app, "setCapsule", filedCard({ noted: true, pages: [], reprint: { filedAt: day.getTime() } }));
   await expect(card.getByRole("img", { name: `Noted, ${stampDay(day)}`, exact: true })).toBeVisible();
-  await expect(bar.getByText("Nothing new to file", { exact: true })).toBeVisible();
+  await expect(said).toHaveText("Nothing new to file. Claude Code noted it in the log.");
   // The card a filing puts up has no reprint: stamped today, and it lands.
   await call(app, "setCapsule", filedCard());
   await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toHaveAttribute("data-animate", "");
@@ -365,14 +370,14 @@ test("a reprint of a capture with no words says No comment, and draws no words",
   await call(app, "setCapsule", filedCard({ text: "", reprint: { filedAt: day.getTime() } }));
   await expect(card.getByText("No comment", { exact: true })).toBeVisible();
   await expect(card.locator(".words")).toHaveCount(0);
-  // The rest is the reprint's: the stamp with the day the thought was filed, the three rows, and the bar with its three buttons.
+  // The rest is the reprint's: the stamp with the day the thought was filed, the three rows, and its three buttons.
   await expect(card.getByRole("img", { name: `Filed, ${stampDay(day)}`, exact: true })).toBeVisible();
   await expect(card.getByRole("listitem")).toHaveCount(3);
-  expect(await namesOf(capsule.getByRole("status").getByRole("button"))).toEqual(["Hide", "Undo", "Open"]);
+  expect(await cardButtons(capsule)).toEqual(["Undo", "Open", "Hide"]);
   await expectInPanel(capsule);
   // A reprint of a filing that only noted its capture says it in the same way.
   await call(app, "setCapsule", filedCard({ text: "", noted: true, pages: [], reprint: { filedAt: day.getTime() } }));
-  await expect(card.getByText("Claude Code noted it in the log.", { exact: true })).toBeVisible();
+  await expect(card.getByText("Nothing new to file. Claude Code noted it in the log.", { exact: true })).toBeVisible();
   await expect(card.getByText("No comment", { exact: true })).toBeVisible();
   await expect(card.locator(".words")).toHaveCount(0);
   // A card with words has them, and no placeholder.
@@ -395,13 +400,13 @@ test("a filed card with no words does not say that the words are kept, though th
   await expect(line).toHaveCount(0);
   // Nor does a filing that only noted its capture.
   await call(app, "setCapsule", filedCard({ text: "", restored: true, noted: true, pages: [] }));
-  await expect(card.getByText("Claude Code noted it in the log.", { exact: true })).toBeVisible(); // the new card has been drawn
+  await expect(card.getByText("Nothing new to file. Claude Code noted it in the log.", { exact: true })).toBeVisible(); // the new card has been drawn
   await expect(line).toHaveCount(0);
   // Words that were put back do say it, on either card.
   await call(app, "setCapsule", filedCard({ restored: true }));
   await expect(line).toBeVisible();
   await call(app, "setCapsule", filedCard({ restored: true, noted: true, pages: [] }));
-  await expect(card.getByText("Claude Code noted it in the log.", { exact: true })).toBeVisible();
+  await expect(card.getByText("Nothing new to file. Claude Code noted it in the log.", { exact: true })).toBeVisible();
   await expect(line).toBeVisible();
   await app.close();
 });
@@ -433,7 +438,7 @@ test("a filing whose agent rewrote the capture keeps the person's words, and its
     )
     .toBe(true);
   expect(await call(app, "capsuleStateForTests")).not.toHaveProperty("restored");
-  await expect(capsule.getByRole("status").getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
+  await expect(capsule.getByRole("article").getByRole("status").getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
   await expect(line).toHaveCount(0);
   expect(archived(library)).toHaveLength(2);
   await app.close();
@@ -577,9 +582,10 @@ test("a Stopped transcription says the recording is in the inbox, and when the e
 test("Hide puts away every result card", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
   const undone = savedCard({ note: "Your words are back in the inbox for the evening review at 21:00.", undone: true });
+  // Hide is the filed card's close button, and the first button of the bar under the others: there is one Hide in the capsule either way.
   for (const state of [filedCard(), filedCard({ noted: true, pages: [] }), savedCard(), undone, cancelledCard(), recordedCard()]) {
     await call(app, "setCapsule", state);
-    await capsule.getByRole("status").getByRole("button", { name: "Hide", exact: true }).click();
+    await capsule.getByRole("button", { name: "Hide", exact: true }).click();
     await expect.poll(() => capsuleKind(app)).toBe("hidden");
   }
   await app.close();
@@ -629,8 +635,7 @@ test("a filing's card lists the pages it wrote, new or updated, and a title open
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   const card = capsule.getByRole("article");
-  const bar = capsule.getByRole("status");
-  await expect(bar.getByText(/^Filed by Claude Code in \d+ s$/)).toBeVisible();
+  await expect(card.getByRole("status").getByText(/^Filed by Claude Code in \d+ s$/)).toBeVisible();
   // Four pages: the two new ones come first (the folder that is no shelf has its name, and no chip), then the first of the updated
   // ones; the fourth is counted.
   const rows = card.getByRole("listitem");
@@ -656,7 +661,7 @@ test("a filing's card lists the pages it wrote, new or updated, and a title open
   expect(realpathSync((await openedWith(app))[1] ?? "")).toBe(realpathSync(path.join(library, "goals", "run.md")));
   expect(await capsuleKind(app)).toBe("filed");
   // Open opens the first page, and puts the card away.
-  await bar.getByRole("button", { name: "Open", exact: true }).click();
+  await card.getByRole("button", { name: "Open", exact: true }).click();
   await expect.poll(() => openedWith(app)).toHaveLength(3);
   expect(realpathSync((await openedWith(app))[2] ?? "")).toBe(realpathSync(path.join(library, "ideas", "tulips.md")));
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
@@ -712,7 +717,7 @@ test("a page the agent made a link to another file opens nothing, by its title o
   expect(await openedWith(app)).toEqual([]);
   expect(await capsuleKind(app)).toBe("filed");
   // ... and Open opens nothing either, and puts the card away, as it always does. Each press is told once.
-  await capsule.getByRole("status").getByRole("button", { name: "Open", exact: true }).click();
+  await capsule.getByRole("article").getByRole("button", { name: "Open", exact: true }).click();
   await expect.poll(answered).toBe(2);
   expect(await openedWith(app)).toEqual([]);
   expect(await notified(app, said.title)).toEqual([said, said]);
@@ -840,7 +845,7 @@ test("Undo on the filed card is busy once pressed, and another press does nothin
   await watchUndos(app, { hold: true });
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-  const undoButton = capsule.getByRole("status").getByRole("button", { name: "Undo", exact: true });
+  const undoButton = capsule.getByRole("article").getByRole("button", { name: "Undo", exact: true });
   await expect(undoButton).not.toHaveAttribute("aria-busy", "true");
   await undoButton.click();
   // It is busy at once, and keeps its name, while the take-back waits at the library's door.
@@ -865,7 +870,7 @@ test("an Undo whose take-back throws says it can't be undone, and the card doesn
   await watchUndos(app, { fail: true });
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-  await capsule.getByRole("status").getByRole("button", { name: "Undo", exact: true }).click();
+  await capsule.getByRole("article").getByRole("button", { name: "Undo", exact: true }).click();
   // A revert that throws is a refusal to the card, as git's own refusal is: the card says so, with nothing to fix.
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
   expect(await call(app, "capsuleStateForTests")).toEqual({
@@ -902,7 +907,7 @@ for (const { refused, said } of [
     await watchUndos(app, { hold: true, fail: refused });
     await dictate(app);
     await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-    await capsule.getByRole("status").getByRole("button", { name: "Undo", exact: true }).click();
+    await capsule.getByRole("article").getByRole("button", { name: "Undo", exact: true }).click();
     await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
     await call(app, "toggleDictate"); // a new thought, begun while the take-back waits at the library's door
     await expect.poll(() => capsuleKind(app), { timeout: 10_000 }).toBe("listening");

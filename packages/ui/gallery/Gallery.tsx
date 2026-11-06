@@ -340,6 +340,25 @@ function PanelSpecimen() {
   const [skip, setSkip] = useState(["com.lastpass.LastPass", "com.dashlane.Dashlane"]);
   return (
     <Stack gap={12}>
+      <Card
+        label="Thought"
+        status="Filing with Claude Code"
+        progress={0.3}
+        onClose={() => {}}
+        footer={<Text variant="footnote" tone="secondary">4 s of about 15 · Transcribed on this Mac in 0.3 s</Text>}
+        actions={<><Button>Edit</Button><Button icon="stop">Stop</Button></>}
+      >
+        <Text variant="words-small">The other side of this call wasn't heard.</Text>
+      </Card>
+      <Card
+        label="Thought"
+        stamp={{ word: "noted", date: "6 Nov 2026" }}
+        onClose={() => {}}
+        footer={<Text variant="footnote">Nothing new to file. Claude Code noted it in the log.</Text>}
+        actions={<Button>Undo</Button>}
+      >
+        <Text variant="words-small">Uh cancel. Let's say it like this.</Text>
+      </Card>
       <Row gap={6} justify="end">
         <Select label="Filter" icon="settings" buttonLabel="Filter" options={[{ value: "all", label: "All pages" }, { value: "ideas", label: "Ideas", section: "Shelves" }]} value="all" onChange={() => {}} />
         <Select label="Sort by" options={[{ value: "changed", label: "Newest change" }, { value: "title", label: "Title" }]} value={sort} onChange={setSort} />

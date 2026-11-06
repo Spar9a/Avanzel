@@ -1,12 +1,11 @@
-// The capsule once a filing ends well: the person's words on a card, stamped, over a bar that says who filed them and how long it
-// took, with Hide, Undo and Open. Nothing here ticks: the bar is a live region, and its one line stays the same.
-import { Button, Card, Text } from "@avanzel/ui";
+// The capsule once a filing ends well: one card of paper with the person's words, stamped, and in its foot who filed them and how long
+// it took, with Undo and Open at its right and Hide in its corner. Nothing here ticks.
+import { Button, Card, Stack, Text } from "@avanzel/ui";
 import { useState } from "react";
 import { stampDate } from "../common/stamp.ts";
 import { useStampDate } from "../common/use-stamp-date.ts";
 import { api, type StateOf } from "./api.ts";
 import { filedLine, notedLine } from "./copy.ts";
-import { Hide } from "./hide.tsx";
 import { Pages } from "./pages.tsx";
 import type { Scene } from "./scene.tsx";
 import { Words } from "./words.tsx";
@@ -35,16 +34,14 @@ const hasReceipt = (state: StateOf<"filed">) => !state.noted && state.pages.leng
  * words that were lost. A card a filing puts up always has words.
  */
 export function filedScene(state: StateOf<"filed">): Scene {
-  return {
-    card: <FiledCard state={state} />,
-    bar: {
-      mood: "filed",
-      line: state.noted ? "Nothing new to file" : filedLine(state.agent, state.seconds),
-      actions: <FiledActions state={state} />,
-    },
-  };
+  return { card: <FiledCard state={state} /> };
 }
 
+/**
+ * One card that holds it all: the words, stamped; in its foot what came of them ("Nothing new to file. Claude Code noted it in the log.",
+ * or who filed them and the pages), with Undo and Open at its right; Hide is its close button in the corner. The foot's first line is a
+ * live region, so VoiceOver hears how the filing ended.
+ */
 function FiledCard({ state }: { state: StateOf<"filed"> }) {
   const cameOn = useStampDate(); // the day the card came, not the day it is redrawn
   const day = state.reprint ? stampDate(new Date(state.reprint.filedAt)) : cameOn; // a reprint prints the day the thought was filed
@@ -55,7 +52,18 @@ function FiledCard({ state }: { state: StateOf<"filed"> }) {
       meta={state.restored && state.text ? "Your exact words are kept." : undefined}
       placeholder="No comment"
       stamp={state.noted ? { word: "noted", date: day } : { word: "filed", date: day, animate: !state.reprint }}
-      footer={state.noted ? <Text variant="footnote">{notedLine(state.agent)}</Text> : receipt ? <Pages pages={state.pages} /> : undefined}
+      onClose={() => api.dismiss()}
+      footer={
+        <Stack gap={6}>
+          <span role="status">
+            <Text variant="footnote" tone={state.noted ? "default" : "secondary"}>
+              {state.noted ? `Nothing new to file. ${notedLine(state.agent)}` : filedLine(state.agent, state.seconds)}
+            </Text>
+          </span>
+          {receipt && <Pages pages={state.pages} />}
+        </Stack>
+      }
+      actions={<FiledActions state={state} />}
     >
       {state.text ? <Words lines={receipt ? 3 : 4}>{state.text}</Words> : null}
     </Card>
@@ -63,17 +71,17 @@ function FiledCard({ state }: { state: StateOf<"filed"> }) {
 }
 
 /**
- * The bar's buttons. Undo answers once: it is busy from its press until the card is replaced by what came of it, and that is held here,
- * in the buttons' own state, which ends with them when the bar's buttons are the next state's.
+ * The card's buttons. Undo answers once: it is busy from its press until the card is replaced by what came of it, and that is held here,
+ * in the buttons' own state, which ends with them when the card is the next state's.
  */
 function FiledActions({ state }: { state: StateOf<"filed"> }) {
   const [undoing, setUndoing] = useState(false);
+  if (!state.canUndo && !hasReceipt(state)) return null;
   return (
     <>
-      <Hide />
       {state.canUndo && (
         <Button
-          size="small"
+          size="regular"
           busy={undoing}
           onClick={() => {
             setUndoing(true);
@@ -83,7 +91,7 @@ function FiledActions({ state }: { state: StateOf<"filed"> }) {
           Undo
         </Button>
       )}
-      {hasReceipt(state) && <Button size="small" variant="primary" onClick={() => api.open()}>Open</Button>}
+      {hasReceipt(state) && <Button size="regular" variant="primary" onClick={() => api.open()}>Open</Button>}
     </>
   );
 }

@@ -62,7 +62,7 @@ test("the picked shortcut's bar is a piece of the stack: as wide as the others, 
   const line = bar.getByText("Capture screen with a comment now uses ⌃⌥⇧⌘Space", { exact: true });
   await expect(line).toBeVisible();
   expect(await line.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
-  expect((await bar.boundingBox())!.width).toBeCloseTo(420, 0); // as wide as the other bars of the stack
+  expect((await bar.boundingBox())!.width).toBeCloseTo(560, 0); // as wide as the other bars of the stack
   // The pointer on it holds it past its time, as it holds any card (it took no pointer, and hid under it, when it was no piece of the stack) ...
   await bar.hover();
   await capsule.waitForTimeout(PICKED_MS + 800);

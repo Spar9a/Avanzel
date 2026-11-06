@@ -345,7 +345,7 @@ test("File it with Codex now files the note with Codex", async () => {
   await capsule.getByRole("button", { name: "File it with Codex now", exact: true }).click();
   // The note is filed as any is: the capsule shows the filing, with Codex, the note's words and how it was captured.
   await expect.poll(() => capsuleKind(app)).toBe("filing");
-  await expect(capsule.getByText("Filing with Codex…")).toBeVisible();
+  await expect(capsule.getByRole("article").getByRole("status")).toHaveText("Filing with Codex"); // the filing card's chip
   expect(await call(app, "capsuleStateForTests")).toMatchObject({
     kind: "filing",
     agent: "Codex",

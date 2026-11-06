@@ -51,14 +51,33 @@ export const blurs = (app: ElectronApplication) => app.evaluate(() => (globalThi
 /** The names of `buttons`, in order: a button's label when it has only an icon, else its words. */
 export const namesOf = (buttons: Locator) => buttons.evaluateAll((all) => all.map((button) => button.getAttribute("aria-label") ?? button.textContent?.trim() ?? ""));
 
-/** The card and the bar fit the panel: the card is below its top and above the bar, and the bar is no lower than its bottom. */
+/**
+ * The capsule's bar: its one live region that is not on a card. A card's own status (the filing card's chip, the filed card's line) is
+ * inside the card, and is no bar. The filing and filed states have no bar: everything they show is on the card.
+ */
+export const barOf = (capsule: Page) => capsule.locator('[role="status"]:not(article [role="status"])');
+
+/**
+ * The names of the buttons a card offers for its work, in page order: the actions at its foot's right, then its close button (Hide) in
+ * its corner. The page titles of a receipt are links, and not counted.
+ */
+export const cardButtons = (capsule: Page) => namesOf(capsule.getByRole("article").locator(".av-card-actions, .av-card-close").getByRole("button"));
+
+/**
+ * The card and the bar fit the panel: the card is below its top and above the bar, and the bar is no lower than its bottom. A state with
+ * no bar (filing, filed) has its card no lower than the panel's bottom.
+ */
 export async function expectInPanel(capsule: Page): Promise<void> {
   const card = (await capsule.getByRole("article").boundingBox())!;
-  const bar = (await capsule.getByRole("status").boundingBox())!;
   const panel = await capsule.evaluate(() => ({ width: innerWidth, height: innerHeight }));
   expect(card.y).toBeGreaterThanOrEqual(8);
-  expect(card.y + card.height).toBeLessThanOrEqual(bar.y);
-  expect(bar.y + bar.height).toBeLessThanOrEqual(panel.height);
+  if ((await barOf(capsule).count()) > 0) {
+    const bar = (await barOf(capsule).boundingBox())!;
+    expect(card.y + card.height).toBeLessThanOrEqual(bar.y);
+    expect(bar.y + bar.height).toBeLessThanOrEqual(panel.height);
+  } else {
+    expect(card.y + card.height).toBeLessThanOrEqual(panel.height);
+  }
   expect(card.x).toBeGreaterThanOrEqual(0);
   expect(card.x + card.width).toBeLessThanOrEqual(panel.width);
 }

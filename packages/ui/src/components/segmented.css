@@ -39,6 +39,10 @@
 }
 /* On the capsule's glass the track and a control share one fill, so the chosen choice is lifted with the glass's own ink. */
 .av-hud .av-segmented > button[aria-checked="true"] {
-  background: color-mix(in srgb, var(--av-hud-ink) 22%, transparent);
+  background: color-mix(in srgb, var(--av-hud-ink) 22%, var(--av-hud-surface-solid));
   box-shadow: none;
 }
+/* On the glass, whatever shows through it: the choices' words in the glass's full ink, on its solid surface, so they read over a white
+   desktop too (the secondary ink measured 4.08:1 there). */
+.av-hud .av-segmented { background: var(--av-hud-surface-solid); }
+.av-hud .av-segmented > button { color: var(--av-hud-ink); }

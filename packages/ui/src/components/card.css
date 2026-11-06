@@ -54,4 +54,55 @@
 .av-card[data-stamped] .av-card-lines::before { content: ""; float: right; width: 74px; height: 21px; }
 .av-card[data-stamped][data-size="regular"] .av-card-lines::before { height: 26px; }
 .av-card-foot { padding: var(--av-space-8) 12px var(--av-space-10); }
+
+/* What the work on the card is doing, as a chip at the head's right with a dot that pulses while it goes on. */
+.av-card-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  margin-bottom: -2px;
+  padding: 0 9px;
+  border-radius: var(--av-radius-pill);
+  background: color-mix(in srgb, var(--av-ink) 9%, transparent);
+  color: var(--av-ink);
+  font: var(--av-text-caption);
+  letter-spacing: var(--av-text-caption-tracking);
+}
+.av-card-status-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-accent-fill);
+  animation: av-card-pulse 1.2s ease-in-out infinite;
+}
+@keyframes av-card-pulse { 50% { opacity: 0.3; } }
+
+/* How far the work is: a thin violet line under the red rule, filling from the left. */
+.av-card-progress { display: block; height: 3px; background: color-mix(in srgb, var(--av-ink) 8%, transparent); }
+.av-card-progress > i {
+  display: block;
+  width: var(--_done);
+  height: 100%;
+  border-radius: 0 var(--av-radius-pill) var(--av-radius-pill) 0;
+  background: linear-gradient(90deg, var(--av-accent-fill), var(--av-shelf-people));
+  transition: width var(--av-duration-card) var(--av-ease-out);
+}
+
+/* A foot with actions: its line of what is going on at the left, the buttons at the right, the primary last. */
+.av-card-foot[data-actions] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--av-space-12);
+}
+.av-card-foot-words { flex: 1; min-width: 0; }
+.av-card-actions { display: flex; flex: none; align-items: center; gap: var(--av-space-8); }
+
+/* The close button in the top corner: the head and the stamp keep clear of it. */
+.av-card-close { position: absolute; top: 3px; right: 4px; }
+.av-card[data-closable] .av-card-head { padding-right: 40px; }
+.av-card[data-closable] .av-card-stamp { right: 40px; }
+.av-card[data-closable][data-stamped] .av-card-head { padding-right: 124px; }
 .av-card[data-size="regular"] .av-card-foot { padding: var(--av-space-10) 26px var(--av-space-16); }

@@ -89,13 +89,20 @@
   box-shadow: 0 0 0 1.5px var(--av-hud-surface-solid);
   color: var(--av-hud-ink-accent);
   pointer-events: none;
-  animation: av-button-badge-in var(--av-duration-base) var(--av-ease-stamp) backwards;
+  animation: av-button-badge-in var(--av-duration-card) var(--av-ease-stamp) backwards;
+}
+/* The sign inside turns in on its own, a beat behind the disc, so the change of sign reads as a swap. */
+.av-button-badge .av-icon { animation: av-button-badge-sign var(--av-duration-card) var(--av-ease-land) var(--av-duration-quick) backwards; }
+@keyframes av-button-badge-sign {
+  from { opacity: 0; transform: rotate(-120deg) scale(0.2); }
+  to { opacity: 1; transform: none; }
 }
 .av-button-badge .av-icon { width: 11px; height: 11px; }
 .av-button-badge[data-badge="spark"] { color: var(--av-shelf-ideas); }
 @keyframes av-button-badge-in {
-  from { opacity: 0; transform: scale(0.4) rotate(-40deg); }
-  to { opacity: 1; transform: none; }
+  0% { opacity: 0; transform: scale(0.3); }
+  60% { opacity: 1; transform: scale(1.25); }
+  100% { opacity: 1; transform: none; }
 }
 .av-button[data-icon-only][data-size="small"] { width: var(--av-size-control-small); }
 .av-button[data-icon-only][data-size="large"] { width: var(--av-size-control-large); }

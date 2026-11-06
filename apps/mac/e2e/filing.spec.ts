@@ -39,10 +39,11 @@ import {
   expectProblem,
   expectStoppedFiling,
   filingSends,
+  barOf,
+  cardButtons,
   inbox,
   launchOn,
   type Left,
-  namesOf,
   notified,
   panelOf,
   reachedUndo,
@@ -659,7 +660,9 @@ for (const [name, onThisMac] of [["the engine's model", true], ["a command", fal
     const capsule = await windowFor(app, "capsule");
     await dictate(app);
     await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
-    await expect(capsule.getByText(onThisMac ? /^Transcribed on this Mac in \d+\.\d s$/ : /^Transcribed in \d+\.\d s$/)).toBeVisible();
+    // The card's secondary line: its seconds, then how the words were made.
+    const made = onThisMac ? "Transcribed on this Mac in \\d+\\.\\d s" : "Transcribed in \\d+\\.\\d s";
+    await expect(capsule.getByRole("article").getByText(new RegExp(`^(\\d+ s of about \\d+|\\d+ s) · ${made}$`))).toBeVisible();
     expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filing", onThisMac });
     await app.close();
   });
@@ -670,7 +673,7 @@ test("a typed note says it was typed, whoever would have made its words", async 
   const capsule = await windowFor(app, "capsule");
   await call(app, "submitQuick", "Plant tulips in October");
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
-  await expect(capsule.getByText("Typed note", { exact: true })).toBeVisible();
+  await expect(capsule.getByRole("article").getByText(/^(\d+ s of about \d+|\d+ s) · Typed note$/)).toBeVisible();
   await app.close();
 });
 
@@ -765,8 +768,8 @@ test("a card that was hidden stays hidden while its filing goes on, and the fili
   await watchFilingStates(app);
   await dictate(app);
   await expect.poll(() => rowKindsOf(app), { timeout: 30_000, intervals: [100] }).toContain("read");
-  // Hide, the bar's first button, puts the card away and leaves the filing to go on.
-  await capsule.getByRole("status").getByRole("button", { name: "Hide", exact: true }).click();
+  // Hide, the card's close button in its corner, puts the card away and leaves the filing to go on.
+  await capsule.getByRole("article").getByRole("button", { name: "Hide", exact: true }).click();
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   const before = (await filingSends(app)).length;
   // The steps that follow bring nothing back: the card stays hidden, and is sent nothing, until the filing ends in its notification.
@@ -859,14 +862,12 @@ test("a log-only filing is noted", async () => {
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", text: "Nothing in this is worth a page", noted: true, pages: [] });
   // The card says nothing new was filed: stamped Noted, with the agent's word that it only logged the capture. Without git there is
-  // no commit to take back, so the bar offers Hide alone.
-  const bar = capsule.getByRole("status");
+  // no commit to take back, so the card offers Hide alone, in its corner.
   const card = capsule.getByRole("article");
-  await expect(bar.getByText("Nothing new to file", { exact: true })).toBeVisible();
-  expect(await namesOf(bar.getByRole("button"))).toEqual(["Hide"]);
+  await expect(card.getByRole("status")).toHaveText("Nothing new to file. fake noted it in the log.");
+  expect(await cardButtons(capsule)).toEqual(["Hide"]);
   await expect(card.getByText("Nothing in this is worth a page", { exact: true })).toBeVisible();
   await expect(card.getByRole("img", { name: /^Noted, / })).toBeVisible();
-  await expect(card.getByText("fake noted it in the log.", { exact: true })).toBeVisible();
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(read(library, "log.md")).toContain("nothing to file (a test)");
   await app.close();
@@ -1000,11 +1001,11 @@ test("the seconds a filing took leave out the time it waited behind another", as
   await expect.poll(() => factsOf(app), { timeout: 10_000 }).toMatchObject({ kind: "filing", text: "Call the plumber on Monday", waiting: true });
   const card = capsule.getByRole("article");
   await expect(card.getByText("Waiting for another Avanzel run to finish…", { exact: true })).toBeVisible();
-  await expect(capsule.getByText(/^\d+ s( of about \d+)?$/)).toHaveCount(0);
+  await expect(capsule.getByText(/\d+ s( of about \d+)?/)).toHaveCount(0);
   // Its turn ends the wait and starts its seconds: its card is the one that counts, with its own run.
   await expect.poll(async () => (await factsOf(app)).waiting ?? false, { timeout: 30_000, intervals: [100] }).toBe(false);
   expect(await factsOf(app)).toMatchObject({ kind: "filing", text: "Call the plumber on Monday" });
-  await expect(card.getByText(/^\d+ s of about \d+$/)).toBeVisible();
+  await expect(card.getByText(/^\d+ s of about \d+ · Typed note$/)).toBeVisible();
   await expect(card.getByText("Waiting for another Avanzel run to finish…", { exact: true })).toHaveCount(0);
   await expect.poll(() => durationsKept(userData, library).fake?.length, { timeout: 60_000 }).toBe(2);
   // Each took about its own pause (4 s) and a little. Were the second's wait for the first in its seconds, it would have taken
@@ -1743,40 +1744,42 @@ const filingCard = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-test("a filing's card is the words on paper over a bar with Hide, Edit and Stop, and the paper holds what counts and changes", async () => {
+test("a filing's card is the words on paper with Hide in its corner and Edit and Stop at its foot, and the paper holds what counts and changes", async () => {
   const { app, capsule } = await steppedClaude(1000);
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
   await snap(capsule, "2-filing-card");
-  // The bar: Zel thinking, one line that names the agent, and three buttons, Hide first, quiet and icon-only.
-  const bar = capsule.getByRole("status");
-  await expect(zel(capsule)).toHaveAttribute("data-mood", "thinking");
-  await expect(bar.getByText("Filing with Claude Code…", { exact: true })).toBeVisible();
-  const hide = bar.getByRole("button", { name: "Hide", exact: true });
+  // No bar, and so no Zel: it is all on the card. Its head's status chip names the agent; Hide is its close button, quiet and
+  // icon-only; Edit and Stop are at its foot's right.
+  const card = capsule.getByRole("article");
+  const chip = card.getByRole("status");
+  await expect(barOf(capsule)).toHaveCount(0);
+  await expect(zel(capsule)).toHaveCount(0);
+  await expect(chip).toHaveText("Filing with Claude Code");
+  const hide = card.getByRole("button", { name: "Hide", exact: true });
   await expect(hide).toHaveAttribute("data-variant", "quiet");
   await expect(hide).toHaveAttribute("data-size", "small");
   await expect(hide).toHaveAttribute("data-icon-only", "");
   for (const name of ["Edit", "Stop"]) {
-    await expect(bar.getByRole("button", { name, exact: true })).toHaveAttribute("data-variant", "secondary");
-    await expect(bar.getByRole("button", { name, exact: true })).toHaveAttribute("data-size", "small");
+    await expect(card.getByRole("button", { name, exact: true })).toHaveAttribute("data-variant", "secondary");
+    await expect(card.getByRole("button", { name, exact: true })).toHaveAttribute("data-size", "regular");
   }
-  await expect(bar.getByRole("button")).toHaveCount(3);
-  // The card above it: the words, how they were made, and their seconds against the estimate (15 until the agent has done three).
-  const card = capsule.getByRole("article");
+  expect(await cardButtons(capsule)).toEqual(["Edit", "Stop", "Hide"]);
+  // The rest of the card: the words, and in its foot their seconds against the estimate (15 until the agent has done three) and how
+  // they were made, on one line.
   await expect(card.getByText("Thought", { exact: true })).toBeVisible();
   await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
-  await expect(card.getByText(/^Transcribed on this Mac in \d+\.\d s$/)).toBeVisible();
   await expect(card).toHaveAttribute("data-ruled", ""); // the words are written on the card's ruling
-  const seconds = card.getByText(/^\d+ s of about 15$/);
+  const seconds = card.getByText(/^\d+ s of about 15 · Transcribed on this Mac in \d+\.\d s$/);
   await expect(seconds).toBeVisible();
-  // None of it is in the bar's live region, so VoiceOver hears a filing start and end, and not each second or each step.
+  // None of it is in the card's live region, so VoiceOver hears a filing start and end, and not each second or each step.
   expect(await seconds.evaluate((el) => el.closest('[role="status"],[aria-live]')?.tagName ?? null)).toBeNull();
-  await expect(bar.getByText(/ s( of about \d+)?$/)).toHaveCount(0);
+  await expect(chip).not.toContainText(" s");
   // The agent's steps come as the card's newest line, one after another, outside the live region too.
   const step = card.getByText(/^(Reading your library index|New idea page: Plant tulips in October|Updated your library index|Added a line to the log)$/);
   await expect(step).toBeVisible({ timeout: 30_000 });
   expect(await step.evaluate((el) => el.closest('[role="status"],[aria-live]')?.tagName ?? null)).toBeNull();
-  await expect(bar.getByText("Filing with Claude Code…", { exact: true })).toBeVisible(); // the bar's line stayed as it was
+  await expect(chip).toHaveText("Filing with Claude Code"); // the chip stayed as it was
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
   await app.close();
 });
@@ -1784,37 +1787,39 @@ test("a filing's card is the words on paper over a bar with Hide, Edit and Stop,
 test("a filing card counts its seconds on the paper, towards the estimate and past it, and counts again from its own start", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
   const card = capsule.getByRole("article");
+  // The count is the first part of the foot's secondary line, before how the words were made (filingCard's are typed: "Typed note").
   // Each count is read within a second of the state being put there, so it may already be one more than it was put at.
   // Towards the estimate: whole seconds, and about how many it is. The card goes on counting by itself.
   await call(app, "setCapsule", filingCard({ startedAt: Date.now() - 6_000 }));
-  await expect(card.getByText(/^[67] s of about 15$/)).toBeVisible();
+  await expect(card.getByText(/^[67] s of about 15 · Typed note$/)).toBeVisible();
   // (Any later count will do: the poll that reads it comes once a second, and a Mac that is busy may read it a second late.)
-  await expect(card.getByText(/^(8|9|1[0-4]) s of about 15$/)).toBeVisible({ timeout: 8_000 });
+  await expect(card.getByText(/^(8|9|1[0-4]) s of about 15 · Typed note$/)).toBeVisible({ timeout: 8_000 });
   // Past it, it just counts.
   await call(app, "setCapsule", filingCard({ startedAt: Date.now() - 18_000 }));
-  await expect(card.getByText(/^(18|19) s$/)).toBeVisible();
+  await expect(card.getByText(/^(18|19) s · Typed note$/)).toBeVisible();
   // An agent that files in about no time has an estimate of 0 or 1 (the tests' fake one does). "Of about 0" is no estimate, so the
   // seconds that have reached the estimate are only counted.
   await call(app, "setCapsule", filingCard({ estimate: 0 }));
-  await expect(card.getByText(/^[01] s$/)).toBeVisible();
+  await expect(card.getByText(/^[01] s · Typed note$/)).toBeVisible();
   await call(app, "setCapsule", filingCard({ estimate: 2, startedAt: Date.now() - 2_000 }));
-  await expect(card.getByText(/^[23] s$/)).toBeVisible();
+  await expect(card.getByText(/^[23] s · Typed note$/)).toBeVisible();
   // A filing queued behind another counts from its own turn: when its start moves forward, the count starts again.
   await call(app, "setCapsule", filingCard({ startedAt: Date.now() - 18_000 }));
-  await expect(card.getByText(/^(18|19) s$/)).toBeVisible();
+  await expect(card.getByText(/^(18|19) s · Typed note$/)).toBeVisible();
   await call(app, "setCapsule", filingCard({ startedAt: Date.now() }));
-  await expect(card.getByText(/^[01] s of about 15$/)).toBeVisible();
+  await expect(card.getByText(/^[01] s of about 15 · Typed note$/)).toBeVisible();
   // While it waits for the library it has no seconds to count: the card says it waits.
   await call(app, "setCapsule", filingCard({ waiting: true, startedAt: Date.now() - 6_000 }));
   await expect(card.getByText("Waiting for another Avanzel run to finish…", { exact: true })).toBeVisible();
-  await expect(capsule.getByText(/^\d+ s( of about \d+)?$/)).toHaveCount(0);
+  await expect(card.getByText("Typed note", { exact: true })).toBeVisible();
+  await expect(capsule.getByText(/\d+ s( of about \d+)?/)).toHaveCount(0);
   await app.close();
 });
 
 test("a filing card's line is the agent's newest step, or says it is still working after eight quiet seconds, or that it waits", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
   const card = capsule.getByRole("article");
-  const bar = capsule.getByRole("status");
+  const chip = card.getByRole("status");
   const rows = [
     { kind: "read", path: "index.md", title: "index", shelf: "" },
     { kind: "new", path: "ideas/podcast.md", title: "Indie game dev podcast", shelf: "ideas" },
@@ -1823,19 +1828,19 @@ test("a filing card's line is the agent's newest step, or says it is still worki
   const working = card.getByText("Claude Code is still working…", { exact: true });
   // Before the first step there is no line, only how the words were made.
   await call(app, "setCapsule", filingCard({ transcribedIn: 1.4 }));
-  await expect(card.getByText("Transcribed on this Mac in 1.4 s", { exact: true })).toBeVisible();
+  await expect(card.getByText(/^[01] s of about 15 · Transcribed on this Mac in 1\.4 s$/)).toBeVisible();
   await expect(card.getByText(/Reading|New idea|Updated|Added|still working|Waiting/)).toHaveCount(0);
   // Then the newest step, and only it, over how the words were made.
   await call(app, "setCapsule", filingCard({ rows }));
   await expect(newest).toBeVisible();
   await expect(card.getByText("Reading your library index", { exact: true })).toHaveCount(0);
-  await expect(card.getByText("Typed note", { exact: true })).toBeVisible();
-  // Eight quiet seconds: the line says the agent is at it, and the bar's line is what it was.
+  await expect(card.getByText(/^[01] s of about 15 · Typed note$/)).toBeVisible();
+  // Eight quiet seconds: the line says the agent is at it, and the chip is what it was.
   await call(app, "setCapsule", filingCard({ rows, stepAt: Date.now() - 9_000 }));
   await expect(working).toBeVisible();
   await expect(newest).toHaveCount(0);
-  await expect(bar).not.toContainText("still working");
-  await expect(bar.getByText("Filing with Claude Code…", { exact: true })).toBeVisible();
+  await expect(chip).not.toContainText("still working");
+  await expect(chip).toHaveText("Filing with Claude Code");
   // A step ends the quiet, even one that adds no row: the newest step is the line again.
   await call(app, "setCapsule", filingCard({ rows, stepAt: Date.now() }));
   await expect(newest).toBeVisible();
@@ -1871,17 +1876,17 @@ test("a long thought is cut off after four lines and keeps its line breaks, and 
   const cut = await words.evaluate((el) => ({ shown: el.clientHeight, whole: el.scrollHeight, pitch: parseFloat(getComputedStyle(el).lineHeight) }));
   expect(cut.shown).toBe(4 * cut.pitch);
   expect(cut.whole).toBeGreaterThan(cut.shown);
-  // A step with a long title stays on one line: it is cut off, and the card is no wider than the bar.
+  // A step with a long title stays on one line: it is cut off, and the card is as wide as the stack (560 px), no wider.
   const step = card.getByText(`New idea page: ${title}`, { exact: true });
   await expect(step).toBeVisible();
   expect(await step.evaluate((el) => ({ lines: Math.round(el.clientHeight / parseFloat(getComputedStyle(el).lineHeight)), cut: el.scrollWidth > el.clientWidth }))).toEqual({ lines: 1, cut: true });
   const cardBox = (await card.boundingBox())!;
-  const barBox = (await capsule.getByRole("status").boundingBox())!;
-  expect(cardBox.width).toBe(barBox.width);
-  // And the panel holds it all, from the top of the card to the bottom of the bar, with a little room to spare.
+  expect(cardBox.width).toBeCloseTo(560, 0);
+  // And the panel holds it all, from the top of the card to its foot (a filing has no bar), with a little room to spare.
+  await expect(barOf(capsule)).toHaveCount(0);
   const panel = await capsule.evaluate(() => ({ width: innerWidth, height: innerHeight }));
   expect(cardBox.y).toBeGreaterThanOrEqual(8);
-  expect(barBox.y + barBox.height).toBeLessThanOrEqual(panel.height);
+  expect(cardBox.y + cardBox.height).toBeLessThanOrEqual(panel.height);
   expect(cardBox.x).toBeGreaterThanOrEqual(0);
   expect(cardBox.x + cardBox.width).toBeLessThanOrEqual(panel.width);
   // The person's line breaks are kept: two lines of words stand on two lines of the ruling, as they were written.
@@ -1920,16 +1925,16 @@ test("Stop on the filing card is busy while the stop waits for the library, and 
   try {
     await dictate(app);
     await expect.poll(() => factsOf(app), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true, canEdit: true });
-    const bar = capsule.getByRole("status");
-    const stopButton = bar.getByRole("button", { name: "Stop", exact: true });
-    await expect(bar.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+    const card = capsule.getByRole("article");
+    const stopButton = card.getByRole("button", { name: "Stop", exact: true });
+    await expect(card.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
     await expect(stopButton).not.toHaveAttribute("aria-busy", "true");
     await stopButton.click();
     // The button keeps its name and is busy, Edit is gone (main would ignore it), and both lines say what they said.
     await expect(stopButton).toHaveAttribute("aria-busy", "true");
-    await expect(bar.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
-    await expect(bar.getByText("Filing with fake…", { exact: true })).toBeVisible();
-    await expect(capsule.getByRole("article").getByText("Waiting for another Avanzel run to finish…", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+    await expect(card.getByRole("status")).toHaveText("Waiting to file");
+    await expect(card.getByText("Waiting for another Avanzel run to finish…", { exact: true })).toBeVisible();
     // The stop is under way until the library is free, however long: a press on a busy button does nothing more.
     await stopButton.click();
     await sleep(1_000);

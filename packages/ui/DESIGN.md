@@ -59,7 +59,7 @@ If nothing fits, add a component or a variant in `packages/ui` (see "When someth
 | `Notice` | A message inside a window: `info`, `error` or `success` | The capsule: use `CapsuleNotice` |
 | `Group`, `GroupRow` | Settings, grouped as in System Settings. On/off rows are `Switch` | Lists of content |
 | `Stage` | The tinted area where Zel and cards perform, one per window | Panels and cards |
-| `Card` | The index card: the user's words on ruled paper, with `label`, `meta`, `stamp` and `footer` | Settings or chrome: cards hold words |
+| `Card` | The index card: the user's words on ruled paper, with `label`, `meta`, `stamp` and `footer`. In the capsule a card holds its whole moment: `status` (a live chip in the head: "Filing with Claude Code"), `progress` (a violet line under the head), `actions` at the foot's right, and `onClose` (Hide, in the corner) | Settings or chrome: cards hold words |
 | `Stamp` | The receipt that ends a piece of work: `filed`, `noted`, `saved`, `letter`, `remembered`, `hello` | Decoration or emphasis |
 | `ShelfDrawer` | The six shelf tabs in one line, with the pages each holds (`total`) or has just taken in (the filing) | A single shelf: use `ShelfTag` |
 | `ChoiceRow` | A row of a `Group` where exactly one row is chosen, as with agents: a check on the chosen row and "Use X" on the others, with a badge and the row's other buttons | Settings with more than one choice at once: use `Switch` |

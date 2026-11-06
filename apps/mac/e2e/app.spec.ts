@@ -31,7 +31,7 @@ import {
   stubOpening,
   windowFor,
 } from "./helpers.ts";
-import { expectProblem, launchOn } from "./capsule-helpers.ts";
+import { barOf, cardButtons, expectProblem, launchOn } from "./capsule-helpers.ts";
 
 const inbox = (root: string) => readdirSync(path.join(root, "inbox")).filter((n) => !n.startsWith("."));
 const archived = (root: string) => {
@@ -164,12 +164,14 @@ test("words whose recording the library won't keep are saved without it, and the
   await call(app, "toggleDictate");
   await call(app, "toggleDictate");
   await expect(note).toBeVisible({ timeout: 30_000 });
-  // The filing is a card of paper: the note is a footnote in its footer, under how the words were made, and the seconds are in its
-  // header, outside the bar's live region.
+  // The filing is a card of paper: the note is a footnote in its footer, under one line of the seconds and how the words were made,
+  // which ticks outside the card's live region (its status chip).
   const card = capsule.getByRole("article");
   await expect(card.getByText(why)).toBeVisible();
-  await expect(card.getByText(/^Transcribed on this Mac in \d+\.\d s$/)).toBeVisible();
-  await expect(card.getByText(/^\d+ s of about \d+$/)).toBeVisible();
+  const meta = card.getByText(/^(\d+ s of about \d+|\d+ s) · Transcribed on this Mac in \d+\.\d s$/);
+  await expect(meta).toBeVisible();
+  expect((await meta.boundingBox())!.y).toBeLessThan((await card.getByText(why).boundingBox())!.y);
+  await expect(card.getByRole("status")).toHaveText(/^(Filing with fake|Waiting to file)$/);
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   const [filed, ...others] = archived(library);
   expect(others).toEqual([]);
@@ -287,10 +289,16 @@ test("Quick is a clear page on a native panel: its field has the focus, and Esc 
   await call(app, "openQuick");
   const quick = await windowFor(app, "quick");
   await expect(quick.getByRole("textbox", { name: "Type a thought" })).toBeFocused();
-  // macOS draws the panel's surface (its material, corners and shadow), so the page itself is clear. The key that
-  // saves is a Kbd.
+  // macOS draws the panel's surface (its material, corners and shadow), so the page itself is clear. Save is the panel's one primary
+  // button, and waits for words: it is disabled while the field is empty (Return saves too).
   await expect(quick.locator("html")).toHaveAttribute("data-backdrop", "clear");
-  await expect(quick.locator("kbd")).toHaveText("↩");
+  const save = quick.getByRole("button", { name: "Save", exact: true });
+  await expect(save).toHaveAttribute("data-variant", "primary");
+  await expect(save).toBeDisabled();
+  await quick.getByRole("textbox", { name: "Type a thought" }).fill("Plant tulips in October");
+  await expect(save).toBeEnabled();
+  await quick.getByRole("textbox", { name: "Type a thought" }).fill("");
+  await expect(save).toBeDisabled();
   await expect.poll(() => shown(app, "quick")).toBe(true);
   await quick.keyboard.press("Escape");
   await expect.poll(() => shown(app, "quick")).toBe(false);
@@ -336,12 +344,13 @@ test("Undo on the filed card takes the filing back, and the note waits in the in
   const { library, app, capsule } = await typedAndFiled();
   expect(filesUnder(library, "ideas")).toHaveLength(1);
   expect(await recentlyFiled(app)).toEqual(["Plant tulips in October"]);
-  // The filed card first: the bar says who filed it and how long it took, and offers Hide, Undo and Open; the card is stamped Filed
-  // and lists the page the filing made, new.
-  const bar = capsule.getByRole("status");
+  // The filed card first, with no bar: its foot says who filed it and how long it took, and it offers Undo and Open, and Hide in its
+  // corner; it is stamped Filed and lists the page the filing made, new.
+  const bar = barOf(capsule);
   const card = capsule.getByRole("article");
-  await expect(bar.getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
-  await expect(bar.getByRole("button")).toHaveCount(3);
+  await expect(card.getByRole("status").getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
+  await expect(bar).toHaveCount(0);
+  expect(await cardButtons(capsule)).toEqual(["Undo", "Open", "Hide"]);
   await expect(card.getByRole("img", { name: /^Filed, \d{1,2} [A-Z][a-z]{2} \d{4}$/ })).toBeVisible();
   await expect(card.getByRole("listitem")).toHaveCount(1);
   await expect(card.getByRole("listitem").getByText("new", { exact: true })).toBeVisible();
@@ -961,11 +970,12 @@ test("a note dictated while a question is answered says it waits for the library
   const waiting = capsule.getByText("Waiting for another Avanzel run to finish…");
   await expect(waiting).toBeVisible({ timeout: 30_000 });
   await snap(capsule, "2-filing-waiting");
-  // The paper says it, not the bar: the live region keeps its one steady line, and the card has no seconds to count meanwhile.
-  await expect(capsule.getByRole("article").getByText("Waiting for another Avanzel run to finish…")).toBeVisible();
-  await expect(capsule.getByRole("status").getByText("Waiting for another Avanzel run to finish…")).toHaveCount(0);
-  await expect(capsule.getByRole("status").getByText(/^Filing with /)).toBeVisible();
-  await expect(capsule.getByText(/^\d+ s( of about \d+)?$/)).toHaveCount(0);
+  // The card's foot says why, outside its live region, whose chip says only "Waiting to file"; the card has no seconds to count meanwhile.
+  const card = capsule.getByRole("article");
+  await expect(card.getByText("Waiting for another Avanzel run to finish…")).toBeVisible();
+  await expect(card.getByRole("status")).toHaveText("Waiting to file");
+  await expect(barOf(capsule)).toHaveCount(0);
+  await expect(capsule.getByText(/\d+ s( of about \d+)?/)).toHaveCount(0);
   // The question is answered and the filing has the library: the line goes while the card still says it files.
   await expect(ask.getByText("Q: What are my goals?")).toBeVisible({ timeout: 60_000 });
   await expect(waiting).toBeHidden();
@@ -1246,12 +1256,13 @@ test("a screen comment has no file mode to switch, and the key that finishes it 
   await app.close();
 });
 
-// ---- One bar ----
+// ---- One bar, and the cards' own regions ----
 //
-// The capsule announces only the start and the end of a filing, through the bar's live region. A `status` region that arrives with its
-// line already in it is often not read, so the page keeps ONE bar mounted from listening through transcribing and filing to filed: each
-// change of state is a change of what the region holds, which a screen reader hears. The tests tag the bar's node in the page and ask,
-// at every change the page makes, whether the live region is still that node and still the only one.
+// The bar's live region serves a recording while it has one: from listening through transcribing the page keeps ONE bar mounted, so each
+// change is a change of what the region holds, which a screen reader hears. A filing and its end have no bar: they are cards, and each says
+// its news from the card's own `status` region (the filing card's chip, "Filing with …", and the filed card's first foot line, "Filed by …").
+// The tests tag the bar's node in the page and ask, at every change the page makes, how many live regions there are and whether the first
+// is still that node.
 
 /** What the page has: the live regions in it, and whether the first is the node that was tagged. */
 type Regions = { regions: number; same: boolean; text: string };
@@ -1279,71 +1290,80 @@ const isTheTaggedBar = (page: Page) =>
     return { regions: all.length, same: all[0] === (window as unknown as { taggedBar: Element }).taggedBar };
   });
 
-test("one bar serves a whole dictation: the same live region from listening through filing to filed", async () => {
+test("one bar serves a dictation while it listens and is transcribed, and the filing and filed cards each say their news from their own region", async () => {
   const library = await makeLibrary();
   const { app, capsule } = await launchHearing(library, newUserData(), { FAKE_AGENT_DELAY_MS: "1500" }); // the filing card stays long enough to be seen
   await startListening(app);
-  const bar = capsule.getByRole("status");
-  await expect(bar).toHaveCount(1);
+  await expect(barOf(capsule)).toHaveCount(1);
   await tagBar(capsule);
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-  await expect(bar.getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
-  // At every change the page made, one live region stood, and it was the node that listening began with: a region that is drawn again for
-  // each state would arrive with its line already in it, which a screen reader often does not read.
+  await expect(capsule.getByRole("article").getByRole("status").getByText(/^Filed by fake in \d+ s$/)).toBeVisible();
+  await expect(barOf(capsule)).toHaveCount(0); // the filed card has no bar
+  // At every change the page made, one live region stood. Until the filing card came it was the node that listening began with: a region
+  // that is drawn again for each state would arrive with its line already in it, which a screen reader often does not read.
   const seen = await regionsSeen(capsule);
   expect(seen.length).toBeGreaterThan(3);
-  expect(seen.filter((one) => one.regions !== 1 || !one.same)).toEqual([]);
-  // It said the filing's start and its end in turn: those are the two things the capsule announces.
-  expect(seen.some((one) => one.text.includes("Filing with fake…"))).toBe(true);
-  expect(seen.some((one) => /Filed by fake in \d+ s/.test(one.text))).toBe(true);
-  expect(await isTheTaggedBar(capsule)).toEqual({ regions: 1, same: true });
+  expect(seen.filter((one) => one.regions !== 1)).toEqual([]);
+  const filing = seen.findIndex((one) => one.text.includes("Filing with fake"));
+  expect(filing).toBeGreaterThan(0);
+  expect(seen.slice(0, filing).filter((one) => !one.same)).toEqual([]);
+  // From there the region is the card's own, not the bar's: the filing card's chip, then the filed card's line.
+  expect(seen.slice(filing).filter((one) => one.same)).toEqual([]);
+  expect(seen.slice(filing).some((one) => /^Filed by fake in \d+ s$/.test(one.text))).toBe(true);
+  expect(await isTheTaggedBar(capsule)).toEqual({ regions: 1, same: false });
   await app.close();
 });
 
-/** The states the capsule draws a bar for, as main sends them, each with the line its bar says (or the button it holds, where it has no line). */
-const BAR_STATES: [string, Record<string, unknown>, string][] = [
-  ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", review: "at 21:00", hint: null }, "21:00"],
-  ["transcribing", { kind: "transcribing", mode: "dictate", onThisMac: true }, "Transcribing on this Mac…"],
-  ["a slow transcription", { kind: "transcribing", mode: "dictate", onThisMac: true, slow: true }, "Still transcribing…"],
+/** The states the capsule draws a card with its own live region for, and no bar, each with the line that region says. */
+const CARD_STATES: [string, Record<string, unknown>, string][] = [
   [
     "filing",
     { kind: "filing", text: "Plant tulips in October", agent: "Claude Code", transcribedIn: 1.4, onThisMac: true, canEdit: true, rows: [], startedAt: Date.now(), estimate: 15, stepAt: Date.now() },
-    "Filing with Claude Code…",
+    "Filing with Claude Code",
+  ],
+  [
+    "filing, waiting",
+    { kind: "filing", text: "Plant tulips in October", agent: "Claude Code", transcribedIn: 1.4, onThisMac: true, canEdit: true, waiting: true, rows: [], startedAt: Date.now(), estimate: 15, stepAt: Date.now() },
+    "Waiting to file",
   ],
   ["filed", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: true, noted: false }, "Filed by Claude Code in 6 s"],
-  ["nothing new", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: false, noted: true }, "Nothing new to file"],
-  // After "nothing new" and not beside the other filed rows: it says the same line as they do, and the test waits for the line and then
-  // checks the region, so it would pass on the card before it and check that card.
+  ["nothing new", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: false, noted: true }, "Nothing new to file. Claude Code noted it in the log."],
   [
     "a reprint",
     {
       kind: "filed",
       text: "Plant tulips in October",
       agent: "Claude Code",
-      seconds: 6,
+      seconds: 7,
       pages: [],
       canUndo: true,
       noted: false,
       reprint: { filedAt: new Date(2026, 9, 25, 12).getTime() },
     },
-    "Filed by Claude Code in 6 s",
+    "Filed by Claude Code in 7 s",
   ],
-  ["saved", { kind: "saved", text: "Plant tulips in October", note: "Saved to the inbox." }, "Saved"],
-  ["undone", { kind: "saved", text: "Plant tulips in October", note: "Your words are back in the inbox.", undone: true }, "Undone"],
-  // After "undone", not beside "filed", whose line it says: the wait for the line would pass on the card before it.
   [
     "a filed card whose words were kept",
-    { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: true, noted: false, restored: true },
-    "Filed by Claude Code in 6 s",
+    { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 8, pages: [], canUndo: true, noted: false, restored: true },
+    "Filed by Claude Code in 8 s",
   ],
+];
+
+/** The states the capsule draws a bar for, as main sends them, each with the line its bar says (or the button it holds, where it has no line). */
+const BAR_STATES: [string, Record<string, unknown>, string][] = [
+  ["listening", { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", review: "at 21:00", hint: null }, "21:00"],
+  ["transcribing", { kind: "transcribing", mode: "dictate", onThisMac: true }, "Transcribing on this Mac…"],
+  ["a slow transcription", { kind: "transcribing", mode: "dictate", onThisMac: true, slow: true }, "Still transcribing…"],
+  ["saved", { kind: "saved", text: "Plant tulips in October", note: "Saved to the inbox." }, "Saved"],
+  ["undone", { kind: "saved", text: "Plant tulips in October", note: "Your words are back in the inbox.", undone: true }, "Undone"],
   ["a stopped filing", { kind: "cancelled", text: "Plant tulips in October", agent: "Claude Code", partial: false, leftovers: 0, review: "at 21:00" }, "Stopped"],
   ["a stopped transcription", { kind: "recorded", review: "at 21:00" }, "Stopped"],
   ["a picked shortcut", { kind: "shortcut-picked", key: "dictate", accelerator: "Control+Shift+Space" }, "Record a thought now uses ⌃⇧Space"],
   ["nothing to undo", { kind: "nothing-to-undo" }, "There's no filing to undo."],
 ];
 
-test("every state that has a bar draws it in the one live region, and the editor and a problem draw none", async () => {
+test("every state that has a bar draws it in the one live region; the filing and filed cards speak from their own, and the editor and a problem have none", async () => {
   const { app, capsule } = await launchOn(await makeLibrary());
   const bar = capsule.getByRole("status");
   let tagged = false;
@@ -1355,6 +1375,13 @@ test("every state that has a bar draws it in the one live region, and the editor
       tagged = true;
     }
     expect(await isTheTaggedBar(capsule), name).toEqual({ regions: 1, same: true });
+  }
+  // A filing and a filed card have no bar: their one live region is on the card, and says the card's news.
+  for (const [name, state, says] of CARD_STATES) {
+    await call(app, "setCapsule", state);
+    await expect(capsule.getByRole("article").getByRole("status"), name).toHaveText(says);
+    await expect(barOf(capsule), name).toHaveCount(0);
+    await expect(bar, name).toHaveCount(1);
   }
   // The editor is only a card, and a problem is an alert: neither has a bar, so neither has a live region.
   await call(app, "setCapsule", { kind: "editing", text: "Plant tulips in October" });
@@ -1387,6 +1414,16 @@ test("a dictation listens on a bar with its file mode, Cancel, Pause and Stop, a
   await expect(bar.getByRole("button", { name: "Cancel the recording", exact: true })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Stop, and your agent files it now", exact: true })).toBeVisible();
+  // Every control sits inside the bar's glass, and the bar inside the panel: nothing spills past either edge.
+  const glass = (await bar.boundingBox())!;
+  const width = await capsule.evaluate(() => innerWidth);
+  expect(glass.x).toBeGreaterThanOrEqual(0);
+  expect(glass.x + glass.width).toBeLessThanOrEqual(width);
+  for (const control of [...(await bar.getByRole("button").all()), bar.getByRole("radiogroup")]) {
+    const box = (await control.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(glass.x);
+    expect(box.x + box.width).toBeLessThanOrEqual(glass.x + glass.width);
+  }
   // The hint above it is one sentence of plain text, with the keys as keys, outside the live region.
   await expect(capsule.getByText("⌥Space to finish, Esc to cancel", { exact: true })).toBeVisible();
   await expect(capsule.locator("kbd")).toHaveText(["⌥Space", "Esc"]);
@@ -1510,7 +1547,7 @@ test("Hide, clicked with the pointer, lets go of the hold: the next card that hi
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const capsule = await windowFor(app, "capsule");
   await call(app, "setCapsule", { kind: "saved", text: "Plant tulips in October", note: "Saved to the inbox." }, 60_000);
-  await capsule.getByRole("status").getByRole("button", { name: "Hide", exact: true }).click();
+  await barOf(capsule).getByRole("button", { name: "Hide", exact: true }).click();
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   const TIME_MS = 2_000;
   await call(app, "setCapsule", { kind: "saved", text: "Call the vet on Monday", note: "Saved to the inbox." }, TIME_MS);
@@ -1566,6 +1603,9 @@ test("Pause holds a recording's time and its limit, Resume goes on from there, a
   // Paused: the bar says so, the time stands still, and Pause becomes Resume.
   await bar.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(bar.getByText("Paused", { exact: true })).toBeVisible();
+  // The word is whole, not cut to its end by the controls beside it.
+  const word = bar.getByText("Paused", { exact: true });
+  expect(await word.evaluate((el) => el.scrollWidth <= (el.parentElement?.clientWidth ?? 0) + 1)).toBe(true);
   const paused = (await call(app, "capsuleStateForTests")) as { kind: string; pausedAt?: number };
   expect(paused).toMatchObject({ kind: "listening" });
   expect(paused.pausedAt).toBeGreaterThan(startedAt);
@@ -1732,7 +1772,7 @@ test("the first ten kept recordings name the key that finishes them, the elevent
   // ... and the eleventh's doesn't.
   await startListening(first.app);
   expect(await call(first.app, "capsuleStateForTests")).toMatchObject({ kind: "listening", hint: null });
-  await expect(first.capsule.getByRole("status").getByRole("button", { name: "Files at 21:00", exact: true })).toBeVisible(); // the bar is up
+  await expect(first.capsule.getByRole("status").getByRole("radiogroup", { name: "When your agent files this recording" })).toBeVisible(); // the bar is up
   await expect(first.capsule.locator("kbd")).toHaveCount(0);
   await call(first.app, "cancelRecording");
   await first.app.close();
