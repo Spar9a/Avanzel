@@ -15,3 +15,6 @@ playwright-report/
 *.tsbuildinfo
 .claude/worktrees/
 apps/mac/.e2e-running
+
+# JetBrains IDE settings (Rider, WebStorm): per machine, never shared
+.idea/
