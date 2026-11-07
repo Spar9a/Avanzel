@@ -918,7 +918,7 @@ export class Setup {
 
   /**
    * Record a thought's shortcut changed (`changeApp`), wherever it was set: on the first-thought step itself, or in
-   * Settings → Voice, where the step's Open Settings leads. While that step shows, its press test starts over.
+   * Settings → General, where the step's Open Settings leads. While that step shows, its press test starts over.
    */
   shortcutChanged(): void {
     if (this.session?.step === "think") this.listenForPress(this.session);

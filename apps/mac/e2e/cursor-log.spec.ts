@@ -1,8 +1,8 @@
 // The library's log of dictations: with config.toml's [dictation] log on, each dictation into another app is also written to the
 // day file raw/dictations/YYYY-MM-DD.md; the skip list keeps an app's dictations out of both stores; and forgetting one (Delete in
-// Settings → Dictations, or the menu's "Forget the last dictation") takes it out of the day file too, or says so when it can't.
+// Settings → Dictation, or the menu's "Forget the last dictation") takes it out of the day file too, or says so when it can't.
 // Settings → Voice holds the switch and the skip lists. The Mac's side is the fake cursor helper (AVANZEL_FAKE_CURSOR).
-import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -12,7 +12,7 @@ import type { Target } from "../src/main/cursor-helper.ts";
 import type { DictationEntry } from "../src/main/dictation-history.ts";
 import { tildePath } from "../src/main/setup-model.ts";
 import { expectProblem, holdTheQueue, letTheQueueGo } from "./capsule-helpers.ts";
-import { call, capsuleKind, launch, makeLibrary, openSettings, speechWav, windowFor } from "./helpers.ts";
+import { call, capsuleKind, launch, makeLibrary, openSettings, speechWav, windowFor, toolbarItem } from "./helpers.ts";
 
 const WORDS = "hello Kowalczyk";
 
@@ -109,7 +109,7 @@ test("a skipped app gets the words pasted, and they are kept in neither the hist
   await app.close();
 });
 
-test("Delete in Settings → Dictations takes the dictation out of the day file too, and leaves the others", async () => {
+test("Delete in Settings → Dictation takes the dictation out of the day file too, and leaves the others", async () => {
   const library = await makeLibrary();
   const { app, pasteOut } = await launchWith(library);
   await call(app, "setLibrarySettings", { dictationLog: true });
@@ -118,7 +118,7 @@ test("Delete in Settings → Dictations takes the dictation out of the day file 
   await expect.poll(async () => (await history(app)).length).toBe(2);
   const [first, second] = await history(app);
   await expect.poll(() => dayText(library)).toContain(`<!-- /dictation ${second!.id} -->`);
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   const cards = settings.getByRole("article");
   await expect(cards).toHaveCount(2);
   await cards.last().getByRole("button", { name: "Delete", exact: true }).click(); // the older one
@@ -158,7 +158,7 @@ test("a day file that can't be rewritten is told, by Delete and by the menu, and
   // The day file is rewritten through a new file beside it: a folder that can't be written to makes that fail.
   chmodSync(dictations(library), 0o555);
   try {
-    const settings = await openSettings(app, "Dictations");
+    const settings = await openSettings(app, "Dictation");
     const cards = settings.getByRole("article");
     await cards.last().getByRole("button", { name: "Delete", exact: true }).click();
     const notice = settings.getByRole("alert");
@@ -200,7 +200,7 @@ test("a dictation forgotten after another library opened leaves the day file of 
 
   const second = await makeLibrary();
   await call(app, "useLibrary", second);
-  const settings = await openSettings(app, "Dictations");
+  const settings = await openSettings(app, "Dictation");
   const cards = settings.getByRole("article");
   await cards.last().getByRole("button", { name: "Delete", exact: true }).click(); // the older one
   await expect(cards).toHaveCount(1);
@@ -224,8 +224,14 @@ test("a dictation forgotten after another library opened leaves the day file of 
   await app.close();
 });
 
-/** The "Dictate into any app" group of Settings → Voice. */
-const cursorGroup = (settings: Page) => settings.locator("section", { has: settings.getByRole("heading", { name: "Dictate into any app", level: 3 }) });
+/** The Never kept group of Settings → Privacy. */
+const neverKept = (settings: Page) => settings.locator("section", { has: settings.getByRole("heading", { name: "Never kept", exact: true }) });
+
+/** The field of a skip list, opened with its row's Edit…. */
+async function skipField(settings: Page, list: "Apps to skip" | "Sites to skip"): Promise<Locator> {
+  await neverKept(settings).getByRole("group", { name: list, exact: true }).getByRole("button", { name: "Edit…", exact: true }).click();
+  return neverKept(settings).getByRole("textbox", { name: list, exact: true });
+}
 
 /**
  * Every reply main has sent the Settings window by now has been drawn: a round trip to main from the page comes back after any reply
@@ -238,45 +244,60 @@ async function repliesDrawn(settings: Page): Promise<void> {
   });
 }
 
-test("Settings → Voice turns the log on at once and saves the skip lists cleaned when a field is left; all of it is there after a reload", async () => {
+test("Settings → Dictation turns the log on at once, and only then says what a sync tool's copies are outside of; it is still on after a reload", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
-  const settings = await openSettings(app, "Voice");
-  const group = cursorGroup(settings);
-  const log = group.getByRole("switch", { name: "Keep what I dictate in the library" });
+  const settings = await openSettings(app, "Dictation");
+  const log = settings.getByRole("switch", { name: "Keep what I dictate in the library" });
+  const written = "Each dictation is also written to raw/dictations/ in the library, one file a day, kept out of git, where your agent can read it.";
   await expect(log).not.toBeChecked();
-  await expect(
-    group.getByText(
-      "Each dictation is also written to raw/dictations/ in the library, one file a day, kept out of git, where your agent can read it. Copies made by sync tools such as Obsidian Sync or iCloud are outside this: a dictation you forget may stay in them.",
-      { exact: true },
-    ),
-  ).toBeVisible();
-  await expect(group.getByText("One bundle id per line, such as com.apple.Passwords. What you dictate there still goes in, but is never kept.", { exact: true })).toBeVisible();
-  await expect(
-    group.getByText(
-      "One website per line, such as example.com. In Safari and Chrome-based browsers, what you dictate there still goes in but is never kept. Other browsers can't say which site is open, so there it is kept.",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  await expect(settings.getByText(written, { exact: true })).toBeVisible();
   await log.click();
   await expect.poll(() => loadSettings(library).dictation.log).toBe(true);
   await expect(log).toBeChecked();
+  await expect(
+    settings.getByText(`${written} Copies made by sync tools such as Obsidian Sync or iCloud are outside this: a dictation you forget may stay in them.`, { exact: true }),
+  ).toBeVisible();
+  await settings.reload();
+  await toolbarItem(settings, "Dictation").click();
+  await expect(settings.getByRole("switch", { name: "Keep what I dictate in the library" })).toBeChecked();
+  await app.close();
+});
 
-  const apps = group.getByRole("textbox", { name: "Apps to skip" });
+test("Settings → Privacy says what its skip lists hold, and saves them cleaned when a field is left; all of it is there after a reload", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Privacy");
+  const group = neverKept(settings);
+  await expect(group.getByText("What you dictate there still goes in, but is never kept.", { exact: true })).toBeVisible();
+  // What each row says of its list: the password managers it comes with by name, and no bundle ids until they are asked for.
+  await expect(group.getByText("1Password, 1Password 7, Bitwarden and 6 more", { exact: true })).toBeVisible();
+  await expect(group.getByText("None", { exact: true })).toBeVisible();
+  await expect(group.getByRole("textbox")).toHaveCount(0);
+
+  const apps = await skipField(settings, "Apps to skip");
+  await expect(group.getByText("One bundle id per line, such as com.apple.Passwords.", { exact: true })).toBeVisible();
   await expect(apps).toHaveValue(loadSettings(library).dictation.skipApps.join("\n")); // the password managers, to begin with
   await apps.fill("com.apple.Passwords\n\n  com.tinyspeck.slackmacgap \ncom.apple.passwords");
   await apps.press("Tab");
   await expect.poll(() => loadSettings(library).dictation.skipApps).toEqual(["com.apple.Passwords", "com.tinyspeck.slackmacgap"]);
   await expect(apps).toHaveValue("com.apple.Passwords\ncom.tinyspeck.slackmacgap");
+  await expect(group.getByText("Passwords and slackmacgap", { exact: true })).toBeVisible();
 
-  const sites = group.getByRole("textbox", { name: "Sites to skip" });
+  const sites = await skipField(settings, "Sites to skip");
+  await expect(
+    group.getByText("One website per line, such as example.com. Safari and Chrome-based browsers say which site is open. Other browsers can't, so there a dictation is kept.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(sites).toHaveValue("");
   await sites.fill("https://Bank.example.com/login\nwww.mail.test:8080");
   await sites.press("Tab");
   await expect.poll(() => loadSettings(library).dictation.skipSites).toEqual(["bank.example.com", "mail.test"]);
   await expect(sites).toHaveValue("bank.example.com\nmail.test");
+  await expect(group.getByText("bank.example.com and mail.test, in Safari and Chrome-based browsers", { exact: true })).toBeVisible();
 
-  // A line that is no website is not saved, and the window says why; the field keeps what was typed.
+  // A line that is no website is not saved, and the window says why; the field keeps what was typed, and the row what is really kept.
   await sites.fill("bank.example.com\nnot a site");
   await sites.press("Tab");
   await expect(settings.getByText("That change wasn't saved.", { exact: true })).toBeVisible();
@@ -286,34 +307,40 @@ test("Settings → Voice turns the log on at once and saves the skip lists clean
     }),
   ).toBeVisible();
   await expect(sites).toHaveValue("bank.example.com\nnot a site");
+  await expect(group.getByText("bank.example.com and mail.test, in Safari and Chrome-based browsers", { exact: true })).toBeVisible();
   expect(loadSettings(library).dictation.skipSites).toEqual(["bank.example.com", "mail.test"]);
 
+  // Done closes the field, and saves what it holds on the way.
+  await sites.fill("bank.example.com");
+  await group.getByRole("group", { name: "Sites to skip", exact: true }).getByRole("button", { name: "Done", exact: true }).click();
+  await expect(sites).toHaveCount(0);
+  await expect.poll(() => loadSettings(library).dictation.skipSites).toEqual(["bank.example.com"]);
+  await expect(group.getByText("bank.example.com, in Safari and Chrome-based browsers", { exact: true })).toBeVisible();
+
   await settings.reload();
-  await settings.getByRole("radiogroup", { name: "Section" }).getByRole("radio", { name: "Voice", exact: true }).click();
-  const again = cursorGroup(settings);
-  await expect(again.getByRole("switch", { name: "Keep what I dictate in the library" })).toBeChecked();
-  await expect(again.getByRole("textbox", { name: "Apps to skip" })).toHaveValue("com.apple.Passwords\ncom.tinyspeck.slackmacgap");
-  await expect(again.getByRole("textbox", { name: "Sites to skip" })).toHaveValue("bank.example.com\nmail.test");
+  await toolbarItem(settings, "Privacy").click();
+  await expect(neverKept(settings).getByText("Passwords and slackmacgap", { exact: true })).toBeVisible();
+  await expect(await skipField(settings, "Apps to skip")).toHaveValue("com.apple.Passwords\ncom.tinyspeck.slackmacgap");
+  await expect(await skipField(settings, "Sites to skip")).toHaveValue("bank.example.com");
   await app.close();
 });
 
 test("a skip list's save that waits while the person goes to another pane and back lands in the field, and leaving it undoes nothing", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
-  const settings = await openSettings(app, "Voice");
-  const section = settings.getByRole("radiogroup", { name: "Section" });
+  const settings = await openSettings(app, "Privacy");
   await holdTheQueue(app); // as a filing run would: the save waits its turn
-  const sites = cursorGroup(settings).getByRole("textbox", { name: "Sites to skip" });
+  const sites = await skipField(settings, "Sites to skip");
   await sites.fill("https://Bank.example.com/login");
   await sites.press("Tab"); // the save is sent, and waits
   // The other list is saved too while the first waits: neither reply may put the other field back.
-  const apps = cursorGroup(settings).getByRole("textbox", { name: "Apps to skip" });
+  const apps = await skipField(settings, "Apps to skip");
   await apps.fill("com.example.notes");
   await apps.press("Tab");
-  await section.getByRole("radio", { name: "General", exact: true }).click();
-  await section.getByRole("radio", { name: "Voice", exact: true }).click();
-  const sitesAgain = cursorGroup(settings).getByRole("textbox", { name: "Sites to skip" });
-  const appsAgain = cursorGroup(settings).getByRole("textbox", { name: "Apps to skip" });
+  await toolbarItem(settings, "General").click();
+  await toolbarItem(settings, "Privacy").click();
+  const sitesAgain = await skipField(settings, "Sites to skip");
+  const appsAgain = await skipField(settings, "Apps to skip");
   await letTheQueueGo(app);
   await call(app, "idleForTests");
   await expect.poll(() => loadSettings(library).dictation.skipSites).toEqual(["bank.example.com"]);

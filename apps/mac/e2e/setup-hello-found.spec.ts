@@ -31,7 +31,7 @@ import {
   UNREADABLE_CLAUDE,
   windowFor,
 } from "./helpers.ts";
-import { callsTo, closeSetup, CODEX_INSTALL, dockShown, settingsSnap, setupSnap, sideways, THINK, windowsTitled } from "./setup-helpers.ts";
+import { callsTo, closeSetup, CODEX_INSTALL, dockShown, settingsSnap, settingsWindows, setupSnap, sideways, THINK, windowsTitled } from "./setup-helpers.ts";
 
 test.afterEach(closeModelHubs);
 
@@ -145,14 +145,14 @@ test("while setup is open, the shortcut and opening Avanzel again bring it forwa
   await expect.poll(() => shown(app, "setup")).toBe(true);
   await call(app, "toggleDictate");
   expect(await windowsTitled(app, "Set up Avanzel")).toBe(1);
-  expect(await windowsTitled(app, "Avanzel Settings")).toBe(0);
+  expect(await settingsWindows(app)).toBe(0);
   // A later step makes the library while setup stays open (here through Settings' own route). Opening Avanzel again
   // still brings setup forward, not Settings beside it.
   await call(app, "createLibrary", path.join(home, "Avanzel"));
   expect((await setupSnap(app)).libraryReady).toBe(true);
   await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
   expect(await windowsTitled(app, "Set up Avanzel")).toBe(1);
-  expect(await windowsTitled(app, "Avanzel Settings")).toBe(0);
+  expect(await settingsWindows(app)).toBe(0);
   expect(await shown(app, "setup")).toBe(true);
   await app.close();
 });

@@ -56,7 +56,7 @@ Success: the owner goes a week without opening FluidVoice.
 ## Design
 
 ### 1. Trigger
-A tap of **Right Option** (press and release with no other key between, and no hold-time limit beyond that) starts dictation; another tap ends it. **Esc** cancels and inserts nothing, as in the existing recording. The key is a setting with Right Option as the default. **(my call)** The capsule shows the same listening state it already shows for a thought, with a clear "dictating" wording so the owner can tell which kind of recording is running.
+A tap of **Right Option** (press and release with no other key between, and no hold-time limit beyond that) starts dictation; another tap ends it. **Esc** cancels and inserts nothing, as in the existing recording. The key is a setting with Right Option as the default. **(my call)** The capsule shows the same listening state it already shows for a thought, with a clear "dictating" wording so the owner can tell which kind of recording is running. The owner took that wording out on 5 Nov, once using it (see 8).
 
 ### 2. Speech
 The same recorder and Parakeet model. The result goes through the whole dictionary, sound-alike included: this text has a trail (the history keeps `heard`, the text before the dictionary), so the caution that made calls aliases-only does not apply. **(my call)** If nothing was recognised, nothing is inserted and the capsule says so plainly.
@@ -87,6 +87,22 @@ Sizes, for planning: about 150 entries a day at about 300 characters is roughly 
 
 ### 7. Evening review (last slice)
 One extra agent run at the end of the evening review reads only that day's `raw/dictations/` file and writes a section into the digest: the conversations and decisions of the day, grouped by app and window, five to ten bullets, creating and editing no pages. Skipped when the log is off or the day's file is empty. If the file is very large, a trimmed copy goes to the agent (entries under about 15 characters dropped, headings kept). The project or agent session is not worked out when writing the log; the summary reads it from the window title. **(my call)** The agent's reading of `raw/` for exact words already lets Ask answer "what did I tell the agent about the dictionary today?" with no new code.
+
+### 8. The words as they are said (added 5 Nov, once the owner was using it)
+The owner asked to see what is being recognised, "kind of like subtitles", and agreed to this: the words show in the capsule while they dictate, refreshed about once a second, and what is pasted still comes from the one recognition of the whole recording. Streaming text into the app itself stays a non-goal.
+
+**(my call)** How it works: the capsule's page sends main what the microphone has just heard, once a second. Main recognises what isn't settled yet (`live-words.ts`), skipping a turn while the last one still runs. Once 12 s are waiting they are settled, cut at the quietest 20 ms of their last 4 s, so each recognition stays short however long the dictation runs. The words go through the dictionary like the final ones, and are kept nowhere.
+
+**(my call)** Measured on the owner's Mac with the real Parakeet model and synthesised speech fed at real time, 31 s of it: about 200 ms per update (median), about 90% of one core during the dictation, and the last preview differed from the final text by 2 words in 119. The newest words can change for a second as more audio arrives; three small tricks against that (padding silence, hiding the last word, showing only what two recognitions agree on) showed no clear gain, and the last of them put the text about 11 words behind on one of the two samples, so none is used.
+
+Where they show: first a paper card above the bar. The owner, comparing it with FluidVoice, asked for one unified panel, so they now stay on the capsule's glass: one panel, the words above a row of the app they go to, the voice and the time, with the newest three lines in view. The rule is glass while the words are in the air, paper once they are kept. The live region is the row alone, so a screen reader doesn't read the words out. The pointer goes through a panel with nothing to press. The design and its reasons are in `reports/Avanzel voice capsule redesign.md`.
+
+**(my call)** When they don't show:
+- In a password field or an app on the skip list, as anyone who can see the screen would read them. What has focus is looked at as the dictation starts and about once a second after that. Once words may not show they stay off for the rest of that dictation. When the first look can't tell, they don't show.
+- When the library's speech-to-text is a command, which can run anywhere and cost anything, and isn't to be asked once a second.
+- For a call and for setup's first spoken thought, which have their own displays. A dictation, a thought, a question for Ask and a screen comment all show them. There is no setting to turn them off.
+
+The owner, trying it: took out the line "Dictating into another app. Tap Right Option again to finish, or press Esc.", as it only took room. A dictation now shows the bar alone until there are words. How it ends is said in Settings → Voice, whose line now names Esc too.
 
 ## Order of work
 

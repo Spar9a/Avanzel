@@ -93,7 +93,7 @@ function endsMidLine(file: string): boolean {
  */
 export class DictationHistory {
   /**
-   * `onChange` is called after an entry was added or removed, so that what shows the history (the Dictations pane, the menu's
+   * `onChange` is called after an entry was added or removed, so that what shows the history (the Dictation pane, the menu's
    * "Forget the last dictation") can read it again. It is told nothing of the entry, and a failure in it costs nothing here.
    */
   constructor(

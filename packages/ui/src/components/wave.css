@@ -9,3 +9,4 @@
   background: var(--av-ink-accent);
   transition: height var(--av-duration-quick) linear;
 }
+.av-wave[data-tone="ink"] > i { background: var(--av-ink); }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cursorKeyName, dictationListeningLine, fileModeChoices, fileModeLabel, stopLabel, filingMeta, transcribedLine, transcribingLine } from "../src/shared/transcribing.ts";
+import { cursorKeyName, dictatingIntoLabel, fileModeLabel, filingMeta, transcribedLine, transcribingLine } from "../src/shared/transcribing.ts";
 
 // The capsule's words about turning a recording into text. The engine's own model runs on this Mac; the command in a library's
 // [voice] settings can run anywhere, so for it the words don't say where. And the card's: the file-mode button of a recording,
@@ -31,23 +31,6 @@ describe("the capsule's words about turning a recording into text", () => {
         expect(line).not.toContain("...");
       }
     }
-  });
-});
-
-describe("fileModeChoices: the listening bar's file-mode switch", () => {
-  it("offers now and the review's time, or the inbox while the review is off", () => {
-    expect(fileModeChoices("at 21:00")).toEqual({ now: "Now", evening: "21:00" });
-    expect(fileModeChoices("on Sundays at 18:00")).toEqual({ now: "Now", evening: "Sundays 18:00" });
-    expect(fileModeChoices("")).toEqual({ now: "Now", evening: "Review" });
-    expect(fileModeChoices(null)).toEqual({ now: "Now", evening: "Inbox" });
-  });
-
-  it("names what Stop does, as its badge shows it", () => {
-    expect(stopLabel("now", "at 21:00")).toBe("Stop, and your agent files it now");
-    expect(stopLabel("evening", "at 21:00")).toBe("Stop, and file it at the evening review at 21:00");
-    expect(stopLabel("evening", "")).toBe("Stop, and file it at the evening review");
-    expect(stopLabel("evening", null)).toBe("Stop, and keep it in the inbox");
-    expect(stopLabel(null, "at 21:00")).toBe("Stop");
   });
 });
 
@@ -137,12 +120,10 @@ describe("filingMeta: the filing card's seconds", () => {
   });
 });
 
-describe("the listening card of a dictation into another app", () => {
-  it("says it is dictating into another app, and names the key that finishes it, as Settings names it, and Esc", () => {
-    expect(dictationListeningLine("right-option")).toBe("Dictating into another app. Tap Right Option again to finish, or press Esc.");
-    expect(dictationListeningLine("left-option")).toBe("Dictating into another app. Tap Left Option again to finish, or press Esc.");
-    expect(dictationListeningLine("right-command")).toBe("Dictating into another app. Tap Right Command again to finish, or press Esc.");
-    expect(dictationListeningLine("right-control")).toBe("Dictating into another app. Tap Right Control again to finish, or press Esc.");
+describe("the keys a dictation can listen to", () => {
+  it("names the app a dictation goes to, when it is known", () => {
+    expect(dictatingIntoLabel("Slack")).toBe("Dictating into Slack");
+    expect(dictatingIntoLabel("")).toBe("Dictating");
   });
 
   it("names each key as the Settings menu does", () => {

@@ -76,17 +76,32 @@ export interface MenuInput {
    */
   hasReceipt: boolean;
   /**
-   * The history of dictations at the cursor holds one (`Controller.forgettableDictation`). The menu then ends the group of actions that
-   * take words in with "Forget the last dictation", which takes the newest one out of the history.
+   * The newest dictations at the cursor, newest first (`MENU_DICTATIONS` at most). The menu then has Recent dictations: a click on one
+   * copies its words, as the capsule's card and Settings offer when a paste misses, and "Forget the last dictation" takes the newest out of the history.
    */
-  forgettableDictation: boolean;
+  recentDictations: readonly MenuDictation[];
+  /** Dictating into any app, with its key by name; null on a Mac that can't: it has no row then. */
+  cursorDictation: { enabled: boolean; key: string } | null;
 }
+
+/** A dictation as the menu lists it. The whole words stay in the history, and a click copies them by `id`. */
+export interface MenuDictation {
+  id: string;
+  /** When it was said, ISO: what the history keeps. */
+  at: string;
+  text: string;
+  /** The app that had the cursor: none when Avanzel couldn't see one. */
+  app: string;
+}
+
+/** How many dictations the menu lists. */
+export const MENU_DICTATIONS = 3;
 
 // Anything the owner has to read is an enabled item: macOS draws disabled items too dim to read.
 export type MenuItemModel =
   | { type: "separator" }
-  | { type: "header"; label: string }
-  | { type: "item"; label: string; action: string; accelerator?: string; enabled?: boolean; shelf?: string; detail?: string; sublabel?: string };
+  | { type: "submenu"; label: string; items: MenuItemModel[] }
+  | { type: "item"; label: string; action: string; accelerator?: string; enabled?: boolean; shelf?: string; detail?: string; sublabel?: string; checked?: boolean };
 
 const SEP: MenuItemModel = { type: "separator" };
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -96,11 +111,12 @@ const hhmm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.g
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const daysBetween = (from: Date, to: Date) => Math.round((startOfDay(to).getTime() - startOfDay(from).getTime()) / 86_400_000);
 
-/** "21:00" today, "Tomorrow 09:05", "Sun 18:00" within the week, else "2 Nov 18:00". */
+/** "21:00" today, "Tomorrow 09:05" or "Yesterday 23:59", "Sun 18:00" within the coming week, else "2 Nov 18:00". */
 export function formatWhen(at: Date, now: Date): string {
   const days = daysBetween(now, at);
   if (days === 0) return hhmm(at);
   if (days === 1) return `Tomorrow ${hhmm(at)}`;
+  if (days === -1) return `Yesterday ${hhmm(at)}`;
   if (days > 1 && days < 7) return `${WEEKDAYS[at.getDay()]} ${hhmm(at)}`;
   return `${at.getDate()} ${MONTHS[at.getMonth()]} ${hhmm(at)}`;
 }
@@ -117,14 +133,40 @@ export function menuLabel(item: { label: string; detail?: string }): string {
   return item.detail ? `${item.label} (${item.detail})` : item.label;
 }
 
+/** How today went, for the head of the menu: "Nothing filed today", "1 thought filed today" or "3 thoughts filed today". */
+export function filedLine(filedToday: number): string {
+  if (filedToday <= 0) return "Nothing filed today";
+  return filedToday === 1 ? "1 thought filed today" : `${filedToday} thoughts filed today`;
+}
+
 /**
- * How today went, for the head of the menu: "Nothing filed today.", "1 thought filed today." or "3 thoughts filed today.", and when an
- * evening review is on, its own name and its next time after that ("Evening review at 21:00.", "Evening review tomorrow at 21:00.").
- * `evening` is the soonest evening review that is on and has a time to say. It is a review, not a letter: no letter is built yet.
+ * The second line of the head: what waits in the inbox, and when an evening review is on, its own name and its next time ("2 in the inbox · Evening
+ * review at 21:00", "Evening review tomorrow at 21:00"); none with neither. `evening` is the soonest evening review that is on and has a time
+ * to say. It is a review, not a letter: no letter is built yet.
  */
-export function statusLine(filedToday: number, evening: MenuTask | undefined, now: Date): string {
-  const filed = filedToday <= 0 ? "Nothing filed today." : filedToday === 1 ? "1 thought filed today." : `${filedToday} thoughts filed today.`;
-  return evening?.at ? `${filed} ${evening.name} ${nextPhrase(evening.at, now)}.` : filed;
+export function waitingLine(inbox: number, evening: MenuTask | undefined, now: Date): string | undefined {
+  const parts = [...(inbox > 0 ? [`${inbox} in the inbox`] : []), ...(evening?.at ? [`${evening.name} ${nextPhrase(evening.at, now)}`] : [])];
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+/** A dictation's row in the menu is cut to this many characters: a menu is as wide as its longest row, and it has no way to cut one itself. */
+const DICTATION_ROW_CHARACTERS = 44;
+
+/**
+ * What a dictation's row shows: its words on one line, the first of them with an ellipsis when there are more. It counts whole characters, so a
+ * character made of two UTF-16 units is never cut in half, and it leaves no space before the ellipsis.
+ */
+export function dictationRow(text: string): string {
+  const characters = Array.from(text.replace(/\s+/g, " ").trim());
+  if (characters.length <= DICTATION_ROW_CHARACTERS) return characters.join("");
+  return `${characters.slice(0, DICTATION_ROW_CHARACTERS).join("").trimEnd()}…`;
+}
+
+/** A dictation's second line: the app it went to, and when, each when there is one to say. */
+function dictationPlace({ app, at }: MenuDictation, now: Date): string | undefined {
+  const moment = new Date(at);
+  const parts = [app, Number.isNaN(moment.getTime()) ? "" : formatWhen(moment, now)].filter(Boolean);
+  return parts.length ? parts.join(" · ") : undefined;
 }
 
 /**
@@ -167,8 +209,7 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     ];
   }
 
-  const inbox = input.inbox === 1 ? "1 note in the inbox" : `${input.inbox} notes in the inbox`;
-  // The soonest evening review that is on and has a time: the head names it. The other reviews are listed further down.
+  // The soonest evening review that is on and has a time: the head names it. The reviews themselves are in their submenu.
   const evening = input.tasks
     .filter((t): t is MenuTask & { at: Date } => t.kind === "evening-review" && t.enabled && t.at !== null)
     .sort((a, b) => a.at.getTime() - b.at.getTime())[0];
@@ -176,8 +217,8 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
   const shortcut = (key: keyof Shortcuts) => (input.unregisteredShortcuts.includes(key) ? {} : { accelerator: input.shortcuts[key] });
   // The click goes where the words say: while the head's second line names the inbox it opens the inbox, and with the inbox empty, when
   // its words no longer mention it, it opens the library.
-  const status = statusLine(input.filedToday, evening, now);
-  const head: MenuItemModel = input.inbox > 0 ? { type: "item", label: status, action: "open-inbox", sublabel: inbox } : { type: "item", label: status, action: "open-library" };
+  const waiting = waitingLine(input.inbox, evening, now);
+  const head: MenuItemModel = { type: "item", label: filedLine(input.filedToday), action: input.inbox > 0 ? "open-inbox" : "open-library", ...(waiting ? { sublabel: waiting } : {}) };
   const items: MenuItemModel[] = [
     head,
     ...(input.speechProblem
@@ -185,21 +226,18 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
       : []),
     SEP,
     { type: "item", label: input.recording ? "Stop recording" : "Record a thought", action: "dictate", ...shortcut("dictate") },
-    { type: "item", label: "Capture screen with a comment", action: "capture", ...shortcut("capture") },
+    { type: "item", label: "Capture screen…", action: "capture", ...shortcut("capture") },
     ...(input.callNotes === "ready" ? [{ type: "item" as const, label: "Take notes on a call…", action: "call-notes" }] : []),
     ...(input.callNotes === "running" ? [{ type: "item" as const, label: "Stop taking notes", action: "call-notes-stop" }] : []),
     ...(input.cutShortCalls > 0 ? [{ type: "item" as const, label: "Finish notes for a call that was cut short", action: "finish-cut-short" }] : []),
     { type: "item", label: "Type a thought…", action: "type", ...shortcut("type") },
     { type: "item", label: "Ask your library…", action: "ask", ...shortcut("ask") },
-    ...(input.forgettableDictation ? [{ type: "item" as const, label: "Forget the last dictation", action: "forget-dictation" }] : []),
     SEP,
   ];
 
-  const filed: MenuItemModel[] = [];
-  for (const page of input.recent.slice(0, 3)) {
-    const shelf = shelfLine(page.shelf);
-    filed.push({ type: "item", label: page.title, action: `open:${page.path}`, shelf: page.shelf, ...(shelf ? { sublabel: shelf } : {}) });
-  }
+  // What has been done, and what is set to come. What is rare waits one hover away, in a submenu; a submenu with nothing to show isn't there, and with
+  // none of this to show, nor is the section.
+  const kept: MenuItemModel[] = [];
   if (!input.recent.length && input.filedToday === 0 && !input.undoableFiling && !input.hasReceipt) {
     // Nothing filed yet invites a first thought. What the owner has to read is an enabled item (see MenuItemModel), so this is
     // one, and it does what Record a thought does. It names the shortcut that action really has: none when it didn't register
@@ -207,29 +245,54 @@ export function buildMenuModel(input: MenuInput, now: Date): MenuItemModel[] {
     // to list, and the invitation would contradict the head's count, and the Undo and the receipt of that filing.
     const dictate = input.unregisteredShortcuts.includes("dictate") ? "" : input.shortcuts.dictate;
     const press = dictate ? `Press ${prettyAccelerator(dictate)}` : "Record a thought";
-    filed.push({ type: "item", label: `Nothing filed yet. ${press} and say hello.`, action: "dictate" });
+    kept.push({ type: "item", label: `Nothing filed yet. ${press} and say hello.`, action: "dictate" });
   }
-  // The newest filing's card can be printed again from here, right above the item that takes the filing back; the last of these closes the
-  // section that lists the pages filed.
-  if (input.showableReceipt) filed.push({ type: "item", label: "Show the last receipt", action: "show-receipt" });
-  if (input.undoableFiling) filed.push({ type: "item", label: "Undo the last filing", action: "undo-filing", ...shortcut("undo") });
-  // A section with nothing to show (filings today, but none that wrote a page or can be undone) has no header either.
-  if (filed.length) items.push({ type: "header", label: "Recently filed" }, ...filed, SEP);
+  if (input.undoableFiling) kept.push({ type: "item", label: "Undo the last filing", action: "undo-filing", ...shortcut("undo") });
+
+  const filed: MenuItemModel[] = [];
+  for (const page of input.recent.slice(0, 3)) {
+    const shelf = shelfLine(page.shelf);
+    filed.push({ type: "item", label: page.title, action: `open:${page.path}`, shelf: page.shelf, ...(shelf ? { sublabel: shelf } : {}) });
+  }
+  // The newest filing's card can be printed again from here. A submenu's rows that act come apart from what it lists, as Recent dictations' do.
+  if (input.showableReceipt) filed.push(...(filed.length ? [SEP] : []), { type: "item", label: "Show the last receipt", action: "show-receipt" });
+  if (filed.length) kept.push({ type: "submenu", label: "Recently filed", items: filed });
+
+  if (input.recentDictations.length) {
+    const rows = input.recentDictations.slice(0, MENU_DICTATIONS).map((dictation): MenuItemModel => {
+      const place = dictationPlace(dictation, now);
+      return { type: "item", label: dictationRow(dictation.text), action: `copy-dictation:${dictation.id}`, ...(place ? { sublabel: place } : {}) };
+    });
+    kept.push({
+      type: "submenu",
+      label: "Recent dictations",
+      items: [...rows, SEP, { type: "item", label: "Forget the last dictation", action: "forget-dictation" }, { type: "item", label: "Open history…", action: "open-settings:dictations" }],
+    });
+  }
 
   if (input.tasks.length || input.undoableReview) {
-    items.push({ type: "header", label: "Scheduled reviews" });
-    for (const task of input.tasks) {
+    const reviews: MenuItemModel[] = input.tasks.map((task) => {
       const detail = task.running ? (task.progress ?? "Running…") : task.enabled && task.at ? formatWhen(task.at, now) : "Off";
-      items.push({ type: "item", label: task.name, action: `task:${task.id}`, detail });
-    }
-    if (input.undoableReview) items.push({ type: "item", label: "Undo the last evening review", action: "undo-review" });
-    items.push(SEP);
+      return { type: "item", label: task.name, action: `task:${task.id}`, detail };
+    });
+    if (input.undoableReview) reviews.push(...(reviews.length ? [SEP] : []), { type: "item", label: "Undo the last evening review", action: "undo-review" });
+    kept.push({ type: "submenu", label: "Scheduled reviews", items: reviews });
   }
+  if (kept.length) items.push(...kept, SEP);
 
+  // Its key in the detail: the one place the menu says which it is. macOS has no room beside a checkbox's words for a key held alone.
+  if (input.cursorDictation) {
+    items.push({ type: "item", label: "Dictate into any app", action: "toggle-dictation", detail: input.cursorDictation.key, checked: input.cursorDictation.enabled });
+  }
   items.push(
     { type: "item", label: "Open library", action: "open-library" },
     { type: "item", label: "Settings…", action: "settings", accelerator: "Cmd+," },
     { type: "item", label: "Quit Avanzel", action: "quit", accelerator: "Cmd+Q" },
   );
   return items;
+}
+
+/** Every row of `menu` in the order it is read, with what is in a submenu in its submenu's place: for what looks for one row, wherever it lives. */
+export function menuRows(menu: readonly MenuItemModel[]): Extract<MenuItemModel, { type: "item" }>[] {
+  return menu.flatMap((item) => (item.type === "item" ? [item] : item.type === "submenu" ? menuRows(item.items) : []));
 }

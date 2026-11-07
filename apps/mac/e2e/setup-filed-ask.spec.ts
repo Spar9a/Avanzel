@@ -18,6 +18,7 @@ import {
   throughFound,
   typeFirstThought,
   windowFor,
+  toolbarItem,
 } from "./helpers.ts";
 import { callsTo, closeSetup, FILED, filedFirstThought, inbox, setupSnap, sideways, tabs, zel } from "./setup-helpers.ts";
 
@@ -441,7 +442,7 @@ test("when the library's agent has gone, a failed question offers Open Settings,
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Open Settings"]);
   await notice.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("radio", { name: "Agents", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
   await app.close();
 });
 

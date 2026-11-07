@@ -189,8 +189,8 @@
   --av-zel-cheek: #ff8db7;
   --av-zel-sweat: #7cc4ff;
   --av-zel-shine: #ffffff;
-  --av-hud-surface: rgb(48 46 56 / 0.96);
-  --av-hud-surface-solid: #302e38;
+  --av-hud-surface: rgb(30 29 36 / 0.95);
+  --av-hud-surface-solid: #1e1d24;
   --av-hud-ink: #f2f2f5;
   --av-hud-ink-secondary: rgb(242 242 245 / 0.64);
   --av-hud-fill: rgb(255 255 255 / 0.12);
@@ -247,8 +247,8 @@
     --av-zel-cheek: #ff8db7;
     --av-zel-sweat: #7cc4ff;
     --av-zel-shine: #ffffff;
-    --av-hud-surface: rgb(48 46 56 / 0.96);
-    --av-hud-surface-solid: #302e38;
+    --av-hud-surface: rgb(30 29 36 / 0.95);
+    --av-hud-surface-solid: #1e1d24;
     --av-hud-ink: #f2f2f5;
     --av-hud-ink-secondary: rgb(242 242 245 / 0.64);
     --av-hud-fill: rgb(255 255 255 / 0.12);

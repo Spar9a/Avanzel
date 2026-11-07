@@ -129,6 +129,18 @@ handle = (command) => {
     });
   });
 
+  it("asks for a look as for an inspect that keeps no window, with the app's icon", async () => {
+    stub(`
+handle = (command) => {
+  if (command.cmd === "inspect") reply(command, { app: { name: command.keep ? "kept" : "Notes", bundleId: "b", pid: 7, icon: command.icon ? "cG5n" : null }, window: null, element: null });
+  else reply(command, {});
+};`);
+    const { helper } = make();
+    helper.start("right-option");
+    expect((await helper.look()).app).toEqual({ name: "Notes", bundleId: "b", pid: 7, icon: "cG5n" });
+    expect((await helper.inspect()).app).toEqual({ name: "Notes", bundleId: "b", pid: 7 });
+  });
+
   it("keeps what the helper could not read as nulls, and gives an app with no name or bundle id empty strings", async () => {
     stub(`
 handle = (command) => {
@@ -591,6 +603,17 @@ describe("CursorHelper with the fake helper", () => {
     const { helper, problems } = make();
     helper.start("right-option");
     await expect.poll(() => problems).toEqual([CURSOR_HELPER_GAVE_UP]);
+  });
+
+  it("answers a look with the target of the next inspect, and leaves it for that inspect", async () => {
+    const script = path.join(tmp(), "fake.json");
+    writeFileSync(script, JSON.stringify({ targets: [front("Notes"), front("Mail")] }));
+    process.env.AVANZEL_FAKE_CURSOR = script;
+    const { helper } = make();
+    expect((await helper.look()).app.name).toBe("Notes");
+    expect((await helper.look()).app.name).toBe("Notes");
+    expect((await helper.inspect()).app.name).toBe("Notes");
+    expect((await helper.look()).app.name).toBe("Mail");
   });
 
   it("says it can't tell whether the window is the same when the script doesn't say", async () => {

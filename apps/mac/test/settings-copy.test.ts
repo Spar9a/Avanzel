@@ -1,5 +1,6 @@
 import { MODELS, VAD_MODEL } from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_SKIP_APPS } from "../src/main/cursor-policy.ts";
 import {
   agentNotChecked,
   AGENTS_NOT_CHECKED,
@@ -17,13 +18,16 @@ import {
   DICTATION_NOT_INSERTED,
   dictationPlace,
   DICTATIONS_EMPTY,
-  DICTATIONS_START,
+  dictationsStart,
   dictationWhen,
-  DICTATION_LOG_DESCRIPTION,
+  dictationLogLine,
   DICTATION_LOG_LABEL,
   DICTIONARY_DESCRIPTION,
-  SKIP_APPS_DESCRIPTION,
-  SKIP_SITES_DESCRIPTION,
+  SKIP_APPS_HELP,
+  skipAppsSummary,
+  SKIP_NOTE,
+  SKIP_SITES_HELP,
+  skipSitesSummary,
   DOWNLOAD_NOT_STARTED,
   failedSaveLine,
   fileModeLine,
@@ -55,7 +59,7 @@ import { NO_GIT_LINE } from "../src/shared/problems.ts";
 
 describe("settings copy", () => {
   it("the toolbar lists the panes in their order", () => {
-    expect(SETTINGS_PANES.map((pane) => PANE_LABELS[pane])).toEqual(["General", "Voice", "Shortcuts", "Dictations", "Agents", "Reviews", "Privacy"]);
+    expect(SETTINGS_PANES.map((pane) => PANE_LABELS[pane])).toEqual(["General", "Voice", "Dictation", "Agents", "Reviews", "Privacy"]);
   });
 
   describe("the Dictations pane", () => {
@@ -98,13 +102,15 @@ describe("settings copy", () => {
 
     it("the empty line and its invitation, the note and the Notice's title are plain sentences", () => {
       expect(DICTATIONS_EMPTY).toBe("Nothing dictated yet.");
-      for (const line of [DICTATIONS_EMPTY, DICTATIONS_START, DICTATION_NOT_INSERTED, DICTATION_NOT_DELETED, DICTATION_NOT_COPIED, DICTATION_NOT_COPIED_BODY]) {
+      for (const line of [DICTATIONS_EMPTY, dictationsStart(true), dictationsStart(false), DICTATION_NOT_INSERTED, DICTATION_NOT_DELETED, DICTATION_NOT_COPIED, DICTATION_NOT_COPIED_BODY]) {
         expect(line).toMatch(/^[A-Z]/);
         expect(line).toMatch(/\.$/);
         expect(line).not.toMatch(/!|Oops|Sorry|\.\.\./);
         expect(line).not.toMatch(/\b(he|she|his|her)\b/i);
       }
-      expect(DICTATIONS_START).toBe("Turn on Dictate into any app in Voice, then tap its key and speak. What you say shows here.");
+      // The switch is right above it, so it says only what is left to do.
+      expect(dictationsStart(false)).toBe("Turn it on above, tap the key and speak. What you say shows here.");
+      expect(dictationsStart(true)).toBe("Tap the key and speak. What you say shows here.");
       expect(DICTATION_NOT_INSERTED).toBe("These words didn't go in. Copy them to paste yourself.");
       expect(DICTATION_NOT_DELETED).toBe("That dictation couldn't be deleted.");
     });
@@ -112,33 +118,33 @@ describe("settings copy", () => {
 
   it("libraryLine counts the six shelves' pages and says whether changes can be undone", () => {
     const shelves = { goals: 12, ideas: 41, problems: 9, memories: 18, people: 27, topics: 21 };
-    expect(libraryLine(shelves, true, true, true)).toBe("128 notes on six shelves. Every change is a commit you can undo.");
-    expect(libraryLine({ ideas: 1 }, true, true, true)).toBe("1 note on six shelves. Every change is a commit you can undo.");
+    expect(libraryLine(shelves, true, true, true)).toBe("128 pages on six shelves. Every change is a commit you can undo.");
+    expect(libraryLine({ ideas: 1 }, true, true, true)).toBe("1 page on six shelves. Every change is a commit you can undo.");
     expect(libraryLine({}, true, true, true)).toBe("Your first thought will fill a shelf. Every change is a commit you can undo.");
     // A folder of the library's own that isn't one of the six shelves doesn't count.
-    expect(libraryLine({ ideas: 2, projects: 5 }, false, true, true)).toBe("2 notes on six shelves. This folder has no git history, so changes can't be undone.");
+    expect(libraryLine({ ideas: 2, projects: 5 }, false, true, true)).toBe("2 pages on six shelves. This folder has no git history, so changes can't be undone.");
   });
 
   it("libraryLine says so when the library's settings turn automatic commits off, since then no change is a commit", () => {
     const off = "Automatic commits are off in this library's settings, so changes can't be undone from Avanzel.";
-    expect(libraryLine({ ideas: 1 }, true, false, true)).toBe(`1 note on six shelves. ${off}`);
+    expect(libraryLine({ ideas: 1 }, true, false, true)).toBe(`1 page on six shelves. ${off}`);
     expect(libraryLine({}, true, false, true)).toBe(`Your first thought will fill a shelf. ${off}`);
     // It is a sentence for a library with git. One without keeps its no-git line, whatever it says of automatic commits.
     const noGit = "This folder has no git history, so changes can't be undone.";
-    expect(libraryLine({ ideas: 2 }, false, false, true)).toBe(`2 notes on six shelves. ${noGit}`);
-    expect(libraryLine({ ideas: 2 }, false, true, true)).toBe(`2 notes on six shelves. ${noGit}`);
+    expect(libraryLine({ ideas: 2 }, false, false, true)).toBe(`2 pages on six shelves. ${noGit}`);
+    expect(libraryLine({ ideas: 2 }, false, true, true)).toBe(`2 pages on six shelves. ${noGit}`);
   });
 
   it("libraryLine tells a Mac that can't run git from a folder that has no history", () => {
     // A .git folder on a Mac whose only git is Apple's stub: the history is there, and this Mac can neither add to it nor undo from it.
     expect(NO_GIT_LINE).toBe("This Mac has no git yet, so changes can't be undone.");
-    expect(libraryLine({ ideas: 1 }, true, true, false)).toBe("1 note on six shelves. This Mac has no git yet, so changes can't be undone.");
+    expect(libraryLine({ ideas: 1 }, true, true, false)).toBe("1 page on six shelves. This Mac has no git yet, so changes can't be undone.");
     // Whatever the library's settings say of automatic commits: nothing commits on such a Mac, so that line doesn't come into it.
     expect(libraryLine({}, true, false, false)).toBe("Your first thought will fill a shelf. This Mac has no git yet, so changes can't be undone.");
     // A folder with no .git has no history to speak of, on a Mac that can run git or not: it keeps its own line.
     const noHistory = "This folder has no git history, so changes can't be undone.";
-    expect(libraryLine({ ideas: 2 }, false, true, false)).toBe(`2 notes on six shelves. ${noHistory}`);
-    expect(libraryLine({ ideas: 2 }, false, false, false)).toBe(`2 notes on six shelves. ${noHistory}`);
+    expect(libraryLine({ ideas: 2 }, false, true, false)).toBe(`2 pages on six shelves. ${noHistory}`);
+    expect(libraryLine({ ideas: 2 }, false, false, false)).toBe(`2 pages on six shelves. ${noHistory}`);
   });
 
   it("asSentence ends a line with a full stop once", () => {
@@ -497,28 +503,58 @@ describe("a scheduled review's copy", () => {
   });
 
   it("the dictation switch says in one calm sentence how it works", () => {
-    expect(CURSOR_DICTATION_DESCRIPTION).toBe("Tap the key once to start and once to finish. The words go where the cursor is.");
+    expect(CURSOR_DICTATION_DESCRIPTION).toBe("Tap the key to start and again to finish, or press Esc to cancel. The words go where the cursor is.");
   });
 
-  it("the library log's switch says where the words go, that they stay out of git, and that sync tools' copies are outside it", () => {
+  it("the library log's switch says where the words go and that they stay out of git, and once it is on, that sync tools' copies are outside it", () => {
     expect(DICTATION_LOG_LABEL).toBe("Keep what I dictate in the library");
-    expect(DICTATION_LOG_DESCRIPTION).toBe(
+    expect(dictationLogLine(false)).toBe("Each dictation is also written to raw/dictations/ in the library, one file a day, kept out of git, where your agent can read it.");
+    expect(dictationLogLine(true)).toBe(
       "Each dictation is also written to raw/dictations/ in the library, one file a day, kept out of git, where your agent can read it. " +
         "Copies made by sync tools such as Obsidian Sync or iCloud are outside this: a dictation you forget may stay in them.",
     );
   });
 
-  it("the skip lists say what a line holds, and that what is said there still goes in but is never kept", () => {
-    expect(SKIP_APPS_DESCRIPTION).toBe("One bundle id per line, such as com.apple.Passwords. What you dictate there still goes in, but is never kept.");
+  it("the skip lists say that what is said there still goes in but is never kept, and what a line holds", () => {
+    expect(SKIP_NOTE).toBe("What you dictate there still goes in, but is never kept.");
+    expect(SKIP_APPS_HELP).toBe("One bundle id per line, such as com.apple.Passwords.");
     // Only the browsers that say which page is open can skip a site; the line doesn't promise more.
-    expect(SKIP_SITES_DESCRIPTION).toBe(
-      "One website per line, such as example.com. In Safari and Chrome-based browsers, what you dictate there still goes in but is " +
-        "never kept. Other browsers can't say which site is open, so there it is kept.",
-    );
-    for (const line of [DICTATION_LOG_DESCRIPTION, SKIP_APPS_DESCRIPTION, SKIP_SITES_DESCRIPTION]) {
+    expect(SKIP_SITES_HELP).toBe("One website per line, such as example.com. Safari and Chrome-based browsers say which site is open. Other browsers can't, so there a dictation is kept.");
+    for (const line of [dictationLogLine(true), SKIP_NOTE, SKIP_APPS_HELP, SKIP_SITES_HELP]) {
       expect(line).toMatch(/^[A-Z][^!]*\.$/);
       expect(line).not.toMatch(/Oops|Sorry/);
     }
+  });
+
+  describe("what a skip list's row says of it", () => {
+    it("names every app the list comes with as a person knows it, Enpass once under its two ids, and counts what doesn't fit", () => {
+      expect(skipAppsSummary(DEFAULT_SKIP_APPS)).toBe("1Password, 1Password 7, Bitwarden and 6 more");
+      expect(DEFAULT_SKIP_APPS.map((id) => skipAppsSummary([id]))).toEqual([
+        "1Password",
+        "1Password 7",
+        "Bitwarden",
+        "Keychain Access",
+        "Passwords",
+        "KeePassXC",
+        "LastPass",
+        "Dashlane",
+        "Enpass",
+        "Enpass",
+      ]);
+      expect(skipAppsSummary(["com.enpass.Enpass", "in.sinew.Enpass-Desktop"])).toBe("Enpass");
+    });
+
+    it("ignores capitals, as the rule does, and shows an app it can't name as the end of its id", () => {
+      expect(skipAppsSummary([])).toBe("None");
+      expect(skipAppsSummary(["COM.BITWARDEN.DESKTOP", "com.acme.Notes"])).toBe("Bitwarden and Notes");
+      expect(skipAppsSummary(["com.acme.Notes", "com.acme.Mail", "com.acme.Chat"])).toBe("Notes, Mail and Chat");
+    });
+
+    it("names the sites as the library keeps them, and where the list can hold, as the field with its reason may be shut", () => {
+      expect(skipSitesSummary([])).toBe("None");
+      expect(skipSitesSummary(["bank.example"])).toBe("bank.example, in Safari and Chrome-based browsers");
+      expect(skipSitesSummary(["a.example", "b.example", "c.example", "d.example"])).toBe("a.example, b.example, c.example and 1 more, in Safari and Chrome-based browsers");
+    });
   });
 
   describe("cursorStatus", () => {

@@ -37,6 +37,7 @@ import {
   stubPicker,
   tomorrowAtNine,
   windowFor,
+  toolbarItem,
 } from "./helpers.ts";
 import {
   archived,
@@ -271,7 +272,7 @@ test("a library whose own agent is gone says so", async () => {
   expect(inbox(library)).toHaveLength(1);
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("radio", { name: "Agents", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
   await app.close();
 });
 

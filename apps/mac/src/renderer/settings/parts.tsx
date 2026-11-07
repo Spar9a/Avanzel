@@ -1,7 +1,7 @@
 // What Settings' panes share: the props each pane is given, how a change is made, the Notice a pane shows in place of the
-// library while none is open, and Choose…, which opens a native menu.
-import { Actions, Button, Notice, Select } from "@avanzel/ui";
-import { createContext, useContext, useRef, type ReactNode } from "react";
+// library while none is open, and the pop-up button, which opens a native menu.
+import { Actions, Button, Notice, PopUp } from "@avanzel/ui";
+import { useRef, type ReactNode } from "react";
 import type { PickOption, SettingsSnapshot } from "../../shared/ipc.ts";
 import { asSentence } from "./copy.ts";
 
@@ -91,51 +91,27 @@ export function NoLibrary({ snap, onChange, attempt }: PaneProps): ReactNode {
 }
 
 /**
- * Whether Settings is in the menu bar panel, where its pop-up buttons and its lists are Avanzel's own (`Select`, `ListField`), drawn
- * inside the panel. Its own window, which the e2e tests drive, keeps macOS's menus and its fields of lines.
+ * A pop-up button for a row: it shows `value`, and a press opens a native menu of `options` under it, with the current one checked (the
+ * list for a microphone, the dictation key, a review's day or its agent). `onChoose` gets the value of the item picked, and a menu that
+ * closes without a pick does nothing. `label` says what is chosen, so VoiceOver hears "Day: Sunday", and tests find the button by that.
  */
-export const EmbeddedSettings = createContext(false);
-
-/**
- * "Choose…" in a group named for its row and the value the row shows, `${label}: ${valueLabel}` ("Day: Sunday"); its
- * menu pops up at the group's bottom left (getBoundingClientRect). This stands in for a pop-up button: the row says the
- * value in words, and Choose… opens a native menu of `options` (the list for a microphone, a review's day or its agent).
- * `onChoose` gets the value of the item picked, and a menu that closes without a pick does nothing. The group's name is
- * what VoiceOver says, so it hears the value beside the button, and what tests find the row's button by, when several
- * rows each have a Choose….
- */
-export function ChooseButton({ label, valueLabel, options, onChoose, disabled }: {
+export function PickButton({ label, value, options, onChoose, disabled }: {
   label: string;
-  valueLabel: string;
+  value: string;
   options: readonly PickOption[];
   onChoose(value: string): void;
   /** The choice can't be made now (dictating into any app on a Mac that can't); the button is there but off. */
   disabled?: boolean;
 }): ReactNode {
-  const embedded = useContext(EmbeddedSettings);
-  const group = useRef<HTMLDivElement>(null);
-  // In the menu bar panel, Avanzel's own pop-up button, whose menu stays inside the panel and says the value itself.
-  if (embedded) {
-    const chosen = options.find((o) => o.checked)?.value ?? null;
-    return (
-      <Select
-        label={label}
-        options={options.map((o) => ({ value: o.value, label: o.label }))}
-        value={chosen}
-        placeholder={valueLabel || "Choose…"}
-        disabled={disabled}
-        onChange={onChoose}
-      />
-    );
-  }
+  const box = useRef<HTMLDivElement>(null);
   const choose = async () => {
-    const box = group.current?.getBoundingClientRect();
-    const value = await api.pick(options, box ? { x: box.left, y: box.bottom } : null);
-    if (value !== null) onChoose(value);
+    const at = box.current?.getBoundingClientRect();
+    const picked = await api.pick(options, at ? { x: at.left, y: at.bottom } : null);
+    if (picked !== null) onChoose(picked);
   };
   return (
-    <div ref={group} role="group" aria-label={`${label}: ${valueLabel}`}>
-      <Button size="small" variant="secondary" disabled={disabled} onClick={choose}>Choose…</Button>
+    <div ref={box}>
+      <PopUp label={label} value={value} disabled={disabled} onClick={() => void choose()} />
     </div>
   );
 }

@@ -63,12 +63,12 @@ doesn't yet notice a call by itself, read calendar titles or tell the other side
 
 Good to know:
 
-- **Dictate into any app**: tap Right Option (settable in Settings → Voice) to dictate into the app that has
-  focus; the words are pasted at the cursor through the clipboard, and what you had on the clipboard (copied
-  files and other formats included) is put back after, unless you copied something meanwhile. The words are
-  marked so clipboard managers skip them. Every dictation is kept in a history in Settings, and an optional
+- **Dictate into any app**: tap Right Option (settable in Settings → Dictation, and turned on or off there or in the menu bar menu) to dictate into the app that has
+  focus; the capsule shows a preview of the words as you speak, then the words are pasted at the cursor through
+  the clipboard, and what you had on the clipboard (copied files and other formats included) is put back after,
+  unless you copied something meanwhile. The words are marked so clipboard managers skip them. Every dictation is kept in a history in Settings → Dictation, the last three can be copied again from Recent dictations in the menu bar menu, and an optional
   library log keeps them in `raw/dictations/` with the app and window; nothing is kept from password managers,
-  password fields, Chrome-family private windows or the apps and sites you list (Safari and Firefox private windows can't be told apart).
+  password fields, Chrome-family private windows or the apps and sites you list in Settings → Privacy (Safari and Firefox private windows can't be told apart).
 - **A dictionary** in Settings → Voice lists the names and terms you use, one per line. What the speech model
   hears is corrected to them (`Ollama = Alema` fixes a word it keeps getting wrong), your agent is told how to
   spell them, and a thought that was corrected keeps what was heard in its `heard:` line.
@@ -77,9 +77,9 @@ Good to know:
 - **A shortcut another app holds** does nothing when pressed (⌥Space is also the default of
   Alfred, Raycast, ChatGPT and Superwhisper). When macOS reports a shortcut as taken, the capsule
   names it once, as soon as there is a library, with the app that probably holds it and two free
-  shortcuts to pick; Settings → Voice offers the same, and the menu bar menu stops showing the
+  shortcuts to pick; Settings → General offers the same, and the menu bar menu stops showing the
   taken one. macOS can't always tell, so if ⌥Space opens another app, pick another shortcut in
-  Settings → Voice.
+  Settings → General.
 - **Setup** checks that ⌥Space really reaches Avanzel. When another app holds it, or you reach
   for it in the setup window (⌥ goes down) and no press follows within 3 s, it names the likely
   app and offers two free shortcuts. Reading, thinking or typing there never brings that up.
@@ -95,7 +95,7 @@ Good to know:
   and reopening Avanzel, and each library keeps its own; one whose commit has left the library's
   history (after a reset, say) is dropped quietly. **⌥⇧Z** does the same from any app, and says so
   once; with nothing to undo, the capsule says "There's no filing to undo." It is a shortcut like
-  the other four: Settings → Voice records it. **Show the last receipt**, right above Undo, reopens
+  the other four: Settings → General records it. **Show the last receipt**, under Recently filed in the same menu, reopens
   the last filing's card (filed, or noted) with the pages that are still there, Open, and Undo while
   that filing can still be taken back, also after a restart. Its stamp is still and dated the day
   the thought was filed. It and ⌥⇧Z's "no filing" bar come only when the
@@ -118,8 +118,8 @@ Good to know:
   while the Ask window stays open.
 - **Settings → Agents** checks that each agent is signed in. For Claude Code and Codex the checks
   run when the pane opens and when a library is set up; they read only the sign-in and never ask
-  the model. Check asks other agents one short question, and Claude Code or Codex too when their
-  sign-in can't be read.
+  the model. **Check agents** asks other agents one short question, and Claude Code or Codex too when
+  their sign-in can't be read.
 - **Agents without a sign-in command** are asked one short question in setup only when you pick
   them or press Check again.
 - **No symlinks inside the library** for `inbox/`, `raw/` or `reviews/`: Avanzel never writes

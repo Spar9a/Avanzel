@@ -1,12 +1,13 @@
-// Settings → Voice → "Dictate into any app": the switch, the key, and the line that says which permission is missing. The Mac's side
-// (the permissions) is the fake cursor helper (AVANZEL_FAKE_CURSOR), whose script says what macOS has granted.
+// Settings → Dictation: the switch, the key, and the line that says which permission is missing, and Settings → Privacy, which lists
+// them all. The Mac's side (the permissions) is the fake cursor helper (AVANZEL_FAKE_CURSOR), whose script says what macOS has granted.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CursorHelper } from "../src/main/cursor-helper.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
-import { answerMenus, call, launch, makeLibrary, openSettings, shownMenus } from "./helpers.ts";
+import { notified } from "./capsule-helpers.ts";
+import { answerMenus, call, launch, makeLibrary, openSettings, shown, shownMenus, toolbarItem, windowFor } from "./helpers.ts";
 
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
 
@@ -17,23 +18,32 @@ function fakeCursor(permissions: { accessibility: boolean; inputMonitoring: bool
   return script;
 }
 
-const group = (settings: Page) => settings.locator("section", { has: settings.getByRole("heading", { name: "Dictate into any app", level: 3 }) });
+/** What main has told the page of the permissions has been drawn: a round trip comes back after any answer sent before it, and a frame later React has drawn it. */
+async function permissionsDrawn(settings: Page): Promise<void> {
+  await settings.evaluate(async () => {
+    await window.avanzel.settings.cursorPermissions();
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  });
+}
+
+/** The Dictation pane's first group, which has no heading: what the pane holds under the toolbar. */
+const group = (settings: Page) => settings.getByRole("main");
 
 test("the switch is off to begin with, turns dictating on at once, and is still on after Avanzel opens again", async () => {
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
   const env = { AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData, AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: true }) };
   const app = await launch(env);
-  const settings = await openSettings(app, "Voice");
+  const settings = await openSettings(app, "Dictation");
   const toggle = settings.getByRole("switch", { name: "Dictate into any app" });
   await expect(toggle).not.toBeChecked();
-  await expect(settings.getByText("Tap the key once to start and once to finish. The words go where the cursor is.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Tap the key to start and again to finish, or press Esc to cancel. The words go where the cursor is.", { exact: true })).toBeVisible();
   await toggle.click();
   await expect(toggle).toBeChecked();
   await expect.poll(async () => (await snapshot(app)).app.cursorDictation).toEqual({ enabled: true, key: "right-option" });
   await app.close();
 
   const again = await launch(env);
-  const settingsAgain = await openSettings(again, "Voice");
+  const settingsAgain = await openSettings(again, "Dictation");
   await expect(settingsAgain.getByRole("switch", { name: "Dictate into any app" })).toBeChecked();
   await again.close();
 });
@@ -42,8 +52,8 @@ test("the key is chosen from Right Option, Left Option, Right Command and Right 
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
   const env = { AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData, AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: true }) };
   const app = await launch(env);
-  const settings = await openSettings(app, "Voice");
-  const choose = settings.getByRole("group", { name: "Dictation key: Right Option", exact: true }).getByRole("button", { name: "Choose…" });
+  const settings = await openSettings(app, "Dictation");
+  const choose = settings.getByRole("button", { name: "Dictation key: Right Option", exact: true });
   await answerMenus(app, "Right Command");
   await choose.click();
   await expect.poll(() => shownMenus(app)).toHaveLength(1);
@@ -56,30 +66,61 @@ test("the key is chosen from Right Option, Left Option, Right Command and Right 
   await expect.poll(async () => (await snapshot(app)).app.cursorDictation.key).toBe("right-command");
   // Choosing a key doesn't turn dictating on.
   expect((await snapshot(app)).app.cursorDictation.enabled).toBe(false);
-  await expect(settings.getByRole("group", { name: "Dictation key: Right Command", exact: true })).toBeVisible();
+  await expect(settings.getByRole("button", { name: "Dictation key: Right Command", exact: true })).toBeVisible();
   await app.close();
 
   const again = await launch(env);
-  const settingsAgain = await openSettings(again, "Voice");
-  await expect(settingsAgain.getByRole("group", { name: "Dictation key: Right Command", exact: true })).toBeVisible();
+  const settingsAgain = await openSettings(again, "Dictation");
+  await expect(settingsAgain.getByRole("button", { name: "Dictation key: Right Command", exact: true })).toBeVisible();
   await again.close();
 });
 
-test("with both permissions granted the group says so, with nothing to press, even while dictating is off", async () => {
+test("with both permissions granted the pane has nothing to say of them, and Privacy lists them as allowed, even while dictating is off", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: true }) });
-  const settings = await openSettings(app, "Voice");
+  const settings = await openSettings(app, "Privacy");
   expect((await snapshot(app)).app.cursorDictation.enabled).toBe(false);
-  await expect(group(settings).getByText("Avanzel can see the key and paste for you.", { exact: true })).toBeVisible();
+  for (const name of ["Accessibility", "Input Monitoring"]) {
+    await expect(settings.getByRole("group", { name, exact: true }).getByText("Allowed", { exact: true })).toBeVisible();
+  }
+  await toolbarItem(settings, "Dictation").click();
+  await expect(settings.getByRole("heading", { name: "Dictation", exact: true })).toBeVisible();
+  await permissionsDrawn(settings);
+  await expect(group(settings).getByText(/^Avanzel (can|needs) /)).toHaveCount(0);
   await expect(group(settings).getByRole("button", { name: "Open System Settings" })).toHaveCount(0);
   await app.close();
 });
 
-test("with Accessibility missing the group says so and its button asks macOS and opens that pane; granting it clears the line when Settings is back in front", async () => {
+test("Privacy lists what dictating lacks too, and each row's button asks macOS and opens where it is turned on", async () => {
   const script = fakeCursor({ accessibility: false, inputMonitoring: true });
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: script });
-  const settings = await openSettings(app, "Voice");
+  const settings = await openSettings(app, "Privacy");
+  const accessibility = settings.getByRole("group", { name: "Accessibility", exact: true });
+  await expect(settings.getByRole("group", { name: "Input Monitoring", exact: true }).getByText("Allowed", { exact: true })).toBeVisible();
+  await accessibility.getByRole("button", { name: "Open System Settings" }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Accessibility"]);
+  await expect(accessibility.getByRole("button", { name: "Open System Settings" })).toBeVisible();
+  // Granted in System Settings: the row says so when Settings is back in front.
+  writeFileSync(script, JSON.stringify({ permissions: { accessibility: true, inputMonitoring: true } }));
+  await settings.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(accessibility.getByText("Allowed", { exact: true })).toBeVisible();
+  await app.close();
+});
+
+test("with both missing, each row of Privacy opens its own place in System Settings", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: false, inputMonitoring: false }) });
+  const settings = await openSettings(app, "Privacy");
+  await settings.getByRole("group", { name: "Accessibility", exact: true }).getByRole("button", { name: "Open System Settings" }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Accessibility"]);
+  await settings.getByRole("group", { name: "Input Monitoring", exact: true }).getByRole("button", { name: "Open System Settings" }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Accessibility", "System Settings → Input Monitoring"]);
+  await app.close();
+});
+
+test("with Accessibility missing the pane says so and its button asks macOS and opens that pane; granting it takes the line away when Settings is back in front", async () => {
+  const script = fakeCursor({ accessibility: false, inputMonitoring: true });
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: script });
+  const settings = await openSettings(app, "Dictation");
   await expect(group(settings).getByText("Avanzel needs Accessibility to paste for you.", { exact: true })).toBeVisible();
-  await expect(settings.getByText("Avanzel can see the key and paste for you.", { exact: true })).toHaveCount(0);
   expect(await call(app, "openedForTests")).toEqual([]);
 
   await group(settings).getByRole("button", { name: "Open System Settings" }).click();
@@ -90,23 +131,23 @@ test("with Accessibility missing the group says so and its button asks macOS and
   // The person grants it in System Settings and comes back: the window gets the focus again.
   writeFileSync(script, JSON.stringify({ permissions: { accessibility: true, inputMonitoring: true } }));
   await settings.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await expect(group(settings).getByText("Avanzel can see the key and paste for you.", { exact: true })).toBeVisible();
+  await expect(group(settings).getByText("Avanzel needs Accessibility to paste for you.", { exact: true })).toHaveCount(0);
   await expect(group(settings).getByRole("button", { name: "Open System Settings" })).toHaveCount(0);
   await app.close();
 });
 
-test("with Input Monitoring missing the group says so, and its button opens that pane", async () => {
+test("with Input Monitoring missing the pane says so, and its button opens that pane", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: false }) });
-  const settings = await openSettings(app, "Voice");
+  const settings = await openSettings(app, "Dictation");
   await expect(group(settings).getByText("Avanzel needs Input Monitoring to see the key.", { exact: true })).toBeVisible();
   await group(settings).getByRole("button", { name: "Open System Settings" }).click();
   await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Input Monitoring"]);
   await app.close();
 });
 
-test("with both missing the group says both in one sentence, turning dictating on still works, and the line stays", async () => {
+test("with both missing the pane says both in one sentence, turning dictating on still works, and the line stays", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: false, inputMonitoring: false }) });
-  const settings = await openSettings(app, "Voice");
+  const settings = await openSettings(app, "Dictation");
   const line = "Avanzel needs Input Monitoring to see the key and Accessibility to paste for you.";
   await expect(group(settings).getByText(line, { exact: true })).toBeVisible();
   await group(settings).getByRole("switch", { name: "Dictate into any app" }).click();
@@ -118,13 +159,70 @@ test("with both missing the group says both in one sentence, turning dictating o
   await app.close();
 });
 
+/** The menu the tray holds, its Dictate into any app row as macOS was given it: its words, and whether it has a check. */
+const toggleRow = (app: ElectronApplication) =>
+  app.evaluate(() => {
+    type Item = { label: string; type: string; checked: boolean };
+    const bar = (globalThis as unknown as { __avanzel: { menuBar: { menu: { items: Item[] } | null } } }).__avanzel.menuBar;
+    const row = bar.menu?.items.find((item) => item.label.startsWith("Dictate into any app"));
+    return row ? { label: row.label, type: row.type, checked: row.checked } : null;
+  });
+
+test("the menu's row turns dictating on and off with a check, names the key, and leaves Settings shut when nothing is missing", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: true }) });
+  await call(app, "snapshot"); // it has started
+  expect(await toggleRow(app)).toEqual({ label: "Dictate into any app (Right Option)", type: "checkbox", checked: false });
+  await call(app, "menuAction", "toggle-dictation");
+  await expect.poll(async () => (await snapshot(app)).app.cursorDictation.enabled).toBe(true);
+  await expect.poll(() => toggleRow(app)).toMatchObject({ checked: true });
+  await call(app, "menuAction", "toggle-dictation");
+  await expect.poll(async () => (await snapshot(app)).app.cursorDictation.enabled).toBe(false);
+  await expect.poll(() => toggleRow(app)).toMatchObject({ checked: false });
+  expect(await shown(app, "settings")).toBe(false);
+  // Another key, chosen in Settings: the row says so.
+  await call(app, "setCursorDictation", { key: "left-option" });
+  await expect.poll(() => toggleRow(app)).toMatchObject({ label: "Dictate into any app (Left Option)" });
+  await app.close();
+});
+
+test("turned on from the menu with a permission missing, Settings opens on Dictation, which says which; turned off, it doesn't", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: false, inputMonitoring: true }) });
+  await call(app, "snapshot");
+  await call(app, "menuAction", "toggle-dictation");
+  const settings = await windowFor(app, "settings");
+  await expect(settings.getByRole("heading", { name: "Dictation", exact: true })).toBeVisible();
+  await expect(group(settings).getByText("Avanzel needs Accessibility to paste for you.", { exact: true })).toBeVisible();
+  expect((await snapshot(app)).app.cursorDictation.enabled).toBe(true);
+  const closed = settings.waitForEvent("close");
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes("/renderer/settings/"))?.close());
+  await closed;
+  await call(app, "menuAction", "toggle-dictation");
+  await expect.poll(async () => (await snapshot(app)).app.cursorDictation.enabled).toBe(false);
+  expect(await shown(app, "settings")).toBe(false);
+  await app.close();
+});
+
+test("a setting the disk won't take is said in a notification, and the menu's row goes back to what is", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData, AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: true }) });
+  await call(app, "snapshot");
+  mkdirSync(path.join(userData, "settings.json.tmp")); // the app can't write its settings when a folder stands where the temporary file it writes first would go
+  await call(app, "menuAction", "toggle-dictation");
+  await expect
+    .poll(() => notified(app, "That change wasn't saved."))
+    .toEqual([{ title: "That change wasn't saved.", body: "Dictating into any app stays as it was." }]);
+  expect((await snapshot(app)).app.cursorDictation.enabled).toBe(false);
+  expect(await toggleRow(app)).toMatchObject({ checked: false });
+  await app.close();
+});
+
 // The quiet stage can't take the built helper away, so this runs where it isn't built (a Mac that can't dictate into any app has none).
-test("on a Mac where the helper isn't there, the group says dictating isn't available and its controls are off", async () => {
+test("on a Mac where the helper isn't there, the pane says dictating isn't available and its controls are off", async () => {
   test.skip(CursorHelper.available(), "the helper is built on this Mac");
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
-  const settings = await openSettings(app, "Voice");
+  const settings = await openSettings(app, "Dictation");
   await expect(group(settings).getByText("Dictating into any app isn't available on this Mac.", { exact: true })).toBeVisible();
   await expect(group(settings).getByRole("switch", { name: "Dictate into any app" })).toBeDisabled();
-  await expect(group(settings).getByRole("button", { name: "Choose…" })).toBeDisabled();
+  await expect(group(settings).getByRole("button", { name: /^Dictation key: / })).toBeDisabled();
   await app.close();
 });

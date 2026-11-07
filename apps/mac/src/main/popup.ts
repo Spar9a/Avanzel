@@ -1,4 +1,4 @@
-// Choose…, in Settings: a native pop-up menu, which macOS draws and a page can't. The page sends the options and a
+// A pop-up button, in Settings: a native pop-up menu, which macOS draws and a page can't. The page sends the options and a
 // point; main checks them (pickRequest), pops the menu up over the window (popupChoice), and sends back the value
 // picked. The menu bar's own choices (which call to take notes on) pop up under its icon (trayChoice).
 import { Menu, type BrowserWindow, type Tray } from "electron";

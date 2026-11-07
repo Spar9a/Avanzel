@@ -141,10 +141,10 @@
   "hud": {
     "$type": "color",
     "surface": {
-      "$value": "{palette.hud.glass-dark}"
+      "$value": "{palette.hud.glass}"
     },
     "surface-solid": {
-      "$value": "{palette.hud.solid-dark}"
+      "$value": "{palette.hud.solid}"
     },
     "ink": {
       "$value": "{palette.hud.ink}"

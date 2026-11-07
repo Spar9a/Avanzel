@@ -1,35 +1,45 @@
-// Settings → Shortcuts: each action's shortcut, which works in every app, with a Notice for each one that has a problem. A shortcut
-// changes by its keyboard button and the next whole shortcut pressed; a taken one offers the free ones to use instead.
-import { Actions, Button, Group, GroupRow, Kbd, Notice, Row, Stack, Text } from "@avanzel/ui";
+// The shortcuts, on Settings → General: a key cap for each, which a press changes, and a Notice for each one that has a problem.
+import { Actions, Button, Group, GroupRow, Notice, ShortcutField } from "@avanzel/ui";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, inMenuLine, prettyAccelerator } from "../../../main/shortcuts.ts";
-import type { Shortcuts } from "../../../shared/ipc.ts";
+import type { Shortcuts as ShortcutKeys } from "../../../shared/ipc.ts";
 import { passesThrough, toAccelerator } from "../accelerator.ts";
-import { attemptChange, type PaneProps } from "../parts.tsx";
+import type { PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
 
-/** The Shortcuts pane: a row for each action, and the problems of those that don't work, each with the free ones to use instead. */
-export function ShortcutsPane(props: PaneProps): ReactNode {
+/** What a screen reader is told of a recording given up. */
+const NOT_CHANGED = "Not changed";
+
+/** `primary`: the fix of the first Notice that has one to offer may be the pane's one primary button. */
+export function Shortcuts({ primary, ...props }: PaneProps & { primary: boolean }): ReactNode {
   const { snap, onChange, attempt } = props;
   // The shortcut being recorded, if any: one at a time.
-  const [recording, setRecording] = useState<keyof Shortcuts | null>(null);
-  // Each shortcut row's group of controls, to put the focus on its Change when a button the person used has gone.
-  const groups = useRef<Partial<Record<keyof Shortcuts, HTMLDivElement | null>>>({});
-  const rows = Object.entries(ACTION_NAMES) as [keyof Shortcuts, string][];
+  const [recording, setRecording] = useState<keyof ShortcutKeys | null>(null);
+  // How the last recording ended, which its field tells a screen reader, as nothing else on screen says so.
+  const [saved, setSaved] = useState<{ key: keyof ShortcutKeys; said: string } | null>(null);
+  // Each shortcut row's box, to put the focus back on its field when a button the person used has gone.
+  const boxes = useRef<Partial<Record<keyof ShortcutKeys, HTMLDivElement | null>>>({});
+  const rows = Object.entries(ACTION_NAMES) as [keyof ShortcutKeys, string][];
   const problems = rows.flatMap(([key]) => {
     const message = snap.shortcutProblems[key];
     // The snapshot lists the best free shortcut first; it goes last here, where a row of buttons keeps its primary.
     return message ? [{ key, message, alternatives: [...(snap.shortcutAlternatives[key] ?? [])].reverse() }] : [];
   });
-  // The pane has one primary button, the fix of the first Notice that has one to offer: the best free shortcut of the
-  // first problem with any, or else Try again. A Notice with nothing to offer leaves it to the next.
-  const primaryKey = problems.find(({ alternatives }) => alternatives.length > 0)?.key;
+  // The best free shortcut of the first problem with any. A Notice with nothing to offer leaves it to the next.
+  const primaryKey = primary ? problems.find(({ alternatives }) => alternatives.length > 0)?.key : undefined;
 
-  /** `accelerator` becomes `key`'s shortcut, and the focus goes to that row's Change. */
-  const save = async (key: keyof Shortcuts, accelerator: string) => {
-    await attemptChange(props, () => api.setApp({ shortcuts: { ...snap.app.shortcuts, [key]: accelerator } }));
-    groups.current[key]?.querySelector("button")?.focus();
+  /**
+   * `accelerator` becomes `key`'s shortcut, and the focus goes to that row's field. It is said to be saved only when it was, and works: a refusal is told
+   * by the window, and another app's holding it by its row's Notice.
+   */
+  const save = async (key: keyof ShortcutKeys, accelerator: string) => {
+    const next = await attempt(() => api.setApp({ shortcuts: { ...snap.app.shortcuts, [key]: accelerator } }));
+    if (next) {
+      onChange(next);
+      if (!next.shortcutProblems[key]) setSaved({ key, said: `Saved ${prettyAccelerator(accelerator)}` });
+    }
+    boxes.current[key]?.querySelector("button")?.focus();
   };
 
   // While a shortcut is recorded, the next whole shortcut pressed anywhere in the window is saved: one with ⌃ or ⌥, or a
@@ -43,7 +53,10 @@ export function ShortcutsPane(props: PaneProps): ReactNode {
       if (passesThrough(event)) return; // a ⌘ key it never takes is the app's: ⌘Q still quits while it listens
       event.preventDefault();
       event.stopPropagation();
-      if (event.key === "Escape") return setRecording(null);
+      if (event.key === "Escape") {
+        setSaved({ key: recording, said: NOT_CHANGED });
+        return setRecording(null);
+      }
       const accelerator = toAccelerator(event);
       if (!accelerator) return; // only modifiers so far, or a key apps use themselves: keep listening
       setRecording(null);
@@ -58,51 +71,30 @@ export function ShortcutsPane(props: PaneProps): ReactNode {
     };
   }, [recording, snap, onChange, attempt]);
 
-  // While it records, Avanzel's own shortcuts are let go: macOS would hand a key Avanzel holds to it, and the page would never see it.
-  const listening = recording !== null;
-  useLayoutEffect(() => {
-    if (!listening) return;
-    api.recordingShortcut(true);
-    return () => api.recordingShortcut(false);
-  }, [listening]);
-
   return (
-    <Stack gap={20}>
-      <Group label="In every app">
+    <>
+      <Group label="Shortcuts" note="They work in every app. Click one to change it.">
         {rows.map(([key, name]) => (
           <GroupRow key={key} label={name}>
             <div
-              role="group"
-              aria-label={name}
-              ref={(group) => {
-                groups.current[key] = group;
+              ref={(box) => {
+                boxes.current[key] = box;
               }}
               onBlur={(event) => {
                 // The focus went to another control, or to nothing: this row's recording is over.
                 if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setRecording((now) => (now === key ? null : now));
               }}
             >
-              <Row gap={8}>
-                {/* While it listens, the row asks for the keys in place of the shortcut it has. */}
-                {/* One fixed box for both, so neither the button nor the row moves when it starts or stops listening. */}
-                <div className="settings-shortcut">
-                  {recording === key ? (
-                    <>
-                      <Text variant="footnote" tone="secondary">Press the new shortcut…</Text>
-                      <Text variant="caption" tone="secondary">Esc to stop</Text>
-                    </>
-                  ) : (
-                    <Kbd>{prettyAccelerator(snap.app.shortcuts[key])}</Kbd>
-                  )}
-                </div>
-                <Button
-                  size="small"
-                  variant={recording === key ? "primary" : "quiet"}
-                  icon="type"
-                  label={recording === key ? "Press the new shortcut…" : "Change"}
-                  onClick={() => setRecording((now) => (now === key ? null : key))}
-                />
-              </Row>
+              <ShortcutField
+                label={name}
+                value={prettyAccelerator(snap.app.shortcuts[key])}
+                recording={recording === key}
+                saved={saved?.key === key ? saved.said : undefined}
+                onClick={() => {
+                  setSaved(recording === key ? { key, said: NOT_CHANGED } : null);
+                  setRecording((now) => (now === key ? null : key));
+                }}
+              />
             </div>
           </GroupRow>
         ))}
@@ -134,6 +126,6 @@ export function ShortcutsPane(props: PaneProps): ReactNode {
           {snap.library?.exists ? inMenuLine(key) : undefined}
         </Notice>
       ))}
-    </Stack>
+    </>
   );
 }

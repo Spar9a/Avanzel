@@ -21,6 +21,7 @@ import {
   stubPicker,
   throughFound,
   windowFor,
+  toolbarItem,
 } from "./helpers.ts";
 import { expectInPanel, expectProblem, expectStoppedRecording, letTranscriptionGo, noteTranscriptions, stopTranscribing, transcriptions } from "./capsule-helpers.ts";
 import { pressShortcut, sentToCapsule, watchCapsule, zel } from "./setup-helpers.ts";
@@ -123,7 +124,7 @@ test("a recording whose audio never arrives is given up, and the capsule is told
   // Its button takes the person to the microphone, in Settings → Voice, and the card goes.
   await capsule.getByRole("button", { name: "Choose microphone", exact: true }).click();
   const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("radio", { name: "Voice", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await app.close();
 });

@@ -26,8 +26,9 @@ import {
   snap,
   stubPicker,
   windowFor,
+  settingsRow, toolbarItem,
 } from "./helpers.ts";
-import { callsTo, settingsSnap, setupSnap, windowsTitled } from "./setup-helpers.ts";
+import { callsTo, settingsSnap, settingsWindows, setupSnap, windowsTitled } from "./setup-helpers.ts";
 
 /** Closes the setup window, as its red button does, and waits until it has gone. */
 async function closeSetup(app: ElectronApplication): Promise<void> {
@@ -78,10 +79,9 @@ test("a scheduled review's switch, schedule, agent and instructions are edited i
   await expect(weekly.getByText("Use a time like 21:00.", { exact: true })).toBeVisible();
   expect(read(library, "tasks/weekly-review.md")).toContain("schedule: weekly sun 18:00");
 
-  // The day comes from a menu of the seven days, with the one saved checked. Its row's group says the day, so VoiceOver
-  // hears it beside Choose….
+  // The day comes from a menu of the seven days, with the one saved checked. Its button says the day, so VoiceOver hears it.
   await answerMenus(app, "Monday");
-  await weekly.getByRole("group", { name: "Day: Sunday", exact: true }).getByRole("button", { name: "Choose…" }).click();
+  await weekly.getByRole("button", { name: "Day: Sunday", exact: true }).click();
   await expect.poll(() => shownMenus(app)).toHaveLength(1);
   expect((await shownMenus(app))[0]).toEqual([
     { label: "Sunday", checked: true },
@@ -93,21 +93,21 @@ test("a scheduled review's switch, schedule, agent and instructions are edited i
     { label: "Saturday", checked: false },
   ]);
   await expect(weekly.getByText("Monday", { exact: true })).toBeVisible();
-  await expect(weekly.getByRole("group", { name: "Day: Monday", exact: true })).toBeVisible();
+  await expect(weekly.getByRole("button", { name: "Day: Monday", exact: true })).toBeVisible();
   // Every day has no day to choose, and Every week brings back the one chosen.
   await weekly.getByRole("radio", { name: "Every day", exact: true }).click();
-  await expect(weekly.getByRole("group", { name: /^Day: / })).toHaveCount(0);
+  await expect(weekly.getByRole("button", { name: /^Day: / })).toHaveCount(0);
   await weekly.getByRole("radio", { name: "Every week", exact: true }).click();
   await expect(weekly.getByText("Monday", { exact: true })).toBeVisible();
 
   // A time without its leading zero is one, and the agent comes from a menu that starts with the library's own.
   await time.fill("7:30");
   await answerMenus(app, "Codex");
-  await weekly.getByRole("group", { name: "Agent: The library's agent", exact: true }).getByRole("button", { name: "Choose…" }).click();
+  await weekly.getByRole("button", { name: "Agent: The library's agent", exact: true }).click();
   await expect.poll(() => shownMenus(app)).toHaveLength(1);
   expect((await shownMenus(app))[0]![0]).toEqual({ label: "The library's agent", checked: true });
   await expect(weekly.getByText("Codex", { exact: true })).toBeVisible();
-  await expect(weekly.getByRole("group", { name: "Agent: Codex", exact: true })).toBeVisible();
+  await expect(weekly.getByRole("button", { name: "Agent: Codex", exact: true })).toBeVisible();
 
   await weekly.getByRole("textbox", { name: "Instructions" }).fill("Look for stale goals.");
   await weekly.getByRole("button", { name: "Save", exact: true }).click();
@@ -145,7 +145,7 @@ test("a review's editor keeps what was typed when Settings gets a new snapshot",
   await weekly.getByRole("radio", { name: "Every day", exact: true }).click();
   await weekly.getByRole("textbox", { name: "Time", exact: true }).fill("7:30");
   await answerMenus(app, "Codex");
-  await weekly.getByRole("group", { name: /^Agent: / }).getByRole("button", { name: "Choose…" }).click();
+  await weekly.getByRole("button", { name: /^Agent: / }).click();
   await expect(weekly.getByText("Codex", { exact: true })).toBeVisible();
   await weekly.getByRole("textbox", { name: "Instructions" }).fill("Look for stale goals.");
   // Another review runs: main sends Settings a snapshot as it starts, and another as it ends.
@@ -178,15 +178,15 @@ test("a review's editor keeps what was typed while another pane shows, and Cance
   await instructions.fill("Look for stale goals.");
 
   // General and back, on the toolbar: the editor is open still, with what was typed.
-  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await toolbarItem(settings, "General").click();
   await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
   await expect(instructions).toHaveCount(0);
-  await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+  await toolbarItem(settings, "Reviews").click();
   await expect(instructions).toHaveValue("Look for stale goals.");
-  // The arrow keys move along the toolbar and show each pane they pass, and the draft outlasts that too.
-  await settings.getByRole("radio", { name: "Reviews", exact: true }).press("ArrowRight");
+  // From the keyboard too, and the draft outlasts that as well.
+  await toolbarItem(settings, "Privacy").press("Enter");
   await expect(settings.getByRole("heading", { name: "Privacy", exact: true })).toBeVisible();
-  await settings.getByRole("radio", { name: "Privacy", exact: true }).press("ArrowLeft");
+  await toolbarItem(settings, "Reviews").press("Space");
   await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
   await expect(instructions).toHaveValue("Look for stale goals.");
   expect(read(library, "tasks/weekly-review.md")).not.toContain("Look for stale goals.");
@@ -219,12 +219,12 @@ test("a review's draft goes when another library opens, whose review of the same
   const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
   await weekly.getByRole("button", { name: "Edit", exact: true }).click();
   await weekly.getByRole("textbox", { name: "Instructions" }).fill("Look for stale goals.");
-  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await toolbarItem(settings, "General").click();
   await stubPicker(app, other);
   await settings.getByRole("button", { name: "Change…" }).click();
   await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.path).toBe(other);
   // The other library's weekly review has the same id: its editor is closed, so a Save can't write the draft into it.
-  await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+  await toolbarItem(settings, "Reviews").click();
   await expect(weekly.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
   await expect(weekly.getByRole("textbox")).toHaveCount(0);
   await app.close();
@@ -292,9 +292,9 @@ test("a review's save waits behind a run, and nothing else saves that review ove
   await expect(on).toBeDisabled();
   // Settings, not the pane, holds the save on its way: leaving the pane and coming back meanwhile, Save is busy still
   // and the switch waits still, so neither can write the old fields over it.
-  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await toolbarItem(settings, "General").click();
   await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
-  await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+  await toolbarItem(settings, "Reviews").click();
   await expect(save).toHaveAttribute("aria-busy", "true");
   await expect(on).toBeDisabled();
   await call(app, "idleForTests");
@@ -415,10 +415,10 @@ test("a review's failed save is told under the review only, and is still told af
     await expect(settings.getByRole("alert")).toHaveCount(1);
 
     // The failure is the window's, not the pane's: another pane and back, and the review still says its save failed.
-    await settings.getByRole("radio", { name: "General", exact: true }).click();
+    await toolbarItem(settings, "General").click();
     await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
     await expect(settings.getByRole("alert")).toHaveCount(0);
-    await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+    await toolbarItem(settings, "Reviews").click();
     await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
     await expect(problem.getByText("This review couldn't be saved.", { exact: true })).toBeVisible();
     await expect(problem).toContainText(/\. It stays off, as last saved\.$/);
@@ -545,7 +545,7 @@ test("a remembered library that is missing at launch is named in Settings, and s
   await call(app, "openQuick");
   await call(app, "menuAction", "settings");
   expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
-  expect(await windowsTitled(app, "Avanzel Settings")).toBe(1);
+  expect(await settingsWindows(app)).toBe(1);
   // Set up a new library opens setup, and Settings closes. Setup suggests ~/Avanzel, not the place that went missing.
   const closed = settings.waitForEvent("close");
   await setUpNew.click().catch(() => undefined); // closes Settings, before the click returns
@@ -776,7 +776,7 @@ test("Agents shows a library's problem as General does, and lists the agents onc
     await expect(settings.getByRole("heading", { name: "Who files your thoughts", exact: true })).toBeVisible();
     await expect(settings.getByRole("alert")).toHaveCount(0);
     await expect(settings.getByRole("group", { name: "fake", exact: true }).getByRole("img", { name: "Chosen" })).toBeVisible();
-    await expect(settings.getByRole("group", { name: "Claude Code", exact: true }).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(settingsRow(settings, "Claude Code").getByText("Signed in", { exact: true })).toBeVisible({ timeout: 20_000 });
     await app.close();
   } finally {
     chmodSync(library, 0o755);
@@ -795,16 +795,16 @@ test("Settings without a library offers setup, which comes forward as Settings c
   const settings = await windowFor(app, "settings");
   await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
   // Agents has no library to list agents for either: the same Notice stands where its groups would be.
-  await settings.getByRole("radio", { name: "Agents", exact: true }).click();
+  await toolbarItem(settings, "Agents").click();
   await expect(settings.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
   await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
   await expect(settings.getByRole("button", { name: "Set up Avanzel…" })).toBeVisible();
   await expect(settings.getByRole("heading", { name: "Who files your thoughts", exact: true })).toHaveCount(0);
   // Nor has Reviews any reviews to show.
-  await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+  await toolbarItem(settings, "Reviews").click();
   await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
   await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
-  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await toolbarItem(settings, "General").click();
   await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
   const closed = settings.waitForEvent("close");
   await settings.getByRole("button", { name: "Set up Avanzel…" }).click().catch(() => undefined); // closes Settings, before the click returns

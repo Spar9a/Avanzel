@@ -10,7 +10,7 @@ import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import { ownLine } from "../src/shared/problems.ts";
 import { expectProblem } from "./capsule-helpers.ts";
 import { zel } from "./setup-helpers.ts";
-import { call, capsuleKind, closeModelHubs, emptyHfCache, fakeModelHub, hfSnapshot, launch, makeLibrary, openSettings, shown, snap, windowFor } from "./helpers.ts";
+import { call, capsuleKind, closeModelHubs, emptyHfCache, fakeModelHub, hfSnapshot, launch, makeLibrary, openSettings, shown, snap, windowFor, toolbarItem } from "./helpers.ts";
 
 const PARAKEET = "nemo-parakeet-tdt-0.6b-v3";
 /** Parakeet's English-only sibling, which the library's config.toml may name. */
@@ -42,7 +42,7 @@ test("without a library nothing downloads, and Settings offers the download with
   expect(await modelStatus(app)).toEqual({ kind: "missing", bytes: total });
   await call(app, "showSettings"); // without a library, setup opens by itself, not Settings
   const settings = await windowFor(app, "settings");
-  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+  await toolbarItem(settings, "Voice").click();
   const download = settings.getByRole("button", { name: "Download (673 MB)" });
   await expect(download).toBeVisible();
   await expect(download).toHaveAttribute("data-variant", "secondary");
@@ -242,7 +242,7 @@ test("a failed download says why, in the capsule and in Voice", async () => {
   await expect(capsule.getByText(body, { exact: true })).toBeVisible();
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+  await toolbarItem(settings, "Voice").click();
   // Voice says the same: what happened, why (the same reason, with no URL in it), what works meanwhile, and what Try again does.
   const alert = settings.getByRole("alert");
   await expect(alert).toContainText("The speech model didn't finish downloading.");
@@ -279,7 +279,7 @@ test("a download cut half way keeps its part, and Try again continues from it an
   await expect(capsule.getByText(/downloads it again/)).toHaveCount(0);
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+  await toolbarItem(settings, "Voice").click();
   await expect(settings.getByRole("alert").getByText(/Try again continues where it stopped\.$/)).toBeVisible();
 
   // Try again asks for the rest alone ...
@@ -322,7 +322,7 @@ test("voice settings Avanzel can't use are named at the shortcut, and nothing do
   // and the card goes.
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
   const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("radio", { name: "Voice", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
   const alert = settings.getByRole("alert");
   await expect(alert).toHaveText(`${title}${state.detail}`); // the title, then the body: one Notice, no button
   await expect(settings.getByRole("button", { name: "Try again" })).toHaveCount(0); // trying again can't help

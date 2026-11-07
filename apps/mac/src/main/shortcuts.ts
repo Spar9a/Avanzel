@@ -10,19 +10,14 @@ export interface ShortcutApi {
 
 /**
  * Each action by its role name: its item in the menu bar menu, which adds "…" to some. Undo the last filing's item is there only after a
- * filing. The actions register in this order (`registerShortcuts`), and Settings → Shortcuts draws a row for each, in it.
+ * filing. The actions register in this order (`registerShortcuts`), and Settings → General draws a row for each, in it.
  */
 export const ACTION_NAMES: Readonly<Record<keyof Shortcuts, string>> = {
   dictate: "Record a thought",
-  capture: "Capture screen with a comment",
+  capture: "Capture screen",
   type: "Type a thought",
   ask: "Ask your library",
   undo: "Undo the last filing",
-  call: "Take notes on a call",
-  region: "Capture part of the screen",
-  shot: "Screenshot of a part",
-  shotScreen: "Screenshot of the screen",
-  shotMarks: "Screenshot with marks",
 };
 
 const ORDER = ["Control", "Alt", "Shift", "Command"] as const;
@@ -90,11 +85,6 @@ export const ALTERNATIVES: Readonly<Record<keyof Shortcuts, readonly string[]>> 
   type: ["Control+Alt+T", "Control+Alt+N"],
   ask: ["Control+Alt+A", "Control+Alt+Q"],
   undo: ["Control+Alt+Z", "Control+Alt+U"],
-  call: ["Control+Alt+M", "Control+Alt+K"],
-  region: ["Control+Alt+P", "Control+Alt+X"],
-  shot: ["Control+Alt+G", "Control+Alt+H"],
-  shotScreen: ["Control+Alt+J", "Control+Alt+L"],
-  shotMarks: ["Control+Alt+B", "Control+Alt+V"],
 };
 
 /** The apps whose default shortcut is ⌥Space, each with the name `ps` gives its process. */
@@ -119,14 +109,14 @@ export function takenMessage(accelerator: string, holder: string | null): string
 
 /**
  * "“Record a thought” is still in the menu bar.": where the action's item is, for the notices of a shortcut that doesn't work (the
- * capsule's, and Settings → Shortcuts'). Undo the last filing's item is in the menu bar only after a filing, so it is not "still" there.
+ * capsule's, and Settings → General's). Undo the last filing's item is in the menu bar only after a filing, so it is not "still" there.
  */
 export function inMenuLine(key: keyof Shortcuts): string {
   return `“${ACTION_NAMES[key]}” ${key === "undo" ? "is in the menu bar after each filing" : "is still in the menu bar"}.`;
 }
 
 export interface Registration {
-  /** What Settings → Shortcuts says of each shortcut that didn't register. */
+  /** What Settings → Voice says of each shortcut that didn't register. */
   problems: Partial<Record<keyof Shortcuts, string>>;
   /**
    * The actions whose shortcut another app holds, or apps use themselves (leftToApps), in the order they register: not

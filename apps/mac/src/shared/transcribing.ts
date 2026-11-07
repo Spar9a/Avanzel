@@ -13,15 +13,10 @@ export const CURSOR_KEYS: readonly { key: CursorKey; name: string }[] = [
   { key: "right-control", name: "Right Control" },
 ];
 
-export const cursorKeyName = (key: CursorKey): string => CURSOR_KEYS.find((entry) => entry.key === key)?.name ?? "the key";
+/** What a screen reader hears of the icon that stands for the app a dictation's words are going to. */
+export const dictatingIntoLabel = (app: string): string => (app ? `Dictating into ${app}` : "Dictating");
 
-/**
- * The listening card of a dictation into another app: what it is doing, and how it ends, with the key the person chose (`key`, from the
- * setting). Esc gives it up.
- */
-export function dictationListeningLine(key: CursorKey): string {
-  return `Dictating into another app. Tap ${cursorKeyName(key)} again to finish, or press Esc.`;
-}
+export const cursorKeyName = (key: CursorKey): string => CURSOR_KEYS.find((entry) => entry.key === key)?.name ?? "the key";
 
 /**
  * The file-mode button of a recording: what its words will do, in words that promise only what the app keeps. "Files now" when

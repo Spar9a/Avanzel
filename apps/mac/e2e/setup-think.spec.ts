@@ -145,20 +145,20 @@ test("with no free shortcut, setup offers Settings, and the shortcut set there i
   const setup = await throughFound(app);
   const taken = setup.getByRole("alert");
   await expect(taken.getByText(/^⌥Space is used by another app/)).toBeVisible();
-  await expect(taken.getByText("Pick another one in Settings → Shortcuts.", { exact: true })).toBeVisible();
+  await expect(taken.getByText("Pick another one in Settings → General.", { exact: true })).toBeVisible();
   await expect(setup.getByRole("button", { name: /^Use / })).toHaveCount(0);
   const open = taken.getByRole("button", { name: "Open Settings" });
   await expect(open).toHaveAttribute("data-variant", "primary");
   await open.click();
   const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("heading", { name: "Shortcuts", level: 2 })).toBeVisible();
+  await expect(settings.getByRole("heading", { name: "General" })).toBeVisible();
   // A shortcut set in Settings is the one the step listens for now, from the start of a new wait.
   await call(app, "setApp", { shortcuts: { ...(await settingsSnap(app)).app.shortcuts, dictate: "Control+Alt+K" } });
   await expect(taken).toHaveCount(0);
   await expect(setup.getByText(INSTRUCTION)).toContainText("⌃⌥K");
   await reachFor(setup, "Control");
   await expect(setup.getByText("Did ⌃⌥K do nothing?", { exact: true })).toBeVisible();
-  await expect(setup.getByText("Another app may be using it. Pick another one in Settings → Shortcuts.", { exact: true })).toBeVisible();
+  await expect(setup.getByText("Another app may be using it. Pick another one in Settings → General.", { exact: true })).toBeVisible();
   await expect(setup.getByRole("button", { name: "Open Settings" })).toHaveAttribute("data-variant", "primary");
   await app.close();
 });
@@ -226,7 +226,7 @@ test("a typed first thought is filed in the window, with the time shown", async 
   await expect(setup.getByRole("heading", { name: "Watch me file it." })).toBeVisible();
   await expect(setup.getByText(/^Claude Code is working: \d+ s of about 15$/)).toBeVisible();
   await expect(setup.getByRole("heading", { name: /^All filed\. Claude Code took \d+ s\.$/ })).toBeVisible({ timeout: 30_000 });
-  await expect(setup.getByRole("listitem")).toHaveCount(1); // the receipt: the new note, on its shelf
+  await expect(setup.getByRole("listitem")).toHaveCount(1); // the receipt: the new page, on its shelf
   await expect(setup.getByRole("listitem")).toContainText(["Plant tulips in October"]);
   await expect(setup.getByRole("listitem")).toContainText(["Ideas"]);
   await expect(zel(setup)).toHaveAttribute("data-mood", "filed");

@@ -6,7 +6,7 @@ import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
 import type { CapsuleState } from "../src/shared/ipc.ts";
 import { filedFromTheCapsule, launchOn } from "./capsule-helpers.ts";
-import { call, filesUnder, filingClaude, firstRun, launch, makeLibrary, screenshotFixture, windowFor } from "./helpers.ts";
+import { call, filesUnder, filingClaude, firstRun, launch, makeLibrary, screenshotFixture, settingsRow, toolbarItem, windowFor } from "./helpers.ts";
 
 type Appearance = "light" | "dark";
 type RGB = [number, number, number];
@@ -152,28 +152,28 @@ function capsuleStates(): [string, CapsuleState, string][] {
   const fourth = { title: "Indie game dev podcast", shelf: "ideas", path: "ideas/podcast.md", created: true };
   const context = { app: "Safari", title: "Shure MV7+ Podcast Microphone", url: "https://www.shure.com/mv7" };
   return [
-    // The hint's card above the bar, and the bar's one control: this capture's file mode, a switch of two worded from the evening review.
+    // The hint's card above the bar, and the bar's one button: this capture's file mode, worded from the evening review.
     [
       "listening",
       { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "now", hint: "Alt+Space", review: "at 21:00" },
-      "Now",
+      "Files now",
     ],
     [
       "listening, filing at the review",
       { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null, review: "at 21:00" },
-      "21:00",
+      "Files at 21:00",
     ],
     // The longest label: a weekly review's day and time.
     [
       "listening, filing at a weekly review",
       { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null, review: "on Sundays at 18:00" },
-      "Sundays 18:00",
+      "Files on Sundays at 18:00",
     ],
-    // With the review off nothing files the capture, so the switch says where it stays.
+    // With the review off nothing files the capture, so the button says where it stays.
     [
       "listening, review off",
       { kind: "listening", mode: "dictate", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: "evening", hint: null, review: null },
-      "Inbox",
+      "Stays in the inbox",
     ],
     // A screen comment: the screenshot on a card labelled with the app, the key that finishes it, and no file mode to switch.
     [
@@ -181,8 +181,26 @@ function capsuleStates(): [string, CapsuleState, string][] {
       { kind: "listening", mode: "comment", startedAt: Date.now(), fakeMic: true, microphoneId: null, thumbnail, context, fileMode: null, hint: "Alt+Shift+S", review: "at 21:00" },
       "Safari",
     ],
+    // A recording's words on the panel's glass as they are said, the newest in view and older ones fading out, and a dictation's app in Zel's place.
+    [
+      "listening, the words as they are said",
+      {
+        kind: "listening",
+        mode: "dictate",
+        startedAt: Date.now(),
+        fakeMic: true,
+        microphoneId: null,
+        fileMode: null,
+        hint: null,
+        review: null,
+        dictation: { app: { name: "Slack", icon: thumbnail } },
+        words: "Ask Dana about the launch checklist before Friday, and tell her the page goes out after the signed build, not before it, whatever else happens this week.",
+      },
+      "Ask Dana about the launch checklist",
+    ],
     ["transcribing", { kind: "transcribing", mode: "dictate", onThisMac: true }, "Transcribing on this Mac…"],
     ["transcribing, slow", { kind: "transcribing", mode: "dictate", onThisMac: true, slow: true }, "Still transcribing…"],
+    ["transcribing, with the words said so far", { kind: "transcribing", mode: "dictate", onThisMac: true, words: "Ask Dana about the launch checklist before Friday" }, "Transcribing on this Mac…"],
     // A screen comment keeps the screenshot's card, labelled with the app, over the bar while its words are made.
     ["transcribing, a screen comment", { kind: "transcribing", mode: "comment", onThisMac: true, thumbnail, context }, "Safari"],
     [
@@ -199,7 +217,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
         estimate: 15,
         stepAt: Date.now(),
       },
-      "Filing with Claude Code", // the card's status chip: the filing card has no bar
+      "Filing with Claude Code…",
     ],
     // Mid-run: the newest step as the card's line, the seconds past the estimate, a note under the origin, and Stop under way.
     [
@@ -221,7 +239,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
         stepAt: Date.now(),
         cancelling: true,
       },
-      "New idea note: Indie game dev podcast",
+      "New idea page: Indie game dev podcast",
     ],
     [
       "filing, still working",
@@ -257,7 +275,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
       "Waiting for another Avanzel run to finish…",
     ],
     ["editing", { kind: "editing", text: said }, "Edit before filing"],
-    // The results: the words on paper, stamped, with who filed them in the card's foot. A filed card has no bar.
+    // The results: the words on paper, stamped, over a bar of one steady line.
     ["filed", { kind: "filed", text: said, agent: "Claude Code", seconds: 23, pages, canUndo: true, noted: false }, "Filed by Claude Code in 23 s"],
     // The engine put the words back after the agent changed them: the card's head says so, in its caption on the right.
     [
@@ -280,7 +298,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
     [
       "filed, nothing new",
       { kind: "filed", text: said, agent: "Claude Code", seconds: 4, pages: [], canUndo: true, noted: true },
-      "No note was made",
+      "Nothing new to file",
     ],
     [
       "saved, a dictation",
@@ -406,15 +424,15 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   // The window is opaque: its page draws the window's own surface, so what lies under it doesn't show through.
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  for (const pane of ["General", "Voice", "Shortcuts", "Agents", "Reviews", "Privacy"]) {
-    await settings.getByRole("radio", { name: pane, exact: true }).click();
-    await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
+  for (const pane of ["General", "Voice", "Dictation", "Agents", "Reviews", "Privacy"]) {
+    await toolbarItem(settings, pane).click();
+    await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
     if (pane === "Reviews") await expect(settings.getByText(/Unknown schedule "sometimes"/)).toBeVisible();
     // launch()'s stand-ins for Claude Code and Codex read their sign-in as the pane opens: read the pane once both
     // are done, not while a Check button spins.
     if (pane === "Agents") {
       for (const name of ["Claude Code", "Codex"]) {
-        await expect(settings.getByRole("group", { name }).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 40_000 });
+        await expect(settingsRow(settings, name).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 40_000 });
       }
     }
     found.push(...(await readable(app, settings, `Settings › ${pane}`, desktops)));
@@ -453,14 +471,15 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
     await expect(capsule.getByText(shows)).toBeVisible();
     // Every piece the page draws takes the pointer. The page's wrapper and the stack take none (the transparent corners pass it to the
     // apps below), so a state whose root were a bare piece, and not a notice or a stack, could not be hovered, and would be put away
-    // under the pointer: each state's pieces are the stack's children, or the notice itself.
+    // under the pointer: each state's pieces are the stack's children, or the notice itself. A recording's panel with nothing to press alone
+    // takes none: it may stand over the box a dictation goes into, and a recording that listens is not put away.
     const pieces = await capsule.evaluate(() =>
       [...document.querySelectorAll(".app > *")]
         .flatMap((root) => (root.matches(".stack") ? [...root.children] : [root]))
         .map((piece) => ({ piece: piece.className || piece.tagName.toLowerCase(), pointerEvents: getComputedStyle(piece).pointerEvents })),
     );
     expect(pieces.length, `capsule ${name}: pieces`).toBeGreaterThan(0);
-    for (const { piece, pointerEvents } of pieces) expect(pointerEvents, `capsule ${name}: ${piece}`).toBe("auto");
+    for (const { piece, pointerEvents } of pieces) expect(pointerEvents, `capsule ${name}: ${piece}`).toBe(piece.includes("through") ? "none" : "auto");
     found.push(...(await readable(app, capsule, `capsule ${name}`, desktops)));
   }
   await app.close();
@@ -480,7 +499,7 @@ test("Ask's saved, undone and refused turns are readable in light and dark", asy
   await field.press("Enter");
   await expect(ask.getByText("Q: Summarize my ideas")).toBeVisible({ timeout: 60_000 });
   const turn = ask.locator("article").first();
-  const offer = turn.getByRole("button", { name: "Save as a note", exact: true });
+  const offer = turn.getByRole("button", { name: "Save as a page", exact: true });
   const undo = turn.getByRole("button", { name: "Undo", exact: true });
   const saved = turn.getByText("Saved as “Answer” in Topics.", { exact: true });
   // The answer saved as a page: the saved line, with Undo and Open.
@@ -558,14 +577,14 @@ test("every setup step and the bubble are readable in light and dark", async () 
   await expect(setup.getByRole("img", { name: /^Filed, / })).toBeVisible();
   found.push(...(await readable(app, setup, "Setup › Filing, filed", desktops)));
 
-  // Ask, answered: the question names the new note, so the answer shows the page it used.
+  // Ask, answered: the question names the new page, so the answer shows the page it used.
   await setup.getByRole("button", { name: "Continue" }).click();
   await expect(setup.getByRole("heading", { name: "Ask me about it." })).toBeVisible();
   const [idea = ""] = filesUnder(path.join(home, "Avanzel"), "ideas");
   const question = setup.getByRole("textbox", { name: "Ask your library" });
   await question.fill(`What is in [[${idea.replace(/\.md$/, "")}]]?`);
   await question.press("Enter");
-  await expect(setup.getByText("Notes I used:", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(setup.getByText("Pages I used:", { exact: true })).toBeVisible({ timeout: 30_000 });
   found.push(...(await readable(app, setup, "Setup › Ask, answered", desktops)));
 
   // Done, with its two switches (opening at login, the evening review).

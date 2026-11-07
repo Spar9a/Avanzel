@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { buildMenuModel, formatWhen, menuLabel, reviewProgress, speechProblemOf, statusLine, type MenuInput, type MenuTask } from "../src/main/menu-model.ts";
+import {
+  buildMenuModel,
+  dictationRow,
+  filedLine,
+  formatWhen,
+  MENU_DICTATIONS,
+  menuLabel,
+  menuRows,
+  reviewProgress,
+  speechProblemOf,
+  waitingLine,
+  type MenuDictation,
+  type MenuInput,
+  type MenuItemModel,
+  type MenuTask,
+} from "../src/main/menu-model.ts";
 import { DEFAULT_SETTINGS } from "../src/main/store.ts";
 import { downloadFailedProblem, TYPED_THOUGHTS_SAVED, TYPING_WORKS_MEANWHILE, voiceSettingsProblem } from "../src/shared/problems.ts";
 
@@ -28,39 +43,53 @@ function input(overrides: Partial<MenuInput> = {}): MenuInput {
     undoableFiling: false,
     showableReceipt: false,
     hasReceipt: false,
-    forgettableDictation: false,
+    recentDictations: [],
+    cursorDictation: null,
     ...overrides,
   };
 }
 
-const labels = (items: ReturnType<typeof buildMenuModel>) =>
-  items.flatMap((item) => (item.type === "separator" ? ["--"] : [item.label]));
+/** The menu's rows as it first opens: a submenu by its name, without what is in it. */
+const labels = (items: readonly MenuItemModel[]) => items.flatMap((item) => (item.type === "separator" ? ["--"] : [item.label]));
+
+/** What is in the submenu named `label`, or nothing when the menu has no such submenu. */
+const submenu = (items: readonly MenuItemModel[], label: string): MenuItemModel[] =>
+  items.flatMap((item) => (item.type === "submenu" && item.label === label ? item.items : []));
+
+/** The row for `action`, wherever it lives. */
+const row = (items: readonly MenuItemModel[], action: string) => menuRows(items).find((item) => item.action === action);
+
+/** The section between the actions and the settings: what has been done and what is to come. */
+const section = (items: readonly MenuItemModel[]) => {
+  const all = labels(items);
+  const from = all.indexOf("Ask your library…") + 2;
+  return all.slice(from, all.indexOf("--", from));
+};
 
 describe("tray menu", () => {
-  it("leads with how today went, which opens the inbox, and the inbox count under it", () => {
+  it("leads with how today went, which opens the inbox, and what waits under it", () => {
     const [head] = buildMenuModel(input(), now);
     expect(head).toEqual({
       type: "item",
-      label: "3 thoughts filed today. Evening review at 21:00.",
+      label: "3 thoughts filed today",
       action: "open-inbox",
-      sublabel: "2 notes in the inbox",
+      sublabel: "2 in the inbox · Evening review at 21:00",
     });
   });
 
-  it("counts a single note in the inbox, and puts no sublabel on an empty one", () => {
-    expect(buildMenuModel(input({ inbox: 1 }), now)[0]).toMatchObject({ action: "open-inbox", sublabel: "1 note in the inbox" });
-    expect(buildMenuModel(input({ inbox: 7 }), now)[0]).toMatchObject({ sublabel: "7 notes in the inbox" });
+  it("counts the inbox, and says nothing of an empty one", () => {
+    expect(buildMenuModel(input({ inbox: 1 }), now)[0]).toMatchObject({ action: "open-inbox", sublabel: "1 in the inbox · Evening review at 21:00" });
+    expect(buildMenuModel(input({ inbox: 7 }), now)[0]).toMatchObject({ sublabel: "7 in the inbox · Evening review at 21:00" });
     const [head] = buildMenuModel(input({ inbox: 0 }), now);
-    expect(head).toEqual({ type: "item", label: "3 thoughts filed today. Evening review at 21:00.", action: "open-library" });
-    expect(head).not.toHaveProperty("sublabel");
-    expect(JSON.stringify(buildMenuModel(input({ inbox: 0 }), now))).not.toMatch(/Inbox is empty|Next:/);
+    expect(head).toEqual({ type: "item", label: "3 thoughts filed today", action: "open-library", sublabel: "Evening review at 21:00" });
+    expect(JSON.stringify(buildMenuModel(input({ inbox: 0 }), now))).not.toMatch(/Inbox is empty|Next:|in the inbox/);
   });
 
   it("opens the inbox only while its second line names the inbox, and the library when it doesn't", () => {
-    // The click goes where the words say: with a note waiting, "2 notes in the inbox" is under the head, and the click opens the inbox.
+    // The click goes where the words say: with a note waiting, "2 in the inbox" is under the head, and the click opens the inbox.
     for (const inbox of [1, 2, 40]) {
       const [head] = buildMenuModel(input({ inbox }), now);
-      expect(head, `${inbox} in the inbox`).toMatchObject({ action: "open-inbox", sublabel: expect.stringMatching(/in the inbox$/) });
+      expect(head, `${inbox} in the inbox`).toMatchObject({ action: "open-inbox", sublabel: expect.stringMatching(/in the inbox/) });
     }
     // With the inbox empty the words no longer mention it, so the click opens the library: an empty folder to look at would say nothing.
     const [empty] = buildMenuModel(input({ inbox: 0 }), now);
@@ -74,7 +103,7 @@ describe("tray menu", () => {
   });
 
   describe("the head says how today went", () => {
-    const head = (overrides: Partial<MenuInput>, at = now) => buildMenuModel(input(overrides), at)[0];
+    const head = (overrides: Partial<MenuInput>, at = now) => buildMenuModel(input({ inbox: 0, ...overrides }), at)[0];
     const eveningAt = (hour: number, minute = 0): MenuTask => ({
       id: "evening-review",
       name: "Evening review",
@@ -86,67 +115,55 @@ describe("tray menu", () => {
     const weekly = input().tasks[1]!;
 
     it("counts today's filings: none, one, or many", () => {
-      expect(head({ filedToday: 0 })).toMatchObject({ label: "Nothing filed today. Evening review at 21:00." });
-      expect(head({ filedToday: 1 })).toMatchObject({ label: "1 thought filed today. Evening review at 21:00." });
-      expect(head({ filedToday: 3 })).toMatchObject({ label: "3 thoughts filed today. Evening review at 21:00." });
-      expect(head({ filedToday: 12 })).toMatchObject({ label: "12 thoughts filed today. Evening review at 21:00." });
+      expect(head({ filedToday: 0 })).toMatchObject({ label: "Nothing filed today", sublabel: "Evening review at 21:00" });
+      expect(head({ filedToday: 1 })).toMatchObject({ label: "1 thought filed today" });
+      expect(head({ filedToday: 3 })).toMatchObject({ label: "3 thoughts filed today" });
+      expect(head({ filedToday: 12 })).toMatchObject({ label: "12 thoughts filed today" });
     });
 
     it("says tomorrow once today's evening review time has passed", () => {
       const late = new Date(2026, 9, 20, 21, 30);
       const tomorrow = { ...eveningAt(21), at: new Date(2026, 9, 21, 21, 0) };
-      expect(head({ filedToday: 0, tasks: [tomorrow] }, late)).toMatchObject({ label: "Nothing filed today. Evening review tomorrow at 21:00." });
-      expect(head({ filedToday: 1, tasks: [tomorrow] }, late)).toMatchObject({ label: "1 thought filed today. Evening review tomorrow at 21:00." });
-      expect(head({ filedToday: 3, tasks: [tomorrow] }, late)).toMatchObject({ label: "3 thoughts filed today. Evening review tomorrow at 21:00." });
+      expect(head({ filedToday: 0, tasks: [tomorrow] }, late)).toMatchObject({ sublabel: "Evening review tomorrow at 21:00" });
     });
 
-    it("says only how today went when there is no evening review", () => {
-      expect(head({ filedToday: 0, tasks: [] })).toMatchObject({ label: "Nothing filed today." });
-      expect(head({ filedToday: 1, tasks: [] })).toMatchObject({ label: "1 thought filed today." });
-      expect(head({ filedToday: 3, tasks: [] })).toMatchObject({ label: "3 thoughts filed today." });
+    it("has no second line with no evening review and nothing in the inbox", () => {
+      expect(head({ filedToday: 3, tasks: [] })).toEqual({ type: "item", label: "3 thoughts filed today", action: "open-library" });
       // One that is switched off isn't one.
-      expect(head({ filedToday: 3, tasks: [{ ...eveningAt(21), enabled: false, at: null }, weekly] })).toMatchObject({ label: "3 thoughts filed today." });
-      expect(head({ filedToday: 3, tasks: [{ ...eveningAt(21), enabled: false }, weekly] })).toMatchObject({ label: "3 thoughts filed today." });
+      expect(head({ tasks: [{ ...eveningAt(21), enabled: false, at: null }, weekly] })).not.toHaveProperty("sublabel");
+      expect(head({ tasks: [{ ...eveningAt(21), enabled: false }, weekly] })).not.toHaveProperty("sublabel");
     });
 
     it("leaves a weekly review out of it: only the evening review is named", () => {
-      expect(head({ filedToday: 3, tasks: [weekly] })).toMatchObject({ label: "3 thoughts filed today." });
+      expect(head({ tasks: [weekly] })).not.toHaveProperty("sublabel");
       // The weekly review is the soonest, and still isn't named.
-      expect(head({ filedToday: 3, tasks: [{ ...weekly, at: new Date(2026, 9, 20, 15, 0) }, eveningAt(21)] })).toMatchObject({
-        label: "3 thoughts filed today. Evening review at 21:00.",
-      });
+      expect(head({ tasks: [{ ...weekly, at: new Date(2026, 9, 20, 15, 0) }, eveningAt(21)] })).toMatchObject({ sublabel: "Evening review at 21:00" });
       const custom = { ...weekly, id: "custom-1", kind: "custom", name: "Reading list" };
-      expect(head({ filedToday: 0, tasks: [custom] })).toMatchObject({ label: "Nothing filed today." });
+      expect(head({ tasks: [custom] })).not.toHaveProperty("sublabel");
     });
 
     it("names the evening review by its own name", () => {
       const renamed = { ...eveningAt(21), name: "Nightly sweep" };
-      expect(head({ filedToday: 3, tasks: [renamed] })).toMatchObject({ label: "3 thoughts filed today. Nightly sweep at 21:00." });
-      expect(head({ filedToday: 0, tasks: [{ ...renamed, at: new Date(2026, 9, 21, 21, 0) }] }, new Date(2026, 9, 20, 22, 0))).toMatchObject({
-        label: "Nothing filed today. Nightly sweep tomorrow at 21:00.",
-      });
+      expect(head({ tasks: [renamed] })).toMatchObject({ sublabel: "Nightly sweep at 21:00" });
+      expect(head({ tasks: [{ ...renamed, at: new Date(2026, 9, 21, 21, 0) }] }, new Date(2026, 9, 20, 22, 0))).toMatchObject({ sublabel: "Nightly sweep tomorrow at 21:00" });
     });
 
     it("doesn't name an enabled review that has no time to say", () => {
-      expect(head({ filedToday: 3, tasks: [{ ...eveningAt(21), at: null }] })).toMatchObject({ label: "3 thoughts filed today." });
-      expect(head({ filedToday: 1, tasks: [{ ...eveningAt(21), at: null }, weekly] })).toMatchObject({ label: "1 thought filed today." });
+      expect(head({ tasks: [{ ...eveningAt(21), at: null }] })).not.toHaveProperty("sublabel");
+      expect(head({ tasks: [{ ...eveningAt(21), at: null }, weekly] })).not.toHaveProperty("sublabel");
     });
 
     it("names the soonest of two evening reviews, as the next one is picked", () => {
       const later = { ...eveningAt(22, 30), id: "evening-2", name: "Late sweep" };
-      expect(head({ filedToday: 2, tasks: [later, eveningAt(21)] })).toMatchObject({ label: "2 thoughts filed today. Evening review at 21:00." });
-      expect(head({ filedToday: 2, tasks: [eveningAt(21), later] })).toMatchObject({ label: "2 thoughts filed today. Evening review at 21:00." });
+      expect(head({ tasks: [later, eveningAt(21)] })).toMatchObject({ sublabel: "Evening review at 21:00" });
+      expect(head({ tasks: [eveningAt(21), later] })).toMatchObject({ sublabel: "Evening review at 21:00" });
       // A switched-off one is skipped, however soon it would be.
-      expect(head({ filedToday: 2, tasks: [{ ...eveningAt(15), enabled: false, at: null }, later] })).toMatchObject({
-        label: "2 thoughts filed today. Late sweep at 22:30.",
-      });
+      expect(head({ tasks: [{ ...eveningAt(15), enabled: false, at: null }, later] })).toMatchObject({ sublabel: "Late sweep at 22:30" });
     });
 
     it("says a review further off as the menu says it elsewhere", () => {
-      const sunday = { ...eveningAt(18), at: new Date(2026, 9, 25, 18, 0) };
-      expect(head({ filedToday: 1, tasks: [sunday] })).toMatchObject({ label: "1 thought filed today. Evening review on Sun at 18:00." });
-      const later = { ...eveningAt(18), at: new Date(2026, 10, 2, 18, 0) };
-      expect(head({ filedToday: 1, tasks: [later] })).toMatchObject({ label: "1 thought filed today. Evening review on 2 Nov at 18:00." });
+      expect(head({ tasks: [{ ...eveningAt(18), at: new Date(2026, 9, 25, 18, 0) }] })).toMatchObject({ sublabel: "Evening review on Sun at 18:00" });
+      expect(head({ tasks: [{ ...eveningAt(18), at: new Date(2026, 10, 2, 18, 0) }] })).toMatchObject({ sublabel: "Evening review on 2 Nov at 18:00" });
     });
 
     it("never says Letter: there is no letter yet", () => {
@@ -156,54 +173,66 @@ describe("tray menu", () => {
     });
 
     it("is the same while recording, with an undo on offer, or with nothing filed yet", () => {
-      expect(head({ recording: true, undoableReview: true, recent: [] })).toMatchObject({
-        label: "3 thoughts filed today. Evening review at 21:00.",
+      expect(buildMenuModel(input({ recording: true, undoableReview: true, recent: [] }), now)[0]).toMatchObject({
+        label: "3 thoughts filed today",
         action: "open-inbox",
       });
     });
   });
 
-  describe("statusLine", () => {
+  describe("filedLine and waitingLine", () => {
     const evening = (at: Date | null, name = "Evening review"): MenuTask => ({ id: "evening-review", name, kind: "evening-review", at, enabled: true, running: false });
 
-    it("counts, then names the review and when", () => {
-      expect(statusLine(0, undefined, now)).toBe("Nothing filed today.");
-      expect(statusLine(1, undefined, now)).toBe("1 thought filed today.");
-      expect(statusLine(3, undefined, now)).toBe("3 thoughts filed today.");
-      expect(statusLine(3, evening(new Date(2026, 9, 20, 21, 0)), now)).toBe("3 thoughts filed today. Evening review at 21:00.");
-      expect(statusLine(1, evening(new Date(2026, 9, 21, 21, 0)), now)).toBe("1 thought filed today. Evening review tomorrow at 21:00.");
-      expect(statusLine(0, evening(new Date(2026, 9, 20, 21, 5), "Nightly sweep"), now)).toBe("Nothing filed today. Nightly sweep at 21:05.");
+    it("counts", () => {
+      expect(filedLine(0)).toBe("Nothing filed today");
+      expect(filedLine(1)).toBe("1 thought filed today");
+      expect(filedLine(3)).toBe("3 thoughts filed today");
+    });
+
+    it("says what waits, then names the review and when, each only when there is one", () => {
+      expect(waitingLine(0, undefined, now)).toBeUndefined();
+      expect(waitingLine(2, undefined, now)).toBe("2 in the inbox");
+      expect(waitingLine(0, evening(new Date(2026, 9, 20, 21, 0)), now)).toBe("Evening review at 21:00");
+      expect(waitingLine(2, evening(new Date(2026, 9, 21, 21, 0)), now)).toBe("2 in the inbox · Evening review tomorrow at 21:00");
+      expect(waitingLine(1, evening(new Date(2026, 9, 20, 21, 5), "Nightly sweep"), now)).toBe("1 in the inbox · Nightly sweep at 21:05");
     });
 
     it("names no review that has no time", () => {
-      expect(statusLine(3, evening(null), now)).toBe("3 thoughts filed today.");
+      expect(waitingLine(0, evening(null), now)).toBeUndefined();
     });
   });
 
-  it("titles Recently filed and Scheduled reviews with section headers", () => {
-    const headers = buildMenuModel(input(), now).filter((item) => item.type === "header");
-    expect(headers).toEqual([{ type: "header", label: "Recently filed" }, { type: "header", label: "Scheduled reviews" }]);
+  it("has no section headers: what is rare is in a submenu, by its name", () => {
+    const menu = buildMenuModel(input({ undoableReview: true }), now);
+    expect(menu.filter((item) => (item.type as string) === "header")).toEqual([]);
+    expect(menu.filter((item) => item.type === "submenu").map((item) => (item as { label: string }).label)).toEqual(["Recently filed", "Scheduled reviews"]);
   });
 
-  it("keeps sublabels off headers, with or without a library", () => {
-    for (const menu of [buildMenuModel(input({ undoableReview: true }), now), buildMenuModel(input({ libraryReady: false }), now)]) {
-      expect(menu.filter((item) => item.type === "header" && "sublabel" in item)).toEqual([]);
-    }
-  });
-
-  it("offers the three captures with their shortcuts, recently filed pages and tasks", () => {
+  it("offers the captures with their shortcuts, then a submenu of the pages filed and one of the reviews, then the settings", () => {
     const items = buildMenuModel(input(), now);
     expect(labels(items)).toEqual([
-      "3 thoughts filed today. Evening review at 21:00.", "--",
-      "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "--",
-      "Recently filed", "Launch the indie game dev podcast", "Маленький сад на балконе", "--",
-      "Scheduled reviews", "Evening review", "Weekly review", "--",
+      "3 thoughts filed today", "--",
+      "Record a thought", "Capture screen…", "Type a thought…", "Ask your library…", "--",
+      "Recently filed", "Scheduled reviews", "--",
       "Open library", "Settings…", "Quit Avanzel",
     ]);
-    const record = items.find((i) => i.type === "item" && i.label === "Record a thought");
-    expect(record).toMatchObject({ action: "dictate", accelerator: "Alt+Space" });
-    const weekly = items.find((i) => i.type === "item" && i.label === "Weekly review");
-    expect(weekly).toMatchObject({ action: "task:weekly-review", detail: "Sun 18:00" });
+    expect(row(items, "dictate")).toMatchObject({ label: "Record a thought", accelerator: "Alt+Space" });
+    expect(row(items, "capture")).toMatchObject({ label: "Capture screen…", accelerator: "Alt+Shift+S" });
+    expect(labels(submenu(items, "Recently filed"))).toEqual(["Launch the indie game dev podcast", "Маленький сад на балконе"]);
+    expect(labels(submenu(items, "Scheduled reviews"))).toEqual(["Evening review", "Weekly review"]);
+    expect(row(items, "task:weekly-review")).toMatchObject({ label: "Weekly review", detail: "Sun 18:00" });
+  });
+
+  it("menuRows reads every row in order, with a submenu's in its place", () => {
+    const rows = menuRows(buildMenuModel(input({ undoableFiling: true }), now)).map((item) => item.label);
+    expect(rows).toEqual([
+      "3 thoughts filed today",
+      "Record a thought", "Capture screen…", "Type a thought…", "Ask your library…",
+      "Undo the last filing",
+      "Launch the indie game dev podcast", "Маленький сад на балконе",
+      "Evening review", "Weekly review",
+      "Open library", "Settings…", "Quit Avanzel",
+    ]);
   });
 
   describe("a review's detail", () => {
@@ -211,7 +240,7 @@ describe("tray menu", () => {
       const tasks: MenuTask[] = [
         { id: "evening-review", name: "Evening review", kind: "evening-review", at: new Date(2026, 9, 20, 21, 0), enabled: true, running: false, ...task },
       ];
-      return buildMenuModel(input({ tasks }), now).find((item) => item.type === "item" && item.action === "task:evening-review");
+      return row(buildMenuModel(input({ tasks }), now), "task:evening-review");
     };
 
     it("is the time it runs next while it isn't running", () => {
@@ -261,11 +290,7 @@ describe("tray menu", () => {
   });
 
   describe("Recently filed shows each page's shelf", () => {
-    const recent = (overrides: Partial<MenuInput> = {}) => {
-      const items = buildMenuModel(input(overrides), now);
-      const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
-      return items.slice(at + 1, items.findIndex((item, i) => i > at && item.type === "separator"));
-    };
+    const recent = (overrides: Partial<MenuInput> = {}) => submenu(buildMenuModel(input(overrides), now), "Recently filed");
 
     it("keeps each item's shelf, and gives it the shelf's name as its sublabel", () => {
       expect(recent()).toEqual([
@@ -351,31 +376,28 @@ describe("tray menu", () => {
     });
   });
 
-  describe("Recently filed, with nothing filed yet", () => {
+  describe("with nothing filed yet", () => {
     // Nothing filed yet: no page to list, none counted today, and no filing to undo.
     const empty = (overrides: Partial<MenuInput> = {}) => buildMenuModel(input({ recent: [], filedToday: 0, ...overrides }), now);
-    /** The item right under the Recently filed header; none when the menu has no such header. */
-    const underHeader = (items: ReturnType<typeof buildMenuModel>) => {
-      const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
-      return at === -1 ? undefined : items[at + 1];
-    };
+    /** The row that invites a first thought; none when the menu has no such row. */
+    const invitation = (items: readonly MenuItemModel[]) => menuRows(items).find((item) => item.label.startsWith("Nothing filed yet"));
 
-    it("keeps the header and invites a first thought: an enabled item that records one, naming the real shortcut", () => {
+    it("invites a first thought out in the open: an enabled item that records one, naming the real shortcut", () => {
       const items = empty();
       expect(labels(items)).toEqual([
-        "Nothing filed today. Evening review at 21:00.", "--",
-        "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "--",
-        "Recently filed", "Nothing filed yet. Press ⌥Space and say hello.", "--",
-        "Scheduled reviews", "Evening review", "Weekly review", "--",
+        "Nothing filed today", "--",
+        "Record a thought", "Capture screen…", "Type a thought…", "Ask your library…", "--",
+        "Nothing filed yet. Press ⌥Space and say hello.", "Scheduled reviews", "--",
         "Open library", "Settings…", "Quit Avanzel",
       ]);
       // Exactly an item that does what Record a thought does: enabled (macOS draws a disabled one too dim to read), and
       // with no accelerator of its own, since its words name the shortcut already.
-      expect(underHeader(items)).toEqual({ type: "item", label: "Nothing filed yet. Press ⌥Space and say hello.", action: "dictate" });
+      expect(invitation(items)).toEqual({ type: "item", label: "Nothing filed yet. Press ⌥Space and say hello.", action: "dictate" });
+      expect(submenu(items, "Recently filed")).toEqual([]);
     });
 
     it("is no page and is not dimmed: its action opens nothing, and it is never disabled", () => {
-      const item = underHeader(empty());
+      const item = invitation(empty());
       expect(item).toMatchObject({ type: "item", action: "dictate" });
       expect(item).not.toMatchObject({ action: expect.stringMatching(/^open:/) });
       expect(item).not.toHaveProperty("enabled", false);
@@ -383,63 +405,124 @@ describe("tray menu", () => {
 
     it("names the dictate shortcut the person has chosen", () => {
       const shortcuts = { ...DEFAULT_SETTINGS.shortcuts, dictate: "Control+Alt+R" };
-      expect(underHeader(empty({ shortcuts }))).toMatchObject({ label: "Nothing filed yet. Press ⌃⌥R and say hello.", action: "dictate" });
+      expect(invitation(empty({ shortcuts }))).toMatchObject({ label: "Nothing filed yet. Press ⌃⌥R and say hello.", action: "dictate" });
     });
 
     it("without a dictate shortcut, one that didn't register or none at all, says to record a thought", () => {
       const noShortcut = { type: "item", label: "Nothing filed yet. Record a thought and say hello.", action: "dictate" };
-      expect(underHeader(empty({ unregisteredShortcuts: ["dictate"] }))).toEqual(noShortcut);
-      expect(underHeader(empty({ shortcuts: { ...DEFAULT_SETTINGS.shortcuts, dictate: "" } }))).toEqual(noShortcut);
+      expect(invitation(empty({ unregisteredShortcuts: ["dictate"] }))).toEqual(noShortcut);
+      expect(invitation(empty({ shortcuts: { ...DEFAULT_SETTINGS.shortcuts, dictate: "" } }))).toEqual(noShortcut);
     });
 
     it("gives way to the pages once there are some, and is not there for a library that isn't ready", () => {
-      expect(labels(buildMenuModel(input(), now))).not.toContain("Nothing filed yet. Press ⌥Space and say hello.");
+      expect(invitation(buildMenuModel(input(), now))).toBeUndefined();
       expect(labels(buildMenuModel(input({ recent: [], libraryReady: false }), now))).toEqual(["Set up Avanzel…", "--", "Quit Avanzel"]);
     });
 
     // A filing that wrote no page (the agent only logged the note) is counted in the head and leaves nothing to list: the invitation
     // would say the opposite of the head, and of an Undo of that filing.
-    it("is not there once a thought has been filed today, though no page was, and the section goes when it has nothing to show", () => {
+    it("is not there once a thought has been filed today, though no page was, and a submenu with nothing to show isn't either", () => {
       const items = empty({ filedToday: 1 });
       expect(labels(items)).toEqual([
-        "1 thought filed today. Evening review at 21:00.", "--",
-        "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "--",
-        "Scheduled reviews", "Evening review", "Weekly review", "--",
+        "1 thought filed today", "--",
+        "Record a thought", "Capture screen…", "Type a thought…", "Ask your library…", "--",
+        "Scheduled reviews", "--",
         "Open library", "Settings…", "Quit Avanzel",
       ]);
       expect(JSON.stringify(items)).not.toContain("Nothing filed yet");
     });
 
-    it("is not there while a filing can be undone, even one filed on another day: the section holds the Undo alone", () => {
+    it("is not there while a filing can be undone, even one filed on another day", () => {
       for (const filedToday of [0, 1]) {
         const items = empty({ filedToday, undoableFiling: true });
-        expect(labels(items).slice(7, 10)).toEqual(["Recently filed", "Undo the last filing", "--"]);
+        expect(section(items)).toEqual(["Undo the last filing", "Scheduled reviews"]);
         expect(JSON.stringify(items)).not.toContain("Nothing filed yet");
       }
     });
+
+    it("leaves no empty section when the library has no reviews either", () => {
+      expect(labels(empty({ filedToday: 1, tasks: [] }))).toEqual([
+        "1 thought filed today", "--",
+        "Record a thought", "Capture screen…", "Type a thought…", "Ask your library…", "--",
+        "Open library", "Settings…", "Quit Avanzel",
+      ]);
+    });
   });
 
-  describe("Forget the last dictation", () => {
+  describe("Recent dictations", () => {
+    const said = (id: string, text: string, app = "Slack", at = "2026-10-20T13:30:00"): MenuDictation => ({ id, text, app, at });
+    const dictations = [said("a", "Ask Dana about the launch checklist"), said("b", "Remember the keys", "T3 Code", "2026-10-19T23:59:00")];
     const forget = { type: "item", label: "Forget the last dictation", action: "forget-dictation" };
+    const history = { type: "item", label: "Open history…", action: "open-settings:dictations" };
 
-    it("ends the group of the actions that take words in, when the history has a dictation", () => {
-      const items = buildMenuModel(input({ forgettableDictation: true }), now);
-      expect(labels(items).slice(2, 8)).toEqual([
-        "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "Forget the last dictation", "--",
+    it("lists them under the pages filed, each copied by a click, with where it went and when, then what acts on the history", () => {
+      const items = buildMenuModel(input({ recentDictations: dictations }), now);
+      expect(section(items)).toEqual(["Recently filed", "Recent dictations", "Scheduled reviews"]);
+      expect(submenu(items, "Recent dictations")).toEqual([
+        { type: "item", label: "Ask Dana about the launch checklist", action: "copy-dictation:a", sublabel: "Slack · 13:30" },
+        { type: "item", label: "Remember the keys", action: "copy-dictation:b", sublabel: "T3 Code · Yesterday 23:59" },
+        { type: "separator" },
+        forget,
+        history,
       ]);
-      expect(items.filter((item) => item.type === "item" && item.action === "forget-dictation")).toEqual([forget]);
     });
 
-    it("is not there while the history is empty, and the rest of the menu is the same either way", () => {
-      const without = buildMenuModel(input({ forgettableDictation: false }), now);
-      expect(JSON.stringify(without)).not.toContain("forget-dictation");
-      const withIt = buildMenuModel(input({ forgettableDictation: true }), now);
-      expect(withIt.filter((item) => item.type !== "item" || item.action !== "forget-dictation")).toEqual(without);
+    it("isn't there while the history is empty, and the rest of the menu is the same either way", () => {
+      const without = buildMenuModel(input(), now);
+      expect(JSON.stringify(without)).not.toMatch(/forget-dictation|copy-dictation|open-settings:dictations/);
+      const withIt = buildMenuModel(input({ recentDictations: dictations }), now);
+      expect(withIt.filter((item) => item.type !== "submenu" || item.label !== "Recent dictations")).toEqual(without);
     });
 
-    it("is an item that can be read, with no shortcut, and not offered where there is no library", () => {
-      expect(buildMenuModel(input({ forgettableDictation: true }), now).find((one) => one.type === "item" && one.action === "forget-dictation")).toEqual(forget);
-      expect(JSON.stringify(buildMenuModel(input({ libraryReady: false, forgettableDictation: true }), now))).not.toContain("forget-dictation");
+    it("lists the newest three at most", () => {
+      const many = Array.from({ length: 5 }, (_, i) => said(`d${i}`, `Thought ${i}`));
+      expect(MENU_DICTATIONS).toBe(3);
+      const rows = submenu(buildMenuModel(input({ recentDictations: many }), now), "Recent dictations");
+      expect(labels(rows)).toEqual(["Thought 0", "Thought 1", "Thought 2", "--", "Forget the last dictation", "Open history…"]);
+    });
+
+    it("says what it knows of where one went", () => {
+      const at = (dictation: MenuDictation) => submenu(buildMenuModel(input({ recentDictations: [dictation] }), now), "Recent dictations")[0];
+      expect(at(said("a", "Hello", ""))).toMatchObject({ sublabel: "13:30" });
+      expect(at(said("a", "Hello", "Mail", "not a time"))).toMatchObject({ sublabel: "Mail" });
+      expect(at(said("a", "Hello", "", "not a time"))).not.toHaveProperty("sublabel");
+    });
+
+    it("isn't offered where there is no library: setup or Settings come first", () => {
+      expect(JSON.stringify(buildMenuModel(input({ libraryReady: false, recentDictations: dictations }), now))).not.toContain("Recent dictations");
+    });
+
+    it("dictationRow keeps a row on one line and cuts a long one at a whole character", () => {
+      expect(dictationRow("Short words")).toBe("Short words");
+      expect(dictationRow("  Two\nlines   and\tspaces ")).toBe("Two lines and spaces");
+      expect(dictationRow("a".repeat(44))).toBe("a".repeat(44));
+      expect(dictationRow("a".repeat(45))).toBe(`${"a".repeat(44)}…`);
+      expect(dictationRow(`${"a".repeat(43)} and more`)).toBe(`${"a".repeat(43)}…`); // no space before the ellipsis
+      expect(dictationRow(`${"a".repeat(43)}🌿🌿🌿`)).toBe(`${"a".repeat(43)}🌿…`); // a character of two units stays whole
+    });
+  });
+
+  describe("Dictate into any app", () => {
+    it("is a row with a check, its key beside it, above the settings", () => {
+      const items = buildMenuModel(input({ cursorDictation: { enabled: true, key: "Right Option" } }), now);
+      expect(labels(items).slice(-5)).toEqual(["--", "Dictate into any app", "Open library", "Settings…", "Quit Avanzel"]);
+      const toggle = row(items, "toggle-dictation");
+      expect(toggle).toEqual({ type: "item", label: "Dictate into any app", action: "toggle-dictation", detail: "Right Option", checked: true });
+      expect(menuLabel(toggle as { label: string; detail?: string })).toBe("Dictate into any app (Right Option)");
+    });
+
+    it("has no check while it is off, and names the key chosen", () => {
+      expect(row(buildMenuModel(input({ cursorDictation: { enabled: false, key: "Left Option" } }), now), "toggle-dictation")).toMatchObject({ detail: "Left Option", checked: false });
+    });
+
+    it("isn't there on a Mac that can't, or where there is no library", () => {
+      expect(row(buildMenuModel(input({ cursorDictation: null }), now), "toggle-dictation")).toBeUndefined();
+      expect(row(buildMenuModel(input({ libraryReady: false, cursorDictation: { enabled: true, key: "Right Option" } }), now), "toggle-dictation")).toBeUndefined();
+    });
+
+    it("is the only row with a check", () => {
+      const items = buildMenuModel(input({ undoableFiling: true, undoableReview: true, showableReceipt: true, hasReceipt: true, cursorDictation: { enabled: false, key: "Right Option" } }), now);
+      expect(menuRows(items).filter((item) => "checked" in item).map((item) => item.action)).toEqual(["toggle-dictation"]);
     });
   });
 
@@ -447,13 +530,12 @@ describe("tray menu", () => {
     const undo = { type: "item", label: "Undo the last filing", action: "undo-filing", accelerator: "Alt+Shift+Z" };
     const withUndo = (overrides: Partial<MenuInput> = {}) => buildMenuModel(input({ undoableFiling: true, ...overrides }), now);
 
-    it("follows the recently filed pages, and is the last item of that section", () => {
+    it("leads the section after the actions, out in the open, with its shortcut", () => {
       const items = withUndo();
       expect(labels(items)).toEqual([
-        "3 thoughts filed today. Evening review at 21:00.", "--",
-        "Record a thought", "Capture screen with a comment", "Type a thought…", "Ask your library…", "--",
-        "Recently filed", "Launch the indie game dev podcast", "Маленький сад на балконе", "Undo the last filing", "--",
-        "Scheduled reviews", "Evening review", "Weekly review", "--",
+        "3 thoughts filed today", "--",
+        "Record a thought", "Capture screen…", "Type a thought…", "Ask your library…", "--",
+        "Undo the last filing", "Recently filed", "Scheduled reviews", "--",
         "Open library", "Settings…", "Quit Avanzel",
       ]);
       expect(items.filter((item) => item.type === "item" && item.action === "undo-filing")).toEqual([undo]);
@@ -472,22 +554,20 @@ describe("tray menu", () => {
       expect(items.filter((item) => item.type !== "item" || item.action !== "undo-filing")).toEqual(without);
     });
 
-    it("closes the section after three pages at most, or is all it holds while there are none", () => {
-      const pages = Array.from({ length: 5 }, (_, i) => ({ title: `Page ${i}`, shelf: "topics", path: `topics/${i}.md` }));
-      expect(labels(withUndo({ recent: pages })).slice(7, 12)).toEqual(["Recently filed", "Page 0", "Page 1", "Page 2", "Undo the last filing"]);
-      // A filing that wrote no page (the agent only logged the note) leaves no page to list: the filing can still be undone, and the
-      // item is all the section holds. "Nothing filed yet" would contradict the head's count and the Undo under it.
-      const empty = labels(withUndo({ recent: [], filedToday: 1 }));
-      expect(empty.slice(0, 1)).toEqual(["1 thought filed today. Evening review at 21:00."]);
-      expect(empty.slice(7, 10)).toEqual(["Recently filed", "Undo the last filing", "--"]);
+    it("is there with no page to list: a filing that wrote none can still be undone", () => {
+      // A filing that wrote no page (the agent only logged the note) leaves no page to list. "Nothing filed yet" would contradict the
+      // head's count and the Undo.
+      const empty = withUndo({ recent: [], filedToday: 1 });
+      expect(labels(empty)[0]).toBe("1 thought filed today");
+      expect(section(empty)).toEqual(["Undo the last filing", "Scheduled reviews"]);
     });
 
     it("is an item that can be read, not dimmed, with its shortcut and no shelf or sublabel", () => {
-      const item = withUndo().find((one) => one.type === "item" && one.action === "undo-filing");
+      const item = row(withUndo(), "undo-filing");
       expect(item).toEqual(undo);
       expect(item).not.toHaveProperty("enabled", false);
       // The shortcut is shown while it works: one that didn't register is not, as it is for the other four.
-      const unregistered = withUndo({ unregisteredShortcuts: ["undo"] }).find((one) => one.type === "item" && one.action === "undo-filing");
+      const unregistered = row(withUndo({ unregisteredShortcuts: ["undo"] }), "undo-filing");
       expect(unregistered).toEqual({ type: "item", label: "Undo the last filing", action: "undo-filing" });
       expect(unregistered).not.toHaveProperty("accelerator");
     });
@@ -496,13 +576,15 @@ describe("tray menu", () => {
       expect(labels(buildMenuModel(input({ libraryReady: false, undoableFiling: true }), now))).toEqual(["Set up Avanzel…", "--", "Quit Avanzel"]);
     });
 
-    it("sits beside the evening review's own Undo, which it does not replace", () => {
+    it("sits apart from the evening review's own Undo, which is with the reviews", () => {
       const items = withUndo({ undoableReview: true });
       expect(labels(items)).toContain("Undo the last filing");
-      expect(labels(items)).toContain("Undo the last evening review");
-      expect(items.filter((item) => item.type === "item" && item.action === "undo-review")).toEqual([
-        { type: "item", label: "Undo the last evening review", action: "undo-review" },
-      ]);
+      expect(labels(submenu(items, "Scheduled reviews"))).toEqual(["Evening review", "Weekly review", "--", "Undo the last evening review"]);
+      expect(row(items, "undo-review")).toEqual({ type: "item", label: "Undo the last evening review", action: "undo-review" });
+    });
+
+    it("keeps the review's Undo offered in a library with no reviews to list", () => {
+      expect(labels(submenu(buildMenuModel(input({ tasks: [], undoableReview: true }), now), "Scheduled reviews"))).toEqual(["Undo the last evening review"]);
     });
   });
 
@@ -510,19 +592,15 @@ describe("tray menu", () => {
     const receipt = { type: "item", label: "Show the last receipt", action: "show-receipt" };
     const withReceipt = (overrides: Partial<MenuInput> = {}) => buildMenuModel(input({ showableReceipt: true, hasReceipt: true, ...overrides }), now);
 
-    it("sits right above Undo the last filing, after the recent pages", () => {
+    it("ends Recently filed, under the pages", () => {
       const items = withReceipt({ undoableFiling: true });
-      expect(labels(items).slice(7, 13)).toEqual([
-        "Recently filed", "Launch the indie game dev podcast", "Маленький сад на балконе", "Show the last receipt", "Undo the last filing", "--",
-      ]);
-      expect(items.filter((item) => item.type === "item" && item.action === "show-receipt")).toEqual([receipt]);
-      // With nothing to undo, it closes the section: the receipt can be shown after the filing was taken back by a review, say.
-      expect(labels(withReceipt()).slice(7, 12)).toEqual(["Recently filed", "Launch the indie game dev podcast", "Маленький сад на балконе", "Show the last receipt", "--"]);
+      expect(labels(submenu(items, "Recently filed"))).toEqual(["Launch the indie game dev podcast", "Маленький сад на балконе", "--", "Show the last receipt"]);
+      expect(row(items, "show-receipt")).toEqual(receipt);
     });
 
-    it("is all the section holds where the invitation would be", () => {
+    it("is all the submenu holds where the invitation would be", () => {
       const items = withReceipt({ recent: [], filedToday: 0 });
-      expect(labels(items).slice(7, 10)).toEqual(["Recently filed", "Show the last receipt", "--"]);
+      expect(labels(submenu(items, "Recently filed"))).toEqual(["Show the last receipt"]);
       expect(JSON.stringify(items)).not.toContain("Nothing filed yet");
     });
 
@@ -533,27 +611,19 @@ describe("tray menu", () => {
       const items = buildMenuModel(input({ recent: [], filedToday: 0, hasReceipt: true, showableReceipt: false }), now);
       expect(labels(items)).not.toContain("Recently filed");
       expect(JSON.stringify(items)).not.toContain("Nothing filed yet");
-      expect(labels(items).slice(5, 9)).toEqual(["Ask your library…", "--", "Scheduled reviews", "Evening review"]);
+      expect(section(items)).toEqual(["Scheduled reviews"]);
       // And with no receipt at all the invitation is there, as it was.
-      expect(labels(buildMenuModel(input({ recent: [], filedToday: 0 }), now)).slice(7, 10)).toEqual(["Recently filed", "Nothing filed yet. Press ⌥Space and say hello.", "--"]);
+      expect(section(buildMenuModel(input({ recent: [], filedToday: 0 }), now))).toEqual(["Nothing filed yet. Press ⌥Space and say hello.", "Scheduled reviews"]);
     });
 
     it("is only there while a receipt can be shown", () => {
       for (const items of [buildMenuModel(input(), now), buildMenuModel(input({ showableReceipt: false }), now), buildMenuModel(input({ hasReceipt: true }), now)]) {
-        expect(labels(items)).not.toContain("Show the last receipt");
         expect(JSON.stringify(items)).not.toContain("show-receipt");
       }
     });
 
-    it("leaves the rest of the menu as it is", () => {
-      const without = buildMenuModel(input(), now);
-      expect(withReceipt().filter((item) => item.type !== "item" || item.action !== "show-receipt")).toEqual(without);
-      const undoable = buildMenuModel(input({ undoableFiling: true }), now);
-      expect(withReceipt({ undoableFiling: true }).filter((item) => item.type !== "item" || item.action !== "show-receipt")).toEqual(undoable);
-    });
-
     it("is an item that can be read, with no shortcut, shelf or sublabel", () => {
-      const item = withReceipt().find((one) => one.type === "item" && one.action === "show-receipt");
+      const item = row(withReceipt(), "show-receipt");
       expect(item).toEqual(receipt);
       expect(item).not.toHaveProperty("enabled", false);
     });
@@ -565,36 +635,26 @@ describe("tray menu", () => {
 
   it("a shortcut that didn't register is not shown in the menu", () => {
     const items = buildMenuModel(input({ unregisteredShortcuts: ["dictate"] }), now);
-    const item = (action: string) => items.find((i) => i.type === "item" && i.action === action);
-    expect(item("dictate")).toEqual({ type: "item", label: "Record a thought", action: "dictate" });
-    expect(item("capture")).toMatchObject({ accelerator: "Alt+Shift+S" });
-    expect(item("type")).toMatchObject({ accelerator: "Alt+Shift+Space" });
-    expect(item("ask")).toMatchObject({ accelerator: "Alt+Shift+A" });
+    expect(row(items, "dictate")).toEqual({ type: "item", label: "Record a thought", action: "dictate" });
+    expect(row(items, "capture")).toMatchObject({ accelerator: "Alt+Shift+S" });
+    expect(row(items, "type")).toMatchObject({ accelerator: "Alt+Shift+Space" });
+    expect(row(items, "ask")).toMatchObject({ accelerator: "Alt+Shift+A" });
   });
 
   it("turns the first item into Stop while recording", () => {
-    const items = buildMenuModel(input({ recording: true }), now);
-    expect(items.find((i) => i.type === "item" && i.action === "dictate")).toMatchObject({ label: "Stop recording" });
+    expect(row(buildMenuModel(input({ recording: true }), now), "dictate")).toMatchObject({ label: "Stop recording" });
   });
 
-  it("offers notes on a call right under Capture screen with a comment, and Stop taking notes while a call runs", () => {
+  it("offers notes on a call right under Capture screen…, and Stop taking notes while a call runs", () => {
     const ready = labels(buildMenuModel(input({ callNotes: "ready" }), now));
-    expect(ready.slice(ready.indexOf("Capture screen with a comment"), ready.indexOf("Capture screen with a comment") + 2)).toEqual([
-      "Capture screen with a comment",
-      "Take notes on a call…",
-    ]);
+    expect(ready.slice(ready.indexOf("Capture screen…"), ready.indexOf("Capture screen…") + 2)).toEqual(["Capture screen…", "Take notes on a call…"]);
     expect(ready).not.toContain("Stop taking notes");
-    const item = (callNotes: MenuInput["callNotes"], action: string) =>
-      buildMenuModel(input({ callNotes }), now).find((i) => i.type === "item" && i.action === action);
-    expect(item("ready", "call-notes")).toEqual({ type: "item", label: "Take notes on a call…", action: "call-notes" });
+    expect(row(buildMenuModel(input({ callNotes: "ready" }), now), "call-notes")).toEqual({ type: "item", label: "Take notes on a call…", action: "call-notes" });
 
     const running = labels(buildMenuModel(input({ callNotes: "running" }), now));
-    expect(running.slice(running.indexOf("Capture screen with a comment"), running.indexOf("Capture screen with a comment") + 2)).toEqual([
-      "Capture screen with a comment",
-      "Stop taking notes",
-    ]);
+    expect(running.slice(running.indexOf("Capture screen…"), running.indexOf("Capture screen…") + 2)).toEqual(["Capture screen…", "Stop taking notes"]);
     expect(running).not.toContain("Take notes on a call…");
-    expect(item("running", "call-notes-stop")).toEqual({ type: "item", label: "Stop taking notes", action: "call-notes-stop" });
+    expect(row(buildMenuModel(input({ callNotes: "running" }), now), "call-notes-stop")).toEqual({ type: "item", label: "Stop taking notes", action: "call-notes-stop" });
 
     const off = labels(buildMenuModel(input({ callNotes: "off" }), now));
     expect(off).not.toContain("Take notes on a call…");
@@ -611,7 +671,7 @@ describe("tray menu", () => {
       CUT_SHORT,
     ]);
     expect(waiting.filter((label) => label === CUT_SHORT)).toHaveLength(1); // one row, however many wait
-    expect(buildMenuModel(input({ callNotes: "ready", cutShortCalls: 1 }), now).find((i) => i.type === "item" && i.label === CUT_SHORT)).toEqual({
+    expect(row(buildMenuModel(input({ callNotes: "ready", cutShortCalls: 1 }), now), "finish-cut-short")).toEqual({
       type: "item",
       label: CUT_SHORT,
       action: "finish-cut-short",
@@ -619,12 +679,6 @@ describe("tray menu", () => {
     expect(labels(buildMenuModel(input({ callNotes: "ready", cutShortCalls: 0 }), now))).not.toContain(CUT_SHORT);
     // Without a library the menu only sets one up.
     expect(labels(buildMenuModel(input({ libraryReady: false, cutShortCalls: 1 }), now))).not.toContain(CUT_SHORT);
-  });
-
-  it("says nothing of an empty inbox, and offers undo after an evening review", () => {
-    const items = buildMenuModel(input({ inbox: 0, undoableReview: true }), now);
-    expect(items[0]).toEqual({ type: "item", label: "3 thoughts filed today. Evening review at 21:00.", action: "open-library" });
-    expect(labels(items)).toContain("Undo the last evening review");
   });
 
   it("only offers setup when there is no library yet", () => {
@@ -663,8 +717,10 @@ describe("tray menu", () => {
   it("formats times relative to today", () => {
     expect(formatWhen(new Date(2026, 9, 20, 21, 0), now)).toBe("21:00");
     expect(formatWhen(new Date(2026, 9, 21, 9, 5), now)).toBe("Tomorrow 09:05");
+    expect(formatWhen(new Date(2026, 9, 19, 23, 59), now)).toBe("Yesterday 23:59");
     expect(formatWhen(new Date(2026, 9, 25, 18, 0), now)).toBe("Sun 18:00");
     expect(formatWhen(new Date(2026, 10, 2, 18, 0), now)).toBe("2 Nov 18:00");
+    expect(formatWhen(new Date(2026, 9, 12, 8, 0), now)).toBe("12 Oct 08:00");
   });
 });
 

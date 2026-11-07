@@ -3,7 +3,6 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileS
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { git, loadSettings, saveSettings, writeWav } from "../../../packages/engine/src/index.ts";
-import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import {
   agentStubs,
@@ -18,6 +17,7 @@ import {
   launch,
   limitedClaude,
   makeLibrary,
+  menuRowsOf,
   onceMarker,
   onlyAgentsIn,
   openedWith,
@@ -30,6 +30,7 @@ import {
   speechWav,
   stubOpening,
   windowFor,
+  toolbarItem,
 } from "./helpers.ts";
 import { barOf, cardButtons, expectProblem, launchOn } from "./capsule-helpers.ts";
 
@@ -403,13 +404,10 @@ test("the menu's Recently filed invites a first thought while nothing is filed, 
     AVANZEL_FAKE_AUDIO: speechWav("hello"),
     AVANZEL_FAKE_TRANSCRIPT: "Say hello to the garden",
   });
-  const menu = async () => (await call(app, "menuForTests")) as MenuItemModel[];
-  const items = await menu();
-  const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
-  expect(at).toBeGreaterThan(-1);
+  const menu = () => menuRowsOf(app);
+  const invite = (await menu()).find((item) => item.label.startsWith("Nothing filed yet"));
   // An enabled item, since macOS draws a disabled one too dim to read, that does what Record a thought does. It is no page:
   // the pages the menu lists open one, and this opens none.
-  const invite = items[at + 1]!;
   expect(invite).toEqual({ type: "item", label: "Nothing filed yet. Press ⌥Space and say hello.", action: "dictate" });
   expect(await recentlyFiled(app)).toEqual([]);
   // Clicking it records, as the menu's own Record a thought does; clicking again stops, and the note is filed.
@@ -419,15 +417,13 @@ test("the menu's Recently filed invites a first thought while nothing is filed, 
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   // Something is filed now, so the pages take the invitation's place.
   await expect.poll(() => recentlyFiled(app)).toHaveLength(1);
-  expect((await menu()).some((item) => item.type === "item" && item.label.startsWith("Nothing filed yet"))).toBe(false);
+  expect((await menu()).some((item) => item.label.startsWith("Nothing filed yet"))).toBe(false);
   await app.close();
 });
 
 test("the menu's invitation says to record a thought when the dictate shortcut is another app's", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
-  const items = (await call(app, "menuForTests")) as MenuItemModel[];
-  const at = items.findIndex((item) => item.type === "header" && item.label === "Recently filed");
-  expect(items[at + 1]).toEqual({ type: "item", label: "Nothing filed yet. Record a thought and say hello.", action: "dictate" });
+  expect((await menuRowsOf(app)).find((item) => item.label.startsWith("Nothing filed yet"))).toEqual({ type: "item", label: "Nothing filed yet. Record a thought and say hello.", action: "dictate" });
   await app.close();
 });
 
@@ -739,7 +735,7 @@ test("when the library's agent is gone, the fix is Open Settings, on Agents", as
   await snap(ask, "9-ask-failed-gone");
   await settingsFix.click();
   const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("radio", { name: "Agents", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
   await app.close();
 });
 
@@ -856,13 +852,13 @@ test("Open Settings in the Ask window leaves a recording and a note being edited
   const ask = await windowFor(app, "ask");
   // What the Ask window's Open Settings sends, when the library's agent isn't installed: the capsule's own call, for Agents.
   const openAgents = () => ask.evaluate(() => window.avanzel.capsule.openSettingsFor("open-settings:agents"));
-  const agents = (settings: Page) => settings.getByRole("radio", { name: "Agents", exact: true });
+  const agents = (settings: Page) => toolbarItem(settings, "Agents");
 
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await openAgents();
   const settings = await windowFor(app, "settings");
-  await expect(agents(settings)).toHaveAttribute("aria-checked", "true");
+  await expect(agents(settings)).toHaveAttribute("aria-current", "page");
   expect(await capsuleKind(app)).toBe("listening"); // the recording goes on
   await expect(capsule.getByRole("status").getByRole("radio", { name: "Now", exact: true })).toHaveAttribute("aria-checked", "true");
 
@@ -873,10 +869,10 @@ test("Open Settings in the Ask window leaves a recording and a note being edited
   await expect.poll(() => capsuleKind(app)).toBe("editing");
   await capsule.getByRole("textbox").fill("Remember to email Mark the agentic plan");
   await expect.poll(() => call(app, "draftForTests")).toBe("Remember to email Mark the agentic plan");
-  await settings.getByRole("radio", { name: "General", exact: true }).click(); // so that the second Open Settings has somewhere to go
-  await expect(agents(settings)).toHaveAttribute("aria-checked", "false");
+  await toolbarItem(settings, "General").click(); // so that the second Open Settings has somewhere to go
+  await expect(agents(settings)).not.toHaveAttribute("aria-current", "page");
   await openAgents();
-  await expect(agents(settings)).toHaveAttribute("aria-checked", "true");
+  await expect(agents(settings)).toHaveAttribute("aria-current", "page");
   expect(await capsuleKind(app)).toBe("editing");
   await expect(capsule.getByRole("textbox")).toHaveValue("Remember to email Mark the agentic plan");
   await app.close();
@@ -893,7 +889,7 @@ test("Open Settings still takes away the capsule's error card and its notice of 
   expect(await capsuleKind(app)).toBe("hidden");
   await call(app, "setCapsule", { kind: "shortcut-taken", key: "dictate", accelerator: "Alt+Space", holder: null, alternatives: [] });
   expect(await capsuleKind(app)).toBe("shortcut-taken");
-  await call(app, "openSettingsFor", "open-settings:voice");
+  await call(app, "openSettingsFor", "open-settings:general");
   expect(await capsuleKind(app)).toBe("hidden");
   await app.close();
 });
@@ -1463,29 +1459,30 @@ test("a dictation listens on a bar with its file mode, Cancel, Pause and Stop, a
   await app.close();
 });
 
-test("the capsule's corners beside the hint catch no pointer: only what is drawn takes it, and gives it back", async () => {
+test("the capsule's corners around its panel catch no pointer: only what is drawn takes it, and gives it back", async () => {
   const library = await makeLibrary();
   const { app, capsule } = await launchHearing(library, newUserData());
   await startListening(app);
-  const hint = (await capsule.locator(".hint").boundingBox())!;
+  const panel = (await capsule.locator(".stack .av-hud").boundingBox())!;
   const bar = (await capsule.getByRole("status").boundingBox())!;
-  const stack = (await capsule.locator(".stack").boundingBox())!;
-  // The hint takes only the room of its words, over the middle of a bar as wide as the stack: there is room beside it.
-  const beside = { x: hint.x - 20, y: hint.y + hint.height / 2 };
-  const between = { x: bar.x + bar.width / 2, y: hint.y + hint.height + 4 }; // the gap under the hint, over the bar
+  // The first recordings' hint stands inside the panel, above its row, on the same glass.
+  const hint = (await capsule.locator(".av-capsule-hint").boundingBox())!;
+  expect(hint.y).toBeGreaterThanOrEqual(panel.y);
+  expect(hint.y + hint.height).toBeLessThanOrEqual(bar.y);
+  const beside = { x: panel.x - 8, y: panel.y + panel.height / 2 };
+  const above = { x: panel.x + panel.width / 2, y: panel.y - 20 };
   const onHint = { x: hint.x + hint.width / 2, y: hint.y + hint.height / 2 };
   const onBar = { x: bar.x + bar.width / 2, y: bar.y + bar.height / 2 };
-  expect(beside.x).toBeGreaterThan(stack.x + 8);
-  expect(between.y).toBeLessThan(bar.y);
-  // What is under each point to the pointer: the pieces that are drawn answer, and the rest of the stack, which is wider than some of
-  // them, and the gaps between them, let it through to the panel.
+  expect(beside.x).toBeGreaterThan(0);
+  expect(above.y).toBeGreaterThan(0);
+  // What is under each point to the pointer: what is drawn answers, and the rest of the window lets it through to the app below.
   const under = (at: { x: number; y: number }) =>
     capsule.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest(".stack"), at);
   expect(await under(onHint)).toBe(true);
   expect(await under(onBar)).toBe(true);
   expect(await under(beside)).toBe(false);
-  expect(await under(between)).toBe(false);
-  // The window takes the pointer, to be clicked and to keep its card up, only while it is over one of them.
+  expect(await under(above)).toBe(false);
+  // The window takes the pointer, to be clicked and to keep its card up, only while it is over what is drawn.
   await app.evaluate(() => {
     const controller = (globalThis as unknown as { __avanzel: { setInteractive(interactive: boolean): void } }).__avanzel;
     const asked: boolean[] = [];
@@ -1497,14 +1494,14 @@ test("the capsule's corners beside the hint catch no pointer: only what is drawn
     };
   });
   const asked = () => app.evaluate(() => (globalThis as { interactiveAsked?: boolean[] }).interactiveAsked ?? []);
-  // The lists below are exact, and the pointer visits the corner and the gap before the hint, so a call from either shows: a corner that
-  // had caught the pointer would not give it back at the second visit to it.
+  // The lists below are exact, and the pointer visits both corners before the panel, so a call from either shows: a corner that had
+  // caught the pointer would not give it back at the second visit to it.
   await capsule.mouse.move(beside.x, beside.y);
-  await capsule.mouse.move(beside.x + 6, beside.y);
-  await capsule.mouse.move(between.x, between.y);
+  await capsule.mouse.move(beside.x + 2, beside.y);
+  await capsule.mouse.move(above.x, above.y);
   await capsule.mouse.move(onHint.x, onHint.y);
   await expect.poll(asked).toEqual([true]);
-  await capsule.mouse.move(beside.x, beside.y);
+  await capsule.mouse.move(above.x, above.y);
   await expect.poll(asked).toEqual([true, false]);
   await capsule.mouse.move(onBar.x, onBar.y);
   await expect.poll(asked).toEqual([true, false, true]);
@@ -1750,7 +1747,7 @@ test("the card names no key for a shortcut that isn't registered", async () => {
   await startListening(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "listening", mode: "dictate", hint: null });
   await call(app, "cancelRecording");
-  // Capture screen with a comment's shortcut works, and is the key that finishes a screen comment.
+  // Capture screen's shortcut works, and is the key that finishes a screen comment.
   await call(app, "toggleCapture");
   await expect.poll(() => capsuleKind(app), { timeout: 20_000 }).toBe("listening");
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ mode: "comment", hint: "Alt+Shift+S" });

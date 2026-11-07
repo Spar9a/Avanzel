@@ -184,9 +184,6 @@ test("Esc while listening drops the dictation and pastes nothing, and the next t
   await call(app, "setCursorDictation", { enabled: true, key: "right-command" });
   await call(app, "pressCursorDictation");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
-  // The listening card says it is dictating into another app, and how it ends, with the key the setting chose.
-  const capsule = await windowFor(app, "capsule");
-  await expect(capsule.getByText("Dictating into another app. Tap Right Command again to finish, or press Esc.", { exact: true })).toBeVisible();
   expect(await call(app, "pressShortcutForTests", "Escape")).toBe(true);
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await wait(1_000);

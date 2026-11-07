@@ -1,0 +1,36 @@
+.av-toolbar {
+  display: flex;
+  justify-content: center;
+  gap: var(--av-space-4);
+  padding: 0 var(--av-space-12) var(--av-space-8);
+  border-bottom: 1px solid var(--av-line-hair);
+}
+.av-toolbar-item {
+  appearance: none;
+  margin: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--av-space-2);
+  width: 76px;
+  padding: 5px 0 4px;
+  border-radius: var(--av-radius-control);
+  font: var(--av-text-caption);
+  line-height: 14px;
+  color: var(--av-ink-secondary);
+  background: transparent;
+  cursor: default;
+  user-select: none;
+}
+.av-toolbar-item:hover { color: var(--av-ink); }
+.av-toolbar-item:active { background: var(--av-surface-fill); }
+/* The pane in view: its weight says so as well as its colour, as Segmented's choice does. */
+.av-toolbar-item[aria-current] {
+  font-weight: 600;
+  color: var(--av-ink-accent);
+  background: var(--av-accent-wash);
+}
+@media (prefers-contrast: more) {
+  .av-toolbar-item[aria-current] { box-shadow: inset 0 0 0 1px var(--av-line-control); }
+}

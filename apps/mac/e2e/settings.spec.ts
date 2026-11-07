@@ -16,39 +16,237 @@ import {
   openedWith,
   openSettings,
   read,
+  settingsRow,
   shownMenus,
   snap,
+  stopFittingSettings,
   stubOpening,
   stubPicker,
+  toolbarItem,
   windowFor,
 } from "./helpers.ts";
 
 /** What Settings is sent now. */
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
 
-const PANES = ["General", "Voice", "Shortcuts", "Dictations", "Agents", "Reviews", "Privacy"];
+const PANES = ["General", "Voice", "Dictation", "Agents", "Reviews", "Privacy"];
 
-test("Settings moves between its seven panes on its toolbar, by click and by the arrow keys", async () => {
+/** Settings' window as main sees it: its title and height, whether a person can size it, and the room its display has. */
+const settingsWindow = (app: ElectronApplication) =>
+  app.evaluate(({ BrowserWindow, screen }) => {
+    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes("/renderer/settings/"))!;
+    return { title: win.getTitle(), size: win.getSize(), resizable: win.isResizable(), workArea: screen.getDisplayMatching(win.getBounds()).workArea.height };
+  });
+
+/** Whether the pane in view has nothing to scroll: the window gives it what it needs. */
+const paneFits = (settings: Page) => settings.locator("main.settings-pane").evaluate((el) => el.scrollHeight <= el.clientHeight);
+
+/** What the window needs to show its pane whole: what is above the pane, the pane's padding, and what the pane holds, in px. */
+const paneNeeds = (settings: Page) =>
+  settings.locator("main.settings-pane").evaluate((el) => {
+    const { paddingTop, paddingBottom } = getComputedStyle(el);
+    return Math.ceil(el.getBoundingClientRect().top + parseFloat(paddingTop) + parseFloat(paddingBottom) + el.firstElementChild!.getBoundingClientRect().height);
+  });
+
+/** Waits for the window to take what its pane needs, within the screen and the window's most, and says its height then, in px. */
+async function fitted(app: ElectronApplication, settings: Page): Promise<number> {
+  await expect
+    .poll(async () => {
+      const { size, workArea } = await settingsWindow(app);
+      return size[1]! - Math.min(await paneNeeds(settings), 800, workArea);
+    })
+    .toBe(0);
+  return (await settingsWindow(app)).size[1]!;
+}
+
+test("Settings moves between its six panes on its toolbar, by click, Space or Return, and its title follows", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app);
-  await expect(settings.getByRole("radiogroup", { name: "Section" }).getByRole("radio")).toHaveText(PANES);
+  await expect(settings.getByRole("navigation", { name: "Section" }).getByRole("button")).toHaveText(PANES);
   for (const pane of PANES) {
-    const radio = settings.getByRole("radio", { name: pane, exact: true });
-    await radio.click();
-    await expect(radio).toHaveAttribute("aria-checked", "true");
-    await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
+    const item = toolbarItem(settings, pane);
+    await item.click();
+    await expect(item).toHaveAttribute("aria-current", "page");
+    await expect(settings.getByRole("navigation", { name: "Section" }).locator('[aria-current="page"]')).toHaveCount(1);
+    // The pane's name is the window's, once: the strip's title is the page's only heading of that level, and the window is called it too.
+    await expect(settings.getByRole("heading", { level: 2 })).toHaveText(pane);
+    await expect.poll(async () => (await settingsWindow(app)).title).toBe(pane);
     await snap(settings, `settings-${pane.toLowerCase()}`);
   }
-  // The arrow keys move along the toolbar, as in any segmented control, and the pane follows.
-  const general = settings.getByRole("radio", { name: "General", exact: true });
-  await general.click();
+  // From the keyboard: Space and Return show the pane of the item that has the focus, and the arrow keys don't move it (a toolbar, not a filter).
+  const general = toolbarItem(settings, "General");
+  const voice = toolbarItem(settings, "Voice");
+  await general.focus();
+  await general.press("Space");
+  await expect(general).toHaveAttribute("aria-current", "page");
   await general.press("ArrowRight");
-  const voice = settings.getByRole("radio", { name: "Voice", exact: true });
-  await expect(voice).toHaveAttribute("aria-checked", "true");
-  await expect(voice).toBeFocused();
+  await expect(general).toBeFocused();
+  await expect(general).toHaveAttribute("aria-current", "page");
+  await voice.focus();
+  await voice.press("Enter");
   await expect(settings.getByRole("heading", { name: "Voice", exact: true })).toBeVisible();
   // The toolbar has no place for Tools & MCP, which offered nothing yet.
   await expect(settings.getByText("Tools & MCP")).toHaveCount(0);
+  await app.close();
+});
+
+test("Settings takes the height each pane needs, has one width, and no one sizes it by hand", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app);
+  const heights = new Map<string, number>();
+  for (const pane of PANES) {
+    await toolbarItem(settings, pane).click();
+    await expect(settings.getByRole("heading", { level: 2 })).toHaveText(pane);
+    heights.set(pane, await fitted(app, settings));
+    const { size, resizable } = await settingsWindow(app);
+    expect(size[0]).toBe(680);
+    expect(resizable).toBe(false);
+  }
+  // They differ: the window really follows its pane.
+  expect(new Set(heights.values()).size).toBeGreaterThan(1);
+  // General shows whole, down to its last switch.
+  await toolbarItem(settings, "General").click();
+  await expect.poll(async () => (await settingsWindow(app)).size[1]).toBe(heights.get("General"));
+  await expect(settings.getByRole("switch", { name: "Open Avanzel when you log in" })).toBeInViewport({ ratio: 1 });
+  await app.close();
+});
+
+test("a new pane moves the window once and at once: no animation, and no second move for a scrollbar or a history that comes late", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  writeFileSync(
+    path.join(userData, "dictations.jsonl"),
+    Array.from({ length: 12 }, (_, i) => `${JSON.stringify({ id: `d${i}`, at: new Date().toISOString(), text: `Words of dictation ${i}`, app: "Notes", bundleId: "com.apple.Notes", title: null, site: null, seconds: 3, inserted: true })}\n`).join(""),
+  );
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
+  const settings = await openSettings(app);
+  // A classic scrollbar, whatever this Mac shows: one that came for the moment before the window had moved would wrap the words, and move it twice.
+  await settings.addStyleTag({ content: "main::-webkit-scrollbar { width: 15px; }" });
+  // The history has been listed, as the window opens, before the Dictation pane has been asked for. Permissions don't move it either: their answer is known.
+  await toolbarItem(settings, "Dictation").click();
+  await expect(settings.getByRole("article")).toHaveCount(12);
+  await fitted(app, settings);
+  await toolbarItem(settings, "General").click();
+  await fitted(app, settings);
+  await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))!;
+    const moves: { height: number; animate: unknown }[] = [];
+    (globalThis as { settingsMoves?: unknown }).settingsMoves = moves;
+    const real = win.setBounds.bind(win);
+    win.setBounds = (bounds: Electron.Rectangle, animate?: boolean) => {
+      moves.push({ height: bounds.height, animate });
+      real(bounds, animate);
+    };
+  });
+  const moves = () => app.evaluate(() => (globalThis as { settingsMoves?: { height: number; animate: unknown }[] }).settingsMoves?.splice(0) ?? []);
+  for (const pane of ["Voice", "Dictation", "Agents", "General", "Reviews", "Privacy", "General", "Dictation"]) {
+    await toolbarItem(settings, pane).click();
+    const height = await fitted(app, settings);
+    await settings.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 100))));
+    expect(await moves(), `${pane} moves the window once, to ${height} px`).toEqual([{ height, animate: undefined }]);
+  }
+  await app.close();
+});
+
+test("the window fills with the page's own colour, so what it grows by is never white, in light or in dark", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app);
+  const windowColour = () =>
+    app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))!.getBackgroundColor().toLowerCase());
+  const pageColour = () =>
+    settings.evaluate(() => {
+      const [r = 0, g = 0, b = 0] = (getComputedStyle(document.body).backgroundColor.match(/\d+/g) ?? []).map(Number);
+      return `#${[r, g, b].map((part) => part.toString(16).padStart(2, "0")).join("")}`;
+    });
+  await expect.poll(windowColour).toBe(await pageColour());
+  expect(await pageColour()).not.toBe("#ffffff");
+  // Dark, and the window follows.
+  const light = await pageColour();
+  await settings.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(pageColour).not.toBe(light);
+  await expect.poll(windowColour).toBe(await pageColour());
+  // Only the Settings window's own page is heard, and only a colour.
+  await call(app, "openAsk");
+  const ask = await windowFor(app, "ask");
+  const dark = await windowColour();
+  await ask.evaluate(() => window.avanzel.settings.surface("rgb(1, 2, 3)"));
+  await settings.evaluate(() => window.avanzel.settings.surface("url(javascript:alert(1))"));
+  await settings.evaluate(() => window.avanzel.settings.get()); // main has heard both by now
+  expect(await windowColour()).toBe(dark);
+  await app.close();
+});
+
+test("Settings grows for what opens in a pane and for a Notice over it, and goes back when they go", async () => {
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const settings = await openSettings(app, "Privacy");
+  const closed = await fitted(app, settings);
+  const list = settings.getByRole("group", { name: "Sites to skip", exact: true });
+  await list.getByRole("button", { name: "Edit…", exact: true }).click();
+  await expect.poll(async () => (await settingsWindow(app)).size[1]).toBeGreaterThan(closed);
+  await expect(settings.getByRole("textbox", { name: "Sites to skip", exact: true })).toBeInViewport({ ratio: 1 });
+  await expect(settings.getByRole("textbox", { name: "Sites to skip", exact: true })).toBeFocused(); // what opened is where the person is now
+  await list.getByRole("button", { name: "Done", exact: true }).click();
+  await expect.poll(async () => (await settingsWindow(app)).size[1]).toBe(closed);
+
+  // A refused change's Notice has a row of its own, which the window makes room for.
+  await toolbarItem(settings, "Dictation").click();
+  await expect(settings.getByRole("heading", { name: "Dictation", exact: true })).toBeVisible();
+  const dictation = await fitted(app, settings);
+  chmodSync(path.join(library, ".avanzel"), 0o555);
+  try {
+    await settings.getByRole("switch", { name: "Keep what I dictate in the library" }).click();
+    await expect(notSaved(settings)).toBeVisible();
+    await expect.poll(async () => (await settingsWindow(app)).size[1]).toBeGreaterThan(dictation);
+    await expect.poll(() => paneFits(settings)).toBe(true);
+  } finally {
+    chmodSync(path.join(library, ".avanzel"), 0o755);
+  }
+  await app.close();
+});
+
+test("Settings opens on the pane it showed last, unless it is asked for another", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const env = { AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData };
+  const closeSettings = async (app: ElectronApplication, page: Page) => {
+    const closed = page.waitForEvent("close");
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes("/renderer/settings/"))?.close());
+    await closed;
+  };
+  const app = await launch(env);
+  await call(app, "showSettings"); // never opened before: General
+  let settings = await windowFor(app, "settings");
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
+  await toolbarItem(settings, "Agents").click();
+  await expect(settings.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
+  await closeSettings(app, settings);
+
+  // Opened as the menu opens it: where it was.
+  await call(app, "showSettings");
+  settings = await windowFor(app, "settings");
+  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
+  await expect.poll(async () => (await settingsWindow(app)).title).toBe("Agents");
+  await closeSettings(app, settings);
+
+  // A card asks for the pane its fix is on: that one, and it is what is shown last from then on.
+  await call(app, "openSettingsFor", "open-settings:privacy");
+  settings = await windowFor(app, "settings");
+  await expect(toolbarItem(settings, "Privacy")).toHaveAttribute("aria-current", "page");
+  await app.close();
+
+  // It outlasts the app.
+  const again = await launch(env);
+  await call(again, "showSettings");
+  settings = await windowFor(again, "settings");
+  await expect(toolbarItem(settings, "Privacy")).toHaveAttribute("aria-current", "page");
+  await again.close();
+});
+
+test("a pane the window remembers that Settings no longer has means General", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app);
+  await settings.evaluate(() => localStorage.setItem("settings-pane", "tools"));
+  await settings.reload();
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
   await app.close();
 });
 
@@ -59,7 +257,7 @@ test("General shows the library with its shelves, and each of its controls appli
   // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
   const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
   const settings = await openSettings(app);
-  await expect(settings.getByText("3 notes on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("3 pages on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
   for (const shelf of ["Goals", "Ideas", "Problems", "Memories", "People", "Topics"]) {
     await expect(settings.getByText(shelf, { exact: true })).toBeVisible();
   }
@@ -94,32 +292,11 @@ test("Settings has no sounds: General ends with its Startup group", async () => 
   await app.close();
 });
 
-test("Settings opens on General at its default size without a scroll, with the Startup switch in view", async () => {
-  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
-  const settings = await openSettings(app);
-  // General with its Library, After you speak and Startup groups needs less than 557 px of pane: the window gives it room (the pane scrolls when
-  // another pane or a Notice needs more, and the window's least height stays).
-  const { size, least, workArea } = await app.evaluate(({ BrowserWindow, screen }) => {
-    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes("/renderer/settings/"))!;
-    return { size: win.getSize(), least: win.getMinimumSize(), workArea: screen.getDisplayMatching(win.getBounds()).workAreaSize.height };
-  });
-  // macOS fits a window to the screen it opens on: where the screen's work area is under 680 pt, Settings opens shorter than 660, as it should.
-  if (workArea < 680) await app.close();
-  test.skip(workArea < 680, `the screen's work area is ${workArea} pt high: too short for Settings' 660`);
-  expect(size).toEqual([680, 660]);
-  expect(least, "the window can still be made small").toEqual([640, 440]);
-  const pane = settings.locator("main.settings-pane");
-  const room = await pane.evaluate((el) => ({ needs: el.scrollHeight, has: el.clientHeight }));
-  expect(room.needs, `the pane needs ${room.needs} px and has ${room.has} px`).toBeLessThanOrEqual(room.has);
-  await expect(settings.getByRole("switch", { name: "Open Avanzel when you log in" })).toBeInViewport({ ratio: 1 });
-  await app.close();
-});
-
 test("the Reviews pane names the evening review's Undo as the menu bar menu does", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app, "Reviews");
   const evening = settings.getByRole("group", { name: "Evening review", exact: true });
-  await expect(evening.getByText("Undo the last evening review, in the menu bar menu, takes back its last run.", { exact: true })).toBeVisible();
+  await expect(evening.getByText("Undo the last evening review, under Scheduled reviews in the menu bar menu, takes back its last run.", { exact: true })).toBeVisible();
   await app.close();
 });
 
@@ -138,7 +315,7 @@ test("Settings is sent a fresh snapshot when it has the focus again, and reading
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
   });
-  await expect(settings.getByText("1 note on six shelves. This folder has no git history, so changes can't be undone.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("1 page on six shelves. This folder has no git history, so changes can't be undone.", { exact: true })).toBeVisible();
   // The refresh only reads: no agent's sign-in was read, and the library's agent was asked nothing, since each costs quota.
   expect(await agentCalls(app)).toEqual(before);
   expect(existsSync(record)).toBe(false);
@@ -191,18 +368,17 @@ test("Open in Obsidian shows only for a library Obsidian has opened, and opens i
   await app.close();
 });
 
-test("the microphone's Choose… lists System default first, and saves the choice", async () => {
+test("the microphone's pop-up lists System default first, and saves the choice", async () => {
   // The saved microphone is one this Mac has never listed, as when a USB microphone is unplugged.
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, microphoneId: "gone" }));
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
   const settings = await openSettings(app, "Voice");
-  const choose = settings.getByRole("group", { name: /^Microphone: / }).getByRole("button", { name: "Choose…" });
+  const choose = settings.getByRole("button", { name: /^Microphone: / });
   await expect(settings.getByText("Microphone not connected", { exact: true })).toBeVisible();
-  // Choose…'s group says the microphone in use, so VoiceOver hears it beside the button.
-  await expect(settings.getByRole("group", { name: "Microphone: Microphone not connected", exact: true })).toBeVisible();
+  // The button says what it chooses and the microphone in use, so VoiceOver hears both.
+  await expect(settings.getByRole("button", { name: "Microphone: Microphone not connected", exact: true })).toBeVisible();
   await expect(settings.getByText("Avanzel listens only while the capsule shows it listening.", { exact: true })).toBeVisible();
-  await choose.scrollIntoViewIfNeeded(); // the group is under Voice's other groups, below the window's fold
   await snap(settings, "settings-voice-microphone");
 
   // A menu that closes without a pick saves nothing.
@@ -222,7 +398,7 @@ test("the microphone's Choose… lists System default first, and saves the choic
   await expect.poll(async () => (await snapshot(app)).app.microphoneId).toBe(null);
   await expect(settings.getByText("System default", { exact: true })).toBeVisible();
   await expect(settings.getByText("Microphone not connected", { exact: true })).toHaveCount(0);
-  await expect(settings.getByRole("group", { name: "Microphone: System default", exact: true })).toBeVisible();
+  await expect(settings.getByRole("button", { name: "Microphone: System default", exact: true })).toBeVisible();
 
   // The next menu checks the one in use.
   await answerMenus(app, null);
@@ -257,7 +433,7 @@ test("the microphone row doesn't call a connected microphone missing while the d
         probe.answer = () => resolve([{ kind: "audioinput", deviceId: "studio", label: "Studio microphone" }] as MediaDeviceInfo[]);
       });
   });
-  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+  await toolbarItem(settings, "Voice").click();
   // The page has asked and hasn't been answered: the row has no name to show, and doesn't say the microphone is gone.
   await expect.poll(() => settings.evaluate(() => typeof (window as unknown as DeviceProbe).answer)).toBe("function");
   await expect(settings.getByText("Avanzel listens only while the capsule shows it listening.", { exact: true })).toBeVisible();
@@ -293,7 +469,7 @@ test("General says only what is true of the library's history: commits, automati
     saveSettings(library, { ...loadSettings(library), autoCommit });
     const app = await launch({ AVANZEL_LIBRARY: library, ...(usable ? {} : { AVANZEL_GIT_USABLE: "0" }) });
     const settings = await openSettings(app);
-    await expect(settings.getByText(`1 note on six shelves. ${line}`, { exact: true })).toBeVisible();
+    await expect(settings.getByText(`1 page on six shelves. ${line}`, { exact: true })).toBeVisible();
     // The snapshot carries what the line is made from: whether the folder has a .git, whether this Mac can run git, and
     // whether the library commits by itself.
     expect((await snapshot(app)).library).toMatchObject({ isGit: git, gitUsable: usable, autoCommit });
@@ -307,14 +483,14 @@ test("General looks for git again each time Settings has the focus while this Ma
   // AVANZEL_GIT_USABLE=0 plays a Mac whose only git is Apple's stub; the app keeps that answer until it is told to look again.
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_GIT_USABLE: "0" });
   const settings = await openSettings(app);
-  await expect(settings.getByText("1 note on six shelves. This Mac has no git yet, so changes can't be undone.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("1 page on six shelves. This Mac has no git yet, so changes can't be undone.", { exact: true })).toBeVisible();
   // The person installs the Command Line Tools from Terminal (here: the stand-in is dropped, and this Mac's own git is read) and
   // comes back to Settings: the window has the focus again, and git is looked for afresh before the pane is drawn.
   await app.evaluate(({ BrowserWindow }) => {
     delete process.env.AVANZEL_GIT_USABLE;
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
   });
-  await expect(settings.getByText("1 note on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("1 page on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
   expect((await snapshot(app)).library).toMatchObject({ isGit: true, gitUsable: true });
   await app.close();
 });
@@ -366,12 +542,12 @@ test("a change that fails says so, with why, and the next change that works take
   // It goes with a pane, too. The button's change is refused the same way, and leaving the pane takes the Notice away.
   chmodSync(path.join(library, ".avanzel"), 0o555);
   try {
-    await settings.getByRole("button", { name: "Use automatic" }).click();
+    await settings.getByRole("group", { name: "Choose automatically", exact: true }).getByRole("button", { name: "Use", exact: true }).click();
     await expect(notSaved(settings)).toBeVisible();
-    await settings.getByRole("radio", { name: "General", exact: true }).click();
+    await toolbarItem(settings, "General").click();
     await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
     await expect(notSaved(settings)).toHaveCount(0);
-    await settings.getByRole("radio", { name: "Agents", exact: true }).click();
+    await toolbarItem(settings, "Agents").click();
     await expect(settings.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
     await expect(notSaved(settings)).toHaveCount(0);
     expect(loadSettings(library).harness).toBe("fake"); // still the library's own choice
@@ -399,9 +575,9 @@ test("a change the app can't keep says so wherever it is made, and stays as it w
   };
   /** Shows `pane` by way of another, which takes the Notice of an earlier refusal away: the next one is then a new one. */
   const fresh = async (pane: string) => {
-    await settings.getByRole("radio", { name: pane === "Privacy" ? "General" : "Privacy", exact: true }).click();
-    await settings.getByRole("radio", { name: pane, exact: true }).click();
-    await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
+    await toolbarItem(settings, pane === "Privacy" ? "General" : "Privacy").click();
+    await toolbarItem(settings, pane).click();
+    await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
     await expect(problem).toHaveCount(0);
   };
   blockWriting("settings.json");
@@ -420,16 +596,17 @@ test("a change the app can't keep says so wherever it is made, and stays as it w
   await expect(settings.getByRole("radio", { name: "Right away", exact: true })).toHaveAttribute("aria-checked", "true");
   expect((await snapshot(app)).app.fileMode).toBe("now");
 
-  // Voice: the microphone. Shortcuts: a shortcut.
+  // Voice: the microphone. General: a shortcut.
   await fresh("Voice");
   await answerMenus(app, "System default");
-  await settings.getByRole("group", { name: /^Microphone: / }).getByRole("button", { name: "Choose…" }).click();
+  await settings.getByRole("button", { name: /^Microphone: / }).click();
   await refused();
-  await fresh("Shortcuts");
-  const row = settings.getByRole("group", { name: "Type a thought", exact: true });
-  await row.getByRole("button", { name: "Change", exact: true }).click();
+  await fresh("General");
+  const row = settingsRow(settings, "Type a thought");
+  await row.getByRole("button", { name: /\. Change$/ }).click();
   await settings.keyboard.press("Control+Alt+K");
   await refused();
+  await expect(row.getByRole("status")).toHaveText(""); // refused, so no one is told it was saved
   expect((await snapshot(app)).app.shortcuts.type).toBe("Alt+Shift+Space");
   await expect(row.getByText("⌥⇧Space", { exact: true })).toBeVisible();
 
@@ -454,7 +631,7 @@ test("a change the app can't keep says so wherever it is made, and stays as it w
   await expect.poll(async () => (await snapshot(app)).tasks.find((task) => task.id === "weekly-review")?.lastRun ?? null).not.toBeNull();
   await call(app, "idleForTests");
   allowWriting("settings.json");
-  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await toolbarItem(settings, "General").click();
   await login.click();
   await expect.poll(async () => (await snapshot(app)).app.launchAtLogin).toBe(true);
   await expect(login).toHaveAttribute("aria-checked", "true");
@@ -529,10 +706,12 @@ test("a refused change is told in a row above the pane, which stays in view howe
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Agents");
-  // A window short enough that the pane scrolls, and the pane scrolled to its end, where the model field is.
+  // A window short enough that the pane scrolls, as on a short screen, and the pane scrolled to its end, where the model field is.
+  await stopFittingSettings(app);
   await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.setSize(680, 480);
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.setSize(680, 400);
   });
+  await expect.poll(() => settings.evaluate(() => window.innerHeight)).toBe(400);
   const pane = settings.locator("main.settings-pane");
   await pane.evaluate((el) => {
     el.scrollTop = el.scrollHeight;
@@ -550,7 +729,7 @@ test("a refused change is told in a row above the pane, which stays in view howe
     // It is in a row of its own between the toolbar and the pane, in view, and not in the pane: the pane isn't scrolled up to it.
     await expect(pane.getByRole("alert")).toHaveCount(0);
     const notice = (await problem.boundingBox())!;
-    const toolbar = (await settings.getByRole("radiogroup", { name: "Section" }).boundingBox())!;
+    const toolbar = (await settings.getByRole("navigation", { name: "Section" }).boundingBox())!;
     const paneBox = (await pane.boundingBox())!;
     expect(notice.y).toBeGreaterThanOrEqual(toolbar.y + toolbar.height);
     expect(notice.y + notice.height).toBeLessThanOrEqual(paneBox.y + 1);
@@ -569,7 +748,7 @@ test("a refused change is told in a row above the pane, which stays in view howe
     // A pane that shows after it starts at its top, with the Notice gone. The field is put back as it was saved first: leaving it
     // with what it holds would save that again, and be refused again, as the press that leaves it is told on the pane it shows.
     await model.fill("");
-    await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+    await toolbarItem(settings, "Voice").click();
     await expect(settings.getByRole("heading", { name: "Voice", exact: true })).toBeVisible();
     await expect(notSaved(settings)).toHaveCount(0);
   } finally {
@@ -596,7 +775,7 @@ test("a call that saves nothing and is refused says what didn't happen in its ow
   });
   const settings = await openSettings(app, "Agents");
   // The window's own Notice, in its row: a pane may have Notices of its own (Voice's, for a model that didn't download).
-  const told = async (title: string) => {
+  const told = async (title: string | RegExp) => {
     const row = settings.locator(".settings-problem");
     await expect(row.getByRole("alert")).toHaveCount(1);
     await expect(row.getByText(title, { exact: true })).toBeVisible();
@@ -606,12 +785,13 @@ test("a call that saves nothing and is refused says what didn't happen in its ow
   };
   // The pane checks the agents' sign-ins as it opens.
   await told("The agents couldn't be checked.");
-  await settings.getByRole("group", { name: "Claude Code", exact: true }).getByRole("button", { name: /^Check/ }).click();
-  await told("Claude Code couldn't be checked.");
-  await settings.getByRole("radio", { name: "Privacy", exact: true }).click();
+  // Check agents asks each installed agent, and each is refused: the Notice names one, and it is the only one.
+  await settings.getByRole("button", { name: "Check agents", exact: true }).click();
+  await told(/^.+ couldn't be checked\.$/);
+  await toolbarItem(settings, "Privacy").click();
   await settings.getByRole("button", { name: "Allow…", exact: true }).click();
   await told("Avanzel couldn't ask macOS.");
-  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+  await toolbarItem(settings, "Voice").click();
   await settings.getByRole("button", { name: "Try again", exact: true }).click();
   await told("The download didn't start.");
   await app.close();
@@ -628,13 +808,13 @@ test("a change that is refused after the person has gone to another pane is told
   const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
   await weekly.getByRole("button", { name: "Run now" }).click();
   await expect(weekly.getByText("Running now…", { exact: true })).toBeVisible();
-  await settings.getByRole("radio", { name: "General", exact: true }).click();
+  await toolbarItem(settings, "General").click();
   await settings.getByRole("radio", { name: "Tonight", exact: true }).click();
   chmodSync(path.join(library, "tasks"), 0o555);
   try {
     // Turn on waits behind the run; the person goes on to Privacy meanwhile, where nothing mentions a review.
     await settings.getByRole("button", { name: "Turn on the evening review", exact: true }).click();
-    await settings.getByRole("radio", { name: "Privacy", exact: true }).click();
+    await toolbarItem(settings, "Privacy").click();
     await expect(settings.getByRole("heading", { name: "Privacy", exact: true })).toBeVisible();
     await expect(notSaved(settings)).toHaveCount(0); // not yet: the run still has the library
     // The run ends, the save is tried and refused, and the Notice is on the pane they are on.
@@ -642,7 +822,7 @@ test("a change that is refused after the person has gone to another pane is told
     await expect(notSaved(settings).getByText(LIBRARY_KEPT, { exact: true })).toBeVisible();
     expect(readFileSync(evening, "utf8")).toContain("enabled: false");
     // Told where they were, and told once: General had gone when it was refused, and the evening review doesn't say it again.
-    await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+    await toolbarItem(settings, "Reviews").click();
     await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
     await expect(settings.getByRole("alert")).toHaveCount(0);
   } finally {
@@ -661,7 +841,7 @@ test("a save refused as the person presses another tab is told on that tab, and 
     // A model typed is saved as its field loses the focus, which pressing a tab does. The press is held, as a person's is: long
     // enough for the refusal to come in while it lasts, on the pane they are leaving, and before the tab has been shown.
     await model.fill("small-model");
-    const general = settings.getByRole("radio", { name: "General", exact: true });
+    const general = toolbarItem(settings, "General");
     const at = (await general.boundingBox())!;
     await settings.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
     await settings.mouse.down();
@@ -672,7 +852,7 @@ test("a save refused as the person presses another tab is told on that tab, and 
     await expect(notSaved(settings)).toBeVisible();
     await expect(notSaved(settings).getByText(LIBRARY_KEPT, { exact: true })).toBeVisible();
     // The next press of a tab does.
-    await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+    await toolbarItem(settings, "Voice").click();
     await expect(settings.getByRole("heading", { name: "Voice", exact: true })).toBeVisible();
     await expect(notSaved(settings)).toHaveCount(0);
   } finally {
@@ -688,7 +868,7 @@ test("a press that leaves its tab shows no pane, and the next move still takes t
   chmodSync(path.join(library, ".avanzel"), 0o555);
   try {
     // Pressed on the Voice tab, and let go over the pane: no click, so no pane.
-    const voice = settings.getByRole("radio", { name: "Voice", exact: true });
+    const voice = toolbarItem(settings, "Voice");
     const at = (await voice.boundingBox())!;
     await settings.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
     await settings.mouse.down();
@@ -696,9 +876,9 @@ test("a press that leaves its tab shows no pane, and the next move still takes t
     await settings.mouse.up();
     await expect(settings.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
     // A refusal is told, and a move by the keyboard takes it away, as it always does.
-    await settings.getByRole("button", { name: "Use automatic" }).click();
+    await settings.getByRole("group", { name: "Choose automatically", exact: true }).getByRole("button", { name: "Use", exact: true }).click();
     await expect(notSaved(settings)).toBeVisible();
-    await settings.getByRole("radio", { name: "Agents", exact: true }).press("ArrowRight");
+    await toolbarItem(settings, "Reviews").press("Enter");
     await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
     await expect(notSaved(settings)).toHaveCount(0);
   } finally {
@@ -729,11 +909,11 @@ test("Turn on the evening review that fails says so in General, and the review s
     await expect(notice).toBeVisible(); // still off, and still offered
     await expect(turnOn).not.toHaveAttribute("aria-busy", "true"); // the save is over: Turn on can be pressed again
     // Told once: General's Notice has said it, so the evening review on Reviews doesn't say it again under itself.
-    await settings.getByRole("radio", { name: "Reviews", exact: true }).click();
+    await toolbarItem(settings, "Reviews").click();
     await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
     await expect(settings.getByRole("group", { name: "Evening review", exact: true })).toBeVisible();
     await expect(settings.getByRole("alert")).toHaveCount(0);
-    await settings.getByRole("radio", { name: "General", exact: true }).click();
+    await toolbarItem(settings, "General").click();
     await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
   } finally {
     chmodSync(path.join(library, "tasks"), 0o755);
@@ -746,7 +926,7 @@ test("Turn on the evening review that fails says so in General, and the review s
   await app.close();
 });
 
-test("Choose… is answered to the Settings window alone, not to another window's note", async () => {
+test("a pop-up's menu is answered to the Settings window alone, not to another window's page", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app, "Voice");
   await call(app, "openAsk");

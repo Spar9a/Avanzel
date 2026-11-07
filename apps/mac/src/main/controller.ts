@@ -3,19 +3,17 @@
 import {
   app,
   BrowserWindow,
-  desktopCapturer,
   dialog,
   globalShortcut,
   nativeImage,
   Notification,
   powerMonitor,
-  screen,
   shell,
   type WebContents,
 } from "electron";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, readdirSync, renameSync, rmSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -70,7 +68,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { CAPSULE_IN_PANEL, DAY_FILE_NOT_UPDATED, isSettingsPane, noSuchReview, type AreaSetup, type DeleteDictationResult, type DictationList } from "../shared/ipc.ts";
+import { DAY_FILE_NOT_UPDATED, DICTATION_NOT_COPIED, DICTATION_NOT_COPIED_BODY, isSettingsPane, noSuchReview, type DeleteDictationResult, type DictationList } from "../shared/ipc.ts";
 import {
   ANOTHER_LIBRARY,
   avanzelFailure,
@@ -102,6 +100,7 @@ import {
   type PartialEdits,
   type Problem,
 } from "../shared/problems.ts";
+import { cursorKeyName } from "../shared/transcribing.ts";
 import type {
   AgentStatus,
   AppSettings,
@@ -111,6 +110,7 @@ import type {
   CapsuleMode,
   CapsuleState,
   CardAction,
+  CursorPermission,
   FiledPage,
   LibraryPatch,
   ModelStatus,
@@ -137,7 +137,7 @@ import { DEFAULT_SKIP_APPS } from "./cursor-policy.ts";
 import { DictationHistory, type DictationEntry } from "./dictation-history.ts";
 import { deleteDictationResult, forgetDictation, pageOf, type ForgetHook, type Forgotten } from "./dictation-rows.ts";
 import { moveInto, writeInto } from "./inbox-file.ts";
-import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording, type Attachment } from "./jobs.ts";
+import { errorMessage, harnessName, lastLines, LIBRARY_PICKER, type Answered, type Correction, type FilingJob, type Recording } from "./jobs.ts";
 import {
   answeredFrom,
   askLinks,
@@ -154,7 +154,8 @@ import {
   savedPage,
 } from "./library-info.ts";
 import { forgetKept, logDictation } from "./library-log.ts";
-import { buildMenuModel, reviewProgress, speechProblemOf, statusLine, type MenuInput, type MenuItemModel } from "./menu-model.ts";
+import { LiveWords } from "./live-words.ts";
+import { buildMenuModel, MENU_DICTATIONS, menuRows, reviewProgress, speechProblemOf, type MenuDictation, type MenuInput, type MenuItemModel } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
 import { pickRequest, popupChoice, trayChoice } from "./popup.ts";
@@ -179,7 +180,7 @@ import {
   withWait,
   type RunState,
 } from "./schedule.ts";
-import { captureDisplay, captureRegion, looksBlank, previewOf } from "./screenshot.ts";
+import { captureDisplay, looksBlank } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
 import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
 import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
@@ -192,54 +193,19 @@ import { UndoRecordStore, type FilingReceipt } from "./undo-records.ts";
 import {
   createAskWindow,
   createCapsuleWindow,
-  createPanelWindow,
-  createAreaWindow,
   createQuickWindow,
   createSettingsWindow,
+  fitSettings,
   isPageOf,
   placeCapsule,
-  placePanel,
   placeQuick,
 } from "./windows.ts";
-import { libraryPages, pagePrompt, sourcesOnlyOf, withoutItem } from "./library-pages.ts";
-import { heardTrigger, withoutStopWord } from "../shared/trigger.ts";
-import type { AddingKind, FileMode, PanelPage, PanelSnapshot, PanelTab } from "../shared/ipc.ts";
-
-/**
- * The panel under the menu bar icon stands in for the menu and for the Settings window: a click on the icon brings it up, and
- * Settings is its third tab. The e2e tests drive the menu and the Settings window as they were, so with AVANZEL_TEST=1 the
- * icon keeps its menu and Settings its own window.
- */
-const USE_PANEL = process.env.AVANZEL_TEST !== "1";
-
-/** What the panel may ask for (`panel:act`): the menu's own actions, and a page to open by its path. */
-const PANEL_ACTIONS = new Set([
-  "dictate", "capture", "capture-region", "call-notes", "call-notes-stop", "type", "ask", "open-library", "open-inbox", "show-receipt", "undo-filing",
-  "undo-review", "quit", "setup", "finish-cut-short", "forget-dictation", "open-settings:voice",
-]);
 
 /** A recording's words: its text, the engine that made it, and `heard`, what was recognised, when the dictionary corrected it. */
 type Heard = Pick<Transcript, "text" | "engine" | "heard">;
 
 // Quitting waits at most this long for stopped agent runs to finish their bookkeeping.
 const QUIT_WAIT_MS = 10_000;
-// Files added to a page or a recording at once, and how large each may be: a screen recording, not a disk image.
-const ATTACH_MAX_FILES = 10;
-const ATTACH_MAX_BYTES = 500 * 1024 * 1024;
-// How often main looks at the pointer for the capsule's drop place, and how far past its edges it counts as over it.
-const DROP_WATCH_MS = 80;
-const DROP_MARGIN = 12;
-// The longest a video of a part of the screen runs before it stops by itself.
-const AREA_MAX_SECONDS = 600;
-/** The capsule's cards the panel shows instead (`CAPSULE_IN_PANEL`): the capsule keeps the state and shows nothing for them. */
-const IN_PANEL = CAPSULE_IN_PANEL;
-/**
- * How long the capsule takes to sink away before its window hides (`CapsuleAppear`'s leaving: `--av-duration-base`, 200 ms), with a
- * frame to spare.
- */
-const CAPSULE_LEAVE_MS = 240;
-/** What the area window's video or marked picture goes with: the recording that runs, or a page of the library. */
-type AreaTarget = { recording: Recording } | { page: string } | { thought: true };
 // How long a stopped recording's audio may take to arrive from the capsule (tests shorten it).
 const AUDIO_TIMEOUT_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_AUDIO_TIMEOUT_MS)) || 15_000;
 // How long a transcription runs before the capsule's card turns slow and offers Stop (tests shorten it).
@@ -265,8 +231,6 @@ const FINISHED_CARDS: ReadonlySet<CapsuleState["kind"]> = new Set<CapsuleState["
 // How long the capsule says that a filing or a transcription is stopped (hovering over it keeps it longer, as it does any card that
 // hides itself).
 const STOPPED_SHOW_MS = 6_000;
-/** How long Processing shows a thought that came to no note (noted only, or stopped) before it goes, its ring running round it meanwhile. */
-const NO_NOTE_SHOW_MS = 5_000;
 // How long after the pointer leaves what the capsule draws a card that hides itself is let go (`setKeepOpen`). The card and its bar are
 // a few pixels apart, and crossing them is a leave and an enter.
 const KEEP_OPEN_LET_GO_MS = 250;
@@ -329,6 +293,15 @@ type TakenShortcut = Extract<CapsuleState, { kind: "shortcut-taken" }>;
 
 /** The capsule's card of a filing under way. */
 type FilingState = Extract<CapsuleState, { kind: "filing" }>;
+type ListeningState = Extract<CapsuleState, { kind: "listening" }>;
+
+/** A listening card with no words as they are said on it. */
+function withoutWords(state: ListeningState): ListeningState {
+  if (state.words === undefined) return state;
+  const { words: _words, ...rest } = state;
+  return rest;
+}
+
 
 /** What an error card's one button does: where its Open Settings goes, or the fix a failed filing offers. */
 type ErrorAction = Extract<CapsuleState, { kind: "error" }>["action"];
@@ -415,16 +388,7 @@ export class Controller {
   private readonly modelsDir: string;
   private vault: Vault | null = null;
   private capsule!: BrowserWindow;
-  /** The Settings window's page; with the panel (`USE_PANEL`), the panel itself, whose Settings tab is that page. */
   private settingsWindow: BrowserWindow | null = null;
-  /** The panel under the menu bar icon, made at its first click and hidden, never closed, after. */
-  private panelWindow: BrowserWindow | null = null;
-  /** While a dialog the panel opened is up (Run Now?, Choose a folder), losing the keyboard to it doesn't hide the panel. */
-  private panelHeld = 0;
-  /** Counts each read of the log, so the panel knows to list the pages again (`PanelSnapshot.pagesVersion`). */
-  private pagesVersion = 0;
-  /** How each review's last run in this app run ended, as its notification told it: for the panel's Library. */
-  private reviewOutcomes = new Map<string, { at: string; title: string; body: string }>();
   private quickWindow: BrowserWindow | null = null;
   private askWindow: BrowserWindow | null = null;
   /** Gives up the Ask window's question being answered or answer being saved, as closing that window does: Stop calls it (cancelAsk). */
@@ -470,10 +434,10 @@ export class Controller {
   /** The history of dictations, in the app's own data (`<userData>/dictations.jsonl`), never in the library. */
   private readonly dictations: DictationHistory;
   /**
-   * Whether the history holds a dictation, for the menu, which is built often: null until it is asked, and again after every change to
+   * The newest dictations of the history, for the menu, which is built often: null until it is asked, and again after every change to
    * the history (`dictationsChanged`), so that the file is not read at each build.
    */
-  private hasDictation: boolean | null = null;
+  private menuDictations: MenuDictation[] | null = null;
   /**
    * Called with the entry that "Forget the last dictation" or a pane's Delete has just taken out of the history (`forgetDictation`).
    * It exists so that whatever else keeps a copy of a dictation can drop it too: the open library's day file (`forgetFromLibrary`).
@@ -485,6 +449,8 @@ export class Controller {
    * its words are thrown away if it has moved on, so they can't be pasted into the next dictation.
    */
   private cursorGeneration = 0;
+  /** The words of the recording that listens, as they are said, when they can be made on this Mac (`liveWordsFor`). */
+  private liveWords: LiveWords | null = null;
   /** A dictation's words are being made (`heardForCursor`), so dropping it must tell the session that they won't come. */
   private cursorRecognising = false;
   /** The words of the last copy prompt, which its Copy button copies (`copy-dictation`). */
@@ -686,7 +652,7 @@ export class Controller {
       this.capsuleListening = false;
     });
     this.capsule.on("closed", () => app.quit());
-    this.menuBar = new MenuBar((action) => void this.menuAction(action), USE_PANEL ? () => this.togglePanel() : undefined);
+    this.menuBar = new MenuBar((action) => void this.menuAction(action));
     const envLibrary = process.env.AVANZEL_LIBRARY;
     if (envLibrary) this.store.update({ libraryPath: envLibrary });
     this.openLibrary(this.store.get().libraryPath);
@@ -874,23 +840,7 @@ export class Controller {
    * the app that probably holds it, and free alternatives are found for it. Each registration reads the shortcuts as
    * they are then, so one that ends after a newer change still registers what the settings say.
    */
-  /**
-   * Settings records a new shortcut (`recording`): Avanzel's own shortcuts are let go meanwhile, so the keys pressed reach its page
-   * rather than macOS's handler of a shortcut Avanzel holds (pressing ⌥Space would record a thought instead of being recorded). They
-   * are registered again when the recording ends, saved or not.
-   */
-  shortcutRecording(sender: WebContents, recording: unknown): void {
-    if (!this.isPanelPage(sender) && !isPageOf(sender, this.settingsWindow)) return;
-    this.shortcutsLetGo = recording === true;
-    if (this.shortcutsLetGo) shortcutApi().unregisterAll();
-    else void this.applyShortcuts();
-  }
-
-  /** Settings records a shortcut (`shortcutRecording`): none is registered until it ends, whatever asks for them meanwhile. */
-  private shortcutsLetGo = false;
-
   private async applyShortcuts(): Promise<void> {
-    if (this.shortcutsLetGo) return;
     const api = shortcutApi();
     const handlers = {
       dictate: () => this.pressDictate(),
@@ -898,20 +848,12 @@ export class Controller {
       type: () => this.openQuick(),
       ask: () => this.openAsk(),
       undo: () => this.pressUndoShortcut(),
-      // A call's notes: stopped while one runs, else the panel's list of calls to pick from (`pickCall`).
-      call: () => void (this.calls.phase === "running" ? this.stopCallNotes() : this.callNotesOffer() === "ready" ? this.pickCall() : undefined),
-      region: () => void this.toggleCapture("region"),
-      // A screenshot of a part, as a thought of its own (Capture's Take a screenshot).
-      shot: () => void this.screenshotThought("area"),
-      shotScreen: () => void this.screenshotThought("screen"),
-      shotMarks: () => void this.screenshotThought("marks"),
     };
     let shortcuts = this.store.get().shortcuts;
     let registration = registerShortcuts(shortcuts, handlers, api);
     let running: string[] = [];
     if (registration.taken.length) {
       running = await runningAppNames();
-      if (this.shortcutsLetGo) return api.unregisterAll(); // a recording began meanwhile: it has the keys
       shortcuts = this.store.get().shortcuts;
       registration = registerShortcuts(shortcuts, handlers, api, running);
     }
@@ -974,7 +916,6 @@ export class Controller {
   private async menuAction(action: string): Promise<void> {
     if (action === "dictate") return this.toggleDictate();
     if (action === "capture") return this.toggleCapture();
-    if (action === "capture-region") return this.toggleCapture("region");
     if (action === "call-notes") return this.pickCall();
     if (action === "call-notes-stop") return this.stopCallNotes();
     if (action === "finish-cut-short") return this.calls.finishOldestCutShort();
@@ -991,7 +932,10 @@ export class Controller {
       this.rereadVoiceSettings();
       return this.showSettings("voice");
     }
+    if (action === "open-settings:dictations") return this.showSettings("dictations");
     if (action === "forget-dictation") return this.forgetLastDictation();
+    if (action === "toggle-dictation") return this.toggleDictationFromMenu();
+    if (action.startsWith("copy-dictation:")) return this.copyDictationFromMenu(action.slice("copy-dictation:".length));
     if (action === "show-receipt") return this.showLastReceipt();
     if (action === "undo-filing") return this.undoLastFiling();
     if (action === "undo-review") return void this.undoEveningReview();
@@ -1036,7 +980,8 @@ export class Controller {
       undoableFiling: this.undoableFiling(),
       showableReceipt: this.receiptShowable(),
       hasReceipt: this.lastReceipt !== null && this.undoChecked(),
-      forgettableDictation: (this.hasDictation ??= this.dictations.last() !== null),
+      recentDictations: (this.menuDictations ??= this.dictations.list().slice(0, MENU_DICTATIONS)),
+      cursorDictation: CursorHelper.available() ? { enabled: this.store.get().cursorDictation.enabled, key: cursorKeyName(this.store.get().cursorDictation.key) } : null,
     };
   }
 
@@ -1228,7 +1173,6 @@ export class Controller {
       console.warn("recent pages", error);
     }
     this.askChanged(); // a take-back or a review ended: the shelves may hold fewer pages, or more
-    this.pagesVersion += 1;
   }
 
   refreshMenu(): void {
@@ -1238,7 +1182,6 @@ export class Controller {
       console.error("menu", error);
     }
     this.refreshTray();
-    this.refreshPanel();
   }
 
   // ---------------------------------------------------------------- menu bar icon
@@ -1302,8 +1245,7 @@ export class Controller {
     try {
       const input = this.trayInput();
       const now = Date.now();
-      // The badge counts the thoughts being processed: the one whose words are being made, and those being filed or waiting their turn.
-      this.menuBar.show(trayView(input, now), this.filings.length + (this.capsuleState.kind === "transcribing" ? 1 : 0));
+      this.menuBar.show(trayView(input, now));
       const delay = this.checksStopped ? null : nextTrayWake(input, now);
       if (delay !== null) {
         this.trayTimer = setTimeout(() => {
@@ -1362,30 +1304,20 @@ export class Controller {
   // ---------------------------------------------------------------- capsule plumbing
 
   /** `capture`: the note an error card is about (`cardCapture`), which stays only as long as that card is what the capsule shows. */
-  /** The capsule is sinking away (`setCapsule`): its window hides when this fires, unless a state that shows comes first. */
-  private capsuleLeaveTimer: ReturnType<typeof setTimeout> | null = null;
-
   private setCapsule(state: CapsuleState, autoHideMs?: number, capture?: string): void {
     if (state.kind === "hidden" && this.callCard) state = this.callCard; // while a call runs its card is what the capsule rests on
     if (state.kind !== "editing") this.keepEdit(); // whatever replaces the editor (a recording, a typed thought, an error) keeps its edit
     const was = this.capsuleState;
     const wasEditing = was.kind === "editing";
     this.capsuleState = state;
-    // The panel shows a recording as the capsule does: it follows as one starts, switches or ends.
-    if ((was.kind === "listening") !== (state.kind === "listening") || state.kind === "listening") this.refreshPanel();
-    // A filing and what came of it show in the panel alone (`IN_PANEL`): it follows as their cards come and go.
-    else if (IN_PANEL.has(was.kind) || IN_PANEL.has(state.kind)) this.refreshPanel();
     this.cardCapture = capture ?? null;
     this.reprint = null; // a reprint is the card of whoever puts one up (`showLastReceipt`), which sets it after this
     this.cardUnkept = null; // a card that has words without its promise sets them after (`fail`)
     if (this.hideTimer) clearTimeout(this.hideTimer);
     this.hideTimer = null;
-    this.hideAt = null;
     const win = this.capsule;
     win.webContents.send("capsule:state", state);
-    // A filing's card and what came of it are the panel's now (its Processing tab): the capsule keeps the state, for Edit, Stop and
-    // Undo, and shows nothing.
-    if (state.kind === "hidden" || IN_PANEL.has(state.kind)) {
+    if (state.kind === "hidden") {
       // A hidden panel can't be hovered, and no leave reaches it: the pointer that was on it (to press Hide, say) lets go of the hold
       // now, or the next card that hides itself would wait for a pointer that has gone (`scheduleHide`).
       this.keepOpen = false;
@@ -1393,18 +1325,8 @@ export class Controller {
       this.letGoTimer = null;
       win.setFocusable(false);
       win.setIgnoreMouseEvents(true, { forward: true });
-      // The page sinks the capsule away first (`CapsuleAppear`), then the window hides: unless something shows in it meanwhile.
-      if (this.capsuleLeaveTimer) clearTimeout(this.capsuleLeaveTimer);
-      this.capsuleLeaveTimer = null;
-      if (win.isVisible() && (was.kind !== "hidden" && !IN_PANEL.has(was.kind))) {
-        this.capsuleLeaveTimer = setTimeout(() => {
-          this.capsuleLeaveTimer = null;
-          if (!win.isDestroyed()) win.hide();
-        }, CAPSULE_LEAVE_MS);
-      } else win.hide();
+      win.hide();
     } else {
-      if (this.capsuleLeaveTimer) clearTimeout(this.capsuleLeaveTimer);
-      this.capsuleLeaveTimer = null;
       if (!win.isVisible()) {
         placeCapsule(win);
         win.showInactive();
@@ -1421,10 +1343,7 @@ export class Controller {
         if (wasEditing) win.blur();
       }
     }
-    if (autoHideMs) {
-      this.scheduleHide(autoHideMs);
-      if (IN_PANEL.has(state.kind)) this.refreshPanel(); // Processing's ring runs until the card's time ends
-    }
+    if (autoHideMs) this.scheduleHide(autoHideMs);
     if (state.kind === "saved" && !state.undone) this.markFiled(); // words saved, for the evening review or as a screen comment: stamped
     this.refreshMenu();
     // A dictation's card held back for a thought's (`showCursorCard`) shows once the capsule is free, after whoever hid it has finished.
@@ -1462,76 +1381,6 @@ export class Controller {
     this.capsuleListening = true;
     this.capsule.webContents.send("capsule:state", this.capsuleState);
     for (const command of this.heldCommands.splice(0)) this.capsule.webContents.send("capsule:command", command);
-    this.applyVoiceTrigger(); // a page that has loaded (again) listens for the trigger word if it is on
-  }
-
-  /** The voice trigger listens while it is on, with the chosen microphone, and not while it is off (`AppSettings.voiceTrigger`). */
-  private applyVoiceTrigger(): void {
-    const { voiceTrigger, microphoneId } = this.store.get();
-    this.capsuleCommand({ kind: "trigger", on: voiceTrigger.enabled, microphoneId });
-  }
-
-  /**
-   * The trigger word, said into Capture's microphone beside its field: made into words on this Mac, as speech-to-text writes them, so
-   * the word the trigger listens for is spelled as it will be heard. Its marks taken off, and a few words at most; null when nothing
-   * was heard, or it couldn't be made into words. Only the panel's own page asks.
-   */
-  async hearTriggerWord(sender: WebContents, samples: unknown): Promise<string | null> {
-    if (!this.isPanelPage(sender) || !(samples instanceof Float32Array) || samples.length === 0 || !this.vault) return null;
-    try {
-      const heard = await this.transcribe(samples);
-      const words = heard.text.replace(/[^\p{L}\p{N}'’\s-]+/gu, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ");
-      return words || null;
-    } catch (error) {
-      console.warn("trigger word", errorMessage(error));
-      return null;
-    }
-  }
-
-  /** The panel's microphone is open for a trigger or stop word: the voice trigger starts and stops nothing meanwhile. */
-  private panelHearsTrigger = false;
-
-  /** The panel's microphone opened (`on`) or closed for a trigger or stop word (`hearTriggerWord`). Only the panel's own page says. */
-  hearingTriggerWord(sender: WebContents, on: unknown): void {
-    if (this.isPanelPage(sender)) this.panelHearsTrigger = on === true;
-  }
-
-  /** A span of speech is being made into words for the voice trigger: the next waits, so the model is never asked twice at once. */
-  private triggerBusy = false;
-
-  /**
-   * A span of speech the voice trigger heard (only the capsule's page sends them): made into words on this Mac, and when they hold the
-   * trigger word (`heardTrigger`), a thought starts recording, as Record a thought's shortcut starts one; while a thought records, its
-   * stop word stops it, as Stop does, and the word is cut from its text. Spans that come while a question, a dictation into an app,
-   * words being made, a filing's editor or a call has the microphone or the model, or while another span is being made into words, are
-   * dropped: nothing they hold is kept, and no word of them is written anywhere.
-   */
-  async onTriggerAudio(sender: WebContents, samples: unknown): Promise<void> {
-    const { voiceTrigger } = this.store.get();
-    if (!isPageOf(sender, this.capsule) || !voiceTrigger.enabled || !(samples instanceof Float32Array) || samples.length === 0) return;
-    if (this.triggerBusy || this.panelHearsTrigger || this.calls.running || !this.vault || this.quitting) return;
-    // While a thought records, only its stop word is listened for: not in a question, a dictation into an app or setup's thought,
-    // which have their own ways to end.
-    const stoppable = (recording: Recording | null): recording is Recording =>
-      !!recording && !recording.stopping && !recording.forAsk && !recording.forCursor && !recording.forSetup;
-    const recording = this.recording;
-    if (recording && !stoppable(recording)) return;
-    const kind = this.capsuleState.kind;
-    if (!recording && (kind === "listening" || kind === "transcribing" || kind === "editing")) return;
-    this.triggerBusy = true;
-    try {
-      const heard = await this.transcribe(samples);
-      if (recording) {
-        if (this.recording === recording && stoppable(recording) && heardTrigger(heard.text, voiceTrigger.stopWord)) {
-          recording.stoppedByWord = voiceTrigger.stopWord;
-          void this.stopRecording();
-        }
-      } else if (heardTrigger(heard.text, voiceTrigger.word) && !this.recording) this.pressDictate();
-    } catch (error) {
-      console.warn("voice trigger", errorMessage(error)); // the model isn't there yet, say: the trigger waits for the next span
-    } finally {
-      this.triggerBusy = false;
-    }
   }
 
   /** A command for the capsule's recorder. Sent while its page loads, it would be lost: so it waits. */
@@ -1540,11 +1389,7 @@ export class Controller {
     else this.heldCommands.push(command);
   }
 
-  /** When the card's own time ends (`scheduleHide`): Processing runs its ring round a card that came to no note until then. */
-  private hideAt: number | null = null;
-
   private scheduleHide(ms: number): void {
-    this.hideAt = Date.now() + ms;
     this.hideTimer = setTimeout(() => {
       if (this.keepOpen) return this.scheduleHide(1500);
       this.setCapsule({ kind: "hidden" });
@@ -1604,11 +1449,7 @@ export class Controller {
     await this.startRecording("dictate");
   }
 
-  /**
-   * Capture screen with a comment. `area`: "screen", the whole display under the pointer (the shortcut, the menu); "region", a part
-   * the person picks with macOS's crosshair first (the panel's Part of the screen). Esc there starts nothing.
-   */
-  async toggleCapture(area: "screen" | "region" = "screen", continues?: string): Promise<void> {
+  async toggleCapture(): Promise<void> {
     if (this.recording?.forCursor) return; // only the dictation's own key stops it
     if (this.recording) return this.stopRecording();
     if (this.calls.refuse()) return;
@@ -1624,9 +1465,7 @@ export class Controller {
     let shot: NonNullable<Recording["shot"]>;
     try {
       // Not asked yet: this capture is what makes macOS ask. Without the grant it comes back blank.
-      const [picked, context] = await Promise.all([area === "region" ? captureRegion() : captureDisplay(), this.screenContext()]);
-      if (picked === null) return; // the crosshair's Esc: nothing was picked, and nothing is said
-      const image = picked;
+      const [image, context] = await Promise.all([captureDisplay(), this.screenContext()]);
       if (looksBlank(image)) return this.cantSeeScreen();
       shotPath = vault.newAttachmentPath(new Date(), ".png");
       writeFileSync(shotPath, image.toPNG());
@@ -1636,7 +1475,7 @@ export class Controller {
       return this.fail(screenCaptureProblem(errorMessage(error), reasonMax(error)));
     }
     try {
-      await this.startRecording("comment", shot, continues ? { continues } : {});
+      await this.startRecording("comment", shot);
     } catch (error) {
       rmSync(shot.path, { force: true });
       this.fail(commentNotStartedProblem(errorMessage(error), reasonMax(error)));
@@ -1717,12 +1556,7 @@ export class Controller {
   private async startRecording(
     mode: CapsuleMode,
     shot?: Recording["shot"],
-    {
-      forSetup = false,
-      askPage = null,
-      forCursor = false,
-      continues,
-    }: { forSetup?: boolean; askPage?: number | null; forCursor?: boolean; continues?: string } = {},
+    { forSetup = false, askPage = null, forCursor = false }: { forSetup?: boolean; askPage?: number | null; forCursor?: boolean } = {},
   ): Promise<boolean> {
     if (this.calls.refuse()) {
       if (shot) rmSync(shot.path, { force: true });
@@ -1736,31 +1570,28 @@ export class Controller {
     }
     this.clearAudioTimeout();
     const maxSeconds = this.vault ? loadSettings(this.vault.root).voice.maxRecordSeconds : 600;
-    const timeUp = () => {
-      if (this.recording !== recording) return;
-      // A dictation ends through its session, which pastes nothing without the person's own second tap: its words are offered on the
-      // copy card instead (`CursorDictation.timeUp`).
-      if (forCursor) this.cursor.timeUp();
-      else void this.stopRecording();
-    };
     const recording: Recording = {
-      limitMs: maxSeconds * 1000,
-      timeUp,
-      pausedAt: null,
       mode,
-      // A page continued by voice is filed at once, whatever the switch says: the person waits on the page for it.
-      fileMode: mode === "dictate" && !forSetup && askPage === null && !forCursor ? (continues ? "now" : this.store.get().fileMode) : null,
+      fileMode: mode === "dictate" && !forSetup && askPage === null && !forCursor ? this.store.get().fileMode : null,
       forSetup,
-      ...(continues ? { continues } : {}),
       forAsk: askPage !== null,
       askPage,
       forCursor,
       startedAt: Date.now(),
       shot,
       stopping: false,
-      maxTimer: setTimeout(timeUp, maxSeconds * 1000),
+      maxTimer: setTimeout(() => {
+        if (this.recording !== recording) return;
+        // A dictation ends through its session, which pastes nothing without the person's own second tap: its words are offered on the
+        // copy card instead (`CursorDictation.timeUp`).
+        if (forCursor) this.cursor.timeUp();
+        else void this.stopRecording();
+      }, maxSeconds * 1000),
     };
     this.recording = recording;
+    // Setup's first spoken thought shows its progress in setup's own window. A dictation waits for its session's look at what has focus.
+    if (!forSetup) this.liveWords = this.liveWordsFor(recording);
+    if (!forCursor) this.liveWords?.allow();
     this.wake(); // the next capture wakes Zel
     this.setCapsule({
       kind: "listening",
@@ -1771,7 +1602,9 @@ export class Controller {
       fileMode: recording.fileMode,
       review: reviewTime(this.openReview()),
       hint: forCursor ? null : this.hintFor(mode),
-      ...(forCursor ? { dictation: { key: this.store.get().cursorDictation.key } } : {}),
+      // A dictation's page always sends its blocks: they are also the clock for looking at what has focus (`hearLive`).
+      ...(forCursor || this.liveWords ? { live: true as const } : {}),
+      ...(forCursor ? { dictation: {} } : {}),
       ...(shot ? { thumbnail: shot.thumbnail, context: shot.context } : {}),
     });
     this.capsuleCommand("start");
@@ -1785,7 +1618,7 @@ export class Controller {
 
   /**
    * The shortcut that finishes a recording in `mode`, for the listening card to name while the first recordings teach the keys:
-   * Record a thought's, or Capture screen with a comment's for a screen comment. Null once HINT_CAPTURES recordings have been kept
+   * Record a thought's, or Capture screen's for a screen comment. Null once HINT_CAPTURES recordings have been kept
    * (`captureCount`), and while that shortcut isn't registered (`shortcutProblems` names it: another app holds it, or it can't
    * work): there is no key to name then.
    */
@@ -1806,71 +1639,10 @@ export class Controller {
    * (`sender` is the page the message came from, `event.sender`).
    */
   toggleFileMode(sender: WebContents): void {
-    if (!isPageOf(sender, this.capsule)) return;
-    this.switchFileMode();
-  }
-
-  /**
-   * The listening bar's own buttons, from the capsule's page only. Stop ends and keeps the recording as its shortcut does (a screen
-   * comment's is Capture's); Cancel gives it up as Esc does; Pause pauses it, or resumes it while it is paused. A call has its own
-   * Stop, and a dictation into another app ends only by its key, so neither is heard here.
-   */
-  barAction(sender: WebContents, action: "stop" | "cancel" | "pause"): void {
-    if (!isPageOf(sender, this.capsule)) return;
-    this.listeningAction(action);
-  }
-
-  /** Stop, Cancel or Pause for the recording that listens, from the capsule's bar or the panel. */
-  private listeningAction(action: "stop" | "cancel" | "pause"): void {
-    const recording = this.recording;
-    if (!recording || recording.forCursor || recording.mode === "call" || this.capsuleState.kind !== "listening") return;
-    if (action === "stop") void this.stopRecording();
-    else if (action === "cancel") this.cancelRecording();
-    else if (recording.pausedAt) this.resumeRecording();
-    else this.pauseRecording();
-  }
-
-  /** Pauses the recording that listens: the microphone keeps nothing, the time stands still, and the time limit waits. */
-  private pauseRecording(): void {
     const recording = this.recording;
     const state = this.capsuleState;
-    if (!recording || recording.pausedAt || recording.stopping || state.kind !== "listening") return;
-    recording.pausedAt = Date.now();
-    clearTimeout(recording.maxTimer);
-    this.capsuleCommand("pause");
-    this.setCapsule({ ...state, pausedAt: recording.pausedAt });
-  }
-
-  /** Resumes a paused recording: its start moves on by the pause, so its time goes on from where it stood, and so does its limit. */
-  private resumeRecording(): void {
-    const recording = this.recording;
-    const state = this.capsuleState;
-    if (!recording || !recording.pausedAt || state.kind !== "listening") return;
-    recording.startedAt += Date.now() - recording.pausedAt;
-    recording.pausedAt = null;
-    const left = Math.max(0, (recording.limitMs ?? 600_000) - (Date.now() - recording.startedAt));
-    if (recording.timeUp) recording.maxTimer = setTimeout(recording.timeUp, left);
-    this.capsuleCommand("resume");
-    const { pausedAt: _paused, ...listening } = state;
-    this.setCapsule({ ...listening, startedAt: recording.startedAt });
-  }
-
-  /** The capsule's microphone level, passed on to the panel while it is up and a recording listens, for its wave. */
-  capsuleLevel(sender: WebContents, level: unknown): void {
-    if (!isPageOf(sender, this.capsule) || typeof level !== "number" || !Number.isFinite(level)) return;
-    const win = this.panelWindow;
-    if (!win || win.isDestroyed() || !win.isVisible() || this.capsuleState.kind !== "listening") return;
-    win.webContents.send("panel:level", Math.min(1, Math.max(0, level)));
-  }
-
-  /** Switches the listening recording's file mode, from the capsule's switch or the panel's: the capsule and the panel both follow. */
-  private switchFileMode(to?: FileMode): void {
-    const recording = this.recording;
-    const state = this.capsuleState;
-    if (!recording || recording.fileMode === null || state.kind !== "listening") return;
-    const next = to ?? (recording.fileMode === "now" ? "evening" : "now");
-    if (next === recording.fileMode) return;
-    recording.fileMode = next;
+    if (!isPageOf(sender, this.capsule) || !recording || recording.fileMode === null || state.kind !== "listening") return;
+    recording.fileMode = recording.fileMode === "now" ? "evening" : "now";
     this.setCapsule({ ...state, fileMode: recording.fileMode });
   }
 
@@ -1880,12 +1652,22 @@ export class Controller {
     recording.stopping = true;
     clearTimeout(recording.maxTimer);
     shortcutApi().unregister("Escape");
+    this.endLiveWords();
     const onThisMac = this.transcribesOnThisMac();
     // This card is the capsule's now: an older transcription still running no longer has it, so neither its slow state nor Stop can
     // reach this recording's card (`slowTranscription`, `stopTranscribing`).
     this.transcribing = null;
-    // A screen comment keeps its screenshot's card while its words are made, as it had it while it listened.
-    this.setCapsule({ kind: "transcribing", mode: recording.mode, onThisMac, ...(recording.shot ? { thumbnail: recording.shot.thumbnail, context: recording.shot.context } : {}) });
+    // A screen comment keeps its screenshot's card while its words are made, as it had it while it listened. So do the words said so
+    // far and the app they are going to, so the panel doesn't lose them just before they are pasted or filed.
+    const listening = this.capsuleState.kind === "listening" ? this.capsuleState : null;
+    this.setCapsule({
+      kind: "transcribing",
+      mode: recording.mode,
+      onThisMac,
+      ...(recording.shot ? { thumbnail: recording.shot.thumbnail, context: recording.shot.context } : {}),
+      ...(listening?.words ? { words: listening.words } : {}),
+      ...(listening?.dictation ? { dictation: listening.dictation } : {}),
+    });
     this.transcribingCardOf = recording; // whose card it is: an older question's words, when they come, hide only their own (`heardQuestion`)
     this.setup.moveThought(recording, { kind: "transcribing", startedAt: Date.now(), onThisMac });
     this.capsuleCommand("stop");
@@ -1947,8 +1729,8 @@ export class Controller {
     clearTimeout(recording.maxTimer);
     this.clearAudioTimeout();
     shortcutApi().unregister("Escape");
+    this.endLiveWords();
     if (recording.shot) rmSync(recording.shot.path, { force: true });
-    for (const file of recording.attachments ?? []) rmSync(file.path, { force: true }); // what was added to it goes with it
     if (this.recording === recording) this.recording = null;
     this.capsuleCommand("cancel");
   }
@@ -1989,23 +1771,20 @@ export class Controller {
         if (!transcript) return; // Stop kept the recording in the inbox meanwhile: the words it made, or its failure, are dropped
         seconds = (performance.now() - started) / 1000;
         text = transcript.text.trim();
-        if (recording.stoppedByWord) text = withoutStopWord(text, recording.stoppedByWord); // the word that stopped it isn't the thought's
         engine = transcript.engine;
         heard = transcript.heard?.trim();
       }
       if (!text && audioPath) rmSync(audioPath, { force: true });
 
       if (recording.mode === "comment" && recording.shot) {
-        const shotCapture = (await this.librarian()).captureScreen({
+        (await this.librarian()).captureScreen({
           image: recording.shot.path,
           comment: text,
           ...(text ? { audio: audioPath, transcriber: engine } : {}),
-          context: { ...recording.shot.context, heard: text ? heard : undefined, continues: recording.continues },
+          context: { ...recording.shot.context, heard: text ? heard : undefined },
         });
         captured = true;
         this.captureCount.add(); // the screenshot is kept, with or without a comment
-        // Recorded with the screen from a page (Add more): filed at once, into that page, rather than kept for the evening review.
-        if (recording.continues) return this.afterCapture(shotCapture.path, text || "A screenshot, with no comment.", seconds, unkept, recording);
         this.setCapsule(
           {
             kind: "saved",
@@ -2019,16 +1798,11 @@ export class Controller {
         );
         return;
       }
-      // Nothing said, but files were added to it: they are its note.
-      if (!text && recording.attachments?.length) text = "Files added, with no words.";
       if (!text) {
         // Its recording went with it: nothing is kept.
         return this.recordingFailed(recording, { problem: "silence" }, NOTHING_HEARD, "open-settings:voice", "Choose microphone");
       }
-      const attachments = (recording.attachments ?? []).map((file) => file.path);
-      // What was added to it (Add: files, screenshots) goes with it, named in its words, so the agent opens each.
-      const words = attachments.length ? `${text}\n\nAdded: ${attachments.map((file) => vault.relativePath(file)).join(", ")}.` : text;
-      const capture = vault.newCapture(words, { source: "voice", audio: audioPath, transcriber: engine, now, attachments, context: { heard, continues: recording.continues } });
+      const capture = vault.newCapture(text, { source: "voice", audio: audioPath, transcriber: engine, now, context: { heard } });
       this.captureCount.add(); // its words are in the inbox: kept, whatever becomes of them next
       this.afterCapture(capture.path, text, seconds, unkept, recording);
     } catch (error) {
@@ -2076,6 +1850,66 @@ export class Controller {
       console.error("question", error);
       this.recordingFailed(recording, { problem: "unheard" }, unheardProblem(errorMessage(error), null, reasonMax(error)));
     }
+  }
+
+  /**
+   * The words of `recording` for its listening card while they are said. Null when the library's speech-to-text is a command, which can run
+   * anywhere and cost anything, and is not to be asked once a second.
+   */
+  private liveWordsFor(recording: Recording): LiveWords | null {
+    if (!this.transcribesOnThisMac()) return null;
+    return new LiveWords({
+      recognise: async (samples) => (await this.transcribe(samples)).text,
+      show: (words) => this.changeListening(recording, (state) => (words ? { ...state, words } : withoutWords(state))),
+    });
+  }
+
+  /**
+   * The listening card of `recording`, changed: it goes straight to the page, as this is the same card with a little more on it, and about
+   * once a second is too often for all that `setCapsule` does for a new card, such as building the menu again. Nothing while another
+   * card has the capsule, or when `change` changes nothing.
+   */
+  private changeListening(recording: Recording, change: (state: ListeningState) => ListeningState): void {
+    const state = this.capsuleState;
+    if (this.recording !== recording || state.kind !== "listening") return;
+    const changed = change(state);
+    if (changed === state) return;
+    this.capsuleState = changed;
+    this.capsule.webContents.send("capsule:state", changed);
+  }
+
+  private endLiveWords(): void {
+    this.liveWords?.stop();
+    this.liveWords = null;
+  }
+
+  /**
+   * What has focus while a dictation listens (`CursorDictation.look`). Words that may not show now stop for the rest of the dictation and
+   * leave the panel: words said into a password field shouldn't come back with the next look. The card changes only when the app does.
+   */
+  private dictatingInto(wordsMayShow: boolean, app: { name: string; icon?: string } | null): void {
+    const recording = this.recording;
+    if (!recording?.forCursor) return;
+    if (wordsMayShow) this.liveWords?.allow();
+    else this.endLiveWords();
+    const seen = app && { name: app.name, ...(app.icon ? { icon: `data:image/png;base64,${app.icon}` } : {}) };
+    this.changeListening(recording, (state) => {
+      const shown = wordsMayShow ? state : withoutWords(state);
+      const known = shown.dictation?.app;
+      const same = known !== undefined && (known === null || seen === null ? known === seen : known.name === seen.name && known.icon === seen.icon);
+      return same ? shown : { ...shown, dictation: { app: seen } };
+    });
+  }
+
+  /** A block of the listening recording's microphone, from the capsule's own page. */
+  onLiveAudio(sender: WebContents, samples: Float32Array): void {
+    if (isPageOf(sender, this.capsule)) this.hearLive(samples);
+  }
+
+  /** A block for the words as they are said. For a dictation it is also the clock for looking again at what has focus. */
+  private hearLive(samples: Float32Array): void {
+    this.liveWords?.add(samples);
+    if (this.recording?.forCursor) void this.cursor.look();
   }
 
   /**
@@ -2199,7 +2033,7 @@ export class Controller {
    */
   async stopTranscribing(sender: WebContents): Promise<void> {
     const transcribing = this.transcribing;
-    if ((!isPageOf(sender, this.capsule) && !this.isPanelPage(sender)) || !transcribing) return;
+    if (!isPageOf(sender, this.capsule) || !transcribing) return;
     // `transcribing.stopped` is a belt: once Stop has kept the recording the card is `recorded`, and the check of the card turns a
     // second Stop away. It keeps a recording from being kept twice, should the card ever allow it.
     const stoppable = () => {
@@ -2260,25 +2094,27 @@ export class Controller {
 
   /**
    * Has macOS ask for the permissions (its prompts come up once; after a refusal only System Settings can grant), and opens System
-   * Settings at the one still missing: Input Monitoring first, as without it the key is never seen.
+   * Settings at `permission` when it is missing, as a row of Privacy asks; with none named, at the one still missing, Input Monitoring first,
+   * as without it the key is never seen.
    */
-  async askCursorPermissions(): Promise<CursorPermissionState> {
+  async askCursorPermissions(permission?: CursorPermission): Promise<CursorPermissionState> {
     const state = await cursorPermissionsOf(this.cursorHelper, true);
     if (!state.available) return state;
-    const missing = !state.inputMonitoring ? "input-monitoring" : !state.accessibility ? "accessibility" : null;
+    const lacks: Record<CursorPermission, boolean> = { "input-monitoring": !state.inputMonitoring, accessibility: !state.accessibility };
+    const missing = permission ? (lacks[permission] ? permission : null) : lacks["input-monitoring"] ? "input-monitoring" : lacks.accessibility ? "accessibility" : null;
     if (missing) this.openPane(missing);
     return state;
   }
 
   /**
-   * The newest `limit` dictations of the history, for Settings → Dictations (`pageOf`): newest first, each as the pane shows it (the words
+   * The newest `limit` dictations of the history, for Settings → Dictation (`pageOf`): newest first, each as the pane shows it (the words
    * cut to a preview), with how many the history holds. It needs no library: the history is the app's own.
    */
   listDictations(limit?: number): DictationList {
     return pageOf(this.dictations.list(), limit);
   }
 
-  /** Copy, in the Dictations pane: dictation `id`'s whole words go on the clipboard. False when it has gone, or the clipboard refused. */
+  /** Copy, in the Dictation pane: dictation `id`'s whole words go on the clipboard. False when it has gone, or the clipboard refused. */
   async copyDictation(id: string): Promise<boolean> {
     const entry = this.dictations.list().find((each) => each.id === id);
     if (!entry) return false;
@@ -2302,11 +2138,36 @@ export class Controller {
   }
 
   /**
-   * Delete, in the Dictations pane: ok once the dictation is gone; else a calm sentence for the pane's Notice, with the dictation kept,
+   * Delete, in the Dictation pane: ok once the dictation is gone; else a calm sentence for the pane's Notice, with the dictation kept,
    * or, when it left the history but the day file couldn't be updated, where its words may still be (`DAY_FILE_NOT_UPDATED`).
    */
   deleteDictation(id: string): Promise<DeleteDictationResult> {
     return deleteDictationResult(() => this.forgetDictation(id));
+  }
+
+  /** A dictation's row in the menu: its whole words go on the clipboard, and macOS's closing menu is all that says so. A clipboard that refuses says so in a notification. */
+  private async copyDictationFromMenu(id: string): Promise<void> {
+    if (!(await this.copyDictation(id))) this.notify(DICTATION_NOT_COPIED, DICTATION_NOT_COPIED_BODY);
+  }
+
+  /**
+   * "Dictate into any app", in the menu: on or off. A setting the disk won't take is said in a notification, and the menu goes back to what is,
+   * since macOS has ticked its row already. Turned on while macOS lacks a permission it would do nothing, with nothing in the menu to say why, so
+   * Settings opens on Dictation, which says which and has the button that asks.
+   */
+  private async toggleDictationFromMenu(): Promise<void> {
+    const on = !this.store.get().cursorDictation.enabled;
+    try {
+      await this.setCursorDictation({ enabled: on });
+    } catch (error) {
+      console.error("dictate into any app", error);
+      this.refreshMenu();
+      this.notify("That change wasn't saved.", "Dictating into any app stays as it was.");
+      return;
+    }
+    if (!on) return;
+    const state = await this.cursorPermissions();
+    if (state.available && (!state.accessibility || !state.inputMonitoring)) this.showSettings("dictations");
   }
 
   /**
@@ -2332,11 +2193,11 @@ export class Controller {
   }
 
   /**
-   * The history changed, by a dictation that ended or by one forgotten: the menu is built again, with or without "Forget the last
-   * dictation", and an open Settings is told, so that its Dictations pane lists the history again.
+   * The history changed, by a dictation that ended or by one forgotten: the menu is built again, with what it now lists under Recent
+   * dictations, and an open Settings is told, so that its Dictation pane lists the history again.
    */
   private dictationsChanged(): void {
-    this.hasDictation = null;
+    this.menuDictations = null;
     this.refreshMenu();
     const win = this.settingsWindow;
     if (win && !win.isDestroyed()) win.webContents.send("settings:dictations-changed");
@@ -2397,10 +2258,11 @@ export class Controller {
       return this.cursorHelper;
     };
     return {
-      helper: { inspect: (keep) => helper().inspect(keep), sameWindow: () => helper().sameWindow(), paste: (text) => helper().paste(text) },
+      helper: { look: () => helper().look(), inspect: (keep) => helper().inspect(keep), sameWindow: () => helper().sameWindow(), paste: (text) => helper().paste(text) },
       clipboard: electronClipboard,
       startListening: () => this.startCursorRecording(),
       stopListening: () => this.stopCursorRecording(),
+      dictatingInto: ({ wordsMayShow, app }) => this.dictatingInto(wordsMayShow, app),
       cancelListening: () => this.cancelCursorRecording(),
       // One microphone: a thought recording or a call refuses a dictation. A thought being transcribed or filed holds no microphone.
       busy: () => (this.recording !== null && !this.recording.forCursor) || this.calls.running,
@@ -2508,7 +2370,7 @@ export class Controller {
     console.error("cursor helper", message);
     if (message !== CURSOR_HELPER_GAVE_UP || this.cursorHelperStoppedTold) return;
     this.cursorHelperStoppedTold = true;
-    this.showCursorCard("helper", () => this.fail(CURSOR_HELPER_STOPPED, "open-settings:voice", "Open Settings"));
+    this.showCursorCard("helper", () => this.fail(CURSOR_HELPER_STOPPED, "open-settings:dictations", "Open Settings"));
   }
 
   /** The refusal's bar, for a moment. */
@@ -2643,8 +2505,6 @@ export class Controller {
    * Mac plays, the only row when none runs; the one chosen starts the call (`startCallNotes`).
    */
   private async pickCall(): Promise<void> {
-    // With the panel, the choice is made in it, on Capture, never in a menu macOS draws.
-    if (USE_PANEL) return this.showPanel("capture", undefined, "panel:pick-call");
     const apps = await runningCallApps().catch((error: unknown) => {
       console.warn("call apps", error);
       return [];
@@ -2684,16 +2544,9 @@ export class Controller {
    * the file mode. Any others are filed now or at the evening review as their recording's own file mode says (`toggleFileMode`);
    * words with no such mode (a typed thought's, or from a recording that has none to switch) as the setting says.
    */
-  private afterCapture(
-    capturePath: string,
-    text: string,
-    transcribedIn: number | null,
-    detail?: string,
-    recording?: Recording,
-    continues: string | undefined = recording?.continues, // the page the note adds to (Add more), which it is filed into at once
-  ): void {
+  private afterCapture(capturePath: string, text: string, transcribedIn: number | null, detail?: string, recording?: Recording): void {
     if (recording && this.setup.heard(recording, capturePath, text, transcribedIn)) return;
-    if (!continues && (recording?.fileMode ?? this.store.get().fileMode) === "evening") {
+    if ((recording?.fileMode ?? this.store.get().fileMode) === "evening") {
       this.setCapsule({ kind: "saved", text, note: this.savedLine(), ...(detail ? { detail } : {}) }, 4000);
       return;
     }
@@ -2711,7 +2564,6 @@ export class Controller {
       startedAt: now,
       stepAt: now,
       detail,
-      ...(continues ? { continues } : {}),
     });
   }
 
@@ -2726,52 +2578,8 @@ export class Controller {
     // (`undoableFiling`). The record itself is cleared by the run, when its turn comes (`runFiling`).
     this.queuedToFile.add(job.capturePath);
     job.queuedAlone = true;
-    this.trackFiling(job);
     this.showFiling(job);
-    void this.enqueue(() => this.runFiling(job)).finally(() => this.untrackFiling(job));
-  }
-
-  /**
-   * The capsule's filings that run or wait for their turn, oldest first: Capture lists them under its tiles (the one at work as its
-   * card, the rest as the queue), and the menu bar icon counts them. Setup's first thought and the background's filings are not here.
-   */
-  private filings: FilingJob[] = [];
-
-  private trackFiling(job: FilingJob): void {
-    if (this.filings.includes(job)) return;
-    this.filings.push(job);
-    this.refreshPanel();
-    this.refreshTray();
-  }
-
-  /**
-   * A thought taken out of the queue in Processing, by its capture's path: one that still waits its turn, queued alone (`queuedAlone`),
-   * so nothing has touched its note. Its filing is stopped (its turn, when it comes, does nothing: `runFiling` finds it stopped), and
-   * its note goes to the Trash, where Finder can put it back. A filing that has begun is Stop's, and is left alone here.
-   */
-  private async removeQueued(capturePath: string): Promise<void> {
-    const job = this.filings.find((each) => each.capturePath === capturePath);
-    if (!job || !job.queuedAlone || this.runs.has(job.abort)) return;
-    job.cancelled = true;
-    job.abort.abort();
-    this.queuedToFile.delete(capturePath);
-    this.untrackFiling(job);
-    if (this.job === job && this.capsuleState.kind === "filing") this.setCapsule({ kind: "hidden" });
-    try {
-      if (existsSync(capturePath)) await shell.trashItem(capturePath);
-    } catch (error) {
-      console.warn("remove queued", error);
-      this.fail({ title: "Avanzel couldn't move the thought to the Trash.", body: `${errorMessage(error)} It stays in the inbox, for the evening review.` });
-    }
-    this.refreshMenu();
-  }
-
-  private untrackFiling(job: FilingJob): void {
-    const before = this.filings.length;
-    this.filings = this.filings.filter((each) => each !== job);
-    if (this.filings.length === before) return;
-    this.refreshPanel();
-    this.refreshTray();
+    void this.enqueue(() => this.runFiling(job));
   }
 
   private showFiling(job: FilingJob): void {
@@ -2814,7 +2622,6 @@ export class Controller {
    * kept in its job, and it ends in a notification.
    */
   private refreshFiling(job: FilingJob): void {
-    if (this.filings.includes(job)) this.refreshPanel(); // Capture lists it, with its newest step
     const state = this.capsuleState;
     if (this.job !== job || state.kind !== "filing" || this.capsule.isDestroyed()) return; // the window is gone as Avanzel quits
     this.capsuleState = this.filingState(job, state.onThisMac);
@@ -3012,9 +2819,6 @@ export class Controller {
     // Setup's thought is filed, which counts whether its window is still there to show it or has closed (§5.4).
     if (job.setup) this.firstRun.filed(new Date());
     this.markFiled(); // whichever card, window or notification tells it
-    // Library lists the pages again at once: the filing wrote or changed some.
-    this.pagesVersion += 1;
-    this.refreshPanel();
     if (this.setup.owns(job)) {
       this.setup.filed(job, outcome, job.pages);
     } else if (this.job === job && this.capsuleState.kind === "filing") {
@@ -3031,7 +2835,7 @@ export class Controller {
           // The agent changed the capture and the engine put the person's words back: the card says they are kept. Absent when it didn't.
           ...(outcome.restored ? { restored: true as const } : {}),
         },
-        job.pages.length === 0 ? NO_NOTE_SHOW_MS : FILED_SHOW_MS,
+        FILED_SHOW_MS,
       );
     } else {
       const first = job.pages[0];
@@ -3039,8 +2843,6 @@ export class Controller {
     }
     this.refreshMenu();
     this.askChanged(); // the shelves hold its pages: an Ask window in front reads again, as the capsule never takes its key
-    // Continued by voice from a page: back to that page, open in Library, with what the note added to it.
-    if (job.continues && USE_PANEL) this.showPanel("library", undefined, { channel: "panel:open-page", value: job.continues });
   }
 
   /**
@@ -3514,18 +3316,13 @@ export class Controller {
    * filed. Not while quitting, which has stopped every run already.
    */
   cancelFiling(sender: WebContents): void {
-    if (isPageOf(sender, this.capsule)) this.stopShownFiling();
-  }
-
-  /** Stop, for the filing the capsule's card shows (`cancelFiling`), pressed there or on its card in the panel's Capture. */
-  private stopShownFiling(): void {
     const job = this.job;
-    if (!job || job.cancelled || job.edited || this.quitting || this.capsuleState.kind !== "filing") return;
+    if (!isPageOf(sender, this.capsule) || !job || job.cancelled || job.edited || this.quitting || this.capsuleState.kind !== "filing") return;
     job.cancelled = true;
     job.abort.abort();
     if (job.queuedAlone) {
       const review = reviewTime(this.openReview());
-      this.setCapsule({ kind: "cancelled", text: job.text, agent: job.agent, partial: false, leftovers: 0, review }, NO_NOTE_SHOW_MS);
+      this.setCapsule({ kind: "cancelled", text: job.text, agent: job.agent, partial: false, leftovers: 0, review }, STOPPED_SHOW_MS);
       return;
     }
     this.refreshFiling(job);
@@ -3555,7 +3352,7 @@ export class Controller {
     const leftovers = unrecordedEdits(job.outcome);
     const review = reviewTime(this.openReview());
     if (showing) {
-      this.setCapsule({ kind: "cancelled", text: job.text, agent: job.agent, partial, leftovers, review }, NO_NOTE_SHOW_MS);
+      this.setCapsule({ kind: "cancelled", text: job.text, agent: job.agent, partial, leftovers, review }, STOPPED_SHOW_MS);
       return;
     }
     // The card has gone, which would have built the menu, and a notification builds nothing. It was last built while the stopped run went on,
@@ -3608,8 +3405,6 @@ export class Controller {
       correction: correction ?? job.correction,
     };
     if (this.queued > 0) next.waiting = true; // behind the stopped run, if it is not over: as `beginFiling` says
-    this.untrackFiling(job);
-    this.trackFiling(next);
     this.showFiling(next);
     void this.enqueue(async () => {
       const problem = await this.takeBack(job); // first: undoing a finished filing puts the misheard capture back in the inbox
@@ -3628,7 +3423,7 @@ export class Controller {
         // The card says where the corrected words wait, and promises the evening review only while the library's is on.
         this.fail(takeBackRefusedProblem(existsSync(next.capturePath), this.eveningReviewOn()));
       }
-    }).finally(() => this.untrackFiling(next));
+    });
   }
 
   /**
@@ -3934,7 +3729,7 @@ export class Controller {
    * `ask:open-page`, which opens a page by name for the Ask window and for setup, and stays as it is.
    */
   openFiledPage(sender: WebContents, rel: unknown): void {
-    if ((!isPageOf(sender, this.capsule) && !this.isPanelPage(sender)) || typeof rel !== "string") return;
+    if (!isPageOf(sender, this.capsule) || typeof rel !== "string") return;
     if (this.shownPages()?.some((page) => page.path === rel)) this.openPage(rel);
   }
 
@@ -4002,46 +3797,6 @@ export class Controller {
   setInteractive(interactive: boolean): void {
     if (this.capsuleState.kind === "editing") return;
     this.capsule.setIgnoreMouseEvents(!interactive, { forward: true });
-  }
-
-  /** The capsule's bar that takes dropped files, in the capsule's points (`setDropZone`), and whether the pointer is over it now. */
-  private dropZone: { x: number; y: number; width: number; height: number } | null = null;
-  private dropOver = false;
-  private dropWatch: ReturnType<typeof setInterval> | null = null;
-
-  /**
-   * The capsule says where its bar takes dropped files, or that it takes none. A drag brings the click-through window no pointer events,
-   * so while there is such a place main looks at the pointer itself, DROP_WATCH_MS apart, and the window takes the pointer while it is
-   * over the place (a little past its edges), and lets it through again once it has left. Only the capsule's own page says.
-   */
-  setDropZone(sender: WebContents, zone: unknown): void {
-    if (!isPageOf(sender, this.capsule)) return;
-    const z = zone as Record<string, unknown> | null;
-    const valid = z !== null && typeof z === "object" && ["x", "y", "width", "height"].every((k) => typeof z[k] === "number" && Number.isFinite(z[k]));
-    this.dropZone = valid ? { x: z.x as number, y: z.y as number, width: z.width as number, height: z.height as number } : null;
-    if (this.dropZone && !this.dropWatch) {
-      this.dropWatch = setInterval(() => this.watchDrop(), DROP_WATCH_MS);
-    } else if (!this.dropZone && this.dropWatch) {
-      clearInterval(this.dropWatch);
-      this.dropWatch = null;
-      if (this.dropOver) this.setInteractive(false);
-      this.dropOver = false;
-    }
-  }
-
-  /** One look at the pointer for the capsule's drop place (`setDropZone`). */
-  private watchDrop(): void {
-    const zone = this.dropZone;
-    const win = this.capsule;
-    if (!zone || win.isDestroyed() || !win.isVisible()) return;
-    const at = screen.getCursorScreenPoint();
-    const box = win.getBounds();
-    const x = at.x - box.x;
-    const y = at.y - box.y;
-    const over = x >= zone.x - DROP_MARGIN && x <= zone.x + zone.width + DROP_MARGIN && y >= zone.y - DROP_MARGIN && y <= zone.y + zone.height + DROP_MARGIN;
-    if (over === this.dropOver) return;
-    this.dropOver = over;
-    this.setInteractive(over);
   }
 
   /**
@@ -4282,10 +4037,8 @@ export class Controller {
    * (`giveUpAsk`): its agent run stops, and the library is free for a filing waiting on it. One is run at a time, so Stop gives up the
    * newest one. `progress` tells the window what the run is doing (`askProgress`). The face thinks meanwhile.
    */
-  private async inAskSlot<T>(
-    run: (abort: AbortController, progress: (message: string) => void) => Promise<T>,
-    win: BrowserWindow | null = this.askWindow, // the window that asked, even once another one opens: Ask's, or the panel's Library
-  ): Promise<T> {
+  private async inAskSlot<T>(run: (abort: AbortController, progress: (message: string) => void) => Promise<T>): Promise<T> {
+    const win = this.askWindow; // the window that asked, even once another one opens
     const abort = new AbortController();
     const giveUp = () => abort.abort();
     this.giveUpAsk = giveUp;
@@ -4303,13 +4056,7 @@ export class Controller {
     }
   }
 
-  /** A question asked in the panel's Library: answered as Ask's are, its progress told to the panel. Only the panel's own page asks. */
-  async askFromPanel(sender: WebContents, question: string): Promise<AskResult> {
-    if (!this.isPanelPage(sender)) throw new Error("Only the panel asks from the panel.");
-    return this.ask(question, this.panelWindow);
-  }
-
-  async ask(question: string, win: BrowserWindow | null = this.askWindow): Promise<AskResult> {
+  async ask(question: string): Promise<AskResult> {
     const library = this.vault?.root ?? null; // the library the question is asked in, which Save hands back
     return this.inAskSlot(async (abort, progress) => {
       const { ok, ran, text, agent, seconds, changedFiles, failure } = await this.answerQuestion(question, abort, progress);
@@ -4326,16 +4073,15 @@ export class Controller {
         failure,
         library,
       };
-    }, win);
+    });
   }
 
   /**
-   * Stop, in the Ask window or the panel's Library: the question being answered, or the answer being saved, is given up, as closing the
-   * window gives it up. Only those windows' own pages can: `sender` is the page the message came from (`event.sender`), and any other
-   * window's gives up nothing.
+   * Stop, in the Ask window: the question being answered, or the answer being saved, is given up, as closing the window gives it up.
+   * Only that window's own page can: `sender` is the page the message came from (`event.sender`), and any other window's gives up nothing.
    */
   cancelAsk(sender: WebContents): void {
-    if (isPageOf(sender, this.askWindow) || this.isPanelPage(sender)) this.giveUpAsk?.();
+    if (isPageOf(sender, this.askWindow)) this.giveUpAsk?.();
   }
 
   /**
@@ -4479,18 +4225,6 @@ export class Controller {
     else void shell.openPath(path.join(vault.root, rel));
   }
 
-  /**
-   * The panel's two ways to open a page: "file", in the app this Mac opens Markdown files with; "obsidian", in Obsidian, when it
-   * can (installed, and the library is a vault), else as a file. Only a page inside the library, never through a link (`pageAt`).
-   */
-  openPageWith(rel: string, how: "file" | "obsidian"): void {
-    const vault = this.vault;
-    if (!vault || pageAt(vault.root, rel) !== "page") return;
-    const url = how === "obsidian" && this.obsidianInstalled() ? obsidianUrl(vault.root, rel) : null;
-    if (url) void shell.openExternal(url);
-    else void shell.openPath(path.join(vault.root, rel));
-  }
-
   openLibraryFolder(): void {
     const vault = this.vault;
     if (!vault) return this.showHome();
@@ -4524,826 +4258,8 @@ export class Controller {
 
   // ---------------------------------------------------------------- settings
 
-  // ---------------------------------------------------------------- panel
-
-  /** The panel's window, made the first time: Settings' page lives in its third tab, so it is Settings' window too. */
-  private panel(): BrowserWindow {
-    if (this.panelWindow && !this.panelWindow.isDestroyed()) return this.panelWindow;
-    const win = createPanelWindow();
-    this.panelWindow = win;
-    this.settingsWindow = win;
-    // Another window took the keyboard: the panel goes, as a popover does. Not while a dialog it asked for is up.
-    win.on("blur", () => {
-      if (this.panelHeld === 0 && !win.isDestroyed() && process.env.AVANZEL_QUIET_STAGE !== "1") win.hide();
-    });
-    // Back from System Settings or Terminal: Settings reads what is on this Mac again, as its own window did (`showSettings`).
-    win.on("focus", () => {
-      try {
-        if (!git.gitUsable()) git.resetGitUsable();
-        this.refreshSettings();
-      } catch (error) {
-        console.error("panel", error);
-      }
-    });
-    return win;
-  }
-
-  /** A click on the menu bar icon: the panel comes up under it, or goes if it is up. */
-  togglePanel(): void {
-    const win = this.panelWindow;
-    if (win && !win.isDestroyed() && win.isVisible()) {
-      win.hide();
-      return;
-    }
-    // While a recording listens the panel opens on it, on Capture, with what the capsule offers for it.
-    this.showPanel(this.capsuleState.kind === "listening" ? "capture" : null);
-  }
-
-  /**
-   * Brings up the panel under the icon, on `tab` (and Settings' `pane`) when given, else where it was. `then`: a message the page is
-   * sent once it shows, for what it opens in place ("panel:pick-call", Take notes on a call…'s list; "panel:open-page" with the page).
-   */
-  showPanel(tab: PanelTab | null, pane?: SettingsPane, then?: string | { channel: string; value: string }): void {
-    const win = this.panel();
-    placePanel(win, this.menuBar.bounds());
-    const show = () => {
-      if (win.isDestroyed()) return;
-      win.webContents.send("panel:shown", tab);
-      if (pane) win.webContents.send("settings:show-pane", pane);
-      if (typeof then === "string") win.webContents.send(then);
-      else if (then) win.webContents.send(then.channel, then.value);
-      this.refreshPanel(true);
-      this.refreshSettings();
-      bringForward(win);
-    };
-    if (win.webContents.isLoading()) win.webContents.once("did-finish-load", show);
-    else show();
-  }
-
-  /** The panel's Esc. */
-  hidePanel(): void {
-    const win = this.panelWindow;
-    if (win && !win.isDestroyed()) win.hide();
-  }
-
-  /** Whether `sender` is the panel's own page: the only one whose actions are heard. */
-  isPanelPage(sender: WebContents): boolean {
-    return isPageOf(sender, this.panelWindow);
-  }
-
-  /** Keeps the panel up while `run`, a dialog it asked for, is open; it would hide as the dialog takes the keyboard. */
-  private async holdingPanel<T>(run: () => Promise<T>): Promise<T> {
-    this.panelHeld += 1;
-    try {
-      return await run();
-    } finally {
-      this.panelHeld -= 1;
-    }
-  }
-
-  /**
-   * Avanzel's own panel and capsule are left out of what the screen shows to captures (macOS's content protection) while `hidden` is
-   * true: a screenshot or a video taken for a recording shows the screen behind them, and they stay where they are for the person.
-   */
-  private keepOutOfCaptures(hidden: boolean): void {
-    for (const win of [this.panelWindow, this.capsule]) if (win && !win.isDestroyed()) win.setContentProtection(hidden);
-  }
-
-  /** The panel asked for one of the menu's actions (`PANEL_ACTIONS`), a page (`open:`) or a review (`task:`). */
-  panelAction(action: unknown): void {
-    if (typeof action !== "string") return;
-    // The recording shown in the panel: its file mode switches as the capsule's does, and Cancel gives it up as Esc does.
-    if (action === "file-mode:now" || action === "file-mode:evening") return this.switchFileMode(action === "file-mode:now" ? "now" : "evening");
-    if (action === "cancel-recording") return this.listeningAction("cancel");
-    // The filing at work, on its card in Capture: Edit and Stop, as its card in the capsule has them.
-    if (action === "filing-edit") return this.edit();
-    if (action === "filing-stop") return this.stopShownFiling();
-    if (action.startsWith("queue-remove:")) return void this.removeQueued(action.slice(13));
-    // Capture's Take a screenshot, each way of it.
-    if (action === "shot-screen" || action === "shot-area" || action === "shot-marks") return void this.screenshotThought(action === "shot-screen" ? "screen" : action === "shot-area" ? "area" : "marks");
-    if (action === "pause-recording") return this.listeningAction("pause");
-    if (action === "stop-recording") {
-      this.hidePanel();
-      return this.listeningAction("stop");
-    }
-    if (action.startsWith("open-md:") || action.startsWith("open-obsidian:")) {
-      const md = action.startsWith("open-md:");
-      this.hidePanel();
-      return this.openPageWith(action.slice(md ? 8 : 14), md ? "file" : "obsidian");
-    }
-    // A page's Show in Finder: Finder comes forward with the page chosen in its folder.
-    if (action.startsWith("reveal:")) {
-      const vault = this.vault;
-      const rel = action.slice(7);
-      if (!vault || pageAt(vault.root, rel) !== "page") return;
-      this.hidePanel();
-      return shell.showItemInFolder(path.join(vault.root, rel));
-    }
-    // A step taken out of a page in the panel ("remove-item:<page>\n<section heading>\n<step>", as the panel lists them): the page is
-    // written without that line, and the panel lists the pages again. The library's history keeps it: the next filing commits the
-    // change as the owner's.
-    if (action.startsWith("remove-item:")) {
-      const vault = this.vault;
-      const [rel = "", heading = "", item = ""] = action.slice(12).split("\n");
-      if (!vault || !heading || !item || pageAt(vault.root, rel) !== "page") return;
-      const file = path.join(vault.root, rel);
-      try {
-        const next = withoutItem(readFileSync(file, "utf8"), heading, item);
-        if (next === null) return;
-        writeFileSync(file, next);
-      } catch (error) {
-        console.warn("remove section", error);
-        return;
-      }
-      this.pagesVersion += 1;
-      return this.refreshPanel();
-    }
-    // Add more's Record with screen: the panel goes (it would be in the shot), the screen is captured, and the comment adds to the page.
-    if (action.startsWith("continue-screen:")) {
-      const vault = this.vault;
-      const rel = action.slice(16);
-      if (!vault || this.recording || pageAt(vault.root, rel) !== "page") return;
-      this.hidePanel();
-      return void this.toggleCapture("screen", rel);
-    }
-    // A page deleted in Library: it goes to the Trash (where it can be put back), and the lines of index.md that link to it go too.
-    if (action.startsWith("delete-page:")) return void this.deletePage(action.slice(12));
-    // A file a page names (a video, a screenshot), opened in the app the Mac opens it with. The panel keeps where it was, for the return.
-    if (action.startsWith("open-file:")) return this.openLibraryFile(action.slice(10));
-    // A file taken off a page ("remove-file:<page>\n<file>"): it goes to the Trash, and the page no longer names it.
-    if (action.startsWith("remove-file:")) {
-      const [page = "", file = ""] = action.slice(12).split("\n");
-      return void this.removePageFile(page, file);
-    }
-    // Add more's Screenshot: a part of the screen, picked with macOS's crosshair, added to the page as a file dropped on it is.
-    if (action.startsWith("continue-shot:")) return void this.screenshotToPage(action.slice(14));
-    if (action.startsWith("continue-marks:")) return void this.markPage(action.slice(15));
-    // Add more's Attach a file.
-    if (action.startsWith("attach:")) return void this.pickAttachments(action.slice(7));
-    // The recording's Add: a file, or a screenshot of the screen as it is, to go with its note.
-    if (action === "recording-attach") return void this.pickRecordingAttachments();
-    if (action === "recording-screenshot") return void this.screenshotForRecording();
-    if (action === "recording-screenshot-area") return void this.screenshotForRecording(true);
-    if (action === "recording-video") return void (this.panelWindow && this.addVideoToRecording(this.panelWindow.webContents));
-    if (action === "recording-marks") return void (this.panelWindow && this.addVideoToRecording(this.panelWindow.webContents, "marks"));
-    // A page's Continue by voice: the panel stays up and turns to the recording on Capture; the note it makes updates that page.
-    if (action.startsWith("continue:")) {
-      const vault = this.vault;
-      const rel = action.slice(9);
-      if (!vault || this.recording || pageAt(vault.root, rel) !== "page") return;
-      this.showPanel("capture");
-      return void this.startRecording("dictate", undefined, { continues: rel });
-    }
-    // A call picked in the panel's own list (`panelCallApps`): one of the apps it was handed, or everything this Mac plays.
-    if (action.startsWith("call-notes:")) {
-      const pick = action.slice(11);
-      const app = pick === "everything" ? "everything" : /^\d+$/.test(pick) ? this.panelCallChoices[Number(pick)] : undefined;
-      if (!app) return;
-      this.hidePanel();
-      return void this.startCallNotes(app);
-    }
-    const page = action.startsWith("open:");
-    const task = action.startsWith("task:");
-    if (!PANEL_ACTIONS.has(action) && !page && !task) return;
-    // What starts something elsewhere (a recording, Quick, Ask, a page) takes the panel away first; a review asks first, over it.
-    const staysUp = ["undo-filing", "undo-review", "forget-dictation", "open-settings:voice", "pause-recording", "cancel-recording"];
-    if (!task && !staysUp.includes(action)) this.hidePanel();
-    if (task) {
-      const id = action.slice(5);
-      void this.holdingPanel(() => this.confirmRun(id)).then((yes) => {
-        if (yes) void this.runTask(id);
-      });
-      return;
-    }
-    void this.menuAction(action);
-  }
-
-  /**
-   * Type a thought, in the panel's Capture: the words are saved as Quick saves them, and the panel goes so the capsule's card is seen.
-   * When they can't be saved this throws, and the panel keeps them in its field for another try. Only the panel's own page types.
-   */
-  async typeFromPanel(sender: WebContents, text: unknown): Promise<void> {
-    if (!this.isPanelPage(sender) || typeof text !== "string" || !text.trim()) return;
-    await this.submitQuick(text);
-    this.hidePanel();
-  }
-
-  /**
-   * Take a screenshot, in the panel's Capture: of the whole screen, of a part picked with macOS's crosshair, or of a part marked in
-   * place first (`MarkUp`). Then a thought is recorded with it, as Record a thought records one, the screenshot on its Add list
-   * (`recordWithShot`). The panel stays, out of the picture (`keepOutOfCaptures`). Esc at the crosshair keeps nothing.
-   */
-  private async screenshotThought(kind: "screen" | "area" | "marks"): Promise<void> {
-    if (!this.vault) return;
-    const access = permissionStatus("screen");
-    if (access === "denied" || access === "restricted") return this.cantSeeScreen();
-    if (kind === "marks") return this.openArea("marks", { thought: true });
-    this.keepOutOfCaptures(true);
-    if (kind === "area") this.panelHeld += 1;
-    await new Promise((r) => setTimeout(r, 60)); // the window server takes the change before the shot
-    let png: Buffer | null = null;
-    try {
-      const image = kind === "area" ? await captureRegion() : await captureDisplay();
-      if (image && !image.isEmpty() && !looksBlank(image)) png = image.toPNG();
-    } catch (error) {
-      console.warn("screenshot", error);
-    } finally {
-      if (kind === "area") this.panelHeld = Math.max(0, this.panelHeld - 1);
-      if (!this.areaWindow || this.areaWindow.isDestroyed()) this.keepOutOfCaptures(false);
-    }
-    if (png) await this.recordWithShot(png, false);
-  }
-
-  /**
-   * A screenshot taken from Take a screenshot: a thought is recorded with it, as Record a thought records one, the screenshot already
-   * on its Add list, so the person says what it is about (or adds more) and stops it as any recording. One that listens already takes
-   * it on its list. Kept in raw/attachments either way. Should no recording start (no microphone, a call running), the screenshot is
-   * kept as a thought of its own, with no words (`saveShotThought`), so it is never lost.
-   */
-  private async recordWithShot(png: Buffer, marked: boolean): Promise<void> {
-    const vault = this.vault;
-    if (!vault) return;
-    const at = new Date();
-    let file: string;
-    try {
-      file = vault.newAttachmentPath(at, ".png");
-      writeFileSync(file, png);
-    } catch (error) {
-      return this.fail(thoughtNotSavedProblem(errorMessage(error), reasonMax(error)));
-    }
-    const shot = { path: file, name: marked ? "Screenshot with marks" : "Screenshot", at: at.getTime() };
-    const listening = this.recording;
-    if (listening && this.takesAttachments(listening)) return this.setAttachments(listening, [...(listening.attachments ?? []), shot]);
-    if (!listening && (await this.startRecording("dictate"))) {
-      const recording = this.recording;
-      if (recording && this.takesAttachments(recording)) return this.setAttachments(recording, [...(recording.attachments ?? []), shot]);
-    }
-    rmSync(file, { force: true });
-    this.saveShotThought(png, marked);
-  }
-
-  /** A screenshot taken as a thought of its own: kept in raw/attachments, and a note that names it, with no words, goes to the inbox. */
-  private saveShotThought(png: Buffer, marked: boolean): void {
-    const vault = this.vault;
-    if (!vault) return;
-    const now = new Date();
-    const text = marked ? "A screenshot with marks, with no words." : "A screenshot, with no words.";
-    let file: string | null = null;
-    try {
-      file = vault.newAttachmentPath(now, ".png");
-      writeFileSync(file, png);
-      const capture = vault.newCapture(`${text}\n\nAdded: ${vault.relativePath(file)}.`, { source: "file", attachments: [file], now });
-      this.captureCount.add();
-      this.afterCapture(capture.path, text, null);
-    } catch (error) {
-      if (file) rmSync(file, { force: true });
-      this.fail(thoughtNotSavedProblem(errorMessage(error), reasonMax(error)));
-    }
-  }
-
-  /**
-   * Files added to a page from the panel (Add more's Attach a file, or files dropped on the page), at most ATTACH_MAX_FILES of
-   * ATTACH_MAX_BYTES each: each is copied into the library's raw/attachments, and one note that names them, saying it adds to that page,
-   * is filed at once; the panel goes back to the page when it is. Anything that isn't a regular file is left out; with none left, nothing
-   * happens. Only the panel's own page attaches.
-   */
-  attachToPage(sender: WebContents, rel: unknown, files: unknown): void {
-    if (!this.isPanelPage(sender) || typeof rel !== "string" || !Array.isArray(files)) return;
-    const vault = this.vault;
-    if (!vault || pageAt(vault.root, rel) !== "page") return;
-    const now = new Date();
-    const kept = copyIntoLibrary(vault, files, now);
-    if (kept.length === 0) return;
-    const text = `Added to this page: ${kept.map((f) => `${vault.relativePath(f.path)} (${f.name})`).join(", ")}.`;
-    try {
-      const capture = vault.newCapture(text, { source: "file", attachments: kept.map((f) => f.path), now, context: { continues: rel } });
-      this.captureCount.add();
-      this.hidePanel(); // the capsule's filing card is what shows now; the panel comes back to the page when it is filed
-      this.afterCapture(capture.path, text, null, undefined, undefined, rel);
-    } catch (error) {
-      for (const f of kept) rmSync(f.path, { force: true });
-      this.fail(thoughtNotSavedProblem(errorMessage(error), reasonMax(error)));
-    }
-  }
-
-  /** Whether `sender` is a page that may add to the recording: the panel's, or the capsule's. */
-  private isRecordingPage(sender: WebContents): boolean {
-    return this.isPanelPage(sender) || isPageOf(sender, this.capsule);
-  }
-
-  /**
-   * Files dropped on the recording (in the panel, or on the capsule's bar), or picked with Add: copied into the library now, and kept
-   * on the recording (`Recording.attachments`) to go with its note. Only a dictation that files a note takes them.
-   */
-  attachToRecording(sender: WebContents, files: unknown): void {
-    const recording = this.recording;
-    const vault = this.vault;
-    if (!this.isRecordingPage(sender) || !Array.isArray(files) || !vault || !recording || !this.takesAttachments(recording)) return;
-    const kept = copyIntoLibrary(vault, files.slice(0, Math.max(0, ATTACH_MAX_FILES - (recording.attachments?.length ?? 0))), new Date());
-    if (kept.length === 0) return;
-    const at = Date.now();
-    this.setAttachments(recording, [...(recording.attachments ?? []), ...kept.map((f) => ({ ...f, at }))]);
-  }
-
-  /** One of the recording's added files taken off its list, by its place in it: its copy goes from the library. */
-  removeAttachment(sender: WebContents, index: unknown): void {
-    const recording = this.recording;
-    const list = recording?.attachments ?? [];
-    if (!recording || !this.isRecordingPage(sender) || typeof index !== "number" || !Number.isInteger(index) || !list[index]) return;
-    rmSync(list[index].path, { force: true });
-    this.setAttachments(recording, list.filter((_, i) => i !== index));
-  }
-
-  /** The recording's added files are now `list`: the capsule's bar and the panel show it. */
-  private setAttachments(recording: Recording, list: Attachment[]): void {
-    recording.attachments = list;
-    const state = this.capsuleState;
-    if (this.recording === recording && state.kind === "listening") {
-      this.setCapsule({ ...state, attached: list.map(({ name, at }) => ({ name, at })) });
-    } else {
-      this.refreshPanel();
-    }
-  }
-
-  /** Whether files can be added to `recording`: a thought dictated into Avanzel, not one typed into another app, a question or a call. */
-  private takesAttachments(recording: Recording): boolean {
-    return recording.mode === "dictate" && !recording.forCursor && !recording.forAsk && !recording.forSetup;
-  }
-
-  /** The capsule's Add menu: Attach a file…, macOS's open panel, and what is picked goes with the recording. */
-  async addFilesToRecording(sender: WebContents): Promise<void> {
-    if (!isPageOf(sender, this.capsule) || !this.recording) return;
-    app.focus({ steal: true }); // the capsule never takes the keyboard: the open panel needs Avanzel in front
-    const picked = await dialog.showOpenDialog({ title: "Add to this recording", buttonLabel: "Add", properties: ["openFile", "multiSelections"] });
-    if (!picked.canceled && picked.filePaths.length > 0) this.attachToRecording(sender, picked.filePaths);
-  }
-
-  /** The capsule's Add menu: a screenshot of the screen, or of an area of it (`screenshotForRecording`). */
-  async addScreenshotToRecording(sender: WebContents, area = false): Promise<void> {
-    if (isPageOf(sender, this.capsule)) await this.screenshotForRecording(area);
-  }
-
-  /** What the recording's Add is getting ready now (`AddingKind`), on its state: the capsule and the panel show it until it is done. */
-  private setRecordingAdding(kind: AddingKind | null): void {
-    const state = this.capsuleState;
-    if (state.kind !== "listening" || (state.adding ?? null) === kind) return;
-    const { adding: _was, ...rest } = state;
-    this.setCapsule(kind ? { ...rest, adding: kind } : rest);
-  }
-
-  /**
-   * The Add menu's Record a video of an area: Avanzel's own picker over the display under the pointer (`createAreaWindow`), where the
-   * person drags out the part, which it then records until its Stop (or its time limit); the video goes with the recording, into its
-   * list, by itself. The recording goes on listening meanwhile. Nothing happens when they give it up (Esc). With `marks`, the part
-   * is taken as a picture instead, marked in place (`MarkUp`), and the marked picture goes with the recording.
-   */
-  async addVideoToRecording(sender: WebContents, mode: AreaSetup["mode"] = "video"): Promise<void> {
-    const recording = this.recording;
-    if (!this.isRecordingPage(sender) || !recording || !this.vault || !this.takesAttachments(recording)) return;
-    await this.openArea(mode, { recording });
-  }
-
-  /**
-   * Add more's Screenshot with marks, on a page in the panel's Library: the panel steps aside, the part is picked and marked in place
-   * (`MarkUp`), and the marked picture is attached to the page (`attachToPage`), as a file added to it is.
-   */
-  private async markPage(rel: string): Promise<void> {
-    const vault = this.vault;
-    if (!vault || pageAt(vault.root, rel) !== "page") return;
-    this.hidePanel();
-    await this.openArea("marks", { page: rel });
-  }
-
-  /**
-   * Avanzel's own picker over the display under the pointer (`createAreaWindow`), for `target`: a video of the part, or (`marks`) a
-   * picture of it, marked in place. What it makes goes to `areaDone`.
-   */
-  private async openArea(mode: AreaSetup["mode"], target: AreaTarget): Promise<void> {
-    const open = this.areaWindow;
-    if (open && !open.isDestroyed()) return open.focus();
-    const access = permissionStatus("screen");
-    if (access === "denied" || access === "restricted") return this.cantSeeScreen();
-    // Until the picker is up, the menu's Record a video (or Screenshot with marks) spins: it takes a moment to ask for the screen.
-    this.setRecordingAdding(mode === "marks" ? "marks" : "video");
-    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-    const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } }).catch(() => []);
-    const source = sources.find((each) => each.display_id === String(display.id)) ?? sources[0];
-    if (!source) {
-      this.setRecordingAdding(null);
-      return this.cantSeeScreen();
-    }
-    this.areaSource = { sourceId: source.id, scale: display.scaleFactor, maxSeconds: AREA_MAX_SECONDS, mode };
-    this.areaFor = target;
-    const win = createAreaWindow(display.bounds);
-    this.areaWindow = win;
-    // What goes wrong in its page (the stream, the recorder) is told here, in the app's own log.
-    win.webContents.on("console-message", (details) => {
-      const event = details as unknown as { level?: string | number; message?: string };
-      if (event.level === "error" || event.level === "warning" || event.level === 3 || event.level === 2) console.warn("area page:", event.message);
-    });
-    // The panel and the capsule stay open under the picker, out of its video; the panel isn't sent away as the picker takes the keys.
-    this.keepOutOfCaptures(true);
-    this.panelHeld += 1;
-    win.once("ready-to-show", () => {
-      this.setRecordingAdding(null);
-      if (win.isDestroyed()) return;
-      app.focus({ steal: true }); // Esc reaches it only while Avanzel is in front
-      win.show();
-      win.focus();
-    });
-    win.once("closed", () => {
-      this.setRecordingAdding(null);
-      this.panelHeld = Math.max(0, this.panelHeld - 1);
-      this.keepOutOfCaptures(false);
-      if (this.areaWindow !== win) return;
-      this.areaWindow = null;
-      this.areaFor = null;
-    });
-  }
-
-  /** The area window's page asks what it records; any other page is told nothing. */
-  areaSetup(sender: WebContents): AreaSetup | null {
-    return isPageOf(sender, this.areaWindow) ? this.areaSource : null;
-  }
-
-  /** Once the part is picked the area window lets the pointer through, but over its Stop, which takes it (as the capsule does). */
-  areaInteractive(sender: WebContents, interactive: boolean): void {
-    const win = this.areaWindow;
-    if (!win || !isPageOf(sender, win)) return;
-    win.setIgnoreMouseEvents(!interactive, { forward: true });
-  }
-
-  /** The area window gave up (Esc): it closes, and nothing is kept. */
-  areaCancel(sender: WebContents): void {
-    if (isPageOf(sender, this.areaWindow)) this.areaWindow?.close();
-  }
-
-  /**
-   * The area window's video, as it recorded it: written into the library's raw/attachments and put on the recording's list, as a file
-   * added to it is. The window closes. A video that comes after its recording has ended goes with nothing.
-   */
-  async areaDone(sender: WebContents, video: unknown, mime: unknown): Promise<void> {
-    const win = this.areaWindow;
-    if (!win || !isPageOf(sender, win)) return;
-    const target = this.areaFor;
-    win.close();
-    const bytes = video instanceof ArrayBuffer ? Buffer.from(video) : ArrayBuffer.isView(video) ? Buffer.from(video.buffer, video.byteOffset, video.byteLength) : null;
-    const vault = this.vault;
-    const kind = typeof video === "object" && video !== null ? Object.prototype.toString.call(video) : typeof video;
-    if (!bytes || bytes.length === 0) return console.warn("area: nothing came to keep", kind, bytes?.length ?? null, mime);
-    const picture = typeof mime === "string" && mime.startsWith("image/png");
-    const ext = picture ? ".png" : typeof mime === "string" && mime.startsWith("video/mp4") ? ".mp4" : ".webm";
-    // A marked screenshot taken as a thought of its own (Capture's Take a screenshot).
-    if (target && "thought" in target) return this.recordWithShot(bytes, true);
-    // For a page: through a file of its own name, attached to it as a file added to it is.
-    if (target && "page" in target) {
-      const panel = this.panelWindow;
-      if (!panel || panel.isDestroyed()) return;
-      const dir = mkdtempSync(path.join(tmpdir(), "avanzel-page-marks-"));
-      try {
-        const file = path.join(dir, `Screenshot with marks${ext}`);
-        writeFileSync(file, bytes);
-        this.attachToPage(panel.webContents, target.page, [file]);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-      return;
-    }
-    const recording = target?.recording;
-    if (!vault || !recording || this.recording !== recording) return console.warn("area: its recording has ended", !!vault, !!recording);
-    try {
-      const at = new Date();
-      const file = vault.newAttachmentPath(at, ext);
-      writeFileSync(file, bytes);
-      const name = picture ? "Screenshot with marks" : "Screen recording";
-      this.setAttachments(recording, [...(recording.attachments ?? []), { path: file, name, at: at.getTime() }]);
-    } catch (error) {
-      console.warn("area video", error);
-    }
-  }
-
-  /** Add's Attach a file…, for the recording, in the panel: macOS's open panel over the panel, and what is picked goes with it. */
-  private async pickRecordingAttachments(): Promise<void> {
-    const win = this.panelWindow;
-    if (!win || win.isDestroyed() || !this.recording) return;
-    const picked = await this.holdingPanel(() =>
-      dialog.showOpenDialog(win, { title: "Add to this recording", buttonLabel: "Add", properties: ["openFile", "multiSelections"] }),
-    );
-    if (!picked.canceled && picked.filePaths.length > 0) this.attachToRecording(win.webContents, picked.filePaths);
-  }
-
-  /**
-   * Add a screenshot, for the recording: the whole screen, without the panel or the capsule in it, goes with the recording. Both stay
-   * open meanwhile, their Add menu too: they are only left out of the shot (`keepOutOfCaptures`). With `area`, of a part of the
-   * screen the person picks with macOS's crosshair; nothing goes when they give it up (Esc).
-   */
-  private async screenshotForRecording(area = false): Promise<void> {
-    const recording = this.recording;
-    const vault = this.vault;
-    if (!recording || !vault || !this.takesAttachments(recording)) return;
-    const screen = permissionStatus("screen");
-    if (screen === "denied" || screen === "restricted") return this.cantSeeScreen();
-    // Until it is in the list, the list shows it on its way, with a spinner: a shot takes a moment, and an area waits for the pick.
-    this.setRecordingAdding("screenshot");
-    this.keepOutOfCaptures(true);
-    // macOS's crosshair takes the keys: the panel stays up meanwhile, as it does for its own dialogs.
-    if (area) this.panelHeld += 1;
-    await new Promise((r) => setTimeout(r, 60)); // the window server takes the change before the shot
-    try {
-      const image = area ? await captureRegion() : await captureDisplay();
-      if (image && !looksBlank(image) && this.recording === recording) {
-        const at = new Date();
-        const shot = vault.newAttachmentPath(at, ".png");
-        writeFileSync(shot, image.toPNG());
-        this.setAttachments(recording, [...(recording.attachments ?? []), { path: shot, name: "Screenshot", at: at.getTime() }]);
-      }
-    } catch (error) {
-      console.warn("recording screenshot", error);
-    } finally {
-      if (area) this.panelHeld = Math.max(0, this.panelHeld - 1);
-      // While an area is recorded they stay out of captures until it ends (`addVideoToRecording`).
-      if (!this.areaWindow || this.areaWindow.isDestroyed()) this.keepOutOfCaptures(false);
-      this.setRecordingAdding(null);
-    }
-  }
-
-  /** Add more's Attach a file: macOS's open panel over the panel, and what is picked is attached to the page (`attachToPage`). */
-  private async pickAttachments(rel: string): Promise<void> {
-    const win = this.panelWindow;
-    if (!win || win.isDestroyed()) return;
-    const picked = await this.holdingPanel(() =>
-      dialog.showOpenDialog(win, { title: "Attach to this note", buttonLabel: "Attach", properties: ["openFile", "multiSelections"] }),
-    );
-    if (!picked.canceled && picked.filePaths.length > 0) this.attachToPage(win.webContents, rel, picked.filePaths);
-  }
-
-  /**
-   * A page deleted in the panel's Library: moved to the Trash, so Finder can put it back, and every line of index.md that links to it
-   * ([[name]] or its path) taken out with it, so the index names no page that isn't there. The library's history keeps both: the next
-   * filing commits the change as the owner's. Only a page of the open library goes, never a link, a capture or a recording.
-   */
-  private async deletePage(rel: string): Promise<void> {
-    const vault = this.vault;
-    if (!vault || pageAt(vault.root, rel) !== "page" || rel.startsWith("inbox/") || rel.startsWith("raw/")) return;
-    // The captures it was filed from go with it (`sourcesOnlyOf`), but those another page was filed from as well.
-    let sources: string[] = [];
-    try {
-      sources = sourcesOnlyOf(vault.root, rel, readFileSync(path.join(vault.root, rel), "utf8"));
-    } catch {
-      // A page that can't be read is deleted alone.
-    }
-    try {
-      await shell.trashItem(path.join(vault.root, rel));
-    } catch (error) {
-      console.warn("delete page", error);
-      return this.fail({ title: "Avanzel couldn't move the note to the Trash.", body: `${errorMessage(error)} The note is still in your library.` });
-    }
-    for (const source of sources) {
-      try {
-        await shell.trashItem(source);
-      } catch (error) {
-        console.warn("delete page's source", error); // the note is gone; its capture stays where it was
-      }
-    }
-    if (sources.length > 0) this.refreshMenu(); // the inbox may hold fewer notes
-    const index = path.join(vault.root, "index.md");
-    try {
-      const name = path.basename(rel, ".md");
-      const text = readFileSync(index, "utf8");
-      const links = (line: string) => line.includes(`[[${name}]]`) || line.includes(`[[${name}|`) || line.includes(`[[${rel.slice(0, -3)}`) || line.includes(rel);
-      const kept = text.split("\n").filter((line) => !(/^\s*[-*+]\s/.test(line) && links(line)));
-      if (kept.length !== text.split("\n").length) writeFileSync(index, kept.join("\n"));
-    } catch {
-      // No index, or one that can't be read: the page is in the Trash all the same.
-    }
-    this.pagesVersion += 1;
-    this.refreshPanel();
-  }
-
-  /** The area window, while a video of a part of the screen is picked or recorded, the recording it goes with, and what it records. */
-  private areaWindow: BrowserWindow | null = null;
-  private areaFor: AreaTarget | null = null;
-  private areaSource: AreaSetup | null = null;
-
-  /** Whether `rel` is a file of the library's raw/attachments (where added files and screenshots are kept), and there. */
-  private attachmentAt(rel: string): string | null {
-    const vault = this.vault;
-    if (!vault || !rel.startsWith("raw/attachments/") || rel.split("/").includes("..")) return null;
-    return pageAt(vault.root, rel) === "page" ? path.join(vault.root, rel) : null;
-  }
-
-  /** A file a page names, opened in the app the Mac opens it with (a video in QuickTime, a screenshot in Preview). */
-  private openLibraryFile(rel: string): void {
-    const file = this.attachmentAt(rel);
-    if (file) void shell.openPath(file);
-  }
-
-  /**
-   * Copy as a prompt, on a page in the panel's Library: the page as a prompt for an agent goes on the clipboard (`pagePrompt`). False
-   * when it can't be read, or the clipboard refused. Only the panel's own page is answered.
-   */
-  async copyPagePrompt(sender: WebContents, rel: unknown): Promise<boolean> {
-    const vault = this.vault;
-    if (!this.isPanelPage(sender) || typeof rel !== "string" || !vault || pageAt(vault.root, rel) !== "page") return false;
-    try {
-      await electronClipboard.writeText(pagePrompt(vault.root, rel, readFileSync(path.join(vault.root, rel), "utf8")));
-      return true;
-    } catch (error) {
-      console.error("copy prompt", (error as NodeJS.ErrnoException).code ?? "failed"); // never the words
-      return false;
-    }
-  }
-
-  /** Previews made so far, by the file and its time: a file that changes gets a new one. */
-  private thumbnails = new Map<string, string>();
-
-  /**
-   * A preview of a file of raw/attachments, for the panel's Library: a picture, a video's frame, or what macOS's Quick Look shows of
-   * any other file, as a PNG data URL about 480 points wide; null when there is none. Only the panel's own page is answered.
-   */
-  async panelThumbnail(sender: WebContents, rel: unknown): Promise<string | null> {
-    if (!this.isPanelPage(sender) || typeof rel !== "string") return null;
-    const file = this.attachmentAt(rel);
-    if (!file) return null;
-    let key: string;
-    try {
-      key = `${file}\n${statSync(file).mtimeMs}`;
-    } catch {
-      return null;
-    }
-    const kept = this.thumbnails.get(key);
-    if (kept) return kept;
-    try {
-      const image = await previewOf(file);
-      if (!image || image.isEmpty()) return null;
-      const url = image.toDataURL();
-      if (this.thumbnails.size > 200) this.thumbnails.clear();
-      this.thumbnails.set(key, url);
-      return url;
-    } catch {
-      return null; // Quick Look has no picture of it
-    }
-  }
-
-  /**
-   * A file taken off a page in Library: moved to the Trash, so Finder can put it back, and every mention of it in the page (its path, or
-   * an embed of its name) becomes "a removed file", so the page says something was there without pointing at nothing.
-   */
-  private async removePageFile(page: string, rel: string): Promise<void> {
-    const vault = this.vault;
-    const file = this.attachmentAt(rel);
-    if (!vault || !file || pageAt(vault.root, page) !== "page") return;
-    try {
-      await shell.trashItem(file);
-    } catch (error) {
-      console.warn("remove file", error);
-      return this.fail({ title: "Avanzel couldn't move the file to the Trash.", body: `${errorMessage(error)} It is still in your library.` });
-    }
-    const pageFile = path.join(vault.root, page);
-    try {
-      const name = path.basename(rel);
-      const text = readFileSync(pageFile, "utf8");
-      const next = text.split(`![[${name}]]`).join("").split(rel).join("a removed file");
-      if (next !== text) writeFileSync(pageFile, next);
-    } catch (error) {
-      console.warn("remove file from page", error);
-    }
-    this.pagesVersion += 1;
-    this.refreshPanel();
-  }
-
-  /** Add more's Screenshot: the crosshair picks a part of the screen (the panel out of the way), and it is added to the page. */
-  private async screenshotToPage(rel: string): Promise<void> {
-    const vault = this.vault;
-    const win = this.panelWindow;
-    if (!vault || !win || win.isDestroyed() || pageAt(vault.root, rel) !== "page") return;
-    const access = permissionStatus("screen");
-    if (access === "denied" || access === "restricted") return this.cantSeeScreen();
-    this.hidePanel();
-    const image = await captureRegion().catch(() => null);
-    if (!image || looksBlank(image)) return;
-    const dir = mkdtempSync(path.join(tmpdir(), "avanzel-page-shot-"));
-    try {
-      const shot = path.join(dir, "Screenshot.png");
-      writeFileSync(shot, image.toPNG());
-      this.attachToPage(win.webContents, rel, [shot]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }
-
-  /** The call apps running now, offered in the panel's Take notes on a call… (`panelCallApps`), kept so a pick names one of them. */
-  private panelCallChoices: CallApp[] = [];
-
-  /** Take notes on a call…, in the panel: the names of the call apps that run now, in the order `call-notes:<index>` picks them. */
-  async panelCallApps(sender: WebContents): Promise<string[]> {
-    if (!this.isPanelPage(sender)) return [];
-    this.panelCallChoices = await runningCallApps().catch((error: unknown) => {
-      console.warn("call apps", error);
-      return [];
-    });
-    return this.panelCallChoices.map((app) => callAppLabel(app.name));
-  }
-
-  /** The library's pages, for the panel's Library. */
-  panelPages(): PanelPage[] {
-    const vault = this.vault;
-    if (!vault) return [];
-    try {
-      return libraryPages(vault.root);
-    } catch (error) {
-      console.warn("panel pages", error);
-      return [];
-    }
-  }
-
-  panelSnapshot(): PanelSnapshot {
-    const input = this.menuInput();
-    const vault = this.vault;
-    const tasks = vault ? this.safeTasks(vault) : [];
-    const state = vault ? this.readRunState(vault) : null;
-    return {
-      libraryReady: input.libraryReady,
-      libraryProblem: input.problem ?? (input.missingLibrary ? `The library at ${input.missingLibrary} is missing.` : null),
-      inbox: input.inbox,
-      filedToday: input.filedToday,
-      headline: statusLine(
-        input.filedToday,
-        input.tasks
-          .filter((t) => t.kind === "evening-review" && t.enabled && t.at !== null)
-          .sort((a, b) => (a.at?.getTime() ?? 0) - (b.at?.getTime() ?? 0))[0],
-        new Date(),
-      ),
-      speechProblem: input.speechProblem ? { title: input.speechProblem, line: input.speechSublabel ?? "" } : null,
-      callNotesOffer: input.callNotes,
-      cutShortCalls: input.cutShortCalls,
-      forgettableDictation: input.forgettableDictation,
-      pagesVersion: this.pagesVersion,
-      shortcuts: input.shortcuts,
-      unregisteredShortcuts: [...input.unregisteredShortcuts],
-      recording: input.recording,
-      listening: this.capsuleState.kind === "listening"
-        ? {
-            mode: this.capsuleState.mode,
-            startedAt: this.capsuleState.startedAt,
-            pausedAt: this.capsuleState.pausedAt ?? null,
-            fileMode: this.capsuleState.fileMode,
-            review: this.capsuleState.review,
-            ownKey: !!this.recording?.forCursor,
-            attached: (this.recording?.attachments ?? []).map(({ name, at }) => ({ name, at })),
-            adding: this.capsuleState.adding ?? null,
-          }
-        : null,
-      callNotes: this.calls.running,
-      voiceTrigger: this.store.get().voiceTrigger,
-      filings: this.filings.map((job) => ({
-        id: job.capturePath,
-        state: this.filingState(job, this.capsuleState.kind === "filing" ? this.capsuleState.onThisMac : this.transcribesOnThisMac()),
-        shown: this.job === job && this.capsuleState.kind === "filing",
-      })),
-      transcribing: this.capsuleState.kind === "transcribing" ? this.capsuleState : null,
-      resultHidesAt: this.hideAt,
-      result:
-        this.capsuleState.kind === "filed" || this.capsuleState.kind === "cancelled" || this.capsuleState.kind === "error" ? this.capsuleState : null,
-      reviews: tasks.map((t) => {
-        const at = t.enabled ? nextRun(t.schedule, new Date()) : null;
-        const ran = state?.ran?.[t.id];
-        return {
-          id: t.id,
-          name: t.name,
-          kind: t.kind,
-          enabled: t.enabled,
-          next: at ? at.toISOString() : null,
-          lastRun: typeof ran === "string" ? ran : null,
-          running: this.running.has(t.id),
-          progress: this.reviewing.get(t.id) ?? null,
-          outcome: this.reviewOutcomes.get(t.id) ?? null,
-        };
-      }),
-      undoableFiling: input.undoableFiling,
-      showableReceipt: input.showableReceipt,
-      undoableReview: input.undoableReview,
-      opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
-    };
-  }
-
-  /**
-   * The panel, if it is up, is sent a fresh snapshot. `showing`: it is about to come up, still hidden, and gets one anyway, so it
-   * opens on what is true now (a recording that began while it was away) rather than on what it last saw.
-   */
-  private refreshPanel(showing = false): void {
-    const win = this.panelWindow;
-    if (!win || win.isDestroyed() || (!showing && !win.isVisible())) return;
-    try {
-      win.webContents.send("panel:changed", this.panelSnapshot());
-    } catch (error) {
-      console.error("panel", error);
-    }
-  }
-
-  /** With a `pane`, a new window opens on it and an open one moves to it; without, a new one opens on General and an open one stays put. */
+  /** With a `pane`, a new window opens on it and an open one moves to it; without, a new one opens on the pane it showed last and an open one stays put. */
   showSettings(pane?: SettingsPane): void {
-    if (USE_PANEL) return this.showPanel("settings", pane);
     if (!this.settingsWindow || this.settingsWindow.isDestroyed()) {
       this.settingsWindow = createSettingsWindow(pane);
       this.settingsWindow.once("ready-to-show", () => showWhenReady(this.settingsWindow));
@@ -5367,7 +4283,7 @@ export class Controller {
   }
 
   /**
-   * Choose…, in Settings: a native menu of the page's `options` pops up over the Settings window, at `at`. Resolves with
+   * A pop-up button, in Settings: a native menu of the page's `options` pops up over the Settings window, at `at`. Resolves with
    * the value picked; null when the menu closes without one, and without an open Settings window or a request that can
    * be read. Only the Settings window's own page is answered: `sender` is the page the message came from (`event.sender`),
    * and a menu is not popped up over Settings for any other window's.
@@ -5377,6 +4293,20 @@ export class Controller {
     const request = pickRequest(options, at);
     if (!win || !isPageOf(sender, win) || !request) return Promise.resolve(null);
     return popupChoice(win, request.options, request.at);
+  }
+
+  /** The Settings page says what its pane needs, and its window takes that height (`fitSettings` in windows.ts). Only its own page is heard, and only a height that reads. */
+  fitSettings(sender: WebContents, height: unknown): void {
+    const win = this.settingsWindow;
+    if (!win || !isPageOf(sender, win) || typeof height !== "number" || !Number.isFinite(height)) return;
+    fitSettings(win, height);
+  }
+
+  /** The Settings page says what colour it is drawn on, and its window fills with that where the page hasn't drawn yet. Only its own page is heard, and only a colour as a page computes it. */
+  settingsSurface(sender: WebContents, color: unknown): void {
+    const win = this.settingsWindow;
+    if (!win || !isPageOf(sender, win) || typeof color !== "string" || !/^rgb\(\d{1,3}, \d{1,3}, \d{1,3}\)$/.test(color)) return;
+    win.setBackgroundColor(color);
   }
 
   /** Settings' Show in Finder: the library's folder opens in Finder. Nothing without a library. */
@@ -5548,10 +4478,6 @@ export class Controller {
       app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
     }
     if (JSON.stringify(before.cursorDictation) !== JSON.stringify(after.cursorDictation)) this.applyCursorDictation();
-    if (JSON.stringify(before.voiceTrigger) !== JSON.stringify(after.voiceTrigger) || before.microphoneId !== after.microphoneId) {
-      if (before.voiceTrigger.enabled !== after.voiceTrigger.enabled || before.microphoneId !== after.microphoneId) this.applyVoiceTrigger();
-      this.refreshPanel(); // Capture shows the trigger as it is now
-    }
     this.broadcast();
     return this.snapshot();
   }
@@ -5565,22 +4491,8 @@ export class Controller {
     return this.snapshot();
   }
 
-  /** Settings' Choose a folder…: the panel stays up while its dialogs are. */
-  chooseLibrary(): Promise<SettingsSnapshot> {
-    return this.holdingPanel(() => this.pickLibrary());
-  }
-
-  /**
-   * The window Settings' dialogs come up as sheets on: its own window. The panel is a popover, which a sheet doesn't suit, so its
-   * dialogs come up on their own (and hold it up, `holdingPanel`).
-   */
-  private settingsDialogParent(): BrowserWindow | undefined {
-    const win = this.settingsWindow;
-    return win && !win.isDestroyed() && win !== this.panelWindow ? win : undefined;
-  }
-
-  private async pickLibrary(): Promise<SettingsSnapshot> {
-    const parent = this.settingsDialogParent();
+  async chooseLibrary(): Promise<SettingsSnapshot> {
+    const parent = this.settingsWindow && !this.settingsWindow.isDestroyed() ? this.settingsWindow : undefined;
     const result = parent ? await dialog.showOpenDialog(parent, LIBRARY_PICKER) : await dialog.showOpenDialog(LIBRARY_PICKER);
     const chosen = result.filePaths[0];
     if (result.canceled || !chosen) return this.snapshot();
@@ -6086,7 +4998,8 @@ export class Controller {
 
   /** Settings' Run now: the question comes up as a sheet on Settings (`confirmRun`), and the review runs on Run Now. Cancel changes nothing. */
   async runTaskFromSettings(id: string): Promise<SettingsSnapshot> {
-    const asked = await this.holdingPanel(() => this.confirmRun(id, this.settingsDialogParent()));
+    const win = this.settingsWindow;
+    const asked = await this.confirmRun(id, win && !win.isDestroyed() ? win : undefined);
     return asked ? this.runTask(id) : this.snapshot();
   }
 
@@ -6151,12 +5064,6 @@ export class Controller {
 
   private async executeTask(task: ShadowTask): Promise<void> {
     const agent = this.agentName(task.agent);
-    // Each ending is told in a notification and kept for the panel's Library, which shows it under the review: a notification
-    // macOS doesn't show, or one missed, leaves the review's end in sight there.
-    const notify = (title: string, body: string, onClick?: () => void) => {
-      this.reviewOutcomes.set(task.id, { at: new Date().toISOString(), title, body });
-      return this.notify(title, body, onClick);
-    };
     try {
       // The weekly review appends to the log and commits as it runs: the filing before it is not the last any more, and a revert of it
       // would meet the review's later commit and be refused. The evening review writes to the library only if it files something, so it
@@ -6183,7 +5090,7 @@ export class Controller {
           filedNothing = !result.outcomes.length;
           this.fallAsleep(); // it ran to its end, whatever it found to file
           if (filedNothing) {
-            notify(task.name, nothingFiled(left.size));
+            this.notify(task.name, nothingFiled(left.size));
             return;
           }
           const filedIds = new Set(result.outcomes.filter((o) => o.ok).map((o) => o.captureId));
@@ -6193,7 +5100,7 @@ export class Controller {
           const failed = result.outcomes.filter((o) => !o.ok);
           const filed = result.outcomes.length - failed.length;
           const digest = result.digestPath;
-          notify(
+          this.notify(
             `${task.name}: ${filed} ${filed === 1 ? "thought" : "thoughts"} filed`,
             failed.length ? notFiled(failed, filed) : `${agent} sorted today's inbox. Click to read the summary.`,
             digest ? () => this.openPage(path.relative(this.requireVault().root, digest)) : undefined,
@@ -6208,16 +5115,16 @@ export class Controller {
       } else if (task.kind === "review") {
         const outcome = await this.withRun(async (signal) => (await this.librarian(task.agent)).review({ signal }));
         const report = outcome.report;
-        notify(
+        this.notify(
           outcome.result.ok ? `${task.name} is ready` : `${task.name} didn't finish`,
           outcome.result.ok ? `${agent} looked over your library. Click to read it.` : lastLines(outcome.result.stderr || outcome.result.output, 1),
           report ? () => this.openPage(path.relative(this.requireVault().root, report)) : undefined,
         );
       } else {
-        notify(task.name, "Avanzel doesn't run custom reviews yet, so this one was skipped.");
+        this.notify(task.name, "Avanzel doesn't run custom reviews yet, so this one was skipped.");
       }
     } catch (error) {
-      notify(`${task.name} didn't run`, errorMessage(error));
+      this.notify(`${task.name} didn't run`, errorMessage(error));
     }
   }
 
@@ -6260,6 +5167,11 @@ export class Controller {
   }
 
   /** Whether no dictation into another app is under way: the last one's words have been pasted and kept (or not kept) by now. */
+  /** `seconds` of silence for the listening recording's words, as its microphone's blocks would bring: the fake microphone sends none. */
+  hearLiveForTests(seconds: number): void {
+    this.hearLive(new Float32Array(Math.round(seconds * 16000)));
+  }
+
   cursorIdleForTests(): boolean {
     return this.cursor.idle();
   }
@@ -6290,6 +5202,11 @@ export class Controller {
 
   menuForTests(): MenuItemModel[] {
     return buildMenuModel(this.menuInput(), new Date());
+  }
+
+  /** Every row of the menu, wherever it lives: what tests look for a row in. */
+  menuRowsForTests(): ReturnType<typeof menuRows> {
+    return menuRows(this.menuForTests());
   }
 
   /**
@@ -6363,25 +5280,4 @@ export class Controller {
       rmSync(dir, { recursive: true, force: true });
     }
   }
-}
-
-/**
- * Each of `files` that is an absolute path to a regular file of at most ATTACH_MAX_BYTES, copied into `vault`'s raw/attachments (at
- * most ATTACH_MAX_FILES): where each went, and its own name. One that can't be read or copied is left out.
- */
-function copyIntoLibrary(vault: Vault, files: readonly unknown[], now: Date): { path: string; name: string }[] {
-  const kept: { path: string; name: string }[] = [];
-  for (const file of files.slice(0, ATTACH_MAX_FILES)) {
-    if (typeof file !== "string" || !path.isAbsolute(file)) continue;
-    try {
-      const stat = statSync(file);
-      if (!stat.isFile() || stat.size > ATTACH_MAX_BYTES) continue;
-      const dest = vault.newAttachmentPath(now, path.extname(file).toLowerCase());
-      copyFileSync(file, dest);
-      kept.push({ path: dest, name: path.basename(file) });
-    } catch (error) {
-      console.warn("attach", error);
-    }
-  }
-  return kept;
 }

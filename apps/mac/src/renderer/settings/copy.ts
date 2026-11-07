@@ -7,12 +7,11 @@ import { DICTATION_PAGE, noSuchReview, type CursorKey, type CursorPermissionStat
 import { NO_GIT_LINE, ownLine } from "../../shared/problems.ts";
 import { CURSOR_KEYS, cursorKeyName } from "../../shared/transcribing.ts";
 
-/** Each pane's name on the toolbar, which is also its heading. The scheduled reviews' pane keeps its id, "tasks". */
+/** Each pane's name on the toolbar, which is also the window's title. The scheduled reviews' pane keeps its id, "tasks", and dictation's its "dictations". */
 export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
   general: "General",
   voice: "Voice",
-  shortcuts: "Shortcuts",
-  dictations: "Dictations",
+  dictations: "Dictation",
   agents: "Agents",
   tasks: "Reviews",
   privacy: "Privacy",
@@ -27,7 +26,7 @@ export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
  */
 export function libraryLine(shelves: Readonly<Record<string, number>>, isGit: boolean, autoCommit: boolean, gitUsable: boolean): string {
   const pages = SHELVES.reduce((sum, shelf) => sum + (shelves[shelf] ?? 0), 0);
-  const filled = pages === 0 ? "Your first thought will fill a shelf." : `${pages} ${pages === 1 ? "note" : "notes"} on six shelves.`;
+  const filled = pages === 0 ? "Your first thought will fill a shelf." : `${pages} ${pages === 1 ? "page" : "pages"} on six shelves.`;
   if (!isGit) return `${filled} This folder has no git history, so changes can't be undone.`;
   if (!gitUsable) return `${filled} ${NO_GIT_LINE}`;
   const undo = autoCommit
@@ -63,7 +62,7 @@ export function microphoneName(id: string | null, devices: readonly InputDevice[
 }
 
 /**
- * Choose…'s menu for the microphone: "System default" (value ""), then each device, named as microphoneName names it,
+ * The microphone's pop-up menu: "System default" (value ""), then each device, named as microphoneName names it,
  * with the one in use checked. A chosen microphone that isn't connected leaves everything unchecked. Before the devices
  * are listed (`devices` null), the menu holds System default alone.
  */
@@ -77,37 +76,82 @@ export function microphoneOptions(id: string | null, devices: readonly InputDevi
 // The keys and their names are shared with the capsule, whose listening card names the key too.
 export { cursorKeyName };
 
-/** Choose…'s menu for the dictation key, with the key in use checked. */
+/** The dictation key's pop-up menu, with the key in use checked. */
 export function cursorKeyOptions(chosen: CursorKey): PickOption[] {
   return CURSOR_KEYS.map(({ key, name }) => ({ label: name, value: key, checked: key === chosen }));
 }
 
 /** The "Dictate into any app" switch's description: how it works, in one sentence. */
-export const CURSOR_DICTATION_DESCRIPTION = "Tap the key once to start and once to finish. The words go where the cursor is.";
+export const CURSOR_DICTATION_DESCRIPTION = "Tap the key to start and again to finish, or press Esc to cancel. The words go where the cursor is.";
 
 /**
  * The library log's switch: the person speaking ("I"), and where the words go. It says what the app does today: the agent can read
  * raw/ (the evening review's own reading of the day file is a later step, so it isn't promised). Forgetting and the git rule can't
- * reach what a sync tool has copied, which it says plainly.
+ * reach what a sync tool has copied, which it says plainly once there is a day file for one to copy.
  */
 export const DICTATION_LOG_LABEL = "Keep what I dictate in the library";
-export const DICTATION_LOG_DESCRIPTION =
-  "Each dictation is also written to raw/dictations/ in the library, one file a day, kept out of git, where your agent can read it. " +
-  "Copies made by sync tools such as Obsidian Sync or iCloud are outside this: a dictation you forget may stay in them.";
+const DICTATION_LOG_DESCRIPTION = "Each dictation is also written to raw/dictations/ in the library, one file a day, kept out of git, where your agent can read it.";
+const DICTATION_LOG_SYNC = "Copies made by sync tools such as Obsidian Sync or iCloud are outside this: a dictation you forget may stay in them.";
+
+/** The library log's description: what it does, and with the log on, what forgetting can't reach. */
+export function dictationLogLine(on: boolean): string {
+  return on ? `${DICTATION_LOG_DESCRIPTION} ${DICTATION_LOG_SYNC}` : DICTATION_LOG_DESCRIPTION;
+}
+
+/** The Never kept group's note: a skipped app or site still gets the words but keeps none of them. */
+export const SKIP_NOTE = "What you dictate there still goes in, but is never kept.";
 
 /**
- * The skip lists' rows: what a line holds, and that a skipped app or site still gets the words but keeps none of them. A site can be
- * told only where the browser says which page is open (front-app.ts: Safari and the Chromium set); elsewhere the dictation is kept
- * (cursor-policy.ts), and the line says so rather than promise more.
+ * What a line of a skip list holds, under its field. A site can be told only where the browser says which page is open (front-app.ts:
+ * Safari and the Chromium set); elsewhere the dictation is kept (cursor-policy.ts), and the line says so rather than promise more.
  */
-export const SKIP_APPS_DESCRIPTION = "One bundle id per line, such as com.apple.Passwords. What you dictate there still goes in, but is never kept.";
-export const SKIP_SITES_DESCRIPTION =
-  "One website per line, such as example.com. In Safari and Chrome-based browsers, what you dictate there still goes in but is " +
-  "never kept. Other browsers can't say which site is open, so there it is kept.";
+export const SKIP_APPS_HELP = "One bundle id per line, such as com.apple.Passwords.";
+export const SKIP_SITES_HELP = "One website per line, such as example.com. Safari and Chrome-based browsers say which site is open. Other browsers can't, so there a dictation is kept.";
 
-/** The Dictations pane when the history is empty: the one line, and how to start. */
+/**
+ * The apps a skip list comes with, by the name a person knows them by (DEFAULT_SKIP_APPS, in lower case as the privacy rule compares them).
+ * Enpass has shipped under two ids, and the summary names it once. Any other app shows as the last part of its bundle id.
+ */
+const SKIP_APP_NAMES: Readonly<Record<string, string>> = {
+  "com.1password.1password": "1Password",
+  "com.agilebits.onepassword7": "1Password 7",
+  "com.bitwarden.desktop": "Bitwarden",
+  "com.apple.keychainaccess": "Keychain Access",
+  "com.apple.passwords": "Passwords",
+  "org.keepassxc.keepassxc": "KeePassXC",
+  "com.lastpass.lastpass": "LastPass",
+  "com.dashlane.dashlane": "Dashlane",
+  "com.enpass.enpass": "Enpass",
+  "in.sinew.enpass-desktop": "Enpass",
+};
+
+/** How many names a skip list's row shows before it counts the rest. */
+const SUMMARY_NAMES = 3;
+
+/** `names` once each, as a row says them: "None", "1Password, Bitwarden and Passwords", or the first three "and 6 more". */
+function namesLine(names: readonly string[]): string {
+  const once = [...new Set(names)];
+  if (once.length === 0) return "None";
+  if (once.length > SUMMARY_NAMES) return `${once.slice(0, SUMMARY_NAMES).join(", ")} and ${once.length - SUMMARY_NAMES} more`;
+  if (once.length === 1) return once[0]!;
+  return `${once.slice(0, -1).join(", ")} and ${once.at(-1)!}`;
+}
+
+/** What the apps' row says of the list the library keeps: the apps by name, not by bundle id, as a person knows them. */
+export function skipAppsSummary(ids: readonly string[]): string {
+  return namesLine(ids.map((id) => SKIP_APP_NAMES[id.toLowerCase()] ?? id.split(".").at(-1)!));
+}
+
+/** What the sites' row says of the list the library keeps, and where it holds: a promise of the row's own, as the field with its full reason may be shut. */
+export const skipSitesSummary = (sites: readonly string[]): string => (sites.length ? `${namesLine(sites)}, in Safari and Chrome-based browsers` : namesLine(sites));
+
+/** The Dictation pane when the history is empty: the one line, and how to start, which the switch above it changes. */
 export const DICTATIONS_EMPTY = "Nothing dictated yet.";
-export const DICTATIONS_START = "Turn on Dictate into any app in Voice, then tap its key and speak. What you say shows here.";
+export const dictationsStart = (enabled: boolean): string =>
+  `${enabled ? "Tap the key and speak." : "Turn it on above, tap the key and speak."} What you say shows here.`;
+
+/** The heading over the Dictation pane's history. */
+export const DICTATIONS_RECENT = "Recent";
 
 /** Under a dictation whose words were not pasted: they were only copied, and Copy gives them again. */
 export const DICTATION_NOT_INSERTED = "These words didn't go in. Copy them to paste yourself.";
@@ -125,9 +169,8 @@ export const olderDictationsLine = (older: number): string =>
 /** The button that lists another page of older dictations. */
 export const SHOW_MORE_DICTATIONS = `Show ${DICTATION_PAGE} more`;
 
-/** The Notice for a Copy the clipboard refused: what happened, what is safe, and the one fix. */
-export const DICTATION_NOT_COPIED = "Those words couldn't be copied.";
-export const DICTATION_NOT_COPIED_BODY = "They are still in the history. Try copying them again.";
+/** The Notice for a Copy the clipboard refused. Defined in shared/ipc.ts, as the menu tells it too; re-exported for the pane. */
+export { DICTATION_NOT_COPIED, DICTATION_NOT_COPIED_BODY } from "../../shared/ipc.ts";
 
 /**
  * When a dictation was said, in this Mac's time: "09:05" today, "Yesterday 23:59", "3 Nov 14:03" before that, and with the year

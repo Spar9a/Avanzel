@@ -6,6 +6,9 @@ import type { AgentFailure, PartialEdits, TooBroad } from "./problems.ts";
 export type { CursorKey } from "../main/tap-detector.ts";
 export type { CursorPermissionState } from "../main/cursor-helper.ts";
 
+/** A permission that dictating into any app needs, as System Settings names its place. */
+export type CursorPermission = "input-monitoring" | "accessibility";
+
 export interface FiledPage {
   title: string;
   /** First folder of the page path, e.g. "goals". */
@@ -35,7 +38,7 @@ export type SettingsPane = (typeof SETTINGS_PANES)[number];
 export const isSettingsPane = (value: unknown): value is SettingsPane => SETTINGS_PANES.some((pane) => pane === value);
 
 /**
- * One dictation at the cursor, as the Dictations pane shows it. The words are cut to a preview (`previewOf`): the whole text stays in
+ * One dictation at the cursor, as the Dictation pane shows it. The words are cut to a preview (`previewOf`): the whole text stays in
  * main, and Copy asks for it by `id`. The pane writes the time out itself, from `at`.
  */
 export interface DictationRow {
@@ -60,7 +63,7 @@ export type DeleteDictationResult = { ok: true } | { ok: false; message: string;
 /**
  * A forgotten dictation left the history, but the library's day file of dictations (`raw/dictations/`) couldn't be updated: what
  * happened, what remains, and the one fix. `library` names the folder of the library the dictation was kept in, when that is not the
- * one open (null: the open one). Told by the Dictations pane after a Delete and by the capsule after the menu's "Forget the last
+ * one open (null: the open one). Told by the Dictation pane after a Delete and by the capsule after the menu's "Forget the last
  * dictation".
  */
 export function dayFileNotUpdated(library: string | null): { title: string; body: string } {
@@ -77,6 +80,10 @@ export function dayFileNotUpdated(library: string | null): { title: string; body
 
 /** `dayFileNotUpdated` for the open library. */
 export const DAY_FILE_NOT_UPDATED = dayFileNotUpdated(null);
+
+/** The Notice or notification for a Copy the clipboard refused: what happened, what is safe, and the one fix. Settings' pane and the menu both tell it. */
+export const DICTATION_NOT_COPIED = "Those words couldn't be copied.";
+export const DICTATION_NOT_COPIED_BODY = "They are still in the history. Try copying them again.";
 
 /**
  * What the pane says under "That dictation couldn't be deleted.": what is safe, and the one fix. Main sends it as a failed Delete's
@@ -122,6 +129,14 @@ export type CardAction =
   | `refile:${string}`;
 
 /**
+ * A dictation into another app, on its capsule. `app`: what has focus, which the words would go to, shown where Zel is for a recording that
+ * goes to the library. Absent until it has been looked at, null when it couldn't be told. `icon`: the app's icon, as a PNG's data URL.
+ */
+export interface DictationState {
+  app?: { name: string; icon?: string } | null;
+}
+
+/**
  * What main tells the capsule page's microphone: a recording's start, stop (its samples go back by `sendAudio`) and cancel; and a call's
  * start and stop, between which its blocks go back by `sendCallAudio` with the call's id (`call`).
  */
@@ -164,15 +179,16 @@ export type CapsuleState =
       review: string | null;
       /**
        * The shortcut that finishes this recording, for the card to name while the first recordings teach the keys: Record a
-       * thought's, or Capture screen with a comment's for a screen comment. Set until the controller's `HINT_CAPTURES` recordings
+       * thought's, or Capture screen's for a screen comment. Set until the controller's `HINT_CAPTURES` recordings
        * have been kept, and while that shortcut is registered; null otherwise.
        */
       hint: string | null;
-      /**
-       * Set only for a dictation into another app (the controller's `startCursorRecording`): the key that ends it, as the setting
-       * chose it, which the card names (`dictationListeningLine`).
-       */
-      dictation?: { key: CursorKey };
+      /** The page sends main its microphone as it hears it (`sendLiveAudio`), for the words as they are said and to look at what has focus. */
+      live?: true;
+      /** The words so far, while they are said (`LiveWords`): a preview, kept nowhere. Absent until there are some, and where they may not show. */
+      words?: string;
+      /** Set only for a dictation into another app (the controller's `startCursorRecording`). */
+      dictation?: DictationState;
     }
   /**
    * `onThisMac`: the library's speech-to-text runs on this Mac, which the card then says; a command can run anywhere. `slow`: it has run
@@ -181,7 +197,7 @@ export type CapsuleState =
    * a screen comment's screenshot and what it is of, as it had them while it listened, so that the card above the bar stays while the
    * words are made and the saved card that follows does not come after a gap.
    */
-  | { kind: "transcribing"; mode: CapsuleMode; onThisMac: boolean; slow?: true; thumbnail?: string; context?: ScreenContext }
+  | { kind: "transcribing"; mode: CapsuleMode; onThisMac: boolean; slow?: true; thumbnail?: string; context?: ScreenContext; words?: string; dictation?: DictationState }
   | {
       kind: "filing";
       text: string;
@@ -504,7 +520,7 @@ export interface SettingsSnapshot {
   opensInObsidian: boolean;
 }
 
-/** One choice of a native pop-up menu, as Settings' Choose… offers it. */
+/** One choice of a native pop-up menu, as Settings' pop-up buttons offer it. */
 export interface PickOption { label: string; value: string; checked: boolean }
 
 /**
@@ -884,6 +900,8 @@ export interface AvanzelBridge {
     removeAttachment(index: number): void;
     onCommand(callback: (command: CapsuleCommand) => void): () => void;
     sendAudio(samples: Float32Array): Promise<void>;
+    /** What a dictation's microphone has heard since the last block, about every second while it listens: for its words as they are said. */
+    sendLiveAudio(samples: Float32Array): void;
     /**
      * A block of the microphone of the call `call` (the id its call-start command gave), about every 5 s while the call runs; `last` once
      * its microphone has stopped.
@@ -926,7 +944,7 @@ export interface AvanzelBridge {
     keepOpen(keep: boolean): void;
     /**
      * An error card's one button, or a notice's Open Settings (see CardAction). The Ask window's Open Settings uses it too,
-     * with "open-settings:agents", when the library's agent isn't installed, and setup's does, with "open-settings:voice".
+     * with "open-settings:agents", when the library's agent isn't installed, and setup's does, with "open-settings:general".
      * The card it was pressed on goes (an error card, or a taken shortcut's notice); whatever else the capsule shows, a
      * recording or a note being edited, stays as it is.
      */
@@ -957,13 +975,13 @@ export interface AvanzelBridge {
      */
     cursorPermissions(): Promise<CursorPermissionState>;
     /**
-     * Has macOS ask for both permissions, and opens System Settings at the one still missing (Input Monitoring first, as the key
-     * can't be seen without it). Resolves with what was granted at the time it asked.
+     * Has macOS ask for both permissions, and opens System Settings at `permission` if it is missing; with none named, at the one still
+     * missing (Input Monitoring first, as the key can't be seen without it). Resolves with what was granted at the time it asked.
      */
-    askCursorPermissions(): Promise<CursorPermissionState>;
+    askCursorPermissions(permission?: CursorPermission): Promise<CursorPermissionState>;
     /**
      * The newest `limit` dictations at the cursor (DICTATION_PAGE when it is not a whole number above 0), newest first, each as the
-     * Dictations pane shows it, with the total the history holds. Needs no library.
+     * Dictation pane shows it, with the total the history holds. Needs no library.
      */
     listDictations(limit?: number): Promise<DictationList>;
     /** Dictation `id`'s whole words go on the clipboard. False when there is no such dictation or the clipboard refused. */
@@ -996,10 +1014,14 @@ export interface AvanzelBridge {
      */
     relaunch(): void;
     requestPermission(kind: "microphone" | "screen"): Promise<SettingsSnapshot>;
-    /** Choose…: a native menu of `options` pops up at `at` (window points; null: at the pointer). Resolves with the
+    /** A pop-up button: a native menu of `options` pops up at `at` (window points; null: at the pointer). Resolves with the
         value picked, or null when the menu closes without one. Only the Settings window's own page is answered: sent from any
         other window, it resolves null and shows no menu. */
     pick(options: readonly PickOption[], at: { x: number; y: number } | null): Promise<string | null>;
+    /** What the pane in view needs, in px: the window takes that height, within the screen, at once. Only the Settings window's own page is heard. */
+    fit(height: number): void;
+    /** The colour the page is drawn on, as the page computes it ("rgb(35, 34, 40)"): the window fills with it where the page hasn't drawn yet. Only the Settings window's own page is heard. */
+    surface(color: string): void;
   };
   quick: {
     submit(text: string): Promise<void>;

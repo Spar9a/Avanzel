@@ -113,9 +113,9 @@ test("Take notes on a call… with Everything this Mac plays: the call's card, w
   const { app, library, userData, capsule } = await launchForCalls({ consent: true, library: dictionaryLibrary });
   filedInto(library, "ideas", "tulips", "Plant tulips in October", onDay(0)); // a page, so ⌥Space in Ask records a question
   await answerDialogs(app, 1);
-  // The item sits right under Capture screen with a comment; nothing offers Stop yet.
+  // The item sits right under Capture screen…; nothing offers Stop yet.
   const before = await menuLabels(app);
-  expect(before[before.indexOf("Capture screen with a comment") + 1]).toBe("Take notes on a call…");
+  expect(before[before.indexOf("Capture screen…") + 1]).toBe("Take notes on a call…");
   expect(before).not.toContain("Stop taking notes");
 
   await takeNotes(app);
@@ -124,11 +124,11 @@ test("Take notes on a call… with Everything this Mac plays: the call's card, w
   await expectCallCard(app, capsule);
   expect(await dialogsAsked(app)).toEqual([]); // consent was given before
   const during = await menuLabels(app);
-  expect(during[during.indexOf("Capture screen with a comment") + 1]).toBe("Stop taking notes");
+  expect(during[during.indexOf("Capture screen…") + 1]).toBe("Stop taking notes");
   expect(during).not.toContain("Take notes on a call…");
   expect(callFolders(userData)).toHaveLength(1);
 
-  // Record a thought, Capture screen with a comment and Ask's ⌥Space each show the notice, and the call's card comes back.
+  // Record a thought, Capture screen and Ask's ⌥Space each show the notice, and the call's card comes back.
   for (const press of [
     () => call(app, "toggleDictate"),
     () => call(app, "toggleCapture"),

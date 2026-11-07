@@ -151,7 +151,7 @@ describe("recordedLine: the Stopped transcription's footer", () => {
 describe("stillInMenuLine: the taken notice's second sentence", () => {
   it("names where each item is", () => {
     expect(stillInMenuLine("dictate")).toBe("Pick another shortcut. “Record a thought” is still in the menu bar.");
-    expect(stillInMenuLine("capture")).toBe("Pick another shortcut. “Capture screen with a comment” is still in the menu bar.");
+    expect(stillInMenuLine("capture")).toBe("Pick another shortcut. “Capture screen” is still in the menu bar.");
     expect(stillInMenuLine("type")).toBe("Pick another shortcut. “Type a thought” is still in the menu bar.");
     expect(stillInMenuLine("ask")).toBe("Pick another shortcut. “Ask your library” is still in the menu bar.");
     // Undo the last filing is in the menu only after a filing, so it is not "still" there.

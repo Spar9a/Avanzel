@@ -1,4 +1,4 @@
-// The skip list of dictating into any app as Settings → Voice saves it: the apps (by bundle id) and the websites whose dictations are
+// The skip list of dictating into any app as Settings → Privacy saves it: the apps (by bundle id) and the websites whose dictations are
 // pasted but never kept. Entries are stored as the privacy rule compares them (cursor-policy.ts), so what the person typed is what skips.
 import { AvanzelError, MAX_DICTIONARY_ENTRIES, MAX_DICTIONARY_LINE_LENGTH, plainLine } from "@avanzel/engine";
 import { skipSiteOf } from "./cursor-policy.ts";

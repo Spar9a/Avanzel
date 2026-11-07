@@ -37,6 +37,40 @@ describe("recorder", () => {
     vi.unstubAllGlobals();
   });
 
+  it("gives what is new each time it is asked, and still the whole recording at the stop", async () => {
+    const media = fakeMedia();
+    const recorder = new Recorder(() => undefined);
+    const starting = recorder.start(null);
+    media.open();
+    await starting;
+    media.hear(Float32Array.of(1, 2));
+    media.hear(Float32Array.of(3));
+    expect([...recorder.fresh()]).toEqual([1, 2, 3]);
+    expect([...recorder.fresh()]).toEqual([]);
+    media.hear(Float32Array.of(4));
+    expect([...recorder.fresh()]).toEqual([4]);
+    media.hear(Float32Array.of(5));
+    expect([...(await recorder.stop())]).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("starts the next recording's new audio from nothing", async () => {
+    const media = fakeMedia();
+    const recorder = new Recorder(() => undefined);
+    const first = recorder.start(null);
+    media.open();
+    await first;
+    media.hear(Float32Array.of(1, 2));
+    recorder.fresh();
+    await recorder.stop();
+    const second = recorder.start(null);
+    media.open();
+    await second;
+    media.hear(Float32Array.of(9));
+    expect([...recorder.fresh()]).toEqual([9]);
+    await recorder.cancel();
+    expect([...recorder.fresh()]).toEqual([]);
+  });
+
   it("lets go of a microphone that opens only after the recording was cancelled", async () => {
     const media = fakeMedia();
     const recorder = new Recorder(() => undefined);

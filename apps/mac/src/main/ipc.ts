@@ -13,6 +13,7 @@ export function registerIpc(controller: Controller): void {
   // capsule
   on("capsule:ready", () => controller.capsuleReady());
   handle("capsule:audio", (_e, samples: Float32Array) => controller.onAudio(samples));
+  on("capsule:live-audio", (e, samples: Float32Array) => controller.onLiveAudio(e.sender, samples)); // only the capsule's own page is heard
   // only the capsule's own page sends a call's microphone, and stops a call from its card
   handle("capsule:call-audio", (e, call: number, samples: Float32Array, last: boolean) => controller.onCallAudio(e.sender, call, samples, last));
   on("capsule:stop-call", (e) => void controller.stopCall(e.sender));
@@ -81,7 +82,7 @@ export function registerIpc(controller: Controller): void {
   on("settings:recording-shortcut", (e, recording: unknown) => controller.shortcutRecording(e.sender, recording));
   handle("settings:set-cursor-dictation", (_e, patch: Partial<AppSettings["cursorDictation"]>) => controller.setCursorDictation(patch));
   handle("settings:cursor-permissions", () => controller.cursorPermissions());
-  handle("settings:ask-cursor-permissions", () => controller.askCursorPermissions());
+  handle("settings:ask-cursor-permissions", (_e, permission: unknown) => controller.askCursorPermissions(permission === "accessibility" || permission === "input-monitoring" ? permission : undefined));
   // The history holds what people said into other apps: only the Settings window's own page is answered.
   handle("settings:list-dictations", (e, limit: unknown) =>
     controller.isSettingsPage(e.sender) ? controller.listDictations(typeof limit === "number" ? limit : undefined) : { rows: [], total: 0 });
@@ -100,6 +101,8 @@ export function registerIpc(controller: Controller): void {
   // What the page sends is checked where it is used: this takes anything, and shows a menu only for a request that reads. Every
   // window has the same bridge, so it also hands over the page that sent it: only the Settings window's own is answered.
   handle("settings:pick", (e, options: unknown, at: unknown) => controller.pickFromSettings(e.sender, options, at));
+  on("settings:fit", (e, height: unknown) => controller.fitSettings(e.sender, height));
+  on("settings:surface", (e, color: unknown) => controller.settingsSurface(e.sender, color));
   on("settings:open-library", () => controller.openLibraryFolder());
   on("settings:show-library", () => controller.showLibraryInFinder());
   on("settings:open-setup", () => controller.openSetupFromSettings());
