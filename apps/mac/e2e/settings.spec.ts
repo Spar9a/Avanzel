@@ -29,7 +29,7 @@ import {
 /** What Settings is sent now. */
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
 
-const PANES = ["General", "Voice", "Dictation", "Agents", "Reviews", "Privacy"];
+const PANES = ["General", "Voice", "Shortcuts", "Dictation", "Agents", "Reviews", "Privacy"];
 
 /** Settings' window as main sees it: its title and height, whether a person can size it, and the room its display has. */
 const settingsWindow = (app: ElectronApplication) =>
@@ -257,7 +257,7 @@ test("General shows the library with its shelves, and each of its controls appli
   // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
   const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
   const settings = await openSettings(app);
-  await expect(settings.getByText("3 pages on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("3 notes on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
   for (const shelf of ["Goals", "Ideas", "Problems", "Memories", "People", "Topics"]) {
     await expect(settings.getByText(shelf, { exact: true })).toBeVisible();
   }
@@ -315,7 +315,7 @@ test("Settings is sent a fresh snapshot when it has the focus again, and reading
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
   });
-  await expect(settings.getByText("1 page on six shelves. This folder has no git history, so changes can't be undone.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("1 note on six shelves. This folder has no git history, so changes can't be undone.", { exact: true })).toBeVisible();
   // The refresh only reads: no agent's sign-in was read, and the library's agent was asked nothing, since each costs quota.
   expect(await agentCalls(app)).toEqual(before);
   expect(existsSync(record)).toBe(false);
@@ -469,7 +469,7 @@ test("General says only what is true of the library's history: commits, automati
     saveSettings(library, { ...loadSettings(library), autoCommit });
     const app = await launch({ AVANZEL_LIBRARY: library, ...(usable ? {} : { AVANZEL_GIT_USABLE: "0" }) });
     const settings = await openSettings(app);
-    await expect(settings.getByText(`1 page on six shelves. ${line}`, { exact: true })).toBeVisible();
+    await expect(settings.getByText(`1 note on six shelves. ${line}`, { exact: true })).toBeVisible();
     // The snapshot carries what the line is made from: whether the folder has a .git, whether this Mac can run git, and
     // whether the library commits by itself.
     expect((await snapshot(app)).library).toMatchObject({ isGit: git, gitUsable: usable, autoCommit });
@@ -483,14 +483,14 @@ test("General looks for git again each time Settings has the focus while this Ma
   // AVANZEL_GIT_USABLE=0 plays a Mac whose only git is Apple's stub; the app keeps that answer until it is told to look again.
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_GIT_USABLE: "0" });
   const settings = await openSettings(app);
-  await expect(settings.getByText("1 page on six shelves. This Mac has no git yet, so changes can't be undone.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("1 note on six shelves. This Mac has no git yet, so changes can't be undone.", { exact: true })).toBeVisible();
   // The person installs the Command Line Tools from Terminal (here: the stand-in is dropped, and this Mac's own git is read) and
   // comes back to Settings: the window has the focus again, and git is looked for afresh before the pane is drawn.
   await app.evaluate(({ BrowserWindow }) => {
     delete process.env.AVANZEL_GIT_USABLE;
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
   });
-  await expect(settings.getByText("1 page on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("1 note on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
   expect((await snapshot(app)).library).toMatchObject({ isGit: true, gitUsable: true });
   await app.close();
 });

@@ -1,14 +1,15 @@
 // Settings → Agents: every agent Avanzel knows, listed as setup lists them, with what its check found under its name. Use makes an
 // agent the one that files and answers, and an agent this Mac doesn't have offers its install command, where it has one. The last row
-// hands the choice back to Avanzel, one Check agents asks all of them again, and the agent in use names its model. Each control applies at
-// once. The pane needs a library: without one the shell draws NoLibrary in its place.
+// hands the choice back to Avanzel, one Check agents asks all of them again, and the agent in use names its model: picked from a list for
+// an agent whose models Avanzel knows, typed for any other. Each control applies at once. The pane needs a library: without one the shell
+// draws NoLibrary in its place.
 import { Actions, Button, ChoiceRow, Group, GroupRow, Stack, Text, TextField } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { harnessName } from "../../../main/jobs.ts";
-import { AGENT_INSTALLS, isAgentProblem, type AgentInstall, type HarnessInfo } from "../../../shared/ipc.ts";
+import { AGENT_INSTALLS, isAgentProblem, type AgentInstall, type HarnessInfo, type PickOption } from "../../../shared/ipc.ts";
 import { agentLine, ownLine } from "../../setup/copy.ts";
 import { agentNotChecked, AGENTS_NOT_CHECKED } from "../copy.ts";
-import { attemptChange, type PaneProps } from "../parts.tsx";
+import { attemptChange, PickButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
 
@@ -84,6 +85,36 @@ function AgentRow({ agent, chosen, inUse, asked, copied, onUse, onCopy }: AgentR
   );
 }
 
+/** The first choice of a model list: no model is kept, and the agent runs with its own default. */
+const AGENT_DEFAULT = "Agent's default";
+
+/**
+ * The models Avanzel offers for an agent, by agent name. Claude Code has no command that lists its models, so these are the aliases
+ * its `--model` takes for the latest model of each family (`claude --help`: "an alias for the latest model (e.g. 'fable', 'opus', or
+ * 'sonnet')"), which stay current as new models come out. An agent not here has its model typed.
+ */
+const MODEL_CHOICES: Readonly<Record<string, readonly { value: string; label: string }[]>> = {
+  claude: [
+    { value: "fable", label: "Fable" },
+    { value: "opus", label: "Opus" },
+    { value: "sonnet", label: "Sonnet" },
+    { value: "haiku", label: "Haiku" },
+  ],
+};
+
+/**
+ * The list to choose from: the agent's default first (value ""), then the known models, and a model saved before that the list
+ * doesn't have, as it was typed, so choosing nothing loses it. The saved one is checked.
+ */
+export function modelOptions(choices: readonly { value: string; label: string }[], saved: string): PickOption[] {
+  const known = choices.some((c) => c.value === saved);
+  return [
+    { value: "", label: AGENT_DEFAULT, checked: saved === "" },
+    ...choices.map((c) => ({ ...c, checked: c.value === saved })),
+    ...(saved && !known ? [{ value: saved, label: saved, checked: true }] : []),
+  ];
+}
+
 interface ModelGroupProps extends Pick<PaneProps, "onChange" | "attempt"> {
   /** The agent in use, by name: "claude". */
   agent: string;
@@ -102,14 +133,27 @@ function ModelGroup({ agent, models, onChange, attempt }: ModelGroupProps): Reac
   const label = harnessName(agent);
   const saved = models[agent] ?? "";
   const [draft, setDraft] = useState(saved);
-  const save = async () => {
-    const model = draft.trim();
+  const saveModel = async (model: string) => {
     if (model === saved) return;
     const next = { ...models, [agent]: model };
     await attemptChange({ onChange, attempt }, () =>
       api.setLibrary({ models: Object.fromEntries(Object.entries(next).filter(([, value]) => value.trim())) }),
     );
   };
+  const save = () => saveModel(draft.trim());
+  // An agent whose models Avanzel knows picks one from a list; any other agent's model is typed.
+  const choices = MODEL_CHOICES[agent];
+  if (choices) {
+    const options = modelOptions(choices, saved);
+    const chosen = options.find((o) => o.checked)?.label ?? AGENT_DEFAULT;
+    return (
+      <Group label={label}>
+        <GroupRow label="Model" description="A smaller model often files just as well and costs less.">
+          <PickButton label={`${label} model`} value={chosen} options={options} onChoose={(value) => void saveModel(value)} />
+        </GroupRow>
+      </Group>
+    );
+  }
   return (
     <Group label={label}>
       {/* The row says what an empty field means, so the field has no placeholder: in a Group, its ink reads under AA in dark. */}

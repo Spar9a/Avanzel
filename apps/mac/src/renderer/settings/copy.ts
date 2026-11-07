@@ -11,6 +11,7 @@ import { CURSOR_KEYS, cursorKeyName } from "../../shared/transcribing.ts";
 export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
   general: "General",
   voice: "Voice",
+  shortcuts: "Shortcuts",
   dictations: "Dictation",
   agents: "Agents",
   tasks: "Reviews",
@@ -26,7 +27,7 @@ export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
  */
 export function libraryLine(shelves: Readonly<Record<string, number>>, isGit: boolean, autoCommit: boolean, gitUsable: boolean): string {
   const pages = SHELVES.reduce((sum, shelf) => sum + (shelves[shelf] ?? 0), 0);
-  const filled = pages === 0 ? "Your first thought will fill a shelf." : `${pages} ${pages === 1 ? "page" : "pages"} on six shelves.`;
+  const filled = pages === 0 ? "Your first thought will fill a shelf." : `${pages} ${pages === 1 ? "note" : "notes"} on six shelves.`;
   if (!isGit) return `${filled} This folder has no git history, so changes can't be undone.`;
   if (!gitUsable) return `${filled} ${NO_GIT_LINE}`;
   const undo = autoCommit

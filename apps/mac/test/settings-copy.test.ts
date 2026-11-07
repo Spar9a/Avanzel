@@ -59,7 +59,7 @@ import { NO_GIT_LINE } from "../src/shared/problems.ts";
 
 describe("settings copy", () => {
   it("the toolbar lists the panes in their order", () => {
-    expect(SETTINGS_PANES.map((pane) => PANE_LABELS[pane])).toEqual(["General", "Voice", "Dictation", "Agents", "Reviews", "Privacy"]);
+    expect(SETTINGS_PANES.map((pane) => PANE_LABELS[pane])).toEqual(["General", "Voice", "Shortcuts", "Dictation", "Agents", "Reviews", "Privacy"]);
   });
 
   describe("the Dictations pane", () => {
@@ -118,33 +118,33 @@ describe("settings copy", () => {
 
   it("libraryLine counts the six shelves' pages and says whether changes can be undone", () => {
     const shelves = { goals: 12, ideas: 41, problems: 9, memories: 18, people: 27, topics: 21 };
-    expect(libraryLine(shelves, true, true, true)).toBe("128 pages on six shelves. Every change is a commit you can undo.");
-    expect(libraryLine({ ideas: 1 }, true, true, true)).toBe("1 page on six shelves. Every change is a commit you can undo.");
+    expect(libraryLine(shelves, true, true, true)).toBe("128 notes on six shelves. Every change is a commit you can undo.");
+    expect(libraryLine({ ideas: 1 }, true, true, true)).toBe("1 note on six shelves. Every change is a commit you can undo.");
     expect(libraryLine({}, true, true, true)).toBe("Your first thought will fill a shelf. Every change is a commit you can undo.");
     // A folder of the library's own that isn't one of the six shelves doesn't count.
-    expect(libraryLine({ ideas: 2, projects: 5 }, false, true, true)).toBe("2 pages on six shelves. This folder has no git history, so changes can't be undone.");
+    expect(libraryLine({ ideas: 2, projects: 5 }, false, true, true)).toBe("2 notes on six shelves. This folder has no git history, so changes can't be undone.");
   });
 
   it("libraryLine says so when the library's settings turn automatic commits off, since then no change is a commit", () => {
     const off = "Automatic commits are off in this library's settings, so changes can't be undone from Avanzel.";
-    expect(libraryLine({ ideas: 1 }, true, false, true)).toBe(`1 page on six shelves. ${off}`);
+    expect(libraryLine({ ideas: 1 }, true, false, true)).toBe(`1 note on six shelves. ${off}`);
     expect(libraryLine({}, true, false, true)).toBe(`Your first thought will fill a shelf. ${off}`);
     // It is a sentence for a library with git. One without keeps its no-git line, whatever it says of automatic commits.
     const noGit = "This folder has no git history, so changes can't be undone.";
-    expect(libraryLine({ ideas: 2 }, false, false, true)).toBe(`2 pages on six shelves. ${noGit}`);
-    expect(libraryLine({ ideas: 2 }, false, true, true)).toBe(`2 pages on six shelves. ${noGit}`);
+    expect(libraryLine({ ideas: 2 }, false, false, true)).toBe(`2 notes on six shelves. ${noGit}`);
+    expect(libraryLine({ ideas: 2 }, false, true, true)).toBe(`2 notes on six shelves. ${noGit}`);
   });
 
   it("libraryLine tells a Mac that can't run git from a folder that has no history", () => {
     // A .git folder on a Mac whose only git is Apple's stub: the history is there, and this Mac can neither add to it nor undo from it.
     expect(NO_GIT_LINE).toBe("This Mac has no git yet, so changes can't be undone.");
-    expect(libraryLine({ ideas: 1 }, true, true, false)).toBe("1 page on six shelves. This Mac has no git yet, so changes can't be undone.");
+    expect(libraryLine({ ideas: 1 }, true, true, false)).toBe("1 note on six shelves. This Mac has no git yet, so changes can't be undone.");
     // Whatever the library's settings say of automatic commits: nothing commits on such a Mac, so that line doesn't come into it.
     expect(libraryLine({}, true, false, false)).toBe("Your first thought will fill a shelf. This Mac has no git yet, so changes can't be undone.");
     // A folder with no .git has no history to speak of, on a Mac that can run git or not: it keeps its own line.
     const noHistory = "This folder has no git history, so changes can't be undone.";
-    expect(libraryLine({ ideas: 2 }, false, true, false)).toBe(`2 pages on six shelves. ${noHistory}`);
-    expect(libraryLine({ ideas: 2 }, false, false, false)).toBe(`2 pages on six shelves. ${noHistory}`);
+    expect(libraryLine({ ideas: 2 }, false, true, false)).toBe(`2 notes on six shelves. ${noHistory}`);
+    expect(libraryLine({ ideas: 2 }, false, false, false)).toBe(`2 notes on six shelves. ${noHistory}`);
   });
 
   it("asSentence ends a line with a full stop once", () => {

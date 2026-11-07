@@ -17,6 +17,26 @@
   justify-content: center;
   -webkit-app-region: drag;
 }
+/* In the menu bar panel: no strip to drag by, and the panes' row of tabs at the left, under the panel's own tabs. */
+.settings[data-embedded] {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+}
+.settings[data-embedded] .settings-toolbar {
+  display: flex;
+  justify-content: flex-start;
+  padding: var(--av-space-8) var(--av-space-12) var(--av-space-12);
+}
+.settings[data-embedded] .settings-problem-box {
+  padding: 0 var(--av-space-16) var(--av-space-12);
+}
+.settings[data-embedded] .settings-pane {
+  overflow: hidden;
+  padding: 0;
+}
+.settings-page {
+  padding: 0 var(--av-space-16) var(--av-space-16);
+}
 /* The problem's Notice, in line with the pane's rows, under the toolbar's line as the pane is. Its words break rather than push
    the row sideways, as the pane's do. */
 .settings-problem-box {

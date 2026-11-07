@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import path from "node:path";
 
 const GALLERY = pathToFileURL(path.join(import.meta.dirname, "..", "gallery", "dist", "index.html")).href;
-const SECTIONS = ["colour", "type", "buttons", "controls", "feedback", "zel", "paper", "capsule", "speech", "settings", "letter", "icons", "parts", "panel"];
+const SECTIONS = ["colour", "type", "buttons", "controls", "feedback", "zel", "paper", "capsule", "speech", "settings", "group-reveal", "letter", "icons", "parts", "panel"];
 
 test.beforeEach(async ({ page }) => {
   const errors: string[] = [];

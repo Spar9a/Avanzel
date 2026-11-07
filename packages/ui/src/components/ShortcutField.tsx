@@ -27,7 +27,14 @@ export function ShortcutField({ label, value, recording, saved, onClick }: Short
         aria-label={recording ? `${label}: type the new shortcut` : `${label}: ${value}. Change`}
         onClick={onClick}
       >
-        {recording ? <span className="av-shortcut-asking">Type the new shortcut…</span> : <Kbd>{value}</Kbd>}
+        {recording ? (
+          <>
+            <span className="av-shortcut-asking">Type the new shortcut…</span>
+            <span className="av-shortcut-stop" aria-hidden="true">Esc to stop</span>
+          </>
+        ) : (
+          <Kbd>{value}</Kbd>
+        )}
       </button>
       <span className="av-shortcut-said" role="status">
         {recording ? "Recording. Type the new shortcut." : saved}

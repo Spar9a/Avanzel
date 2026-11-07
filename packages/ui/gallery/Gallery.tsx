@@ -4,9 +4,10 @@
 // main.tsx mounts it in a browser; static.tsx renders it to plain HTML for a preview.
 import { useState, type CSSProperties, type ReactNode } from "react";
 import {
-  Actions, Badge, Bubble, Button, CapsuleBar, CapsuleNotice, Card, ChoiceRow, Group, GroupRow, Hud, Icon, ICON_NAMES, Kbd, Letter, Link, Notice, PopUp, ShortcutField, Toolbar,
+  ActionTile, Actions, Badge, Bubble, Button, CapsuleAppear, CapsuleBar, CapsuleMenu, CapsuleNotice, Card, ChoiceRow, Group, GroupRow, GroupReveal, Hud, Icon, ICON_NAMES, Kbd, Letter, Link, Notice,
+  PopUp, ShortcutField, Toolbar,
   PermissionPrimer, Progress, Receipt, Row, Segmented, SHELVES, SHELF_NAMES, ShelfDrawer, ShelfGlyph, ShelfMark, ShelfTag, Spacer, Spinner,
-  Stack, Stage, Stamp, Switch, Text, TextArea, TextField, Wave, Zel, type ZelMood,
+  Aura, Confirm, Disclosure, Dust, Expiring, FileChip, FileLink, FilePreview, Items, UndoBar, ListField, MarkUp, More, RecordingStage, ScreenArea, Select, SpokenField, Stack, Stage, Stamp, Switch, TabPanel, Tabs, Text, TextArea, TextField, Wave, Zel, PageRow, type ZelMood,
 } from "../src/index.ts";
 import "./gallery.css";
 
@@ -38,6 +39,8 @@ const COLOURS: [string, string[]][] = [
   ["Shelves", SHELVES.map((s) => `--av-shelf-${s}`)],
 ];
 
+/** A picture to mark in the gallery: an empty one, the size of the part it stands for, so the window's own ground shows through. */
+const BLANK_PICTURE = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='220'/>";
 const LEVELS = [0.1, 0.25, 0.5, 0.35, 0.7, 0.9, 0.6, 0.4, 0.75, 0.5, 0.3, 0.55, 0.8, 0.45, 0.2, 0.1];
 /** A stand-in for an app's icon, as the helper gives one: a plain rounded square. */
 const APP_ICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='gray'/%3E%3C/svg%3E";
@@ -67,7 +70,7 @@ function Controls() {
         <Switch label="Evening letter" checked={false} onChange={() => {}} disabled />
       </Stack>
       <Segmented label="Capture mode" value={mode} onChange={setMode} options={[{ value: "auto", label: "Auto" }, { value: "screen", label: "Screen" }, { value: "type", label: "Type" }]} />
-      <TextField label="Library" value={library} onChange={setLibrary} description="Pages are Markdown files in a git repository." />
+      <TextField label="Library" value={library} onChange={setLibrary} description="Notes are Markdown files in a git repository." />
       <TextField label="Type a thought" labelHidden size="large" variant="bare" icon="waveform" placeholder="Type a thought…" value={thought} onChange={setThought} />
       <TextField label="Search the library" labelHidden icon="search" value="launch checklist" onChange={() => {}} action={<Button size="small" variant="quiet">Clear</Button>} />
       <TextArea label="Edit before filing" value={draft} onChange={setDraft} rows={2} />
@@ -133,7 +136,7 @@ export function Gallery() {
               <Button variant="primary">File it</Button>
               <Button>Undo</Button>
               <Button variant="quiet">Not now</Button>
-              <Button variant="danger">Delete page</Button>
+              <Button variant="danger">Delete note</Button>
             </Row>
             <Row gap={8} wrap align="center">
               <Button size="small">Open</Button>
@@ -209,6 +212,17 @@ export function Gallery() {
               What did Roediger and Karpicke find about testing against restudying?
             </Card>
             <Card label="Thought" placeholder="Say anything…" />
+            <Card
+              look="panel"
+              label="Thought"
+              status="Filing with Claude Code"
+              progress={0.4}
+              onClose={() => {}}
+              footer={<Text variant="footnote" tone="secondary">10 s of about 18</Text>}
+              actions={<><Button>Edit</Button><Button icon="stop">Stop</Button></>}
+            >
+              Ask Dana about the launch checklist before Friday, and book the room.
+            </Card>
             <Stage>
               <Row gap={12} wrap justify="center">
                 <Stamp word="filed" date="20 Oct 2026" />
@@ -227,13 +241,38 @@ export function Gallery() {
       <Specimen id="capsule" title="The capsule" use="Dark glass in light and dark mode, because it floats over any desktop. One panel: the words above a row." code={'<CapsuleBar mood="listening" levels={levels} centred words="…and book the room" />'}>
         {() => (
           <Stack gap={12}>
-            <CapsuleBar mood="listening" levels={LEVELS} time="0:01" centred hint={<><Kbd>⌥Space</Kbd> to finish, <Kbd>Esc</Kbd> to cancel</>} />
+            <CapsuleAppear>
+              <CapsuleBar mood="listening" levels={LEVELS} time="0:01" centred hint={<><Kbd>⌥Space</Kbd> to finish, <Kbd>Esc</Kbd> to cancel</>} />
+            </CapsuleAppear>
             <CapsuleBar mood="listening" levels={LEVELS} time="0:07" centred words="Ask Dana about the launch checklist before Friday" />
             <CapsuleBar mood="listening" levels={LEVELS} time="0:31" centred app={{ icon: APP_ICON, label: "Dictating into Slack" }} words={LONG_WORDS} />
             <CapsuleBar mood="thinking" centred app={{ icon: APP_ICON, label: "Dictating into Slack" }} words={LONG_WORDS}>Transcribing on this Mac…</CapsuleBar>
-            <CapsuleBar mood="listening" levels={LEVELS} time="0:12">Taking notes on the call</CapsuleBar>
+            <div className="g-screen">
+              <ScreenArea rect={{ x: 40, y: 24, width: 260, height: 110 }} recording={false} hint="Drag over the part of the screen to record. Esc gives up." />
+            </div>
+            <div className="g-screen">
+              <ScreenArea rect={{ x: 40, y: 24, width: 260, height: 110 }} recording time="0:12" hint="" />
+            </div>
+            <div className="g-screen">
+              <MarkUp rect={{ x: 40, y: 24, width: 300, height: 110 }} picture={BLANK_PICTURE} onDone={() => {}} onCancel={() => {}} />
+            </div>
+            <CapsuleMenu
+              open
+              title="Add to this recording"
+              onClose={() => {}}
+              items={[
+                { label: "Attach a file…", icon: "attach", onSelect: () => {} },
+                { label: "Screenshot of the screen", icon: "display", onSelect: () => {} },
+                { label: "Screenshot of an area", icon: "screen", onSelect: () => {} },
+                { label: "Record a video of an area", icon: "play", onSelect: () => {}, busy: true },
+              ]}
+            >
+              <Items items={[{ text: "report.pdf · 10:42" }, { text: "Screenshot", busy: true }]} onRemove={() => {}} />
+            </CapsuleMenu>
+            <CapsuleBar mood="listening" levels={LEVELS} time="0:05" onDropFiles={() => {}}>Ask Dana about the launch checklist</CapsuleBar>
+            <CapsuleBar mood="listening" steady levels={LEVELS} time="0:13" actions={<Button size="small">Stop</Button>}>Taking notes on the call</CapsuleBar>
             <CapsuleBar mood="thinking" time="0:04"><Text tone="secondary" as="span" truncate>Reading Ideas/Launch checklist.md</Text></CapsuleBar>
-            <CapsuleBar mood="filed" actions={<><Button size="small">Undo</Button><Button size="small" variant="primary">Open</Button></>}>Filed on 2 pages</CapsuleBar>
+            <CapsuleBar mood="filed" actions={<><Button size="small">Undo</Button><Button size="small" variant="primary">Open</Button></>}>Filed on 2 notes</CapsuleBar>
             <CapsuleBar mood="needs-you" actions={<Button size="small" variant="primary">Answer</Button>}>Claude Code has a question</CapsuleBar>
             <Hud>
               <Stack gap={10}>
@@ -286,6 +325,18 @@ export function Gallery() {
         )}
       </Specimen>
 
+      <Specimen id="group-reveal" title="Rows a switch shows" use="A switch's own settings, under it while it is on: they open out and fade in, and fold away when it is off." code={'<Switch label="Start a thought by voice" checked={on} … />\n<GroupReveal open={on}>\n  <GroupRow label="Trigger word">…</GroupRow>\n</GroupReveal>'}>
+        {() => (
+          <Group label="Voice trigger">
+            <Switch label="Start a thought by voice" checked onChange={() => {}} />
+            <GroupReveal open>
+              <GroupRow label="Trigger word"><Kbd>Avanzel</Kbd></GroupRow>
+              <GroupRow label="Stop word"><Kbd>Avanzel stop</Kbd></GroupRow>
+            </GroupReveal>
+          </Group>
+        )}
+      </Specimen>
+
       <Specimen id="letter" title="The evening letter" use="The ending of the day: what you filed, in Zel's words, signed and stamped." code={'<Letter date="Tuesday, 20 October" stampDate="20 Oct 2026">…</Letter>'}>
         {() => (
           <Letter date="Tuesday, 20 October" stampDate="20 Oct 2026">
@@ -321,7 +372,7 @@ export function Gallery() {
         {() => (
           <Stack gap={16}>
             <Stack gap={6}>
-              <Text variant="footnote" tone="secondary">Pages used:</Text>
+              <Text variant="footnote" tone="secondary">Notes used:</Text>
               <Row gap={6} wrap align="center"><ShelfTag shelf="topics" /><Button variant="page">Plant tulips in October</Button></Row>
               <Row gap={6} wrap align="start"><ShelfTag shelf="ideas" /><Button variant="page" wrap>Move the trading system from Voxfor to new hosting before the end of the month</Button></Row>
             </Stack>
@@ -340,11 +391,269 @@ export function Gallery() {
               </ChoiceRow>
               <ChoiceRow label="OpenCode" description="Not installed." chosen={false} unavailable chooseLabel="Use OpenCode" onChoose={() => {}} />
             </Group>
-            <Text variant="callout" tone="secondary" align="center">Answers come from your library only, with links to the pages they use.</Text>
+            <Text variant="callout" tone="secondary" align="center">Answers come from your library only, with links to the notes they use.</Text>
           </Stack>
         )}
       </Specimen>
+
+      <Specimen id="panel" title="The menu bar panel" use="Tabs move between the panel's places, with a quieter row for the parts of one. Action tiles start something new. A page row folds open in place to show more." code={'<Tabs label="Sections" controls="panel" options={…} value={tab} onChange={setTab} />\n<TabPanel id="panel" value={tab} pages={[{ value: "capture", content: … }, …]} />\n<Aura><ActionTile icon="mic" label="Record a thought" … /></Aura>\n<PageRow title="Fix the light in graphics" shelf="problems" status="open" date="6 Nov" expanded={open} onToggle={…} actions={…} />'}>
+        {() => <PanelSpecimen />}
+      </Specimen>
     </main>
+  );
+}
+
+type PanelTab = "capture" | "library" | "settings";
+type PanelPart = "all" | "ideas" | "problems";
+
+function PanelSpecimen() {
+  const [tab, setTab] = useState<PanelTab>("library");
+  const [part, setPart] = useState<PanelPart>("all");
+  const [open, setOpen] = useState<string | null>("onboarding");
+  // The bin's demonstration: the row turns to dust, and comes back a moment later to be deleted again.
+  const [dusting, setDusting] = useState(false);
+  const [dusted, setDusted] = useState(false);
+  const [sort, setSort] = useState<"changed" | "title">("changed");
+  const [skip, setSkip] = useState(["com.lastpass.LastPass", "com.dashlane.Dashlane"]);
+  return (
+    <Stack gap={12}>
+      <Card
+        label="Thought"
+        status="Filing with Claude Code"
+        progress={0.3}
+        onClose={() => {}}
+        footer={<Text variant="footnote" tone="secondary">4 s of about 15 · Transcribed on this Mac in 0.3 s</Text>}
+        actions={<><Button>Edit</Button><Button icon="stop">Stop</Button></>}
+      >
+        <Text variant="words-small">The other side of this call wasn't heard.</Text>
+      </Card>
+      <Card
+        label="Thought"
+        stamp={{ word: "noted", date: "6 Nov 2026" }}
+        onClose={() => {}}
+        footer={<Text variant="footnote">Nothing new to file. Claude Code noted it in the log.</Text>}
+        actions={<Button>Undo</Button>}
+      >
+        <Text variant="words-small">Uh cancel. Let's say it like this.</Text>
+      </Card>
+      <Row gap={6} justify="end">
+        <Select label="Filter" icon="settings" buttonLabel="Filter" options={[{ value: "all", label: "All notes" }, { value: "ideas", label: "Ideas", section: "Shelves" }]} value="all" onChange={() => {}} />
+        <Select
+          label="Filter"
+          icon="settings"
+          options={[{ value: "all", label: "All notes" }, { value: "problems", label: "Problems", shelf: "problems", section: "Shelves" }]}
+          value="problems"
+          onChange={() => {}}
+          clearable
+          clearLabel="Clear the filter"
+          onClear={() => {}}
+        />
+        <Select label="Sort by" options={[{ value: "changed", label: "Newest change" }, { value: "title", label: "Title" }]} value={sort} onChange={setSort} />
+      </Row>
+      <ListField label="Apps to skip" items={skip} onChange={setSkip} placeholder="com.apple.Passwords" />
+      <Row gap={6} wrap>
+        <FileChip name="2026-11-07-131109.mov" kind="video" onOpen={() => {}} onRemove={() => {}} />
+        <FileChip name="Screenshot.png" kind="image" onOpen={() => {}} onRemove={() => {}} />
+        <FileChip name="brief.pdf" kind="file" onOpen={() => {}} />
+      </Row>
+      <Row gap={6} justify="center">
+        <UndoBar message="Note deleted" seconds={5} paused onUndo={() => {}} onDone={() => {}} />
+        <Dust removing={false}>
+          <Card look="panel" label="Thought" status="Waiting to file" headAction={<Button size="small" variant="danger" icon="trash" label="Delete this thought" />}>
+            Book the room for Friday
+          </Card>
+        </Dust>
+        <Expiring seconds={5}>
+          <Card look="panel" label="Thought" footer={<Text variant="footnote">No note was made. Claude Code noted it in the log.</Text>}>
+            Testing the microphone
+          </Card>
+        </Expiring>
+      </Row>
+      <Stack gap={8}>
+        <SpokenField label="Trigger word" value="Avanzel" onChange={() => {}} listening={false} levels={[]} onListen={() => {}} listenLabel="Say the trigger word" />
+        <SpokenField label="Trigger word" value="" onChange={() => {}} listening levels={LEVELS} onListen={() => {}} listenLabel="Say the trigger word" />
+      </Stack>
+      <Row gap={6} justify="end">
+        <Button size="small" variant="danger" icon="trash" label="Delete this note" />
+        <Confirm open question="Move this note to the Trash?" confirmLabel="Delete" onConfirm={() => {}} onCancel={() => {}}>
+          <Button size="small" variant="danger" icon="trash" label="Delete this note" expanded />
+        </Confirm>
+      </Row>
+      <Text variant="callout">
+        Watch <FileLink name="2026-11-07-131109.mov" kind="video" onOpen={() => {}} onRemove={() => {}}>the screen recording</FileLink> before
+        Friday.
+      </Text>
+      <Items
+        items={[
+          {
+            text: "2026-11-07-172904.png",
+            content: (
+              <>
+                <FileLink name="2026-11-07-172904.png" kind="image" onOpen={() => {}} onRemove={() => {}}>2026-11-07-172904.png</FileLink>
+                <FilePreview name="2026-11-07-172904.png" kind="video" picture={BLANK_PICTURE} onOpen={() => {}} />
+              </>
+            ),
+          },
+          {
+            text: "2026-11-07-173133.png",
+            content: (
+              <>
+                <FileLink name="2026-11-07-173133.png" kind="image" onOpen={() => {}}>2026-11-07-173133.png</FileLink>
+                <FilePreview name="2026-11-07-173133.png" kind="image" picture={undefined} onOpen={() => {}} />
+              </>
+            ),
+          },
+        ]}
+      />
+      <Disclosure label="Log" count={2}>
+        <Items items={[{ text: "2026-11-07 — Noted by voice.", when: "2026-11-07", content: "Noted by voice." }, { text: "2026-11-07 — Added a screen recording.", when: "2026-11-07", content: "Added a screen recording." }]} />
+      </Disclosure>
+      <Row gap={8} wrap>
+        <ListField label="Apps to skip" items={skip} onChange={setSkip} placeholder="com.apple.Passwords" collapsed={{ one: "app", many: "apps" }} />
+        <ListField label="Sites to skip" items={[]} onChange={() => {}} placeholder="bank.example.com" collapsed={{ one: "site", many: "sites" }} />
+      </Row>
+      <Row gap={8} wrap>
+        <Button size="small" variant="primary" icon="screen" shortcut="⌥⇧S">Capture the whole screen</Button>
+        <Button size="small" shortcut="⌥⇧R">Pick a part</Button>
+        <Select
+          label="Add a file, a screenshot or a video, 3 added"
+          trigger={{ icon: "attach", size: "xlarge", count: 3 }}
+          options={[{ value: "file", label: "Attach a file…", icon: "attach" }, { value: "shot", label: "Screenshot of the screen", icon: "display" }]}
+          value={null}
+          onChange={() => {}}
+        />
+      </Row>
+      <Notice
+        tone="info"
+        title="Next steps"
+        actions={<Button size="small" variant="primary" icon="mic">Continue by voice</Button>}
+      >
+        <Items items={[{ text: "Ask Dana which project the lighting fix is for" }, { text: "Book the room for Friday", done: true }]} onRemove={() => {}} />
+      </Notice>
+      <RecordingStage
+        active
+        line="Recording a thought"
+        time="0:12"
+        levels={LEVELS}
+        controls={
+          <Row gap={8}>
+            <Button size="xlarge" icon="attach" count={2} label="Add a file, a screenshot or a video, 2 added" />
+            <Button size="xlarge" icon="close" label="Cancel the recording" />
+            <Button size="xlarge" icon="pause" label="Pause" />
+            <Button size="xlarge" variant="primary" icon="stop" badge="spark" label="Stop, and your agent files it now" />
+          </Row>
+        }
+      >
+        <Text variant="callout" tone="secondary">The ways to start something new.</Text>
+      </RecordingStage>
+      <Tabs
+        label="Sections"
+        controls="g-panel-tab"
+        options={[{ value: "capture", label: "Capture" }, { value: "library", label: "Library", count: 12, countLabel: "12 notes" }, { value: "settings", label: "Settings" }]}
+        value={tab}
+        onChange={setTab}
+      />
+      <Tabs
+        level="secondary"
+        label="Shelves"
+        options={[{ value: "all", label: "All" }, { value: "ideas", label: "Ideas", shelf: "ideas", count: 1, countLabel: "1 note" }, { value: "problems", label: "Problems", shelf: "problems", count: 1, countLabel: "1 note" }]}
+        value={part}
+        onChange={setPart}
+        controls="g-panel-shelves"
+      />
+      <CapsuleBar mood="listening" levels={LEVELS} time="0:11">
+        {null}
+      </CapsuleBar>
+      <Row gap={6} justify="end">
+        <Segmented
+          label="When your agent files this recording"
+          options={[{ value: "now", label: "Now", icon: "spark" }, { value: "evening", label: "21:00", icon: "moon" }]}
+          value="now"
+          onChange={() => {}}
+        />
+        <Button size="small" icon="close" label="Cancel the recording" />
+        <Button size="small" icon="pause" label="Pause" />
+        <Button size="small" variant="primary" icon="stop" badge="spark" label="Stop, and your agent files it now" />
+        <Button size="small" variant="primary" icon="stop" badge="moon" label="Stop, and file it at the evening review at 21:00" />
+      </Row>
+      <Aura>
+        <Stack gap={8}>
+          <ActionTile tone="primary" icon="mic" label="Record a thought" hint="Speak, and your agent files it." shortcut="⌥Space" onClick={() => {}} />
+          <ActionTile
+            icon="screen"
+            label="Capture the screen"
+            hint="With a comment on what is on it."
+            open
+            choices={
+              <>
+                <Button size="small" variant="primary" icon="screen">Capture the whole screen</Button>
+                <Button size="small">Pick a part</Button>
+              </>
+            }
+            onClick={() => {}}
+          />
+        </Stack>
+      </Aura>
+      <TabPanel
+        id="g-panel-tab"
+        value={tab}
+        pages={[
+          { value: "capture", content: <Text variant="callout" tone="secondary">The ways to start something new.</Text> },
+          {
+            value: "library",
+            content: (
+              <Stack gap={8}>
+                <PageRow
+                  title="Fix the light in graphics"
+                  shelf="problems"
+                  status="open"
+                  tags={["work", "graphics"]}
+                  date="6 Nov"
+                  summary="A short voice note about a work task: fix the lighting in the graphics."
+                  expanded={open === "light"}
+                  onToggle={() => setOpen(open === "light" ? null : "light")}
+                  actions={<><Button size="small" icon="open">.md</Button><Button size="small" icon="open">Obsidian</Button></>}
+                  lead={<Row gap={8} wrap><Text variant="footnote" tone="secondary">Add more</Text><Button size="small" variant="primary" icon="mic">Record</Button><More><Button size="small" icon="pen">Screenshot with marks</Button><Button size="small" icon="attach">Attach a file…</Button></More></Row>}
+                  onDropFiles={() => {}}
+                />
+                {!dusted && (
+                  <PageRow
+                    title="Ask Dana about the launch"
+                    shelf="people"
+                    date="4 Nov"
+                    expanded={false}
+                    onToggle={() => {}}
+                    removing={dusting}
+                    onRemoved={() => {
+                      setDusted(true);
+                      setDusting(false);
+                      setTimeout(() => setDusted(false), 1200);
+                    }}
+                    actions={<Button size="small" variant="quiet" icon="trash" label="Delete this note" onClick={() => setDusting(true)} />}
+                  />
+                )}
+                <PageRow
+                  title="An easier first run"
+                  shelf="ideas"
+                  tags={["product"]}
+                  date="5 Nov"
+                  summary="Show the shortcut on the first card, so people learn it by using it."
+                  expanded={open === "onboarding"}
+                  onToggle={() => setOpen(open === "onboarding" ? null : "onboarding")}
+                  actions={<><Button size="small" icon="open">.md</Button><Button size="small" icon="open">Obsidian</Button></>}
+                >
+                  <Stack gap={4}>
+                    <Text variant="footnote" tone="secondary">Next steps</Text>
+                    <Text variant="callout">Try it with three people this week.</Text>
+                  </Stack>
+                </PageRow>
+              </Stack>
+            ),
+          },
+          { value: "settings", content: <Text variant="callout" tone="secondary">Settings, pane by pane.</Text> },
+        ]}
+      />
+    </Stack>
   );
 }
 

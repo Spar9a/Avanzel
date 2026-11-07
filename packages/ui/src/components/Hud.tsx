@@ -3,8 +3,11 @@ import "../foundations.css";
 import "./hud.css";
 
 export interface HudProps {
-  /** capsule: the capsule's panel, a pill while it is one row. card: a capsule card, such as a receipt or a problem. */
-  shape?: "capsule" | "card";
+  /**
+   * capsule: the capsule's panel, a pill while it is one row. card: a capsule card, such as a receipt or a problem. pill: a row of
+   * controls that is only ever one row, such as the bar under a part of the screen being recorded or marked.
+   */
+  shape?: "capsule" | "card" | "pill";
   /** status for news, alert for a problem that needs the user. Leave it out inside another live region. */
   role?: "status" | "alert";
   children: ReactNode;

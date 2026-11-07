@@ -1,5 +1,6 @@
-// The shortcuts, on Settings → General: a key cap for each, which a press changes, and a Notice for each one that has a problem.
-import { Actions, Button, Group, GroupRow, Notice, ShortcutField } from "@avanzel/ui";
+// Settings → Shortcuts: a key cap for each action, which works in every app and which a press changes, and a Notice for each one that
+// has a problem, with the free ones to use instead.
+import { Actions, Button, Group, GroupRow, Notice, ShortcutField, Stack } from "@avanzel/ui";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, inMenuLine, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { Shortcuts as ShortcutKeys } from "../../../shared/ipc.ts";
@@ -10,6 +11,15 @@ const api = window.avanzel.settings;
 
 /** What a screen reader is told of a recording given up. */
 const NOT_CHANGED = "Not changed";
+
+/** The Shortcuts pane: the shortcuts, whose first fix offered is the pane's one primary button. */
+export function ShortcutsPane(props: PaneProps): ReactNode {
+  return (
+    <Stack gap={20}>
+      <Shortcuts {...props} primary />
+    </Stack>
+  );
+}
 
 /** `primary`: the fix of the first Notice that has one to offer may be the pane's one primary button. */
 export function Shortcuts({ primary, ...props }: PaneProps & { primary: boolean }): ReactNode {
@@ -70,6 +80,14 @@ export function Shortcuts({ primary, ...props }: PaneProps & { primary: boolean 
       window.removeEventListener("blur", stop);
     };
   }, [recording, snap, onChange, attempt]);
+
+  // While it records, Avanzel's own shortcuts are let go: macOS would hand a key Avanzel holds to it, and the page would never see it.
+  const listening = recording !== null;
+  useLayoutEffect(() => {
+    if (!listening) return;
+    api.recordingShortcut(true);
+    return () => api.recordingShortcut(false);
+  }, [listening]);
 
   return (
     <>

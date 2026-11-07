@@ -56,7 +56,7 @@ test("a taken ⌥Space is named at launch, and a free one picked there says it w
   await app.close();
 });
 
-test("the picked shortcut's bar is a piece of the stack: as wide as the others, it says each action in full and holds while the pointer is on it", async () => {
+test("the picked shortcut's bar is a piece of the stack: as wide as its line, it says each action in full and holds while the pointer is on it", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const capsule = await windowFor(app, "capsule");
   const bar = capsule.getByRole("status");
@@ -66,7 +66,8 @@ test("the picked shortcut's bar is a piece of the stack: as wide as the others, 
   const line = bar.getByText("Capture screen now uses ⌃⌥⇧⌘Space", { exact: true });
   await expect(line).toBeVisible();
   expect(await line.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
-  expect((await bar.boundingBox())!.width).toBeCloseTo(420, 0); // as wide as the other bars of the stack
+  // The bar is as wide as what is in it (never narrower than a bar's least), and the whole line fits in it.
+  expect((await bar.boundingBox())!.width).toBeGreaterThanOrEqual(320);
   // The pointer on it holds it past its time, as it holds any card (it took no pointer, and hid under it, when it was no piece of the stack) ...
   await bar.hover();
   await capsule.waitForTimeout(PICKED_MS + 800);
@@ -208,6 +209,14 @@ const primaries = (settings: Page) => settings.locator('button[data-variant="pri
 const tryAgain = (settings: Page) =>
   settings.getByRole("alert").filter({ hasText: "The speech model didn't finish downloading." }).getByRole("button", { name: "Try again" });
 
+/** Voice, where the failed download's Notice is: its Try again is that pane's primary, whatever the shortcuts' problems. */
+async function voiceHasTryAgainAsPrimary(settings: Page): Promise<void> {
+  await settings.getByRole("radio", { name: "Voice", exact: true }).click();
+  await expect(settings.getByRole("heading", { name: "Voice", exact: true })).toBeVisible();
+  await expect(tryAgain(settings)).toHaveAttribute("data-variant", "primary");
+  await expect(primaries(settings)).toHaveCount(1);
+}
+
 // A running Alfred or Raycast is named after ⌥Space, so the titles below match its words, not spell them out.
 const TAKEN_TITLES = [/^⌥Space is used by another app.* Pick another shortcut\.$/, /^⌥⇧S is used by another app.* Pick another shortcut\.$/];
 
@@ -225,6 +234,9 @@ test("with more than one shortcut problem, the best free shortcut of the first N
   await toolbarItem(settings, "Voice").click();
   await expect(tryAgain(settings)).toHaveAttribute("data-variant", "primary");
   await expect(primaries(settings)).toHaveCount(1);
+  // The failed download's Notice is in Voice, where its Try again is the one primary.
+  await expect(tryAgain(settings)).toHaveCount(0);
+  await voiceHasTryAgainAsPrimary(settings);
   await app.close();
 });
 
@@ -239,6 +251,7 @@ test("a Notice with no free shortcut to offer leaves the primary to the next one
   await expect(settings.getByRole("button", { name: "Use ⌃⌥S" })).toHaveAttribute("data-variant", "primary");
   await expect(settings.getByRole("button", { name: "Use ⌃⌥C" })).toHaveAttribute("data-variant", "secondary");
   await expect(primaries(settings)).toHaveCount(1);
+  await voiceHasTryAgainAsPrimary(settings);
   await app.close();
 });
 

@@ -22,6 +22,15 @@
 /* The same corners as a capsule card, at every height, so one row grows into a panel with no change of shape. */
 .av-hud[data-shape="capsule"] { display: flow-root; border-radius: var(--av-radius-hud); }
 .av-hud[data-shape="card"] { padding: 14px 16px; border-radius: var(--av-radius-hud); }
+/* A row of controls that never grows into a panel: the bar under a part of the screen being recorded or marked. */
+.av-hud[data-shape="pill"] {
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-10);
+  min-height: var(--av-size-capsule);
+  padding: 6px 8px 6px 6px;
+  border-radius: var(--av-radius-pill);
+}
 @media (prefers-reduced-transparency: reduce) {
   .av-hud { background: var(--av-hud-surface-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }

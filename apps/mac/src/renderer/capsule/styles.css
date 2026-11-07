@@ -34,9 +34,37 @@ body {
 .stack {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: var(--av-space-8);
-  width: 420px;
+  /* As wide as the card when there is one, else as the bar; never past the panel and its 16 px margins. */
   max-width: 100%;
+}
+/* A card keeps the width it reads well at; the bar is as wide as what is in it, a recording's controls at full size included. */
+.stack-card {
+  width: 560px;
+  max-width: 100%;
+}
+.stack-bar {
+  width: fit-content;
+  min-width: 320px;
+  max-width: 100%;
+}
+/* The recording's Add menu and its bar, one over the other, as one place for dropped files. The place itself lets the pointer through
+   (it is wider than the menu); the menu and the bar take it. */
+.stack > .stack-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--av-space-8);
+  max-width: 100%;
+  pointer-events: none;
+}
+.stack-drop > * {
+  pointer-events: auto;
+}
+/* A dictation's panel has nothing to press and may stand over the very box its words go into: the pointer goes through. */
+.stack-drop > .through {
+  pointer-events: none;
 }
 /* The person's words are cut off after four lines of the card's ruling (4lh, whatever its line pitch is): the panel is 300 px
    tall, and a card with its footer's four lines, the bar and the gaps leave room for no more. They are clipped, not hidden: a
@@ -56,12 +84,13 @@ body {
 .words.lines-2 {
   max-height: 2lh;
 }
-/* The filed card's pages, a row each, in three columns that line up from row to row: the shelf (a chip, or the folder's name, which
-   is cut off at 96 px), the title, which takes the free width, and whether the page is new or updated. The columns are 2 px apart
-   because the title's column has 4 px of its own on each side (see .page-title), which makes 6 px between its link and what is beside it. */
+/* The filed card's pages, a row each, in two columns that line up from row to row: the shelf (a chip, or the folder's name, which
+   the column takes whole, uncapped, so a chip never runs under the title), and the title with, right after it, whether the page is new or updated.
+   The columns are 2 px apart because the title's column has 4 px of its own on each side (see .page-title), which makes 6 px between
+   the chip and the link. */
 .page-list {
   display: grid;
-  grid-template-columns: fit-content(96px) minmax(0, 1fr) auto;
+  grid-template-columns: max-content minmax(0, 1fr);
   row-gap: var(--av-space-6);
   column-gap: var(--av-space-2);
   align-items: center;
@@ -77,6 +106,9 @@ body {
    2 px off): the column has 4 px of padding on each side for the ring, and the gaps beside it are 4 px narrower for that (see
    .page-list), so the link stands where it did and the row is no taller. */
 .page-title {
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-6);
   min-width: 0;
   overflow-x: clip;
   padding: 0 var(--av-space-4);
@@ -109,5 +141,5 @@ body {
 }
 /* A notice or a card from @avanzel/ui in a state that isn't one of the above (a problem, preparing, a failed download, a taken
    shortcut), as wide as the cards above; .fill takes the rest of its row. */
-.slot { width: 420px; max-width: 100%; }
+.slot { width: 560px; max-width: 100%; }
 .slot .fill { flex: 1; min-width: 0; }

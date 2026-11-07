@@ -1,7 +1,7 @@
 // What Settings' panes share: the props each pane is given, how a change is made, the Notice a pane shows in place of the
 // library while none is open, and the pop-up button, which opens a native menu.
-import { Actions, Button, Notice, PopUp } from "@avanzel/ui";
-import { useRef, type ReactNode } from "react";
+import { Actions, Button, Notice, PopUp, Select } from "@avanzel/ui";
+import { createContext, useContext, useRef, type ReactNode } from "react";
 import type { PickOption, SettingsSnapshot } from "../../shared/ipc.ts";
 import { asSentence } from "./copy.ts";
 
@@ -91,9 +91,16 @@ export function NoLibrary({ snap, onChange, attempt }: PaneProps): ReactNode {
 }
 
 /**
+ * Whether Settings is in the menu bar panel, where its pop-up buttons and its lists are Avanzel's own (`Select`, `ListField`), drawn
+ * inside the panel. Its own window, which the e2e tests drive, keeps macOS's menus and its fields of lines.
+ */
+export const EmbeddedSettings = createContext(false);
+
+/**
  * A pop-up button for a row: it shows `value`, and a press opens a native menu of `options` under it, with the current one checked (the
  * list for a microphone, the dictation key, a review's day or its agent). `onChoose` gets the value of the item picked, and a menu that
  * closes without a pick does nothing. `label` says what is chosen, so VoiceOver hears "Day: Sunday", and tests find the button by that.
+ * In the menu bar panel (`EmbeddedSettings`) it is Avanzel's own `Select`, whose menu stays inside the panel.
  */
 export function PickButton({ label, value, options, onChoose, disabled }: {
   label: string;
@@ -103,7 +110,22 @@ export function PickButton({ label, value, options, onChoose, disabled }: {
   /** The choice can't be made now (dictating into any app on a Mac that can't); the button is there but off. */
   disabled?: boolean;
 }): ReactNode {
+  const embedded = useContext(EmbeddedSettings);
   const box = useRef<HTMLDivElement>(null);
+  // In the menu bar panel, Avanzel's own pop-up button, whose menu stays inside the panel and says the value itself.
+  if (embedded) {
+    const chosen = options.find((o) => o.checked)?.value ?? null;
+    return (
+      <Select
+        label={label}
+        options={options.map((o) => ({ value: o.value, label: o.label }))}
+        value={chosen}
+        placeholder={value || "Choose…"}
+        disabled={disabled}
+        onChange={onChoose}
+      />
+    );
+  }
   const choose = async () => {
     const at = box.current?.getBoundingClientRect();
     const picked = await api.pick(options, at ? { x: at.left, y: at.bottom } : null);

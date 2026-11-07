@@ -1,9 +1,9 @@
 // The menu bar icon (Zel's face, its title beside it, and its tooltip in words) and its menu, rebuilt from MenuInput whenever something
 // changes, and where the icon is on screen.
 import type { MenuBarState } from "@avanzel/ui/menu-bar";
-import { Menu, Tray, nativeImage, type MenuItemConstructorOptions, type NativeImage, type Rectangle } from "electron";
+import { Menu, Tray, nativeImage, nativeTheme, type MenuItemConstructorOptions, type NativeImage, type Rectangle } from "electron";
 import { buildMenuModel, menuLabel, type MenuInput, type MenuItemModel } from "./menu-model.ts";
-import { encodePng, faceIcon, type Bitmap } from "./png.ts";
+import { colorBadge, encodePng, faceIcon, type Bitmap } from "./png.ts";
 import { isShelf, shelfGlyph, type Shelf } from "./shelf-glyphs.ts";
 import { trayTooltip, type TrayView } from "./tray-state.ts";
 
@@ -20,7 +20,9 @@ function image(make: (scale: 1 | 2) => Bitmap, template: boolean): NativeImage {
 export class MenuBar {
   readonly tray: Tray;
   /** One image for each face, made the first time it shows: a template image, so macOS tints it for the menu bar and its appearance. */
-  private readonly faces = new Map<MenuBarState, NativeImage>();
+  private readonly faces = new Map<string, NativeImage>();
+  /** How many thoughts are being filed, as the badge on the face counts them (`show`). */
+  private badge = 0;
   /** One image for each shelf, made the first time a menu needs it: a menu has a few pages, and is built again at each step of a filing. */
   private readonly glyphs = new Map<Shelf, NativeImage>();
   private current: TrayView = { face: "idle", title: "" };
@@ -28,9 +30,20 @@ export class MenuBar {
   private words = trayTooltip("idle");
   private built: Menu | null = null;
 
-  constructor(private readonly onAction: (action: string) => void) {
+  /**
+   * `onAction`: a menu item was picked. `onClick`: the icon was clicked, which brings up the panel; a right click or a Control-click
+   * does the same, for Avanzel draws its own panel and no menu macOS draws. Without `onClick` every click shows the menu, as before
+   * the panel (the tests drive that one).
+   */
+  constructor(private readonly onAction: (action: string) => void, private readonly onClick?: () => void) {
     this.tray = new Tray(this.faceImage("idle"));
     this.tray.setToolTip(this.words);
+    // Optional: a stand-in for Electron (the tests') may have no events.
+    if (typeof nativeTheme.on === "function") nativeTheme.on("updated", () => this.repaint());
+    if (onClick) {
+      this.tray.on("click", () => onClick());
+      this.tray.on("right-click", () => onClick());
+    }
   }
 
   /** What the icon and its title show now (`show`). */
@@ -59,13 +72,26 @@ export class MenuBar {
     return glyph;
   }
 
-  private faceImage(state: MenuBarState): NativeImage {
-    let face = this.faces.get(state);
+  private faceImage(state: MenuBarState, badge = 0): NativeImage {
+    // A problem's face has its own mark where the badge would go: it shows alone. Ten and more read as one badge, "+".
+    const count = state === "needs-you" ? 0 : Math.min(badge, 10);
+    // With a count, the badge is red and the icon in colour, so it is drawn for the menu bar's appearance (`colorBadge`); else a template.
+    const dark = count > 0 && nativeTheme.shouldUseDarkColors;
+    const key = `${state}:${count}:${dark}`;
+    let face = this.faces.get(key);
     if (!face) {
-      face = image((scale) => faceIcon(state, scale), true);
-      this.faces.set(state, face);
+      face = count > 0
+        ? image((scale) => colorBadge(faceIcon(state, scale), count, scale, dark), false)
+        : image((scale) => faceIcon(state, scale), true);
+      this.faces.set(key, face);
     }
     return face;
+  }
+
+  /** The appearance changed: a coloured icon (one with a badge) is drawn again in the new ink. */
+  private repaint(): void {
+    if (this.tray.isDestroyed() || this.badge === 0) return;
+    this.tray.setImage(this.faceImage(this.current.face, this.badge));
   }
 
   /**
@@ -73,10 +99,13 @@ export class MenuBar {
    * doesn't shake as it goes. Each is set only when it changes (the face and the tooltip together), and the menu is never rebuilt, so
    * this may run as often as the count needs it. Nothing once the tray is destroyed.
    */
-  show(view: TrayView): void {
+  show(view: TrayView, badge = 0): void {
     if (this.tray.isDestroyed()) return;
+    if (view.face !== this.current.face || badge !== this.badge) {
+      this.tray.setImage(this.faceImage(view.face, badge));
+      this.badge = badge;
+    }
     if (view.face !== this.current.face) {
-      this.tray.setImage(this.faceImage(view.face));
       this.words = trayTooltip(view.face);
       this.tray.setToolTip(this.words);
     }
@@ -95,7 +124,7 @@ export class MenuBar {
    */
   update(input: MenuInput, now = new Date()): void {
     this.built = Menu.buildFromTemplate(this.template(buildMenuModel(input, now)));
-    this.tray.setContextMenu(this.built);
+    if (!this.onClick) this.tray.setContextMenu(this.built);
   }
 
   /** The rows of a menu or a submenu as Electron takes them. A row with `checked` is a checkbox, whose click also ticks it, until the next `update` says what is. */

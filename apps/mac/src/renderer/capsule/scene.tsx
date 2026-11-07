@@ -25,7 +25,13 @@ export interface BarSpec extends Pick<CapsuleBarProps, "words" | "wordLines" | "
   levels?: readonly number[];
   /** Date.now() when the recording began: the bar draws how long it has run, in whole seconds. */
   startedAt?: number;
+  /** Date.now() when it was paused, while it is: the time stands still at what it had then. */
+  pausedAt?: number;
   actions?: ReactNode;
+  /** The line is a steady label, not words as they are heard (a call): the voice fills the bar after it (`CapsuleBar`'s `steady`). */
+  steady?: boolean;
+  /** Files dropped on the bar: a recording that takes them adds them (`CapsuleBar`'s `onDropFiles`). */
+  onDropFiles?: (files: File[]) => void;
 }
 
 /**
@@ -54,13 +60,16 @@ export function appOf(dictation: DictationState | undefined): CapsuleBarProps["a
  * live region, as the state changes; only what is in it changes. The buttons are the state's own, though: a button a state shares a
  * place with in the next one (Stop, then Open) is a new button, as it would be in a bar drawn for each state.
  */
-export function Bar({ kind, mood, line, levels, startedAt, actions, words, wordLines, hint, app, centred }: BarSpec & { kind: string }) {
-  const now = useNow(startedAt === undefined ? null : TICK_MS);
+export function Bar({ kind, mood, line, levels, startedAt, pausedAt, actions, steady, onDropFiles, words, wordLines, hint, app, centred }: BarSpec & { kind: string }) {
+  const now = useNow(startedAt === undefined || pausedAt !== undefined ? null : TICK_MS);
   return (
     <CapsuleBar
       mood={mood}
       levels={levels}
-      time={startedAt === undefined ? undefined : clock(now - startedAt)}
+      steady={steady}
+      paused={pausedAt !== undefined}
+      {...(onDropFiles ? { onDropFiles } : {})}
+      time={startedAt === undefined ? undefined : clock((pausedAt ?? now) - startedAt)}
       actions={actions ? <Fragment key={kind}>{actions}</Fragment> : undefined}
       words={words}
       wordLines={wordLines}
