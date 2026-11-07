@@ -35,7 +35,7 @@ export function failedAnswer(result: AskResult, now: Date): AskProblem {
 export function emptyLine(pages: number | null): string {
   return pages === 0
     ? "Your shelves are empty. Say something first, then ask about it."
-    : "Answers come from your library only, with links to the pages they use.";
+    : "Answers come from your library only, with links to the notes they use.";
 }
 
 /**
@@ -62,8 +62,8 @@ export const ASKING_LINES: WaitLines = { first: LOOKING, counting: askingLine };
 
 /** The wait of a save of the answer as a page. */
 export const SAVING_LINES: WaitLines = {
-  first: "Saving the answer as a page…",
-  counting: (seconds) => `Saving the answer as a page: ${Math.max(0, Math.floor(seconds))} s`,
+  first: "Saving the answer as a note…",
+  counting: (seconds) => `Saving the answer as a note: ${Math.max(0, Math.floor(seconds))} s`,
 };
 
 /**

@@ -22,11 +22,38 @@
   white-space: nowrap;
   transition: background var(--av-duration-quick) var(--av-ease-out), color var(--av-duration-quick) var(--av-ease-out);
 }
+.av-segmented { position: relative; }
+/* The choices are painted over the thumb, which comes first in the row; the chosen one is brighter and bolder, the thumb its fill. */
+.av-segmented > button { position: relative; }
 .av-segmented > button[aria-checked="true"] {
-  background: var(--av-surface-control);
   color: var(--av-ink);
   font-weight: 600;
+}
+/* The thumb under the chosen choice: it slides and stretches to the next one. */
+.av-segmented-thumb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--_width);
+  height: var(--_height);
+  border-radius: var(--av-radius-tab);
+  background: var(--av-surface-control);
   box-shadow: 0 1px 2px var(--av-line-control);
+  transform: translate(var(--_x), var(--_y));
+  transition: transform var(--av-duration-card) var(--av-ease-land), width var(--av-duration-card) var(--av-ease-land);
+  pointer-events: none;
+}
+.av-segmented[data-size="large"] .av-segmented-thumb { border-radius: var(--av-radius-pill); }
+/* A label holds room for itself in bold (the out-of-sight copy takes width, no height), so the row never shifts as the choice moves. */
+.av-segmented-label { display: inline-flex; flex-direction: column; }
+.av-segmented-label::after {
+  content: attr(data-label) / "";
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
+  pointer-events: none;
+  user-select: none;
 }
 .av-segmented > button:disabled { opacity: 0.45; }
 .av-segmented[data-size="large"] { padding: 3px; border-radius: var(--av-radius-pill); }
@@ -38,7 +65,7 @@
   font: var(--av-text-button-xlarge);
 }
 /* On the capsule's glass the track and a control share one fill, so the chosen choice is lifted with the glass's own ink. */
-.av-hud .av-segmented > button[aria-checked="true"] {
+.av-hud .av-segmented-thumb {
   background: color-mix(in srgb, var(--av-hud-ink) 22%, var(--av-hud-surface-solid));
   box-shadow: none;
 }

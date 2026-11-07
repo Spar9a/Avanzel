@@ -13,7 +13,6 @@
   width: max-content;
   max-width: 100%;
   white-space: nowrap;
-  cursor: default;
   user-select: none;
   background: var(--av-surface-fill);
   color: var(--av-ink);
@@ -45,6 +44,17 @@
 }
 .av-button[data-variant="link"]:not(:disabled):hover { filter: none; text-decoration: underline; }
 .av-button[data-variant="danger"] { color: var(--av-ink-danger); }
+/* A danger icon on its own (a page's bin): red on nothing, a red tint under the pointer, and a shake as it is pressed. */
+.av-button[data-variant="danger"][data-icon-only] { background: transparent; }
+.av-button[data-variant="danger"][data-icon-only]:not(:disabled):hover { filter: none; background: color-mix(in srgb, var(--av-ink-danger) 14%, transparent); }
+.av-button[data-variant="danger"][data-icon-only]:not(:disabled):active .av-icon,
+.av-button[data-variant="danger"][data-icon-only][aria-expanded="true"] .av-icon { animation: av-button-shake var(--av-duration-card) var(--av-ease-out); }
+@keyframes av-button-shake {
+  0%, 100% { transform: none; }
+  20% { transform: rotate(-14deg) scale(1.1); }
+  45% { transform: rotate(10deg) scale(1.1); }
+  70% { transform: rotate(-6deg); }
+}
 .av-button[data-variant="page"] {
   height: auto;
   padding: 2px 8px;
@@ -72,8 +82,19 @@
 .av-button[data-size="xlarge"] { height: var(--av-size-control-xlarge); padding: 0 20px; font: var(--av-text-button-xlarge); }
 .av-button[data-icon-only] { width: var(--av-size-control); padding: 0; }
 
+/* A button's shortcut, after its label: a key cap. On a primary button the cap is only an outline in the button's own ink, its keys on
+   the violet itself, so they read as well as the label does. */
+.av-button-key { display: inline-flex; margin-left: 2px; }
+.av-button-key .av-kbd { margin: 0; }
+.av-button[data-variant="primary"] .av-button-key .av-kbd {
+  background: transparent;
+  color: var(--av-ink-on-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--av-ink-on-accent) 45%, transparent);
+}
+
 /* A badge at an icon-only button's corner: a second icon on a dark disc ringed in the button's surroundings. When the badge changes
-   it pops in, so the eye catches that what the button does has changed. ✦ is warm, as a spark; ☾ is the cool lilac of the evening. */
+   the disc stays as it is and the sign inside it turns in, within the disc, so the eye catches that what the button does has changed
+   and nothing grows past the button's corner. ✦ is warm, as a spark; ☾ is the cool lilac of the evening. */
 .av-button[data-icon-only] { position: relative; overflow: visible; }
 .av-button-badge {
   position: absolute;
@@ -89,20 +110,62 @@
   box-shadow: 0 0 0 1.5px var(--av-hud-surface-solid);
   color: var(--av-hud-ink-accent);
   pointer-events: none;
-  animation: av-button-badge-in var(--av-duration-card) var(--av-ease-stamp) backwards;
+  overflow: hidden;
 }
-/* The sign inside turns in on its own, a beat behind the disc, so the change of sign reads as a swap. */
-.av-button-badge .av-icon { animation: av-button-badge-sign var(--av-duration-card) var(--av-ease-land) var(--av-duration-quick) backwards; }
+/* The sign inside turns in on its own, so the change of sign reads as a swap; it never grows past its disc. */
+.av-button-badge .av-icon { animation: av-button-badge-sign var(--av-duration-card) var(--av-ease-land) backwards; }
 @keyframes av-button-badge-sign {
   from { opacity: 0; transform: rotate(-120deg) scale(0.2); }
   to { opacity: 1; transform: none; }
 }
 .av-button-badge .av-icon { width: 11px; height: 11px; }
 .av-button-badge[data-badge="spark"] { color: var(--av-shelf-ideas); }
-@keyframes av-button-badge-in {
-  0% { opacity: 0; transform: scale(0.3); }
-  60% { opacity: 1; transform: scale(1.25); }
-  100% { opacity: 1; transform: none; }
+/* An icon button's name, as the pointer rests on it: a small pill on the capsule's glass, over the button (under it at the window's top),
+   centred on it, fading in. Fixed to the window, at the page's top level, so nothing clips it. */
+.av-button-tip {
+  position: fixed;
+  left: var(--_x);
+  top: var(--_y);
+  z-index: var(--av-layer-popover);
+  transform: translate(-50%, calc(-100% - 6px));
+  padding: 4px 10px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-hud-surface-solid);
+  box-shadow: 0 0 0 0.5px var(--av-hud-line), var(--av-shadow-button);
+  color: var(--av-hud-ink);
+  font: var(--av-text-caption);
+  letter-spacing: var(--av-text-caption-tracking);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: av-button-tip-in var(--av-duration-quick) var(--av-ease-out) backwards;
+}
+.av-button-tip[data-under] { transform: translate(-50%, 6px); }
+@keyframes av-button-tip-in { from { opacity: 0; } }
+/* How many it holds, on its top corner: a violet pill with the number, which pops in afresh each time the number changes. */
+.av-button-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-accent-fill);
+  box-shadow: 0 0 0 1.5px var(--av-hud-surface-solid);
+  color: var(--av-ink-on-accent);
+  font: var(--av-text-caption);
+  font-weight: 600;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  animation: av-button-count-in var(--av-duration-base) var(--av-ease-land) backwards;
+}
+@keyframes av-button-count-in {
+  from { opacity: 0; transform: scale(0.4); }
+  to { opacity: 1; transform: none; }
 }
 .av-button[data-icon-only][data-size="small"] { width: var(--av-size-control-small); }
 .av-button[data-icon-only][data-size="large"] { width: var(--av-size-control-large); }

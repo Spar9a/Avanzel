@@ -18,6 +18,11 @@ export interface CardProps {
   progress?: number;
   /** small: the capsule and setup, 21 px lines. regular: reading, 26 px lines. */
   size?: "small" | "regular";
+  /**
+   * paper: the index card, red rule, blue ruling and the words in a serif. panel: the menu bar panel's own look, for the capsule's
+   * cards: the window's surface with a hairline edge, the words in the interface face with room around them, no ruling.
+   */
+  look?: "paper" | "panel";
   /** Blue ruling under the words. Turn it off only for cards that hold no words. */
   ruled?: boolean;
   /** Shown in italic while the card is still empty: "Say anything…". */
@@ -31,6 +36,8 @@ export interface CardProps {
   /** A close button in the card's top corner, named by `closeLabel`: the card goes, and the work goes on or stays done. */
   onClose?: () => void;
   closeLabel?: string;
+  /** A button of the window's own in the head, right after the status: the bin of a thought waiting in the queue. */
+  headAction?: ReactNode;
   /** The user's own words. Plain text or paragraphs; they are set in the words face. */
   children?: ReactNode;
 }
@@ -38,14 +45,15 @@ export interface CardProps {
 /** The index card: the unit of a thought. Red header rule, blue ruling, the user's words in a reading
     serif. Everything inside takes the paper's inks. The capsule's cards also carry what the work on them is doing, its
     actions and a close button, all on the card. */
-export function Card({ label, meta, status, progress, size = "small", ruled = true, placeholder, stamp, footer, actions, onClose, closeLabel = "Hide", children }: CardProps) {
+export function Card({ label, meta, status, progress, size = "small", look = "paper", ruled = true, placeholder, stamp, footer, actions, onClose, closeLabel = "Hide", headAction, children }: CardProps) {
   const empty = children === undefined || children === null || children === "";
   const done = progress === undefined ? undefined : Math.min(1, Math.max(0, progress));
   return (
     <article
       className="av-card"
       data-size={size}
-      data-ruled={ruled ? "" : undefined}
+      data-look={look}
+      data-ruled={ruled && look === "paper" ? "" : undefined}
       data-stamped={stamp ? "" : undefined}
       data-closable={onClose ? "" : undefined}
     >
@@ -59,6 +67,7 @@ export function Card({ label, meta, status, progress, size = "small", ruled = tr
         ) : (
           meta && <span>{meta}</span>
         )}
+        {headAction && <span className="av-card-head-action">{headAction}</span>}
       </header>
       {done !== undefined && (
         <span className="av-card-progress" aria-hidden="true">

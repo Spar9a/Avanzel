@@ -63,7 +63,8 @@ export function inboxLine(inbox: number): string {
   return `${inbox} ${inbox === 1 ? "note waits" : "notes wait"} in the inbox.`;
 }
 
-export const pagesLabel = (count: number) => `${count} ${count === 1 ? "page" : "pages"}`;
+/** How Library's tab counts the library's pages, which the panel calls notes: "1 note", "12 notes". */
+export const notesLabel = (count: number) => `${count} ${count === 1 ? "note" : "notes"}`;
 
 /** The orders Library can list its pages in. */
 export const SORTS = ["changed", "made", "title", "shelf"] as const;
@@ -79,13 +80,6 @@ export const sortLabel = (sort: PageSort) => SORT_LABELS[sort];
 
 /** What Library shows: every page, a shelf's, or those of one status. */
 export type PageFilter = { kind: "all" } | { kind: "shelf"; shelf: Shelf } | { kind: "status"; status: string };
-
-/** A filter's name on its button: "Ideas", "Status: open". */
-export function filterLabel(filter: PageFilter): string {
-  if (filter.kind === "shelf") return SHELF_NAMES[filter.shelf];
-  if (filter.kind === "status") return `Status: ${filter.status}`;
-  return "All pages";
-}
 
 const SHELF_ORDER: readonly string[] = SHELVES;
 

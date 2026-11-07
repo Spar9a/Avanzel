@@ -19,6 +19,7 @@ function EditorCard({ text }: { text: string }) {
   const [value, setValue] = useState(text);
   return (
     <Card
+      look="panel"
       label="Edit before filing"
       ruled={false}
       footer={

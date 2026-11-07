@@ -1,4 +1,4 @@
-// The setup window's Filed and Ask steps: the first filing's stamp, proof and Undo, and a question about the new page.
+// The setup window's Filed and Ask steps: the first filing's stamp, proof and Undo, and a question about the new note.
 // Every test launches as a first run (firstRun) whose stand-in Claude Code files (filingClaude).
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -46,21 +46,21 @@ test("a filed thought shows its stamp, its page and how to undo it, and Undo put
   // The step, in order: the heading, Zel's praise, what the filing wrote, the receipt, the proof (which says how to undo it,
   // once) and its buttons.
   await expect(setup.getByText("Your first thought has a home.", { exact: true })).toBeVisible();
-  await expect(setup.getByText("1 new page, all plain Markdown in ~/Avanzel.", { exact: true })).toBeVisible();
+  await expect(setup.getByText("1 new note, all plain Markdown in ~/Avanzel.", { exact: true })).toBeVisible();
   await expect(setup.getByRole("listitem")).toHaveText(["Plant tulips in OctoberIdeas"]);
   await expect(setup.getByText(KEPT, { exact: true })).toBeVisible(); // the agent left the words be: the line is there all the same
   await expect(setup.getByText(SAVED, { exact: true })).toBeVisible();
   // The whole step reads: the receipt's row, the proof's two lines, Undo, then Open the page. No ⌘Z line comes before the receipt.
   await expect(setup.getByRole("main")).toHaveText(
-    /^All filed\. .+Your first thought has a home\.1 new page, all plain Markdown in ~\/Avanzel\.Plant tulips in OctoberIdeasKept your exact words in raw\/\.Saved a snapshot\. Press ⌘Z or Undo to put everything back\.UndoOpen the page$/,
+    /^All filed\. .+Your first thought has a home\.1 new note, all plain Markdown in ~\/Avanzel\.Plant tulips in OctoberIdeasKept your exact words in raw\/\.Saved a snapshot\. Press ⌘Z or Undo to put everything back\.UndoOpen the page$/,
   );
   // Continue is the one primary, and there is no Back.
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Continue"]);
   await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
   expect(await recentlyFiled(app)).toEqual(["Plant tulips in October"]);
-  // Open the page opens the new page.
+  // Open the page opens the new note.
   await stubOpening(app);
-  await setup.getByRole("button", { name: "Open the page" }).click();
+  await setup.getByRole("button", { name: "Open the note" }).click();
   await expect.poll(() => openedWith(app)).toHaveLength(1);
   expect(realpathSync((await openedWith(app))[0] ?? "")).toBe(realpathSync(path.join(library, "ideas", page)));
   // Undo puts everything back: the words in the inbox, no page, and nothing in the menu's Recently filed.
@@ -152,7 +152,7 @@ test("an Undo that git refuses says so, and Undo goes away", async () => {
   const { env, home } = firstRun({ claude: filingClaude() });
   const { app, setup } = await filedFirstThought(env);
   const library = path.join(home, "Avanzel");
-  // Meanwhile the new page is edited by hand, and the edit committed: undoing the filing would take the edit with it.
+  // Meanwhile the new note is edited by hand, and the edit committed: undoing the filing would take the edit with it.
   const [page = ""] = filesUnder(library, "ideas");
   const file = path.join(library, "ideas", page);
   writeFileSync(file, "# Tulips, by hand\n");
@@ -201,7 +201,7 @@ test("Continue goes to Ask after a filing, and to the end after an undo", async 
   await undone.app.close();
 });
 
-test("in a library Obsidian has opened as a vault, the new page opens in Obsidian", async () => {
+test("in a library Obsidian has opened as a vault, the new note opens in Obsidian", async () => {
   const { env, home } = firstRun({ claude: filingClaude() });
   const app = await launch(env);
   const setup = await throughFound(app);
@@ -214,7 +214,7 @@ test("in a library Obsidian has opened as a vault, the new page opens in Obsidia
   await stubOpening(app);
   await typeFirstThought(setup, "Plant tulips in October");
   await expect(setup.getByRole("heading", { name: FILED })).toBeVisible({ timeout: 30_000 });
-  await expect(setup.getByRole("button", { name: "Open the page" })).toHaveCount(0);
+  await expect(setup.getByRole("button", { name: "Open the note" })).toHaveCount(0);
   await setup.getByRole("button", { name: "Open in Obsidian" }).click();
   await expect.poll(() => openedWith(app)).toHaveLength(1);
   const [url = ""] = await openedWith(app);
@@ -224,7 +224,7 @@ test("in a library Obsidian has opened as a vault, the new page opens in Obsidia
   await app.close();
 });
 
-// Ask me about it: a question about the new pages, answered from the library only, with the pages the answer used. The
+// Ask me about it: a question about the new notes, answered from the library only, with the pages the answer used. The
 // stand-in Claude Code runs the engine's fake agent, which answers "Q: <the question>" and then lists the library's
 // pages; a [[link]] in the question comes back in its answer, as an agent cites a page.
 
@@ -248,14 +248,14 @@ const questionsAsked = async (app: ElectronApplication) => (await callsTo(app, "
 /** The button that asks the suggested `question`, which the card shows: Ask this, in a group named for its question. */
 const askThis = (setup: Page, question = SUGGESTED) => setup.getByRole("group", { name: question }).getByRole("button", { name: "Ask this" });
 
-test("Ask suggests a question about the new page and answers it", async () => {
+test("Ask suggests a question about the new note and answers it", async () => {
   const { app, setup } = await filedFirstThought(firstRun({ claude: filingClaude() }).env);
   // Only the Ask step asks: a question sent while Filing shows asks nothing.
   await call(app, "askInSetup", SUGGESTED);
   expect((await setupSnap(app)).answer).toBeNull();
   await setup.getByRole("button", { name: "Continue" }).click();
   await expect(setup.getByRole("heading", { name: "Ask me about it." })).toBeVisible();
-  await expect(setup.getByText("I answer from your library only, and show you the pages I used.", { exact: true })).toBeVisible();
+  await expect(setup.getByText("I answer from your library only, and show you the notes I used.", { exact: true })).toBeVisible();
   // The suggestion is on the stage's card, and in words beside the secondary Ask this, which asks it, its title quoted.
   // Before an answer, Skip is the quiet way on, nothing is primary, and there is no Back. Zel looks up at the card.
   await expect(setup.getByRole("article")).toContainText(SUGGESTED);
@@ -294,7 +294,7 @@ test("an answer's links become the pages it used", async () => {
   await field.fill(`What is in [[${name}]]?`);
   await field.press("Enter");
   await expect(field).toHaveValue(""); // asked: the box is ready for the next one
-  await expect(setup.getByText("Pages I used:", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(setup.getByText("Notes I used:", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(setup.getByText("Ideas", { exact: true })).toBeVisible(); // the page's shelf
   const source = setup.getByRole("button", { name: "Plant tulips in October", exact: true });
   await expect(source).toHaveAttribute("data-variant", "page");

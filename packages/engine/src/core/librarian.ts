@@ -116,8 +116,11 @@ export interface ScreenCapture {
   audio?: string | null;
   /** The speech-to-text engine that transcribed the comment. */
   transcriber?: string | null;
-  /** Where it was taken; `heard` is what the speech model recognised of the comment, when the dictionary corrected it. */
-  context?: { app?: string; title?: string; url?: string; heard?: string };
+  /**
+   * Where it was taken; `heard` is what the speech model recognised of the comment, when the dictionary corrected it; `continues`, the
+   * library-relative page it was taken to add to.
+   */
+  context?: { app?: string; title?: string; url?: string; heard?: string; continues?: string };
 }
 
 export interface CallCapture {
@@ -384,7 +387,9 @@ export class Librarian {
     const attachments = this.#attachments(original.toString("utf8"));
     const before = snapshot(root);
     const call = this.#isCall(original.toString("utf8"));
-    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term), instructions });
+    const continues = this.#continues(original.toString("utf8"));
+    const files = original.toString("utf8").includes("raw/attachments/");
+    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, continues, files, names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term), instructions });
     // Only a caller that asked for the steps is told them: Claude Code's come from its own events, and other agents'
     // from the folder. The changes below are read from `after`, the library as the run left it, whether or not they are.
     const { result, guarded, after } = await this.#run(prompt, { write: true, images: attachments, signal, before, steps });
@@ -448,6 +453,18 @@ export class Librarian {
   #isCall(captureText: string): boolean {
     const [frontmatter] = splitFrontmatter(captureText);
     return frontmatterFields(frontmatter).get("source") === "call";
+  }
+
+  /**
+   * The page the capture continues (its `continues:` field, set when the owner recorded it from that page): library-relative, a
+   * Markdown page on a shelf that is there now. Null for anything else, so a field can never point the agent outside the library.
+   */
+  #continues(captureText: string): string | null {
+    const [frontmatter] = splitFrontmatter(captureText);
+    const rel = frontmatterFields(frontmatter).get("continues")?.replace(/^["']|["']$/g, "").trim();
+    if (!rel || isAbsolute(rel) || !rel.endsWith(".md") || rel.split(/[\\/]/).some((part) => part === ".." || part === "")) return null;
+    if (SOURCES.some((source) => rel.startsWith(source))) return null; // a page, never a capture or a recording
+    return isRegularFile(join(this.vault.root, rel)) ? rel : null;
   }
 
   /** The capture's screenshots that really are images inside the library, vault-relative. */

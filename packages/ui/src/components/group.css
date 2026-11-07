@@ -15,6 +15,36 @@
   border-top: 1px solid var(--av-line-hair);
 }
 .av-group-box > :first-child { border-top: 0; }
+/* Rows shown only while the setting above them is on: their height grows from nothing (a grid row from 0fr to 1fr) as they fade in,
+   and shrinks back as they fade out. Inside, they are rows as any other, each with its hairline above. */
+.av-group-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--av-duration-card) var(--av-ease-out),
+    opacity var(--av-duration-card) var(--av-ease-out);
+}
+.av-group-reveal[data-open] { grid-template-rows: 1fr; opacity: 1; }
+.av-group-reveal-rows { min-height: 0; overflow: hidden; }
+.av-group-reveal-rows > .av-group-row {
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-12);
+  min-height: 40px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--av-line-hair);
+}
+.av-group-reveal[data-open] .av-group-reveal-rows > .av-group-row { animation: av-group-reveal-in var(--av-duration-card) var(--av-ease-land) backwards; }
+.av-group-reveal[data-open] .av-group-reveal-rows > .av-group-row:nth-child(2) { animation-delay: calc(var(--av-duration-quick) * 0.5); }
+@keyframes av-group-reveal-in {
+  from { transform: translateY(-6px); }
+  to { transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .av-group-reveal { transition: none; }
+  .av-group-reveal[data-open] .av-group-reveal-rows > .av-group-row { animation: none; }
+}
 .av-group-row-text { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; color: var(--av-ink); }
 .av-group-row-text small { font: var(--av-text-footnote); color: var(--av-ink-secondary); }
 .av-group-row-control { display: flex; flex: none; align-items: center; gap: var(--av-space-8); }

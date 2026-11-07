@@ -1,7 +1,7 @@
 import { inflateSync } from "node:zlib";
 import type { MenuBarState } from "@avanzel/ui/menu-bar";
 import { describe, expect, it } from "vitest";
-import { encodePng, faceIcon, type Bitmap } from "../src/main/png.ts";
+import { encodePng, faceIcon, withBadge, type Bitmap } from "../src/main/png.ts";
 
 // Keyed by every MenuBarState, so a state the design system adds fails the typecheck here until its face is tested too.
 const FACE_STATES: Record<MenuBarState, true> = { idle: true, listening: true, filing: true, filed: true, "needs-you": true, asleep: true };
@@ -70,5 +70,27 @@ describe("faceIcon", () => {
     // the same art, drawn finer: both scales cover about the same share of the face
     const share = (face: Bitmap) => alphas(face).reduce((sum, a) => sum + a, 0) / 255 / (face.width * face.height);
     expect(Math.abs(share(faceIcon("idle", 2)) - share(faceIcon("idle", 1)))).toBeLessThan(0.01);
+  });
+});
+
+describe("withBadge", () => {
+  it("leaves the face as it is with nothing to count", () => {
+    const face = faceIcon("filing", 2);
+    expect(withBadge(face, 0, 2)).toBe(face);
+  });
+
+  it("puts a disc at the face's top right with the count cut out of it, and a clear ring between them", () => {
+    const badged = withBadge(faceIcon("filing", 2), 3, 2);
+    // At 2x the disc is centred at (28, 8), 8 px across; its left edge is solid, its middle has the figure cut out.
+    expect(alphaAt(badged, 22, 8)).toBe(255);
+    expect(alphaAt(badged, 28, 8)).toBeLessThan(255);
+    // The ring around it is cleared, where the face's own circle passes.
+    expect(alphaAt(badged, 19, 13)).toBeLessThan(alphaAt(faceIcon("filing", 2), 19, 13) || 1);
+  });
+
+  it("draws each count apart, and ten and more as one", () => {
+    const pictures = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => alphas(withBadge(faceIcon("idle", 1), n, 1)).join(","));
+    expect(new Set(pictures).size).toBe(10);
+    expect(alphas(withBadge(faceIcon("idle", 1), 25, 1))).toEqual(alphas(withBadge(faceIcon("idle", 1), 10, 1)));
   });
 });

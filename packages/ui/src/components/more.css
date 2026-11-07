@@ -1,0 +1,11 @@
+/* The choices More shows: in the row as if they had always been there, each coming in from the left a moment after the one before. */
+.av-more { display: contents; }
+.av-more > * { animation: av-more-in var(--av-duration-card) var(--av-ease-land) backwards; }
+.av-more > :nth-child(2) { animation-delay: calc(var(--av-duration-quick) * 0.4); }
+.av-more > :nth-child(3) { animation-delay: calc(var(--av-duration-quick) * 0.8); }
+.av-more > :nth-child(4) { animation-delay: calc(var(--av-duration-quick) * 1.2); }
+.av-more > :nth-child(n + 5) { animation-delay: calc(var(--av-duration-quick) * 1.6); }
+@keyframes av-more-in {
+  from { opacity: 0; transform: translateX(-8px) scale(0.92); }
+  to { opacity: 1; transform: none; }
+}

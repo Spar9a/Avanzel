@@ -34,6 +34,7 @@ function SavedCard({ state }: { state: StateOf<"saved"> }) {
   const address = state.context?.url?.replace(/^https?:\/\//, "");
   return (
     <Card
+      look="panel"
       label={screen ? (app ?? "Screen") : "Thought"}
       placeholder="No comment"
       stamp={state.undone ? undefined : { word: "saved", date: day }}

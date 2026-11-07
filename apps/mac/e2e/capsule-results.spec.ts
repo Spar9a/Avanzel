@@ -144,11 +144,15 @@ test("a filed card is the words stamped Filed, with who filed them and how long 
   await expect(folder.getByRole("button", { name: "Garden plan", exact: true })).toHaveAttribute("data-variant", "link");
   await expect(folder.getByText("updated", { exact: true })).toBeVisible();
   expect(await leftOf(folder.getByText("projects", { exact: true }))).toBeLessThan(await leftOf(folder.getByRole("button")));
-  // The columns line up from row to row: each title starts where the others do, and each caption ends where the others do.
+  // The titles line up from row to row, each starting where the others do, and each badge stands right after its own title.
   const titleAt = [made, changed, folder].map((row) => leftOf(row.getByRole("button")));
   expect(new Set(await Promise.all(titleAt)).size).toBe(1);
   const right = async (locator: Locator) => { const box = (await locator.boundingBox())!; return box.x + box.width; };
-  expect(new Set(await Promise.all([made.getByText("new", { exact: true }), changed.getByText("updated", { exact: true }), folder.getByText("updated", { exact: true })].map(right))).size).toBe(1);
+  for (const [row, caption] of [[made, "new"], [changed, "updated"], [folder, "updated"]] as const) {
+    const gapAfter = (await leftOf(row.getByText(caption, { exact: true }))) - (await right(row.getByRole("button")));
+    expect(gapAfter).toBeGreaterThanOrEqual(0);
+    expect(gapAfter).toBeLessThanOrEqual(16);
+  }
   // Three pages are all of them: nothing is left to count.
   await expect(card.getByText(/^and \d+ more$/)).toHaveCount(0);
   await expectInPanel(capsule);
@@ -216,7 +220,7 @@ test("a filed card clips long words to three lines while its pages show, and the
   // The Japanese title is cut where its column ends, and shows its start, and its "…".
   await expect(card.getByRole("button", { name: /^日本語/ })).toHaveText(/^日本語.*…$/);
   const folders = card.getByText("a-folder-whose-name-goes-on-and-on-and-on", { exact: true });
-  expect((await folders.boundingBox())!.width).toBeLessThanOrEqual(96); // the folder's name is cut off, with "…", at the column's width
+  expect((await folders.boundingBox())!.width).toBeLessThanOrEqual(96.5); // the folder's name is cut off, with "…", at the column's width (a part of a pixel past it is the text's rounding)
   expect(await folders.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
   await expect(card.getByText("and 1 more", { exact: true })).toBeVisible();
   await expectInPanel(capsule);
@@ -241,21 +245,20 @@ test("a thought the filing card showed whole is shown whole on the card that is 
   });
   await expect(card.getByText(thought, { exact: true })).toBeVisible();
   const filing = await room();
-  expect(filing.whole).toBe(2 * filing.pitch);
-  expect(filing.shown).toBe(filing.whole);
+  expect(filing.shown).toBe(filing.whole); // shown whole, however many lines the card's face takes for it
   // Filed, with its pages listed under it: three lines, all of them shown.
   await call(app, "setCapsule", filedCard({ text: thought }));
   await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toBeVisible();
   const filed = await room();
-  expect(filed.whole).toBe(3 * filed.pitch);
-  expect(filed.shown).toBe(filed.whole); // its end, "co-host.", is not cut off
+  expect(filed.whole).toBeLessThanOrEqual(filing.whole + filed.pitch); // the stamp takes at most the first line's end
+  expect(filed.shown).toBe(filed.whole); // its end is not cut off
   await expectInPanel(capsule);
   // A screen comment of two lines is saved the same way: its stamp takes the first line's end, and the picture is under the words.
   const thumbnail = `data:image/png;base64,${readFileSync(screenshotFixture()).toString("base64")}`;
   await call(app, "setCapsule", savedCard({ text: thought, thumbnail, context: { app: "Safari", title: "Growing basil", url: "https://example.com/basil" } }));
   await expect(card.getByRole("img", { name: `Saved, ${stampDay()}`, exact: true })).toBeVisible();
   const saved = await room();
-  expect(saved.whole).toBe(3 * saved.pitch);
+  expect(saved.whole).toBeLessThanOrEqual(filing.whole + saved.pitch);
   expect(saved.shown).toBe(saved.whole);
   await expectInPanel(capsule);
   await app.close();
@@ -267,7 +270,7 @@ test("a filing that only noted its capture says so: the card is stamped Noted, a
   const said = card.getByRole("status");
   await call(app, "setCapsule", filedCard({ noted: true, pages: [] }));
   await expect(barOf(capsule)).toHaveCount(0); // no bar: it is all on the card
-  await expect(said).toHaveText("Nothing new to file. Claude Code noted it in the log.");
+  await expect(said).toHaveText("No note was made. Claude Code noted it in the log.");
   expect(await cardButtons(capsule)).toEqual(["Undo", "Hide"]); // no pages: nothing to Open
   await expect(card.getByRole("button", { name: "Undo", exact: true })).toHaveAttribute("data-variant", "secondary");
   await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
@@ -278,7 +281,7 @@ test("a filing that only noted its capture says so: the card is stamped Noted, a
   // Without a commit there is nothing to take back.
   await call(app, "setCapsule", filedCard({ noted: true, pages: [], canUndo: false }));
   await expect(card.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
-  await expect(said).toHaveText("Nothing new to file. Claude Code noted it in the log.");
+  await expect(said).toHaveText("No note was made. Claude Code noted it in the log.");
   expect(await cardButtons(capsule)).toEqual(["Hide"]);
   // And a filing that wrote pages but left no commit offers Open and no Undo.
   await call(app, "setCapsule", filedCard({ canUndo: false }));
@@ -313,7 +316,7 @@ test("a filed card whose words the engine put back says so in its head: “Your 
   await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toBeVisible();
   // A filing that only noted its capture says it too, in the head and over the footer's sentence, which stays.
   await call(app, "setCapsule", filedCard({ noted: true, pages: [], restored: true }));
-  const noted = card.getByText("Nothing new to file. Claude Code noted it in the log.", { exact: true });
+  const noted = card.getByText("No note was made. Claude Code noted it in the log.", { exact: true });
   await expect(noted).toBeVisible(); // the new card has been drawn: the line below is its own, not the previous card's
   await expect(line).toBeVisible();
   expect((await line.boundingBox())!.y).toBeLessThan((await noted.boundingBox())!.y);
@@ -351,7 +354,7 @@ test("a reprinted filed card is the same card, its stamp still and dated the day
   // A reprint of a filing that only noted its capture is stamped Noted, with its day.
   await call(app, "setCapsule", filedCard({ noted: true, pages: [], reprint: { filedAt: day.getTime() } }));
   await expect(card.getByRole("img", { name: `Noted, ${stampDay(day)}`, exact: true })).toBeVisible();
-  await expect(said).toHaveText("Nothing new to file. Claude Code noted it in the log.");
+  await expect(said).toHaveText("No note was made. Claude Code noted it in the log.");
   // The card a filing puts up has no reprint: stamped today, and it lands.
   await call(app, "setCapsule", filedCard());
   await expect(card.getByRole("img", { name: `Filed, ${stampDay()}`, exact: true })).toHaveAttribute("data-animate", "");
@@ -377,7 +380,7 @@ test("a reprint of a capture with no words says No comment, and draws no words",
   await expectInPanel(capsule);
   // A reprint of a filing that only noted its capture says it in the same way.
   await call(app, "setCapsule", filedCard({ text: "", noted: true, pages: [], reprint: { filedAt: day.getTime() } }));
-  await expect(card.getByText("Nothing new to file. Claude Code noted it in the log.", { exact: true })).toBeVisible();
+  await expect(card.getByText("No note was made. Claude Code noted it in the log.", { exact: true })).toBeVisible();
   await expect(card.getByText("No comment", { exact: true })).toBeVisible();
   await expect(card.locator(".words")).toHaveCount(0);
   // A card with words has them, and no placeholder.
@@ -400,13 +403,13 @@ test("a filed card with no words does not say that the words are kept, though th
   await expect(line).toHaveCount(0);
   // Nor does a filing that only noted its capture.
   await call(app, "setCapsule", filedCard({ text: "", restored: true, noted: true, pages: [] }));
-  await expect(card.getByText("Nothing new to file. Claude Code noted it in the log.", { exact: true })).toBeVisible(); // the new card has been drawn
+  await expect(card.getByText("No note was made. Claude Code noted it in the log.", { exact: true })).toBeVisible(); // the new card has been drawn
   await expect(line).toHaveCount(0);
   // Words that were put back do say it, on either card.
   await call(app, "setCapsule", filedCard({ restored: true }));
   await expect(line).toBeVisible();
   await call(app, "setCapsule", filedCard({ restored: true, noted: true, pages: [] }));
-  await expect(card.getByText("Nothing new to file. Claude Code noted it in the log.", { exact: true })).toBeVisible();
+  await expect(card.getByText("No note was made. Claude Code noted it in the log.", { exact: true })).toBeVisible();
   await expect(line).toBeVisible();
   await app.close();
 });
@@ -708,7 +711,7 @@ test("a page the agent made a link to another file opens nothing, by its title o
   const [page] = filesUnder(library, "ideas");
   const rel = `ideas/${page}`;
   expect(lstatSync(path.join(library, rel)).isSymbolicLink()).toBe(true);
-  const said = { title: "Avanzel didn't open that page.", body: `${rel} goes through a link, which could lead anywhere, so nothing was opened.` };
+  const said = { title: "Avanzel didn't open that note.", body: `${rel} goes through a link, which could lead anywhere, so nothing was opened.` };
   /** How many presses have been answered: by opening something, or by the notification. */
   const answered = async () => (await openedWith(app)).length + (await notified(app, said.title)).length;
   // Its title opens nothing, and the card stays ...
@@ -727,7 +730,7 @@ test("a page the agent made a link to another file opens nothing, by its title o
   await app.close();
 });
 
-/** A stand-in Claude Code that files a second thought as the real one does: one new page, and goals/run.md, which the first filing changed too. */
+/** A stand-in Claude Code that files a second thought as the real one does: one new note, and goals/run.md, which the first filing changed too. */
 function secondFiler(): string {
   const filer = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-filer-")), "filer.mjs");
   writeFileSync(

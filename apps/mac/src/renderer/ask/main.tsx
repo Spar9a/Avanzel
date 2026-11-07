@@ -445,7 +445,7 @@ function SaveAsPage({
         {undo === "refused" && <Notice tone="error" title={undoRefused.title}>{undoRefused.body}</Notice>}
         {(offered || saved) && (
           <Actions align="start">
-            {offered && <Button size="small" disabled={undoing} onClick={onSave}>Save as a page</Button>}
+            {offered && <Button size="small" disabled={undoing} onClick={onSave}>Save as a note</Button>}
             {saved && saved.commit !== null && undo !== "refused" && (
               <Button size="small" busy={undo === "asked"} disabled={saveRuns && undo !== "asked"} onClick={onUndo}>Undo</Button>
             )}
@@ -521,7 +521,7 @@ function Answer({ result }: { result: AskResult }) {
       </Stack>
       {result.sources.length > 0 && (
         <Stack gap={4}>
-          <Text variant="footnote" tone="secondary">Pages used:</Text>
+          <Text variant="footnote" tone="secondary">Notes used:</Text>
           {result.sources.map((page) => (
             <Row key={page.path} gap={6} wrap>
               {isShelf(page.shelf) && <ShelfTag shelf={page.shelf} />}

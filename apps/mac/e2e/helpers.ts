@@ -422,7 +422,8 @@ export async function openSettings(app: ElectronApplication, pane = "General"): 
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
   await settings.getByRole("radiogroup", { name: "Section" }).getByRole("radio", { name: pane, exact: true }).click();
-  await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
+  // The pane's own heading (level 2): a group in it may have the same name, as Shortcuts' Shortcuts group does.
+  await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
   return settings;
 }
 

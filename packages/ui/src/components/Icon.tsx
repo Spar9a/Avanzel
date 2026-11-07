@@ -20,7 +20,17 @@ const ICONS = {
   clock: { d: "M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Z M8 5v3.2l2.1 1.3" },
   chevron: { d: "M6.5 4l4 4-4 4" },
   plus: { d: "M8 3.5v9M3.5 8h9" },
-  screen: { d: "M2 5V3a1 1 0 0 1 1-1h2 M11 2h2a1 1 0 0 1 1 1v2 M14 11v2a1 1 0 0 1-1 1h-2 M5 14H3a1 1 0 0 1-1-1v-2 M6.5 6.5h3v3h-3Z" },
+  /** A bin: a page of the library moved to the Trash. */
+  trash: { d: "M3 4.5h10 M6.5 4.5V3h3v1.5 M4.5 4.5l.6 8.2a1 1 0 0 0 1 .8h3.8a1 1 0 0 0 1-.8l.6-8.2 M7 7v4 M9 7v4" },
+  /** A page with a + in its corner: something added to a recording or a page (Add, Attach a file). */
+  attach: { d: "M9 2.5H5a1.5 1.5 0 0 0-1.5 1.5v8A1.5 1.5 0 0 0 5 13.5h3M9 2.5 12.5 6v1.5M9 2.5V6h3.5 M12 10v4M10 12h4" },
+  copy: { d: "M5.5 5.5V3.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2 M3.5 5.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z" },
+  pen: { d:"M3 13l.8-3.2 6.7-6.7a1.4 1.4 0 0 1 2 0l.4.4a1.4 1.4 0 0 1 0 2l-6.7 6.7Z M9.5 4.1l2.4 2.4" },
+  box: { d: "M3.5 3.5h9a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z" },
+  ring: { d: "M8 2.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11Z" },
+  arrow: { d: "M3 13 12.5 3.5 M6.5 3.5h6v6" },
+  display: { d:"M2.5 2.5h11a1 1 0 0 1 1 1V10a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1Z M5.5 14h5 M8 11v3" },
+  screen: { d:"M2 5V3a1 1 0 0 1 1-1h2 M11 2h2a1 1 0 0 1 1 1v2 M14 11v2a1 1 0 0 1-1 1h-2 M5 14H3a1 1 0 0 1-1-1v-2 M6.5 6.5h3v3h-3Z" },
   pause: { d: "M4.5 3.5h2.5v9H4.5Z M9 3.5h2.5v9H9Z", fill: true },
   spark: { d: "M8 1.8 9.2 6.8 14.2 8 9.2 9.2 8 14.2 6.8 9.2 1.8 8 6.8 6.8Z", fill: true },
   moon: { d: "M12.6 10.3A5.3 5.3 0 0 1 5.7 3.4 5.3 5.3 0 1 0 12.6 10.3Z", fill: true },

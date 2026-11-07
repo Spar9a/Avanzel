@@ -1,7 +1,8 @@
 // Avanzel for Mac: a menu-bar app. No main window, and no Dock icon except while setup is open.
-import { app, Menu, session } from "electron";
+import { app, BrowserWindow, Menu, nativeImage, session } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { appIconPng } from "./app-icon.ts";
 import { Controller } from "./controller.ts";
 import { registerIpc } from "./ipc.ts";
 import { loginShellPath, widenedPath } from "./shell-path.ts";
@@ -51,6 +52,15 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     app.dock?.hide();
+    // A development build runs inside Electron's own app, whose atom the Dock and the app switcher would show: Zel's icon instead, as the
+    // packaged app has it (build/icon.icns, made from the same drawing).
+    if (!app.isPackaged) {
+      try {
+        app.dock?.setIcon(nativeImage.createFromBuffer(appIconPng(512)));
+      } catch (error) {
+        console.warn("app icon", error);
+      }
+    }
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }]));
     const ours = (url: string) => url.startsWith(`file://${DIST}`);
     session.defaultSession.setPermissionRequestHandler((contents, permission, callback) =>
@@ -64,5 +74,27 @@ if (!app.requestSingleInstanceLock()) {
     // Only once it has started, so the launch itself never counts as opening Avanzel again.
     app.on("activate", () => controller?.showHome());
     if (process.env.AVANZEL_TEST === "1") (globalThis as { __avanzel?: Controller }).__avanzel = controller;
+    if (process.env.AVANZEL_DEV_RELOAD === "1") listenToDevRunner();
+  });
+}
+
+/**
+ * Run from source by scripts/dev.mjs, Avanzel takes its lines on stdin: "reload" when a window's code was rebuilt (every window
+ * reloads, the main process and a recording in it go on), "quit" when the main process was (the usual quit, so a run stops safely).
+ */
+function listenToDevRunner(): void {
+  let pending = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk: string) => {
+    pending += chunk;
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines.map((l) => l.trim())) {
+      if (line === "reload") {
+        for (const win of BrowserWindow.getAllWindows()) if (!win.isDestroyed()) win.webContents.reloadIgnoringCache();
+      } else if (line === "quit") {
+        app.quit();
+      }
+    }
   });
 }

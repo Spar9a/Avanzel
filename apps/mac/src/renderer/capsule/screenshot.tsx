@@ -10,7 +10,7 @@ import type { ScreenContext } from "../../shared/ipc.ts";
 export function ScreenshotCard({ thumbnail, context }: { thumbnail: string; context?: ScreenContext }) {
   const app = context?.app;
   return (
-    <Card label={app ?? "Screen"} ruled={false}>
+    <Card look="panel" label={app ?? "Screen"} ruled={false}>
       <img className="thumbnail" src={thumbnail} alt={app ? `Screenshot of ${app}` : "Screenshot"} />
     </Card>
   );

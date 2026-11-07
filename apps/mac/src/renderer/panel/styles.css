@@ -25,6 +25,96 @@
 .panel-pad {
   padding: var(--av-space-16);
 }
+/* Processing draws the capsule's own cards (filed, stopped, a problem): their layout as the capsule's window has it (capsule/styles.css).
+   The words, kept with their line breaks and cut off after four lines (three or two where a card has more under them). */
+.words {
+  max-height: 4lh;
+  overflow: clip;
+  white-space: pre-wrap;
+}
+.words.lines-3 { max-height: 3lh; }
+.words.lines-2 { max-height: 2lh; }
+/* The filed card's pages, a row each, in two columns that line up from row to row: the shelf, and the title with whether it is new. */
+.page-list {
+  display: grid;
+  /* The shelf's column exactly as wide as its widest chip, uncapped, so a chip never runs under the title beside it. */
+  grid-template-columns: max-content minmax(0, 1fr);
+  row-gap: var(--av-space-6);
+  column-gap: var(--av-space-2);
+  align-items: center;
+}
+.page {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  align-items: center;
+}
+.page-title {
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-6);
+  min-width: 0;
+  overflow-x: clip;
+  padding: 0 var(--av-space-4);
+}
+.slot .fill { flex: 1; min-width: 0; }
+/* Library: a column as tall as its tab at least, so a line with no notes to list can sit in the middle of the room left. */
+.panel-library {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+.panel-empty {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  padding: var(--av-space-16) var(--av-space-24);
+}
 .panel-foot {
   padding: var(--av-space-6) var(--av-space-12) var(--av-space-8);
+}
+/* What takes the room left in its row: Library's search field beside the filters, the waiting line beside Stop. */
+.panel-grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Library's filter and sort: half the row between them, always, so picking one never moves the field or the other. Each takes its
+   share and cuts a long choice short; the filter's clear button sits between them. */
+.panel-tools {
+  display: flex;
+  flex: 0 0 50%;
+  align-items: center;
+  gap: var(--av-space-4);
+  min-width: 0;
+}
+.panel-tool {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.panel-tool:last-child {
+  justify-content: flex-end;
+}
+/* Type a thought…'s field, folded open under its tile: the whole width of the choices, with room around it for its focus ring,
+   which the fold would otherwise cut, and a gap above the tile's bottom edge. */
+.panel-fold-field {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: var(--av-space-4) var(--av-space-4) var(--av-space-8) var(--av-space-2);
+}
+/* A deleted page's Undo: over the foot of the panel, in the middle, above whatever the list scrolls under it. */
+.panel-undo {
+  position: fixed;
+  left: var(--av-space-16);
+  right: var(--av-space-16);
+  bottom: var(--av-space-48);
+  z-index: var(--av-layer-overlay);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.panel-undo > * {
+  pointer-events: auto;
 }

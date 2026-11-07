@@ -25,10 +25,36 @@
   box-shadow: inset 0 0 0 1px var(--av-accent-fill), var(--av-shadow-card);
 }
 
+/* A file dragged over the row: a dashed violet edge and a violet wash over it, with the words saying what a drop does, over its middle. */
+.av-page-row-drop {
+  position: absolute;
+  inset: 0;
+  z-index: var(--av-layer-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  border: 1.5px dashed var(--av-accent-fill);
+  background: color-mix(in srgb, var(--av-accent-fill) 22%, transparent); /* the page still shows through: which one the file lands on */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--av-duration-quick) var(--av-ease-out);
+}
+.av-page-row[data-dropping] .av-page-row-drop { opacity: 1; }
+.av-page-row-drop-words {
+  padding: 4px 12px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-accent-fill);
+  color: var(--av-ink-on-accent);
+  font: var(--av-text-headline);
+  letter-spacing: var(--av-text-headline-tracking);
+}
+/* The ways to add to an open page, over its summary. */
+.av-page-row-lead { margin-bottom: 12px; }
+
 /* The row's top: the part a click opens and folds, and its buttons beside the title. */
 .av-page-row-top {
-  display: flex;
-  align-items: flex-start;
+  position: relative;
   min-width: 0;
 }
 .av-page-row-head {
@@ -36,22 +62,23 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  flex: 1;
+  width: 100%;
   min-width: 0;
   margin: 0;
   border: 0;
-  padding: 10px 8px 10px 12px;
+  padding: 10px 12px;
   border-radius: inherit;
   background: transparent;
   color: inherit;
   text-align: left;
-  cursor: default;
 }
 .av-page-row-title {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  min-height: 28px; /* as tall as the buttons beside it, so the line under it clears them */
+  padding-right: var(--_actions, 0px);
 }
 .av-page-row-name {
   min-width: 0;
@@ -79,6 +106,19 @@
   letter-spacing: var(--av-text-caption-tracking);
   color: var(--av-ink-secondary);
 }
+.av-page-row-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  color: var(--av-ink);
+}
+.av-page-row-status > i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-accent-fill);
+}
 .av-page-row-tags { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .av-page-row-date { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
@@ -86,8 +126,10 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: none;
-  padding: 8px 8px 0 0;
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 8px 8px 0 4px;
 }
 
 /* The details fold open: the height grows from nothing, and what is inside fades in a moment after. Folding is quicker. */
@@ -117,4 +159,46 @@
   opacity: 1;
   transform: none;
   transition: opacity var(--av-duration-base) var(--av-ease-land) var(--av-duration-quick), transform var(--av-duration-base) var(--av-ease-land) var(--av-duration-quick);
+}
+
+/* Taken away (`removing`): the row turns to dust. A front sweeps from the left (`--_wipe`, moved by the dust's own frames), taking
+   the row with it, while the grains drift off over a canvas that reaches past the row's edges. Then the row closes up. */
+.av-page-row-dust {
+  position: absolute;
+  inset: -32px;
+  width: calc(100% + 64px);
+  height: calc(100% + 64px);
+  z-index: var(--av-layer-raised);
+  pointer-events: none;
+}
+.av-page-row[data-dust] > :not(.av-page-row-dust) {
+  /* A mask reads only how opaque each point is: the ink stands for "all of it". */
+  -webkit-mask-image: linear-gradient(90deg, transparent var(--_wipe, 0%), var(--av-ink) calc(var(--_wipe, 0%) + 6%));
+  mask-image: linear-gradient(90deg, transparent var(--_wipe, 0%), var(--av-ink) calc(var(--_wipe, 0%) + 6%));
+}
+/* The row's own fill goes with the front too: it moves to a layer under the words, masked as they are. */
+.av-page-row[data-dust] {
+  background: transparent;
+  box-shadow: none;
+}
+.av-page-row[data-dust]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--av-surface-group);
+  box-shadow: inset 0 0 0 0.5px var(--av-line-hair);
+  -webkit-mask-image: linear-gradient(90deg, transparent var(--_wipe, 0%), var(--av-ink) calc(var(--_wipe, 0%) + 6%));
+  mask-image: linear-gradient(90deg, transparent var(--_wipe, 0%), var(--av-ink) calc(var(--_wipe, 0%) + 6%));
+}
+.av-page-row[data-gone] {
+  height: var(--_height, auto);
+  overflow: hidden;
+  opacity: 0;
+  animation: av-page-row-close var(--av-duration-base) var(--av-ease-leave) forwards;
+}
+.av-page-row[data-gone] > * { visibility: hidden; }
+@keyframes av-page-row-close {
+  from { height: var(--_height); }
+  to { height: 0; margin-top: calc(var(--av-space-8) * -1); }
 }

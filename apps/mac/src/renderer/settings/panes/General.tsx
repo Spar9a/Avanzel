@@ -41,7 +41,7 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
             </Row>
           </GroupRow>
           {/* The shelves, in the library's panel under its row: a row holds a label and a control, not a line of tabs, so
-              they sit in a box of their own. Each tab carries its total, read as "3 pages". */}
+              they sit in a box of their own. Each tab carries its total, read as "3 notes". */}
           <div className="settings-shelves">
             <ShelfDrawer total align="start" counts={lib.shelves} />
           </div>

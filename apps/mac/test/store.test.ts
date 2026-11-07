@@ -55,7 +55,7 @@ describe("settings store", () => {
 
   it("an older settings file, with four shortcuts, gets ⌥⇧Z for Undo the last filing", () => {
     const four = { dictate: "Alt+D", capture: "Alt+Shift+S", type: "Alt+Shift+Space", ask: "Alt+Shift+A" };
-    expect(normalizeSettings({ shortcuts: four }).shortcuts).toEqual({ ...four, undo: "Alt+Shift+Z" });
+    expect(normalizeSettings({ shortcuts: four }).shortcuts).toEqual({ ...four, undo: "Alt+Shift+Z", call: "Alt+Shift+C", region: "Alt+Shift+R", shot: "Alt+Shift+X", shotScreen: "Alt+Shift+E", shotMarks: "Alt+Shift+M" });
   });
 
   it("drops the sounds setting an older file has: the app has no sounds", () => {

@@ -108,7 +108,8 @@ test("Use Codex makes Codex the agent that files, Use automatic hands the choice
   await expect(codex.getByRole("img", { name: "Chosen" })).toHaveCount(0);
   await expect(codex.getByRole("button", { name: "Use Codex" })).toBeVisible();
   await expect(settings.getByRole("heading", { name: "Claude Code", exact: true })).toBeVisible();
-  await expect(settings.getByRole("textbox", { name: "Claude Code model" })).toBeVisible();
+  // Claude Code's model is chosen from a list, which starts on the agent's own default.
+  await expect(settings.getByRole("group", { name: "Claude Code model: Agent's default" }).getByRole("button", { name: "Choose…" })).toBeVisible();
   await app.close();
 });
 

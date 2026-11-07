@@ -378,7 +378,7 @@ test("Undo on the filed card takes the filing back, and the note waits in the in
 
 test("an Undo git refuses says so on the card, and the edit made since stays", async () => {
   const { library, app, capsule } = await typedAndFiled();
-  // Meanwhile the new page is edited by hand, and the edit committed: undoing the filing would take the edit with it.
+  // Meanwhile the new note is edited by hand, and the edit committed: undoing the filing would take the edit with it.
   const [page = ""] = filesUnder(library, "ideas");
   const file = path.join(library, "ideas", page);
   writeFileSync(file, "# Tulips, by hand\n");
@@ -443,7 +443,7 @@ test("asking shows the agent's answer", async () => {
   // The question heads its answer, which ends with who answered and in how long. No link in it names a page, so none is listed.
   await expect(ask.getByRole("heading", { name: "What are my goals?", exact: true })).toBeVisible();
   await expect(ask.getByText(/^fake answered in \d+ s$/)).toBeVisible();
-  await expect(ask.getByText("Pages used:")).toHaveCount(0);
+  await expect(ask.getByText("Notes used:")).toHaveCount(0);
   await snap(ask, "9-ask");
   await app.close();
 });
@@ -459,7 +459,7 @@ test("Ask on a library with no pages says to say something first, and gives the 
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
   const empty = ask.getByText("Your shelves are empty. Say something first, then ask about it.", { exact: true });
-  const usual = ask.getByText("Answers come from your library only, with links to the pages they use.", { exact: true });
+  const usual = ask.getByText("Answers come from your library only, with links to the notes they use.", { exact: true });
   await expect(empty).toBeVisible();
   await expect(usual).toHaveCount(0);
   await snap(ask, "9-ask-empty-shelves");
@@ -484,7 +484,7 @@ test("an answer's links become buttons that open the pages they name", async () 
   // The fake agent repeats the question, so its answer links the page: the link reads as the words it gives, and the page
   // is a button beside its shelf.
   await expect(ask.getByText("Q: What about run-a-marathon?")).toBeVisible({ timeout: 60_000 });
-  await expect(ask.getByText("Pages used:", { exact: true })).toBeVisible();
+  await expect(ask.getByText("Notes used:", { exact: true })).toBeVisible();
   const page = ask.getByRole("button", { name: "Run a marathon", exact: true });
   await expect(page).toBeVisible();
   await expect(ask.getByText("Goals", { exact: true })).toBeVisible();
@@ -1328,7 +1328,7 @@ const CARD_STATES: [string, Record<string, unknown>, string][] = [
     "Waiting to file",
   ],
   ["filed", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: true, noted: false }, "Filed by Claude Code in 6 s"],
-  ["nothing new", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: false, noted: true }, "Nothing new to file. Claude Code noted it in the log."],
+  ["nothing new", { kind: "filed", text: "Plant tulips in October", agent: "Claude Code", seconds: 6, pages: [], canUndo: false, noted: true }, "No note was made. Claude Code noted it in the log."],
   [
     "a reprint",
     {
@@ -1410,7 +1410,9 @@ test("a dictation listens on a bar with its file mode, Cancel, Pause and Stop, a
   const atTheReview = choice.getByRole("radio", { name: "21:00", exact: true });
   await expect(now).toHaveAttribute("aria-checked", "true");
   await expect(atTheReview).toHaveAttribute("aria-checked", "false");
-  await expect(capsule.getByRole("button")).toHaveCount(3);
+  await expect(capsule.getByRole("button")).toHaveCount(4);
+  // Add first: a file, a screenshot or a video to go with the note, in the menu it opens over the bar.
+  await expect(bar.getByRole("button", { name: "Add a file, a screenshot or a video", exact: true })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Cancel the recording", exact: true })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Stop, and your agent files it now", exact: true })).toBeVisible();
@@ -1600,12 +1602,12 @@ test("Pause holds a recording's time and its limit, Resume goes on from there, a
   const bar = capsule.getByRole("status");
   const { startedAt } = (await call(app, "capsuleStateForTests")) as { startedAt: number };
   await expect.poll(() => Date.now() - startedAt, { timeout: 10_000, intervals: [250] }).toBeGreaterThan(2_000);
-  // Paused: the bar says so, the time stands still, and Pause becomes Resume.
+  // Paused: the voice and the time stand still, dimmed, in a bar of the same size, and Pause becomes Resume.
+  const wide = (await bar.boundingBox())!.width;
   await bar.getByRole("button", { name: "Pause", exact: true }).click();
-  await expect(bar.getByText("Paused", { exact: true })).toBeVisible();
-  // The word is whole, not cut to its end by the controls beside it.
-  const word = bar.getByText("Paused", { exact: true });
-  expect(await word.evaluate((el) => el.scrollWidth <= (el.parentElement?.clientWidth ?? 0) + 1)).toBe(true);
+  await expect(bar.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+  await expect(capsule.locator(".av-capsule-time[data-paused]")).toBeVisible();
+  expect((await bar.boundingBox())!.width).toBe(wide);
   const paused = (await call(app, "capsuleStateForTests")) as { kind: string; pausedAt?: number };
   expect(paused).toMatchObject({ kind: "listening" });
   expect(paused.pausedAt).toBeGreaterThan(startedAt);

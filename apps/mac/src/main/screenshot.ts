@@ -49,3 +49,33 @@ export function looksBlank(image: NativeImage): boolean {
   }
   return true;
 }
+
+
+/** How wide a file's preview is made, in pixels: twice the panel's column, for a sharp picture on a Retina screen. */
+const PREVIEW_WIDTH = 960;
+const PICTURE = /\.(png|jpe?g|gif|webp|heic|heif|tiff?|bmp)$/i;
+
+/**
+ * A preview of `file`, as wide as PREVIEW_WIDTH at most, in its own proportions: a picture itself, scaled down; anything else (a
+ * video's frame, a PDF's first page) as macOS's Quick Look draws it (`qlmanage`, which keeps the proportions, as Electron's own
+ * thumbnail does not). Null when there is none.
+ */
+export async function previewOf(file: string): Promise<NativeImage | null> {
+  if (PICTURE.test(file)) {
+    const image = nativeImage.createFromPath(file);
+    if (image.isEmpty()) return null;
+    return image.getSize().width > PREVIEW_WIDTH ? image.resize({ width: PREVIEW_WIDTH, quality: "good" }) : image;
+  }
+  const dir = mkdtempSync(path.join(tmpdir(), "avanzel-preview-"));
+  try {
+    await new Promise<void>((resolve) => {
+      execFile("/usr/bin/qlmanage", ["-t", "-s", String(PREVIEW_WIDTH), "-o", dir, file], { timeout: 15_000 }, () => resolve());
+    });
+    const made = path.join(dir, `${path.basename(file)}.png`);
+    if (!existsSync(made)) return null;
+    const image = nativeImage.createFromPath(made);
+    return image.isEmpty() ? null : image;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}

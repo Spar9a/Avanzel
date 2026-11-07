@@ -26,9 +26,9 @@ import {
 /** What Settings is sent now. */
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
 
-const PANES = ["General", "Voice", "Dictations", "Agents", "Reviews", "Privacy"];
+const PANES = ["General", "Voice", "Shortcuts", "Dictations", "Agents", "Reviews", "Privacy"];
 
-test("Settings moves between its six panes on its toolbar, by click and by the arrow keys", async () => {
+test("Settings moves between its seven panes on its toolbar, by click and by the arrow keys", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app);
   await expect(settings.getByRole("radiogroup", { name: "Section" }).getByRole("radio")).toHaveText(PANES);
@@ -36,7 +36,7 @@ test("Settings moves between its six panes on its toolbar, by click and by the a
     const radio = settings.getByRole("radio", { name: pane, exact: true });
     await radio.click();
     await expect(radio).toHaveAttribute("aria-checked", "true");
-    await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
+    await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
     await snap(settings, `settings-${pane.toLowerCase()}`);
   }
   // The arrow keys move along the toolbar, as in any segmented control, and the pane follows.
@@ -59,7 +59,7 @@ test("General shows the library with its shelves, and each of its controls appli
   // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
   const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
   const settings = await openSettings(app);
-  await expect(settings.getByText("3 pages on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("3 notes on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
   for (const shelf of ["Goals", "Ideas", "Problems", "Memories", "People", "Topics"]) {
     await expect(settings.getByText(shelf, { exact: true })).toBeVisible();
   }
@@ -138,7 +138,7 @@ test("Settings is sent a fresh snapshot when it has the focus again, and reading
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
   });
-  await expect(settings.getByText("1 page on six shelves. This folder has no git history, so changes can't be undone.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("1 note on six shelves. This folder has no git history, so changes can't be undone.", { exact: true })).toBeVisible();
   // The refresh only reads: no agent's sign-in was read, and the library's agent was asked nothing, since each costs quota.
   expect(await agentCalls(app)).toEqual(before);
   expect(existsSync(record)).toBe(false);
@@ -293,7 +293,7 @@ test("General says only what is true of the library's history: commits, automati
     saveSettings(library, { ...loadSettings(library), autoCommit });
     const app = await launch({ AVANZEL_LIBRARY: library, ...(usable ? {} : { AVANZEL_GIT_USABLE: "0" }) });
     const settings = await openSettings(app);
-    await expect(settings.getByText(`1 page on six shelves. ${line}`, { exact: true })).toBeVisible();
+    await expect(settings.getByText(`1 note on six shelves. ${line}`, { exact: true })).toBeVisible();
     // The snapshot carries what the line is made from: whether the folder has a .git, whether this Mac can run git, and
     // whether the library commits by itself.
     expect((await snapshot(app)).library).toMatchObject({ isGit: git, gitUsable: usable, autoCommit });
@@ -307,14 +307,14 @@ test("General looks for git again each time Settings has the focus while this Ma
   // AVANZEL_GIT_USABLE=0 plays a Mac whose only git is Apple's stub; the app keeps that answer until it is told to look again.
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_GIT_USABLE: "0" });
   const settings = await openSettings(app);
-  await expect(settings.getByText("1 page on six shelves. This Mac has no git yet, so changes can't be undone.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("1 note on six shelves. This Mac has no git yet, so changes can't be undone.", { exact: true })).toBeVisible();
   // The person installs the Command Line Tools from Terminal (here: the stand-in is dropped, and this Mac's own git is read) and
   // comes back to Settings: the window has the focus again, and git is looked for afresh before the pane is drawn.
   await app.evaluate(({ BrowserWindow }) => {
     delete process.env.AVANZEL_GIT_USABLE;
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
   });
-  await expect(settings.getByText("1 page on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("1 note on six shelves. Every change is a commit you can undo.", { exact: true })).toBeVisible();
   expect((await snapshot(app)).library).toMatchObject({ isGit: true, gitUsable: true });
   await app.close();
 });
@@ -401,7 +401,7 @@ test("a change the app can't keep says so wherever it is made, and stays as it w
   const fresh = async (pane: string) => {
     await settings.getByRole("radio", { name: pane === "Privacy" ? "General" : "Privacy", exact: true }).click();
     await settings.getByRole("radio", { name: pane, exact: true }).click();
-    await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
+    await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
     await expect(problem).toHaveCount(0);
   };
   blockWriting("settings.json");
@@ -420,12 +420,12 @@ test("a change the app can't keep says so wherever it is made, and stays as it w
   await expect(settings.getByRole("radio", { name: "Right away", exact: true })).toHaveAttribute("aria-checked", "true");
   expect((await snapshot(app)).app.fileMode).toBe("now");
 
-  // Voice: the microphone, and a shortcut.
+  // Voice: the microphone. Shortcuts: a shortcut.
   await fresh("Voice");
   await answerMenus(app, "System default");
   await settings.getByRole("group", { name: /^Microphone: / }).getByRole("button", { name: "Choose…" }).click();
   await refused();
-  await fresh("Voice");
+  await fresh("Shortcuts");
   const row = settings.getByRole("group", { name: "Type a thought", exact: true });
   await row.getByRole("button", { name: "Change", exact: true }).click();
   await settings.keyboard.press("Control+Alt+K");
@@ -746,7 +746,7 @@ test("Turn on the evening review that fails says so in General, and the review s
   await app.close();
 });
 
-test("Choose… is answered to the Settings window alone, not to another window's page", async () => {
+test("Choose… is answered to the Settings window alone, not to another window's note", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app, "Voice");
   await call(app, "openAsk");

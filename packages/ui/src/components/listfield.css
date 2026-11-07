@@ -73,3 +73,33 @@
   font: var(--av-text-footnote);
   color: var(--av-ink-secondary);
 }
+
+/* A collapsed list's popover: the field and the items on a raised card under its button, kept inside the window, scrolling past its
+   room. It comes in as a choice's menu does. */
+.av-list-field-pop {
+  position: fixed;
+  left: var(--_left, 0);
+  top: var(--_top, 0);
+  z-index: var(--av-layer-popover);
+  width: var(--_width, 280px);
+  max-height: var(--_max, 360px);
+  overflow-y: auto;
+  padding: var(--av-space-8);
+  border-radius: var(--av-radius-group);
+  background: var(--av-surface-raised);
+  box-shadow: 0 0 0 0.5px var(--av-line-control), var(--av-shadow-card);
+  color: var(--av-ink);
+  visibility: hidden;
+  transform-origin: top right;
+}
+.av-list-field-pop[data-above] { transform-origin: bottom right; }
+.av-list-field-pop[data-placed] {
+  visibility: visible;
+  animation: av-list-field-pop-in var(--av-duration-base) var(--av-ease-land);
+}
+@keyframes av-list-field-pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+/* Closed and empty, the button says so quietly. */
+.av-select[data-empty] .av-select-label { color: var(--av-ink-secondary); }

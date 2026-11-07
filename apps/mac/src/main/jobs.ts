@@ -22,6 +22,13 @@ export interface Recording {
    */
   forSetup: boolean;
   /**
+   * The library-relative page this dictation continues (Continue by voice, on a page in the panel's Library): its capture says so
+   * (`continues:`), it is filed at once, and the panel goes back to the page when it is.
+   */
+  continues?: string;
+  /** Files and screenshots added to the recording (Add), already copied into the library's raw/attachments: they go with its note. */
+  attachments?: Attachment[];
+  /**
    * A question for the Ask window (`pressDictate` while Ask is the key window and the shelves hold a page: `pressAsks`): its words go to
    * Ask's field (`heardQuestion`) and nowhere in the library, and it has no file mode.
    */
@@ -46,6 +53,8 @@ export interface Recording {
   timeUp?: () => void;
   /** Date.now() when it was paused, while it is; null while it listens. */
   pausedAt?: number | null;
+  /** The stop word, when the voice trigger heard it stop this recording: it is cut from the end of its words (`withoutStopWord`). */
+  stoppedByWord?: string;
   /** Asked to stop (the shortcut, the menu or the time limit); its audio is on the way. */
   stopping: boolean;
 }
@@ -72,6 +81,8 @@ export interface FilingJob {
   correction?: Correction;
   /** A line under the words on the filing card, e.g. why the recording itself wasn't kept. */
   detail?: string;
+  /** The page the note continues (`Recording.continues`): once it is filed, the panel opens Library on it. */
+  continues?: string;
   /**
    * Its run waits: for its turn in the app's queue (another run of Avanzel's own has it: `beginFiling`), or for the library (another
    * run has it, which the engine tells: `filingProgress`). The filing card says so until the run starts (`startRun`).
@@ -162,3 +173,10 @@ export interface Correction {
 
 export const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 export const lastLines = (text: string, n = 3) => text.trim().split("\n").filter(Boolean).slice(-n).join("\n");
+
+/** A file or screenshot added to a recording: where its copy is in the library, its own name, and when it was added (Date.now()). */
+export interface Attachment {
+  path: string;
+  name: string;
+  at: number;
+}

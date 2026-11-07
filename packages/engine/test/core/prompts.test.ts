@@ -109,6 +109,18 @@ describe("filePrompt", () => {
     );
     expect(filePrompt("inbox/x.md", "x", NOW, { instructions: "  " })).toContain(`network.\n\n${WHEN_DONE}`);
   });
+
+  it("asks for files the capture adds to be linked in the page's words, only when it adds some", () => {
+    expect(filePrompt("inbox/x.md", "x", NOW, { files: true })).toContain("link it in those words, as a Markdown link to its path");
+    expect(filePrompt("inbox/x.md", "x", NOW)).not.toContain("Markdown link to its path");
+  });
+
+  it("names the page a capture continues, first, so the agent updates it", () => {
+    const prompt = filePrompt("inbox/x.md", "x", NOW, { attachments: ["raw/a.png"], continues: "problems/fix-light.md" });
+    expect(prompt).toContain("recorded this capture from the page `problems/fix-light.md` to continue it. Update that page with it first");
+    expect(prompt.indexOf("problems/fix-light.md")).toBeLessThan(prompt.indexOf("raw/a.png"));
+    expect(filePrompt("inbox/x.md", "x", NOW, { continues: null })).not.toContain("continue it");
+  });
 });
 
 describe("askPrompt", () => {

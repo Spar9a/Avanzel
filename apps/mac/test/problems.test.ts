@@ -628,14 +628,14 @@ describe("askProblem: what the Notice offers", () => {
   });
 });
 
-// A save of the answer the person was shown (the Ask window's Save as a page): an agent that writes, so a save that failed says first
+// A save of the answer the person was shown (the Ask window's Save as a note): an agent that writes, so a save that failed says first
 // what it left in the library, where a question says that the library hasn't changed. It reads as a question's otherwise.
 describe("saveProblem", () => {
   const COMMITTED = "Claude Code's partial edits are kept as their own commit in the library's history.";
 
   it("a run that ended well with no page says so, and what it left", () => {
     expect(saveProblem(null, "Claude Code", null, now)).toEqual({
-      title: "Claude Code didn't save a page.",
+      title: "Claude Code didn't save a note.",
       body: UNCHANGED,
       terminal: false,
       settings: false,
@@ -994,7 +994,7 @@ describe("voiceSettingsProblem", () => {
 describe("linkedPageNotice", () => {
   it("says the page wasn't opened, names it by its library path, and says why and that nothing was opened", () => {
     expect(linkedPageNotice("ideas/run-me.md")).toEqual({
-      title: "Avanzel didn't open that page.",
+      title: "Avanzel didn't open that note.",
       body: "ideas/run-me.md goes through a link, which could lead anywhere, so nothing was opened.",
     });
   });

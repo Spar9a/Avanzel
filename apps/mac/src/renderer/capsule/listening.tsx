@@ -16,7 +16,7 @@ import type { Scene } from "./scene.tsx";
  * and give up a recording, on a small card of the capsule's glass (owner item 1). The time is the recording's own, counted from when
  * it began (`startedAt`), whatever is pressed.
  */
-export function listeningScene(state: StateOf<"listening">, levels: readonly number[]): Scene {
+export function listeningScene(state: StateOf<"listening">, levels: readonly number[], onAdd?: () => void): Scene {
   if (state.mode === "call") return callScene(state, levels);
   return {
     card: state.mode === "comment" && state.thumbnail ? <ScreenshotCard thumbnail={state.thumbnail} context={state.context} /> : undefined,
@@ -39,10 +39,13 @@ export function listeningScene(state: StateOf<"listening">, levels: readonly num
     ) : undefined,
     bar: {
       mood: "listening",
-      // Paused, the wave would only lie flat: its room goes to the word "Paused", which the bar's line holds whole.
-      ...(state.pausedAt ? {} : { levels }),
+      // A thought that files a note takes files dropped on its bar, as its + takes them.
+      ...(onAdd && state.mode === "dictate" && state.fileMode !== null ? { onDropFiles: (files: File[]) => api.attachToRecording(files) } : {}),
+      // Paused, the wave and the time stand still where they were, dimmed (`CapsuleBar`'s `paused`): the bar keeps its size, and the
+      // ❚❚ that became ▶ says it is paused.
+      levels,
       startedAt: state.startedAt,
-      ...(state.pausedAt ? { pausedAt: state.pausedAt, line: "Paused" } : {}),
+      ...(state.pausedAt ? { pausedAt: state.pausedAt } : {}),
       // A dictation into another app ends only by its own key: its bar has none of these.
       actions: state.dictation ? undefined : (
         <ListeningControls
@@ -55,6 +58,10 @@ export function listeningScene(state: StateOf<"listening">, levels: readonly num
           onCancel={() => api.cancel()}
           onPause={() => api.pause()}
           onStop={() => api.stop()}
+          // A thought that files a note takes files and screenshots: the + opens the Add menu over the bar. A comment on the screen,
+          // setup's first thought and a question for Ask (none of which has a file mode) don't.
+          {...(onAdd && state.mode === "dictate" && state.fileMode !== null ? { onAdd } : {})}
+          attached={state.attached?.length ?? 0}
         />
       ),
     },
@@ -70,6 +77,7 @@ function callScene(state: StateOf<"listening">, levels: readonly number[]): Scen
     bar: {
       mood: "listening",
       line: CALL_LISTENING_LINE,
+      steady: true,
       levels,
       startedAt: state.startedAt,
       actions: <Button size="small" onClick={() => api.stopCall()}>Stop</Button>,

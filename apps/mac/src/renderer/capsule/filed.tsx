@@ -38,7 +38,7 @@ export function filedScene(state: StateOf<"filed">): Scene {
 }
 
 /**
- * One card that holds it all: the words, stamped; in its foot what came of them ("Nothing new to file. Claude Code noted it in the log.",
+ * One card that holds it all: the words, stamped; in its foot what came of them ("No note was made. Claude Code noted it in the log.",
  * or who filed them and the pages), with Undo and Open at its right; Hide is its close button in the corner. The foot's first line is a
  * live region, so VoiceOver hears how the filing ended.
  */
@@ -48,6 +48,7 @@ function FiledCard({ state }: { state: StateOf<"filed"> }) {
   const receipt = hasReceipt(state);
   return (
     <Card
+      look="panel"
       label="Thought"
       meta={state.restored && state.text ? "Your exact words are kept." : undefined}
       placeholder="No comment"
@@ -57,7 +58,7 @@ function FiledCard({ state }: { state: StateOf<"filed"> }) {
         <Stack gap={6}>
           <span role="status">
             <Text variant="footnote" tone={state.noted ? "default" : "secondary"}>
-              {state.noted ? `Nothing new to file. ${notedLine(state.agent)}` : filedLine(state.agent, state.seconds)}
+              {state.noted ? `No note was made. ${notedLine(state.agent)}` : filedLine(state.agent, state.seconds)}
             </Text>
           </span>
           {receipt && <Pages pages={state.pages} />}

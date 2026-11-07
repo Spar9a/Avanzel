@@ -1,0 +1,34 @@
+/* Something taken away with the Library's dust (`Dust`): a front wipes what it holds from the left as grains drift off over a canvas
+   around it, then its room closes up. */
+.av-dust { position: relative; }
+.av-dust-grains {
+  position: absolute;
+  inset: -32px;
+  width: calc(100% + 64px);
+  height: calc(100% + 64px);
+  z-index: var(--av-layer-raised);
+  pointer-events: none;
+}
+.av-dust[data-dust] > .av-dust-body {
+  /* A mask reads only how opaque each point is: the ink stands for "all of it". */
+  -webkit-mask-image: linear-gradient(90deg, transparent var(--_wipe, 0%), var(--av-ink) calc(var(--_wipe, 0%) + 6%));
+  mask-image: linear-gradient(90deg, transparent var(--_wipe, 0%), var(--av-ink) calc(var(--_wipe, 0%) + 6%));
+}
+.av-dust[data-gone] {
+  height: var(--_height, auto);
+  overflow: hidden;
+  animation: av-dust-close var(--av-duration-base) var(--av-ease-leave) forwards;
+}
+.av-dust[data-gone] > * { visibility: hidden; }
+/* Gently: done, not deleted. It fades where it is, then its room closes up. */
+.av-dust[data-gone][data-gently] { animation: av-dust-fade var(--av-duration-card) var(--av-ease-leave) forwards; }
+.av-dust[data-gone][data-gently] > * { visibility: visible; }
+@keyframes av-dust-fade {
+  0% { height: var(--_height); opacity: 1; }
+  55% { height: var(--_height); opacity: 0; }
+  100% { height: 0; opacity: 0; margin-top: calc(var(--av-space-8) * -1); }
+}
+@keyframes av-dust-close {
+  from { height: var(--_height); }
+  to { height: 0; margin-top: calc(var(--av-space-8) * -1); }
+}

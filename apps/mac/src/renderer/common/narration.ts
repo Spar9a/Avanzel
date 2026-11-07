@@ -59,7 +59,7 @@ function readLine({ path, title, shelf }: NarrationRow): string {
     case "AGENTS.md":
       return "Reading the library's rules";
   }
-  return shelf === "people" && path?.endsWith(".md") ? `Reading ${title}'s page` : `Reading ${title}`;
+  return shelf === "people" && path?.endsWith(".md") ? `Reading ${title}'s note` : `Reading ${title}`;
 }
 
 /** A write to the index or the log, new or updated alike, by what it did; null for any other file. */
@@ -70,13 +70,13 @@ function ownFileWritten({ path }: NarrationRow): string | null {
 }
 
 /**
- * A new page: of its shelf's kind on one of the six shelves ("New idea page: …"), only a page anywhere else. A file that
+ * A new page: of its shelf's kind on one of the six shelves ("New idea note: …"), only a note anywhere else. A file that
  * isn't Markdown is not a page, wherever it is: it is a file, named by its file name.
  */
 function newLine({ path, title, shelf }: NarrationRow): string {
   if (!path?.endsWith(".md")) return `New file: ${title}`;
   // Own properties only, since a folder may be called anything, "constructor" included.
-  return Object.hasOwn(NOUN, shelf) ? `New ${NOUN[shelf as Shelf]} page: ${title}` : `New page: ${title}`;
+  return Object.hasOwn(NOUN, shelf) ? `New ${NOUN[shelf as Shelf]} note: ${title}` : `New note: ${title}`;
 }
 
 /** How long the agent may take no step before the capsule's filing card says it is still at work. */

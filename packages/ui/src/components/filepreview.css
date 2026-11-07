@@ -1,0 +1,49 @@
+/* A file's preview under its name: the picture in a thin frame, as wide as it is up to the column, at most 160 px tall; it lifts a little
+   under the pointer, and a video wears ▶ on a dark disc. While it is made, a quiet box of its usual height breathes in its place. */
+.av-file-preview {
+  appearance: none;
+  position: relative;
+  display: block;
+  max-width: 100%;
+  margin: var(--av-space-6) 0 var(--av-space-4);
+  border: 0;
+  padding: 0;
+  border-radius: var(--av-radius-small);
+  background: var(--av-surface-raised);
+  box-shadow: 0 0 0 1px var(--av-line-control);
+  overflow: hidden;
+  cursor: pointer;
+  transition: box-shadow var(--av-duration-quick) var(--av-ease-out), transform var(--av-duration-quick) var(--av-ease-out);
+}
+.av-file-preview:hover { box-shadow: 0 0 0 1px var(--av-accent-fill), var(--av-shadow-button); transform: translateY(-1px); }
+.av-file-preview:focus-visible { outline: 2px solid var(--av-accent-fill); outline-offset: 2px; }
+.av-file-preview-picture {
+  display: block;
+  max-width: 100%;
+  max-height: 160px;
+  width: auto;
+  height: auto;
+  animation: av-file-preview-in var(--av-duration-base) var(--av-ease-out) backwards;
+}
+@keyframes av-file-preview-in { from { opacity: 0; } }
+.av-file-preview[data-loading] {
+  width: 160px;
+  height: 90px;
+  cursor: progress;
+  animation: av-file-preview-wait 1.4s ease-in-out infinite;
+}
+@keyframes av-file-preview-wait { 50% { opacity: 0.5; } }
+.av-file-preview-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: -16px 0 0 -16px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-hud-surface-solid);
+  color: var(--av-hud-ink);
+}

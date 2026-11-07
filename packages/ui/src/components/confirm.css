@@ -1,0 +1,49 @@
+/* A question in one line on a small raised pill laid over the button that asked it and what is beside it. Its last part, the red verb
+   with the button's own sign after it, ends exactly where the button is, its sign right over the button's: the question grows out of
+   the button to the left as it opens, and shrinks back into it as it closes. */
+.av-confirm {
+  position: relative;
+  display: inline-flex;
+}
+.av-confirm-card {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  z-index: var(--av-layer-popover);
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-6);
+  padding: 4px 0 4px var(--av-space-12);
+  border-radius: var(--av-radius-pill);
+  background: var(--av-surface-raised);
+  /* Lifted off what it lies over: a clear edge, and the deep shadow of something that floats. */
+  box-shadow: 0 0 0 1px var(--av-line-control), var(--av-shadow-hud), var(--av-shadow-window);
+  color: var(--av-ink);
+  white-space: nowrap;
+  transform: translateY(-50%);
+  transform-origin: right center;
+  animation: av-confirm-in var(--av-duration-card) var(--av-ease-land) both;
+}
+.av-confirm-card[data-leaving] { animation: av-confirm-out var(--av-duration-base) var(--av-ease-leave) both; }
+@keyframes av-confirm-in {
+  from { opacity: 0; clip-path: inset(0 0 0 calc(100% - var(--av-size-control-small)) round var(--av-radius-pill)); }
+  to { opacity: 1; clip-path: inset(0 0 0 0 round var(--av-radius-pill)); }
+}
+@keyframes av-confirm-out {
+  from { opacity: 1; clip-path: inset(0 0 0 0 round var(--av-radius-pill)); }
+  to { opacity: 0; clip-path: inset(0 0 0 calc(100% - var(--av-size-control-small)) round var(--av-radius-pill)); }
+}
+.av-confirm-question {
+  font: var(--av-text-footnote);
+  letter-spacing: var(--av-text-footnote-tracking);
+}
+.av-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-4);
+}
+/* The verb, its sign after its word, the sign as far from the end as an icon button's is from its edge: right over the button's own. */
+.av-confirm-actions > .av-button:last-child {
+  flex-direction: row-reverse;
+  padding-right: calc((var(--av-size-control-small) - 12px) / 2);
+}

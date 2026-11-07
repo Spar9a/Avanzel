@@ -25,6 +25,9 @@
 /* One line each: a meta line that is too long gives way to the label with an ellipsis, never wrapping out of the head. */
 .av-card-head > span { white-space: nowrap; }
 .av-card-head > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The label at the left, the status and the head's own button together at the right. */
+.av-card-head > span:first-child { margin-right: auto; }
+.av-card-head > span.av-card-head-action { display: inline-flex; align-self: center; min-width: auto; overflow: visible; }
 .av-card-lines {
   min-height: 42px;
   padding: 1px 12px 0;
@@ -106,3 +109,45 @@
 .av-card[data-closable] .av-card-stamp { right: 40px; }
 .av-card[data-closable][data-stamped] .av-card-head { padding-right: 124px; }
 .av-card[data-size="regular"] .av-card-foot { padding: var(--av-space-10) 26px var(--av-space-16); }
+
+/* look="panel": the menu bar panel's own look, for the capsule's cards. The window's surface and inks, a hairline edge in place of
+   the red rule, the words in the interface face with room around them and no ruling, and the foot set off by a hairline. */
+.av-card[data-look="panel"] {
+  --av-ink: inherit;
+  --av-ink-secondary: inherit;
+  border-radius: var(--av-radius-panel);
+  background: var(--av-surface-window);
+  box-shadow: 0 0 0 0.5px var(--av-line-hair), var(--av-shadow-window);
+}
+.av-card[data-look="panel"] .av-card-head {
+  align-items: center;
+  height: auto;
+  min-height: 40px;
+  padding-top: var(--av-space-8);
+  padding-bottom: var(--av-space-8);
+  padding-left: var(--av-space-16);
+  border-bottom: 0;
+  box-shadow: inset 0 -0.5px 0 var(--av-line-hair); /* a hairline that takes no room: the card's height stays whole pixels */
+}
+.av-card[data-look="panel"]:not([data-closable]):not([data-stamped]) .av-card-head { padding-right: var(--av-space-16); }
+.av-card[data-look="panel"] .av-card-head > span:first-child {
+  font: var(--av-text-footnote);
+  letter-spacing: var(--av-text-footnote-tracking);
+}
+.av-card[data-look="panel"] .av-card-status { margin-bottom: 0; }
+.av-card[data-look="panel"] .av-card-lines {
+  min-height: 0;
+  padding: var(--av-space-12) var(--av-space-16);
+  font: var(--av-text-callout);
+  line-height: 20px; /* whole pixels, so what is under the card doesn't land between them */
+  letter-spacing: var(--av-text-callout-tracking);
+  background: none;
+}
+.av-card[data-look="panel"] .av-card-lines p + p { margin-top: var(--av-space-8); }
+.av-card[data-look="panel"][data-stamped] .av-card-lines::before { height: 1lh; }
+.av-card[data-look="panel"] .av-card-foot {
+  padding: var(--av-space-12) var(--av-space-16);
+  box-shadow: inset 0 0.5px 0 var(--av-line-hair);
+}
+.av-card[data-look="panel"] .av-card-close { top: 6px; right: 8px; }
+.av-card[data-look="panel"] .av-card-stamp { top: 6px; }

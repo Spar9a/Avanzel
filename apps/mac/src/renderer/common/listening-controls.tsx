@@ -1,7 +1,9 @@
 // A recording's controls, shared by the capsule's bar and the menu bar panel's recording.
 import { Button, Segmented } from "@avanzel/ui";
+import type { ReactNode } from "react";
 import type { FileMode } from "../../shared/ipc.ts";
 import { fileModeChoices, stopLabel } from "../../shared/transcribing.ts";
+import { addLabel } from "./attached.ts";
 import "./listening-controls.css";
 
 /**
@@ -19,6 +21,12 @@ export function ListeningControls(props: {
   onStop: () => void;
   /** The when over the buttons, as the panel's recording shows them; the capsule's bar has them all in one line. */
   stacked?: boolean;
+  /** Given, a + first: Add, a file or a screenshot to go with the recording (the capsule's menu over its bar). */
+  onAdd?: () => void;
+  /** In the + 's place, a control of the window's own: the panel's menu of what can be added. */
+  add?: ReactNode;
+  /** How many files go with the recording: a number on the Add button while there are any. */
+  attached?: number;
 }) {
   const { fileMode, review, paused } = props;
   const choices = fileModeChoices(review);
@@ -37,6 +45,10 @@ export function ListeningControls(props: {
         />
       )}
       <span className="listening-buttons">
+        {props.add ??
+          (props.onAdd && (
+            <Button size="xlarge" variant="secondary" icon="attach" label={addLabel(props.attached ?? 0)} count={props.attached ?? 0} onClick={props.onAdd} />
+          ))}
         <Button size="xlarge" variant="secondary" icon="close" label="Cancel the recording" onClick={props.onCancel} />
         <Button size="xlarge" variant="secondary" icon={paused ? "play" : "pause"} label={paused ? "Resume" : "Pause"} onClick={props.onPause} />
         <Button

@@ -1,12 +1,10 @@
-// Settings → Voice: the shortcuts, with a Notice for each one that has a problem; dictating into any app, its key, the permission it
+// Settings → Voice: dictating into any app, its key, the permission it
 // lacks, and the library's log of it and skip lists; the microphone Avanzel listens with; the speech model that turns what it hears
 // into text; and the library's dictionary of names and terms. Each control applies at once, a field of lines when the focus leaves it.
-import { Actions, Button, Group, GroupRow, Kbd, ListField, Notice, Progress, Row, Stack, Switch, Text, TextArea } from "@avanzel/ui";
-import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { ACTION_NAMES, inMenuLine, prettyAccelerator } from "../../../main/shortcuts.ts";
-import type { CursorKey, CursorPermissionState, LibraryPatch, ModelStatus, SettingsSnapshot, Shortcuts } from "../../../shared/ipc.ts";
+import { Actions, Button, Group, GroupRow, ListField, Notice, Progress, Row, Stack, Switch, Text, TextArea } from "@avanzel/ui";
+import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import type { CursorKey, CursorPermissionState, LibraryPatch, ModelStatus, SettingsSnapshot } from "../../../shared/ipc.ts";
 import { downloadFailedProblem, voiceSettingsProblem } from "../../../shared/problems.ts";
-import { passesThrough, toAccelerator } from "../accelerator.ts";
 import {
   CURSOR_DICTATION_DESCRIPTION,
   CURSOR_KEY_DESCRIPTION,
@@ -236,27 +234,34 @@ const LIST_PLACEHOLDERS: Record<string, string> = {
   Dictionary: "Avanzel = avant cell",
 };
 
+/** What each list counts, for its closed button: "10 apps". */
+const LIST_NOUNS: Record<string, { one: string; many: string }> = {
+  "Apps to skip": { one: "app", many: "apps" },
+  "Sites to skip": { one: "site", many: "sites" },
+  Dictionary: { one: "term", many: "terms" },
+};
+
 /**
  * A field of lines in a row of a Group, saved when the focus leaves it. TextArea takes no onBlur, so the box around it hears the focus
  * leave (React's onBlur bubbles).
  */
 function LinesField({ label, edit, rows }: { label: string; edit: TextEdit; rows: number }): ReactNode {
   const embedded = useContext(EmbeddedSettings);
-  // In the menu bar panel: one item at a time, each with its own Remove; each change is saved at once.
+  // In the menu bar panel: a pop-up button that says what the list holds, and opens on the field and the items, one at a time, each
+  // with its own Remove; each change is saved at once.
   if (embedded) {
     const items = edit.draft.split("\n").map((line) => line.trim()).filter(Boolean);
     return (
-      <div className="settings-lines">
-        <ListField
-          label={label}
-          items={items}
-          placeholder={LIST_PLACEHOLDERS[label]}
-          onChange={(next) => {
-            edit.setDraft(next.join("\n"));
-            void edit.save();
-          }}
-        />
-      </div>
+      <ListField
+        label={label}
+        items={items}
+        collapsed={LIST_NOUNS[label] ?? { one: "item", many: "items" }}
+        placeholder={LIST_PLACEHOLDERS[label]}
+        onChange={(next) => {
+          edit.setDraft(next.join("\n"));
+          void edit.save();
+        }}
+      />
     );
   }
   return (
@@ -314,7 +319,7 @@ function SpeechControl({ model, onDownload }: { model: ModelStatus; onDownload()
  * again (which continues where it stopped when part of it was kept), or voice settings in the library's config file that
  * Avanzel can't use, with why, which Try again couldn't help: they are fixed in that file. Either way the words are the
  * capsule's card's, from the same builder (shared/problems.ts), and say what is safe meanwhile. `primary` says whether Try again
- * is the pane's primary button, which it isn't when a shortcut's Notice has a free shortcut to offer.
+ * is the pane's primary button.
  */
 function SpeechProblem({ model, primary, onDownload }: { model: ModelStatus; primary: boolean; onDownload(): void }): ReactNode {
   if (model.kind !== "error") return null;
@@ -342,109 +347,15 @@ function SpeechProblem({ model, primary, onDownload }: { model: ModelStatus; pri
   );
 }
 
-/** The Voice pane: the shortcuts and their problems, dictating into any app, MicrophoneGroup, the speech model, and the dictionary. */
+/**
+ * The Voice pane: dictating into any app, MicrophoneGroup, the speech model, and the dictionary. The shortcuts have a pane of their
+ * own (`ShortcutsPane`).
+ */
 export function Voice({ drafts, ...props }: PaneProps & { drafts: VoiceDrafts }): ReactNode {
-  const { snap, onChange, attempt } = props;
-  // The shortcut being recorded, if any: one at a time.
-  const [recording, setRecording] = useState<keyof Shortcuts | null>(null);
-  // Each shortcut row's group of controls, to put the focus on its Change when a button the person used has gone.
-  const groups = useRef<Partial<Record<keyof Shortcuts, HTMLDivElement | null>>>({});
-  const rows = Object.entries(ACTION_NAMES) as [keyof Shortcuts, string][];
-  const problems = rows.flatMap(([key]) => {
-    const message = snap.shortcutProblems[key];
-    // The snapshot lists the best free shortcut first; it goes last here, where a row of buttons keeps its primary.
-    return message ? [{ key, message, alternatives: [...(snap.shortcutAlternatives[key] ?? [])].reverse() }] : [];
-  });
-  // The pane has one primary button, the fix of the first Notice that has one to offer: the best free shortcut of the
-  // first problem with any, or else Try again. A Notice with nothing to offer leaves it to the next.
-  const primaryKey = problems.find(({ alternatives }) => alternatives.length > 0)?.key;
-
-  /** `accelerator` becomes `key`'s shortcut, and the focus goes to that row's Change. */
-  const save = async (key: keyof Shortcuts, accelerator: string) => {
-    await attemptChange(props, () => api.setApp({ shortcuts: { ...snap.app.shortcuts, [key]: accelerator } }));
-    groups.current[key]?.querySelector("button")?.focus();
-  };
-
-  // While a shortcut is recorded, the next whole shortcut pressed anywhere in the window is saved: one with ⌃ or ⌥, or a
-  // bare F-key (toAccelerator). Leaving the window ends it, as does leaving the row (its group's onBlur) and leaving the
-  // pane, which unmounts this. A layout effect, so the listening stops in the same commit that ends the recording or
-  // takes the pane away: a key pressed on the next pane, even at once, is never taken for this one.
-  useLayoutEffect(() => {
-    if (recording === null) return;
-    const listen = (event: KeyboardEvent) => {
-      if (event.key === "Tab") return; // the focus may leave the row, which ends the recording
-      if (passesThrough(event)) return; // a ⌘ key it never takes is the app's: ⌘Q still quits while it listens
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.key === "Escape") return setRecording(null);
-      const accelerator = toAccelerator(event);
-      if (!accelerator) return; // only modifiers so far, or a key apps use themselves: keep listening
-      setRecording(null);
-      void save(recording, accelerator);
-    };
-    const stop = () => setRecording(null);
-    window.addEventListener("keydown", listen, true);
-    window.addEventListener("blur", stop);
-    return () => {
-      window.removeEventListener("keydown", listen, true);
-      window.removeEventListener("blur", stop);
-    };
-  }, [recording, snap, onChange, attempt]);
-
+  const { snap } = props;
   const download = () => attemptChange(props, () => api.downloadModel(), DOWNLOAD_NOT_STARTED);
   return (
     <Stack gap={20}>
-      <Group label="Shortcuts" note="They work in every app.">
-        {rows.map(([key, name]) => (
-          <GroupRow key={key} label={name}>
-            <div
-              role="group"
-              aria-label={name}
-              ref={(group) => {
-                groups.current[key] = group;
-              }}
-              onBlur={(event) => {
-                // The focus went to another control, or to nothing: this row's recording is over.
-                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setRecording((now) => (now === key ? null : now));
-              }}
-            >
-              <Row gap={8}>
-                <Kbd>{prettyAccelerator(snap.app.shortcuts[key])}</Kbd>
-                <Button size="small" variant="secondary" onClick={() => setRecording((now) => (now === key ? null : key))}>
-                  {recording === key ? "Type the new shortcut…" : "Change"}
-                </Button>
-              </Row>
-            </div>
-          </GroupRow>
-        ))}
-      </Group>
-      {/* One Notice for each shortcut with a problem. The primary is the best free shortcut of the one primaryKey names. */}
-      {problems.map(({ key, message, alternatives }) => (
-        <Notice
-          key={key}
-          tone="error"
-          title={message}
-          actions={
-            alternatives.length > 0 ? (
-              <Actions align="start">
-                {alternatives.map((accelerator, place) => (
-                  <Button
-                    key={accelerator}
-                    size="small"
-                    variant={key === primaryKey && place === alternatives.length - 1 ? "primary" : "secondary"}
-                    onClick={() => void save(key, accelerator)}
-                  >
-                    {`Use ${prettyAccelerator(accelerator)}`}
-                  </Button>
-                ))}
-              </Actions>
-            ) : undefined
-          }
-        >
-          {/* Where the action's item is, in the capsule's words (`inMenuLine`); without a library the menu has no such item yet. */}
-          {snap.library?.exists ? inMenuLine(key) : undefined}
-        </Notice>
-      ))}
       <CursorDictationGroup {...props} drafts={drafts} />
       <MicrophoneGroup {...props} />
       <Group label="Speech">
@@ -452,7 +363,7 @@ export function Voice({ drafts, ...props }: PaneProps & { drafts: VoiceDrafts })
           <SpeechControl model={snap.model} onDownload={download} />
         </GroupRow>
       </Group>
-      <SpeechProblem model={snap.model} primary={primaryKey === undefined} onDownload={download} />
+      <SpeechProblem model={snap.model} primary onDownload={download} />
       {/* The dictionary is the library's: with none open, or one Avanzel can't find, there is nowhere to keep it. */}
       {snap.library?.exists && <DictionaryGroup dictionary={drafts.dictionary} />}
     </Stack>

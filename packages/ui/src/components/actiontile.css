@@ -22,7 +22,9 @@
   box-shadow: inset 0 0 0 0.5px var(--av-line-control), var(--av-shadow-button);
   transform: translateY(-1px);
 }
-.av-action-tile[data-open] {
+/* Open, the violet ring stays under the pointer too: the hover above only lifts the tile, never takes the ring away. */
+.av-action-tile[data-open],
+.av-action-tile[data-open]:hover:has(.av-action-tile-button:not(:disabled)) {
   background: var(--av-surface-raised);
   box-shadow: inset 0 0 0 1px var(--av-accent-fill), var(--av-shadow-card);
 }
@@ -40,7 +42,6 @@
   background: transparent;
   color: inherit;
   text-align: left;
-  cursor: default;
   transition: transform var(--av-duration-quick) var(--av-ease-out);
 }
 .av-action-tile-button:active:not(:disabled) { transform: scale(0.99); }

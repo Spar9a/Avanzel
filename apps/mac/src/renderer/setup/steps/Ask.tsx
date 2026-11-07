@@ -59,7 +59,7 @@ export function Ask({ snap, go }: StepProps) {
     >
       <Stack gap={12}>
         <Text variant="heading" focusable>Ask me about it.</Text>
-        <Text variant="callout">I answer from your library only, and show you the pages I used.</Text>
+        <Text variant="callout">I answer from your library only, and show you the notes I used.</Text>
         {snap.filing?.kind === "undone" && <Notice title="Undone.">Everything is back as it was, and your words are in the inbox.</Notice>}
         {offer && (
           // The suggestion in words, beside the button that asks it, which stays short however long a title is. The
@@ -184,7 +184,7 @@ function Answer({ answer }: { answer: Answered }) {
       </Stack>
       {answer.sources.length > 0 && (
         <Stack gap={4}>
-          <Text variant="footnote" tone="secondary">Pages I used:</Text>
+          <Text variant="footnote" tone="secondary">Notes I used:</Text>
           {answer.sources.map((page) => (
             <Row key={page.path} gap={6} wrap>
               {isShelf(page.shelf) && <ShelfTag shelf={page.shelf} />}

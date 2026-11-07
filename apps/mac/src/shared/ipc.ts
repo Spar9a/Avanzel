@@ -30,7 +30,7 @@ export interface ScreenContext {
 export type CapsuleMode = "dictate" | "comment" | "call";
 
 /** The panes of the Settings window, in the order of its toolbar. "tasks" is the scheduled reviews' pane, named Reviews. */
-export const SETTINGS_PANES = ["general", "voice", "dictations", "agents", "tasks", "privacy"] as const;
+export const SETTINGS_PANES = ["general", "voice", "shortcuts", "dictations", "agents", "tasks", "privacy"] as const;
 export type SettingsPane = (typeof SETTINGS_PANES)[number];
 export const isSettingsPane = (value: unknown): value is SettingsPane => SETTINGS_PANES.some((pane) => pane === value);
 
@@ -125,7 +125,15 @@ export type CardAction =
  * What main tells the capsule page's microphone: a recording's start, stop (its samples go back by `sendAudio`) and cancel; and a call's
  * start and stop, between which its blocks go back by `sendCallAudio` with the call's id (`call`).
  */
-export type CapsuleCommand = "start" | "stop" | "cancel" | "pause" | "resume" | { kind: "call-start" | "call-stop"; call: number };
+export type CapsuleCommand =
+  | "start"
+  | "stop"
+  | "cancel"
+  | "pause"
+  | "resume"
+  | { kind: "call-start" | "call-stop"; call: number }
+  /** The voice trigger listens (`on`), with the chosen microphone, or stops: what it hears is sent in short spans (`sendTriggerAudio`). */
+  | { kind: "trigger"; on: boolean; microphoneId: string | null };
 
 export type CapsuleState =
   | { kind: "hidden" }
@@ -134,6 +142,10 @@ export type CapsuleState =
       mode: CapsuleMode;
       /** Date.now() when it began, moved on by each pause's length, so that now less it is how long it has listened. */
       startedAt: number;
+      /** The files and screenshots added to it so far (Add), each with when it was added: they go with its note. */
+      attached?: AttachedItem[];
+      /** What Add is getting ready now, while it is: the list shows a screenshot on its way, the menu its video starting. */
+      adding?: AddingKind;
       /** Date.now() when it was paused, while it is: the microphone keeps nothing, and the time stands still. */
       pausedAt?: number;
       fakeMic: boolean;
@@ -300,6 +312,12 @@ export type CapsuleState =
   /** A dictation into any app was asked for while a thought records or notes on a call run: a bar says so. It hides by itself. */
   | { kind: "dictation-refused" };
 
+/**
+ * The capsule's cards the panel shows instead, in its Processing tab: a filing, and what came of it (filed, stopped, or a problem). The
+ * capsule keeps the state, which the panel draws, and shows nothing for them: its page lets the capsule go as for "hidden".
+ */
+export const CAPSULE_IN_PANEL: ReadonlySet<CapsuleState["kind"]> = new Set(["transcribing", "filing", "filed", "cancelled", "error"]);
+
 export interface Shortcuts {
   dictate: string;
   capture: string;
@@ -307,6 +325,16 @@ export interface Shortcuts {
   ask: string;
   /** Takes the last filing back from any app (the menu's Undo the last filing). */
   undo: string;
+  /** Takes notes on a call: the panel's list of calls opens, or, while one runs, the notes stop. */
+  call: string;
+  /** Captures a part of the screen, picked with macOS's crosshair, with a comment (Capture the screen's Pick a part). */
+  region: string;
+  /** Takes a screenshot of a part of the screen, picked with macOS's crosshair, as a thought of its own (Take a screenshot's A part). */
+  shot: string;
+  /** Takes a screenshot of the whole screen as a thought of its own (Take a screenshot's The whole screen). */
+  shotScreen: string;
+  /** Takes a screenshot of a part, marked in place first, as a thought of its own (Take a screenshot's With marks). */
+  shotMarks: string;
 }
 
 export type FileMode = "now" | "evening";
@@ -322,6 +350,12 @@ export interface AppSettings {
   callConsent: boolean;
   /** Dictating into any app: a tap of `key` starts and ends a dictation whose words go in at the cursor. Off until the person turns it on. */
   cursorDictation: { enabled: boolean; key: CursorKey };
+  /**
+   * A thought started by voice, as Siri is: while `enabled`, the microphone stays open and saying `word` starts recording a thought, as
+   * Record a thought's shortcut does, and saying `stopWord` while it records stops it, as Stop does (the word is cut from its text).
+   * Off until the person turns it on.
+   */
+  voiceTrigger: { enabled: boolean; word: string; stopWord: string };
 }
 
 export type PermissionStatus = "granted" | "denied" | "not-determined" | "restricted" | "unknown";
@@ -827,6 +861,27 @@ export interface AvanzelBridge {
     onState(callback: (state: CapsuleState) => void): () => void;
     /** Listening now: send the current state again (one sent while the page loaded is lost). */
     ready(): void;
+    /** The recording's Add menu: macOS's open panel, and the files picked go with the recording's note. */
+    addFiles(): void;
+    /**
+     * The recording's Add menu: a screenshot goes with the recording's note, of the screen as it is (without the capsule), or with
+     * `area`, of a part of it the person picks with macOS's crosshair.
+     */
+    addScreenshot(area?: boolean): void;
+    /** The recording's Add menu: a video of a part of the screen, picked and stopped in macOS's capture toolbar, goes with the note. */
+    addVideo(): void;
+    /** The recording's Add menu: a part of the screen, picked, taken as a picture and marked in place, goes with the note. */
+    addMarked(): void;
+    /** Files dropped on the recording's bar: they go with its note. */
+    attachToRecording(files: File[]): void;
+    /**
+     * Where the recording's bar is, in the capsule's points, while it takes dropped files; null when it takes none. The capsule lets the
+     * pointer through where nothing is drawn, and a drag brings it no enter: main watches the pointer itself, and the window takes it
+     * over this place, so a file dragged there lands on the bar.
+     */
+    setDropZone(zone: { x: number; y: number; width: number; height: number } | null): void;
+    /** One of the recording's added files, by its place in the list, taken off it (its copy goes from the library). */
+    removeAttachment(index: number): void;
     onCommand(callback: (command: CapsuleCommand) => void): () => void;
     sendAudio(samples: Float32Array): Promise<void>;
     /**
@@ -834,6 +889,8 @@ export interface AvanzelBridge {
      * its microphone has stopped.
      */
     sendCallAudio(call: number, samples: Float32Array, last: boolean): Promise<void>;
+    /** A span of speech the voice trigger heard: main makes it into words and listens for the trigger word in them. */
+    sendTriggerAudio(samples: Float32Array): Promise<void>;
     /** Stop, on the listening card of a call: the call ends and becomes its notes. */
     stopCall(): void;
     reportMicError(message: string): void;
@@ -890,6 +947,8 @@ export interface AvanzelBridge {
     /** Settings is open and something else (an error card's Open Settings) asks for another pane. */
     onShowPane(callback: (pane: SettingsPane) => void): () => void;
     setApp(patch: Partial<AppSettings>): Promise<SettingsSnapshot>;
+    /** Shortcuts records a new one: Avanzel's own let go meanwhile, so the keys reach the page; registered again when it ends. */
+    recordingShortcut(recording: boolean): void;
     /** Turns dictating into any app on or off, or chooses its key; what isn't in `patch` stays. The helper starts, stops or watches the new key at once. */
     setCursorDictation(patch: Partial<AppSettings["cursorDictation"]>): Promise<SettingsSnapshot>;
     /**
@@ -1086,6 +1145,17 @@ export interface AvanzelBridge {
     close(): void;
   };
   /** The panel under the menu bar icon: Capture, Library and Settings (Settings' own calls are `settings`). */
+  /** The window that picks a part of the screen and records it (`createAreaWindow`). */
+  area: {
+    /** What it records: the screen's capture source, its scale (pixels a point), and the longest a video may run. */
+    get(): Promise<AreaSetup>;
+    /** Picked: the window stops taking the pointer but over its Stop (`setInteractive`). */
+    setInteractive(interactive: boolean): void;
+    /** The video, as recorded, or the marked picture (`image/png`): it goes with the recording. */
+    done(video: ArrayBuffer, mime: string): Promise<void>;
+    /** Esc, or a picking given up: nothing is kept. */
+    cancel(): void;
+  };
   panel: {
     get(): Promise<PanelSnapshot>;
     onChanged(callback: (snapshot: PanelSnapshot) => void): () => void;
@@ -1099,11 +1169,39 @@ export interface AvanzelBridge {
     hide(): void;
     /** The microphone's level, 0 to 1, as the capsule hears it, while a recording listens and the panel is up. */
     onLevel(callback: (level: number) => void): () => void;
+    /** Type a thought, in Capture: the words are saved as Quick saves them. Rejects when they couldn't be, and the field keeps them. */
+    type(text: string): Promise<void>;
+    /** Take notes on a call…, in Capture: the call apps running now, by name; `act("call-notes:<index>")` or `"call-notes:everything"` picks. */
+    callApps(): Promise<string[]>;
+    /** A preview of a file of raw/attachments (a picture, a video's frame), as a data URL; null when there is none. */
+    thumbnail(rel: string): Promise<string | null>;
+    /** The trigger word said into the voice trigger's microphone: its words, as speech-to-text writes them; null when none were heard. */
+    hearTriggerWord(samples: Float32Array): Promise<string | null>;
+    /** The panel's microphone is open for a trigger or stop word (true) or has closed: meanwhile the voice trigger starts and stops nothing. */
+    hearingTriggerWord(on: boolean): void;
+    /** Copy as a prompt: the page, as a prompt for an agent, goes on the clipboard. False when it couldn't. */
+    copyPrompt(rel: string): Promise<boolean>;
+    /** Main asks Capture to open Take notes on a call…'s list (the call was asked for from somewhere else). */
+    onPickCall(callback: () => void): () => void;
+    /** Ask your library, in Library: answered as the Ask window's questions are. */
+    ask(question: string): Promise<AskResult>;
+    /** What the question being answered is doing now. */
+    onAskProgress(callback: (message: string) => void): () => void;
+    /** Stop: the question being answered is given up. */
+    cancelAsk(): void;
+    /** Main asks Library to open the page at this library-relative path (back from Continue by voice). */
+    onOpenPage(callback: (rel: string) => void): () => void;
+    /** Files dropped on a page in Library: copied into the library and filed into that page at once (`act("attach:<page>")` picks them). */
+    attachToPage(rel: string, files: File[]): void;
+    /** Files dropped on the recording, or picked for it: they go with its note when it is saved. */
+    attachToRecording(files: File[]): void;
+    /** One of the recording's added files, by its place in the list, taken off it (its copy goes from the library). */
+    removeAttachment(index: number): void;
   };
 }
 
 /** The menu bar panel's places, in the order of its tabs. */
-export const PANEL_TABS = ["capture", "library", "settings"] as const;
+export const PANEL_TABS = ["capture", "processing", "library", "settings"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
 
 /** How many pages the panel's Library lists at most. */
@@ -1125,6 +1223,13 @@ export interface PanelPage {
   summary: string;
   /** Its `##` sections, each with its lines (list items without their marks), for the open row. */
   sections: { heading: string; lines: string[] }[];
+  /** The files of the library's raw/attachments it names (videos, screenshots, files added to it) that are there, in its order. */
+  attachments: string[];
+  /**
+   * The names those files had when they were added, as the page writes them beside their paths ("raw/attachments/….mov (Screen
+   * Recording 2026-11-07 at 10.54.48.mov)"): its text may name a file by them alone, and the panel links those words too.
+   */
+  attachmentNames: { name: string; path: string }[];
 }
 
 /** A scheduled review as the panel shows it, with how its last run ended. */
@@ -1172,11 +1277,63 @@ export interface PanelSnapshot {
    * the capsule's switch has them (null where there is none to switch). Null while nothing listens. `ownKey`: a dictation into
    * another app, which only its own key ends, so the panel offers no Stop for it.
    */
-  listening: { mode: "dictate" | "comment" | "call"; startedAt: number; pausedAt: number | null; fileMode: FileMode | null; review: string | null; ownKey: boolean } | null;
+  listening: {
+    mode: "dictate" | "comment" | "call";
+    startedAt: number;
+    pausedAt: number | null;
+    fileMode: FileMode | null;
+    review: string | null;
+    ownKey: boolean;
+    /** The files and screenshots added to it so far (Add), each with when it was added: they go with its note. */
+    attached: AttachedItem[];
+    /** What Add is getting ready now, or null. */
+    adding: AddingKind | null;
+  } | null;
   callNotes: boolean;
+  /** Start a thought by voice: whether it is on, and its word (`AppSettings.voiceTrigger`). Capture's foot turns it on and names it. */
+  voiceTrigger: AppSettings["voiceTrigger"];
+  /**
+   * The thoughts being filed, oldest first: the first that isn't waiting is at work, and Capture shows it as the capsule's filing card;
+   * the rest wait their turn, and Capture lists them under it as the queue.
+   */
+  filings: PanelFiling[];
+  /** A recording whose words are being made now, before they are filed: Processing says so, with Stop once it takes long. */
+  transcribing: Extract<CapsuleState, { kind: "transcribing" }> | null;
+  /** When `result`'s card goes by itself (Date.now() ms), or null while it stays until it is put away (a problem). */
+  resultHidesAt: number | null;
+  /** What came of the last filing, while its card stands: filed, stopped, or a problem. Processing shows it until it is put away. */
+  result: Extract<CapsuleState, { kind: "filed" | "cancelled" | "error" }> | null;
   reviews: PanelReview[];
   undoableFiling: boolean;
   showableReceipt: boolean;
   undoableReview: boolean;
   opensInObsidian: boolean;
+}
+
+/** A file or screenshot added to a recording, as its Add list shows it: its name and when it was added (Date.now()). */
+export interface AttachedItem {
+  name: string;
+  at: number;
+}
+
+/** A thought being filed, as Capture shows it. */
+export interface PanelFiling {
+  /** Its capture's path: the same for the whole filing. */
+  id: string;
+  /** As the capsule's card has it: its words, agent, steps, seconds and estimate. */
+  state: Extract<CapsuleState, { kind: "filing" }>;
+  /** Its card in the capsule is up, so Edit and Stop reach it from Capture too. */
+  shown: boolean;
+}
+
+/** What the recording's Add is getting ready now: a screenshot being taken, or the picker opening for a video or a marked screenshot. */
+export type AddingKind = "screenshot" | "video" | "marks";
+
+/** What the area window records: the display's capture source (`chromeMediaSourceId`), its pixels a point, and its time limit. */
+export interface AreaSetup {
+  sourceId: string;
+  scale: number;
+  maxSeconds: number;
+  /** video: the part is recorded until Stop. marks: the part is taken as a picture and marked (`MarkUp`) before it is added. */
+  mode: "video" | "marks";
 }

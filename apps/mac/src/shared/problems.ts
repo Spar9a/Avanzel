@@ -294,7 +294,7 @@ export const ANOTHER_LIBRARY = "This answer came from another library. Change ba
  */
 export function saveProblem(f: AgentFailure | null, agent: string, partial: PartialEdits, now: Date): AskProblem {
   const safe = unsavedLine(agent, partial);
-  if (f === null) return { title: `${agent} didn't save a page.`, body: safe, terminal: false, settings: false };
+  if (f === null) return { title: `${agent} didn't save a note.`, body: safe, terminal: false, settings: false };
   return askProblemWith(f, safe, now, SAVE_WORDS);
 }
 
@@ -495,7 +495,7 @@ export function voiceSettingsProblem(reason: string): Problem {
  * says so without alarm, and what is safe: nothing was opened. There is nothing to fix from here, so it offers nothing.
  */
 export function linkedPageNotice(rel: string): Problem {
-  return { title: "Avanzel didn't open that page.", body: `${rel} goes through a link, which could lead anywhere, so nothing was opened.` };
+  return { title: "Avanzel didn't open that note.", body: `${rel} goes through a link, which could lead anywhere, so nothing was opened.` };
 }
 
 /**

@@ -191,7 +191,7 @@ function Outcome({ filing, where, inObsidian }: { filing: Filed; where: string; 
       {(undoable || first) && (
         <Actions align="start">
           {undoable && <Button busy={filing.undoing} onClick={() => api.undo()}>Undo</Button>}
-          {first && <Button onClick={() => window.avanzel.ask.openPage(pageName(first.path))}>{inObsidian ? "Open in Obsidian" : "Open the page"}</Button>}
+          {first && <Button onClick={() => window.avanzel.ask.openPage(pageName(first.path))}>{inObsidian ? "Open in Obsidian" : "Open the note"}</Button>}
         </Actions>
       )}
     </>

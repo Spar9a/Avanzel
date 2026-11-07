@@ -26,8 +26,12 @@ export function isPageOf(sender: WebContents, win: BrowserWindow | null): boolea
   return win !== null && !win.isDestroyed() && sender === win.webContents;
 }
 
-/** Wide enough for a recording's bar with its controls at full size (44 px buttons, 16 px words) and room at its ends. */
-export const CAPSULE_SIZE = { width: 600, height: 320 };
+/**
+ * Wide enough for a recording's bar with all its controls at full size (44 px buttons, 16 px words, Add's + among them) and room at
+ * its ends; the bar itself is only as wide as what is in it. Tall enough for the tallest card (a saved screen comment: its words, the
+ * screenshot beside its title and address, its note and the line under it, on the panel's look), or the Add menu, over the bar.
+ */
+export const CAPSULE_SIZE = { width: 680, height: 460 };
 
 /** A non-activating panel above the Dock: it never takes focus from the app you are typing in. */
 export function createCapsuleWindow(): BrowserWindow {
@@ -233,5 +237,36 @@ export function createAskWindow(): BrowserWindow {
     webPreferences,
   });
   void win.loadFile(pagePath("ask"));
+  return win;
+}
+
+/**
+ * Recording a part of the screen: a clear window over the whole of `bounds` (a display's, in points), above everything there, the
+ * menu bar too. Its page picks the part and then records it, and it is kept out of every capture of the screen (content protection),
+ * so neither its dimming nor its edge is in the video.
+ */
+export function createAreaWindow(bounds: { x: number; y: number; width: number; height: number }): BrowserWindow {
+  const win = new BrowserWindow({
+    ...bounds,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    enableLargerThanScreen: true,
+    skipTaskbar: true,
+    type: "panel",
+    webPreferences: { ...webPreferences, backgroundThrottling: false },
+  });
+  win.setContentProtection(true);
+  win.setAlwaysOnTop(true, "screen-saver");
+  floatOverSpaces(win);
+  win.setBounds(bounds);
+  void win.loadFile(pagePath("area"));
   return win;
 }

@@ -22,6 +22,25 @@ export function Group({ label, note, children }: GroupProps) {
   );
 }
 
+export interface GroupRevealProps {
+  /** Shown: the rows open out under the one before; hidden, they fold away and can't be reached. */
+  open: boolean;
+  /** Rows: <GroupRow>s that belong to the setting above them, such as a Switch's own settings. */
+  children: ReactNode;
+}
+
+/**
+ * Rows of a Group that are there only while the setting above them is on: they open out, growing from nothing and fading in, and fold
+ * away the same way when it is turned off, so the group never jumps.
+ */
+export function GroupReveal({ open, children }: GroupRevealProps) {
+  return (
+    <div className="av-group-reveal" data-open={open ? "" : undefined} inert={!open}>
+      <div className="av-group-reveal-rows">{children}</div>
+    </div>
+  );
+}
+
 export interface GroupRowProps {
   label: string;
   description?: string;

@@ -49,7 +49,7 @@ import {
  * The rows the stand-in's filing of "Call the vet on Monday" shows, in the order it takes its steps. Its first read, of the
  * capture, is no row.
  */
-const VET_ROWS = ["Reading your library index", "New idea page: Call the vet on Monday", "Updated your library index", "Added a line to the log"];
+const VET_ROWS = ["Reading your library index", "New idea note: Call the vet on Monday", "Updated your library index", "Added a line to the log"];
 
 /**
  * A first run whose stand-in Claude Code reports its steps as Claude Code does and takes a second over each (`agent` steers
@@ -124,18 +124,18 @@ test("the shelf tabs count the pages while the filing runs", async () => {
   await typeFirstThought(setup, "Call the vet on Monday");
   await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 30_000 });
   const working = await whileWorking(setup);
-  const idea = working.findIndex((shown) => rowsOf(shown).includes("New idea page: Call the vet on Monday"));
+  const idea = working.findIndex((shown) => rowsOf(shown).includes("New idea note: Call the vet on Monday"));
   expect(idea).toBeGreaterThan(0);
-  // No tab counted anything before the idea's page was written. As its row showed, Ideas counted one, labelled "1 page",
+  // No tab counted anything before the idea's page was written. As its row showed, Ideas counted one, labelled "1 note",
   // and no other tab did; the index and the log are on no shelf, so it stayed so while the rest of the steps came.
   for (const shown of working.slice(0, idea)) expect(shown.counts).toEqual([]);
   for (const shown of working.slice(idea)) {
     expect(shown.tabs).toEqual(["Goals", "Ideas1", "Problems", "Memories", "People", "Topics"]);
-    expect(shown.counts).toEqual(["1 page"]);
+    expect(shown.counts).toEqual(["1 note"]);
   }
   // Once filed, the tabs count the same.
   await expect(tabs(setup)).toHaveText(["Goals", "Ideas1", "Problems", "Memories", "People", "Topics"]);
-  await expect(setup.getByLabel("1 page")).toBeVisible();
+  await expect(setup.getByLabel("1 note")).toBeVisible();
   await app.close();
 });
 

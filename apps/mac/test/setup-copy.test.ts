@@ -88,17 +88,17 @@ describe("setup copy", () => {
 
   it("pagesLine says what the filing wrote", () => {
     const where = "~/Avanzel";
-    expect(pagesLine(1, 0, where)).toBe("1 new page, all plain Markdown in ~/Avanzel.");
-    expect(pagesLine(3, 1, where)).toBe("3 new pages and 1 updated, all plain Markdown in ~/Avanzel.");
-    expect(pagesLine(0, 1, where)).toBe("1 updated page, all plain Markdown in ~/Avanzel.");
-    expect(pagesLine(0, 2, where)).toBe("2 updated pages, all plain Markdown in ~/Avanzel.");
+    expect(pagesLine(1, 0, where)).toBe("1 new note, all plain Markdown in ~/Avanzel.");
+    expect(pagesLine(3, 1, where)).toBe("3 new notes and 1 updated, all plain Markdown in ~/Avanzel.");
+    expect(pagesLine(0, 1, where)).toBe("1 updated note, all plain Markdown in ~/Avanzel.");
+    expect(pagesLine(0, 2, where)).toBe("2 updated notes, all plain Markdown in ~/Avanzel.");
     // No page at all: the log line says what the agent did instead, so this line claims nothing.
     expect(pagesLine(0, 0, where)).toBeNull();
   });
 
   it("othersLine counts the pages a filing wrote off the six shelves", () => {
-    expect(othersLine(1)).toBe("1 more page in other folders.");
-    expect(othersLine(2)).toBe("2 more pages in other folders.");
+    expect(othersLine(1)).toBe("1 more note in other folders.");
+    expect(othersLine(2)).toBe("2 more notes in other folders.");
     expect(othersLine(0)).toBeNull();
   });
 

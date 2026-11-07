@@ -91,10 +91,10 @@ describe("ask copy", () => {
 
   it("emptyLine says where answers come from, or for a library with no pages what to do first", () => {
     expect(emptyLine(0)).toBe("Your shelves are empty. Say something first, then ask about it.");
-    expect(emptyLine(1)).toBe("Answers come from your library only, with links to the pages they use.");
-    expect(emptyLine(42)).toBe("Answers come from your library only, with links to the pages they use.");
+    expect(emptyLine(1)).toBe("Answers come from your library only, with links to the notes they use.");
+    expect(emptyLine(42)).toBe("Answers come from your library only, with links to the notes they use.");
     // Before main has counted the pages, the usual line stands: it is true of every library.
-    expect(emptyLine(null)).toBe("Answers come from your library only, with links to the pages they use.");
+    expect(emptyLine(null)).toBe("Answers come from your library only, with links to the notes they use.");
   });
 
   it("waitingLine says the agent looks, and counts its whole seconds only from 10 s on", () => {
@@ -113,13 +113,13 @@ describe("ask copy", () => {
   });
 
   it("waitingLine, with the save's lines, says the save, main's own words while it waits, and counts from 10 s", () => {
-    const saving = "Saving the answer as a page…";
+    const saving = "Saving the answer as a note…";
     // Before main has said anything, and once it says the agent looks: a save's agent looks too, and the line says the save.
     expect(waitingLine(null, 3, SAVING_LINES)).toEqual({ line: saving, counting: false });
     expect(waitingLine(LOOKING, 3, SAVING_LINES)).toEqual({ line: saving, counting: false });
     expect(waitingLine(null, 9.9, SAVING_LINES)).toEqual({ line: saving, counting: false });
-    expect(waitingLine(null, 10, SAVING_LINES)).toEqual({ line: "Saving the answer as a page: 10 s", counting: true });
-    expect(waitingLine(null, 12.7, SAVING_LINES)).toEqual({ line: "Saving the answer as a page: 12 s", counting: true });
+    expect(waitingLine(null, 10, SAVING_LINES)).toEqual({ line: "Saving the answer as a note: 10 s", counting: true });
+    expect(waitingLine(null, 12.7, SAVING_LINES)).toEqual({ line: "Saving the answer as a note: 12 s", counting: true });
     // While it waits for the library, the line is main's own, as a question's is.
     const waiting = "Waiting for Avanzel to finish with your library…";
     expect(waitingLine(waiting, 30, SAVING_LINES)).toEqual({ line: waiting, counting: false });

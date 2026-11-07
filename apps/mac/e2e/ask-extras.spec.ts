@@ -1,5 +1,5 @@
 // What the Ask window adds to a question: before the first one, up to three questions about the pages filed last, each in words
-// beside Ask this, which asks it; and on the newest answer, Save as a page, which the turn can take back with its own Undo. The fake
+// beside Ask this, which asks it; and on the newest answer, Save as a note, which the turn can take back with its own Undo. The fake
 // agent answers an ask with "Q: " and the question, as app.spec.ts's Ask tests read it, and when it is asked to save the answer it
 // writes topics/answer.md. Under the field a hint names Record a thought's shortcut, which, pressed with this window in front, says a
 // question into the field and keeps nothing in the library (the last tests).
@@ -59,7 +59,7 @@ import { pressShortcut, sentToCapsule, settingsSnap, watchCapsule } from "./setu
 test.afterEach(closeModelHubs);
 
 /** The line under the field before the first question, and the one a library with no pages gets instead. */
-const USUAL = "Answers come from your library only, with links to the pages they use.";
+const USUAL = "Answers come from your library only, with links to the notes they use.";
 const EMPTY = "Your shelves are empty. Say something first, then ask about it.";
 
 /** The names of the groups in `scope` (the window, or a group of it), in order: each group is named by the words its aria-labelledby points at. */
@@ -112,7 +112,7 @@ test("Ask suggests a question about each page filed last, newest first, and Ask 
   await ask.getByRole("group", { name: "What am I doing with Maya?", exact: true }).getByRole("button", { name: "Ask this", exact: true }).click();
   await expect(ask.getByRole("heading", { name: "What am I doing with Maya?", exact: true })).toBeVisible();
   await expect(ask.getByText("Q: What am I doing with Maya?")).toBeVisible({ timeout: 60_000 });
-  // No suggestion is left, nor the group that held them, and no group is named by one: the only group is the answer's Save as a page,
+  // No suggestion is left, nor the group that held them, and no group is named by one: the only group is the answer's Save as a note,
   // which nothing names yet.
   await expect(ask.getByRole("button", { name: "Ask this", exact: true })).toHaveCount(0);
   await expect(suggestionsOf(ask)).toHaveCount(0);
@@ -206,7 +206,7 @@ test("a long title wraps in the question, never in its button", async () => {
   await app.close();
 });
 
-// ---------------------------------------------------------------- Save as a page
+// ---------------------------------------------------------------- Save as a note
 
 /** A new file for the fake agent's record (FAKE_AGENT_RECORD): one line for each run it makes. */
 const newRecord = () => path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-runs-")), "runs.jsonl");
@@ -237,13 +237,13 @@ async function answeredIn(app: ElectronApplication, question: string): Promise<P
 /** The newest turn's save: the status region that holds what the save says (the turn's second one, after its reply's). */
 const saveRegion = (ask: Page) => ask.locator("article").first().getByRole("status").nth(1);
 
-/** The newest turn's Save as a page. */
-const saveOffer = (ask: Page) => ask.locator("article").first().getByRole("button", { name: "Save as a page", exact: true });
+/** The newest turn's Save as a note. */
+const saveOffer = (ask: Page) => ask.locator("article").first().getByRole("button", { name: "Save as a note", exact: true });
 
 /** What the turn says once the fake agent has saved: it writes topics/answer.md, which has the title "Answer". */
 const SAVED = "Saved as “Answer” in Topics.";
 
-/** Asks `question`, saves its answer as a page, and waits until the newest turn says it is saved: the Ask window. */
+/** Asks `question`, saves its answer as a note, and waits until the newest turn says it is saved: the Ask window. */
 async function savedIn(app: ElectronApplication, question = "Summarize my ideas"): Promise<Page> {
   const ask = await answeredIn(app, question);
   await saveOffer(ask).click();
@@ -270,7 +270,7 @@ const LEFTOVERS = "avanzel: leftovers of an answer that was not saved";
 /** The subject of the last commit in `library`. */
 const lastCommit = (library: string) => gitOut(library, "log", "-1", "--format=%s").trim();
 
-test("Save as a page saves the answer the person saw, says where, and opens it", async () => {
+test("Save as a note saves the answer the person saw, says where, and opens it", async () => {
   const library = await makeLibrary({ git: true });
   const record = newRecord();
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_RECORD: record });
@@ -304,7 +304,7 @@ test("Save as a page saves the answer the person saw, says where, and opens it",
     process.env.FAKE_AGENT_DELAY_MS = "1500";
   });
   await offer.click();
-  await expect(saveRegion(ask)).toHaveText("Saving the answer as a page…");
+  await expect(saveRegion(ask)).toHaveText("Saving the answer as a note…");
   await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
   await app.evaluate(() => {
     delete process.env.FAKE_AGENT_DELAY_MS;
@@ -348,7 +348,7 @@ test("one run at a time: no question while a save runs, and Stop gives the save 
   await field.press("Enter");
   await expect(ask.getByRole("heading")).toHaveCount(1);
   await expect(field).toHaveValue("What are my goals?");
-  await expect(ask.getByRole("button", { name: "Save as a page" })).toHaveCount(0);
+  await expect(ask.getByRole("button", { name: "Save as a note" })).toHaveCount(0);
   // Once the agent has started its page, Stop gives the save up: the agent is gone, what it wrote is kept as its own commit, and
   // the offer is back.
   await expect.poll(() => exists(library, "goals/half.md"), { timeout: 30_000 }).toBe(true);
@@ -372,7 +372,7 @@ test("a save that saved no page, or failed, says so with one fix, Save again", a
   // was. Its one fix, the moment's primary, saves again.
   await agentMode(app, "noop");
   await saveOffer(ask).click();
-  await expect(alert.getByText("fake didn't save a page.", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(alert.getByText("fake didn't save a note.", { exact: true })).toBeVisible({ timeout: 60_000 });
   await expect(alert.getByText("Your library hasn't changed.", { exact: true })).toBeVisible();
   await expect(alert.getByRole("button")).toHaveText(["Save again"]);
   await expect(alert.getByRole("button", { name: "Save again", exact: true })).toHaveAttribute("data-variant", "primary");
@@ -399,26 +399,26 @@ test("an older turn's unsaved Notice keeps its words, with no buttons", async ()
   const ask = await answeredIn(app, "Summarize my ideas");
   await agentMode(app, "noop");
   await saveOffer(ask).click();
-  await expect(ask.getByRole("alert").getByText("fake didn't save a page.", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(ask.getByRole("alert").getByText("fake didn't save a note.", { exact: true })).toBeVisible({ timeout: 60_000 });
   // A later question comes after the failed save: only the newest turn offers a fix, as a failed question's Notice does.
   await agentMode(app, "ok");
   await answeredIn(app, "What are my goals?");
   const [newest, older] = await ask.locator("article").all();
-  await expect(older!.getByRole("alert").getByText("fake didn't save a page.", { exact: true })).toBeVisible();
+  await expect(older!.getByRole("alert").getByText("fake didn't save a note.", { exact: true })).toBeVisible();
   await expect(older!.getByRole("alert").getByText("Your library hasn't changed.", { exact: true })).toBeVisible();
   await expect(older!.getByRole("button")).toHaveCount(0);
-  await expect(newest!.getByRole("button", { name: "Save as a page", exact: true })).toBeVisible();
+  await expect(newest!.getByRole("button", { name: "Save as a note", exact: true })).toBeVisible();
   await app.close();
 });
 
-test("Save as a page is offered on the newest answered turn only", async () => {
+test("Save as a note is offered on the newest answered turn only", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   await answeredIn(app, "Summarize my ideas");
   const ask = await answeredIn(app, "What are my goals?");
-  const offers = ask.getByRole("button", { name: "Save as a page", exact: true });
+  const offers = ask.getByRole("button", { name: "Save as a note", exact: true });
   await expect(offers).toHaveCount(1);
-  await expect(ask.locator("article").first().getByRole("button", { name: "Save as a page", exact: true })).toHaveCount(1);
+  await expect(ask.locator("article").first().getByRole("button", { name: "Save as a note", exact: true })).toHaveCount(1);
   // The newest turn failed: there is no answer to keep, and the one before it is not the newest any more.
   await agentMode(app, "fail");
   await askedIn(app, "What about my people?");
@@ -502,7 +502,7 @@ test("a save that commits nothing leaves the last filing's Undo", async () => {
   const ask = await answeredIn(app, "Summarize my ideas");
   await agentMode(app, "noop");
   await saveOffer(ask).click();
-  await expect(ask.getByRole("alert").getByText("fake didn't save a page.", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(ask.getByRole("alert").getByText("fake didn't save a note.", { exact: true })).toBeVisible({ timeout: 60_000 });
   await expect.poll(() => undoItem(app)).toBeDefined();
   await expect.poll(() => trayOffersUndo(app)).toBe(true);
   // It is the filing's Undo, still good: ⌥⇧Z takes the filing back.
@@ -771,8 +771,8 @@ test("a saved turn keeps its Undo under newer questions, and an older turn that 
   expect(exists(library, "topics/answer.md")).toBe(false);
   // The offer is the newest turn's alone: the older turn says it is undone, and has nothing to press.
   await expect(older.getByRole("button")).toHaveCount(0);
-  await expect(ask.getByRole("button", { name: "Save as a page", exact: true })).toHaveCount(1);
-  await expect(newest.getByRole("button", { name: "Save as a page", exact: true })).toBeVisible();
+  await expect(ask.getByRole("button", { name: "Save as a note", exact: true })).toHaveCount(1);
+  await expect(newest.getByRole("button", { name: "Save as a note", exact: true })).toBeVisible();
   await app.close();
 });
 
@@ -812,7 +812,7 @@ test("closing the Ask window ends its Undo, and the library's history keeps the 
   await app.close();
 });
 
-test("Save as a page waits for an Undo that waits, and a question doesn't", async () => {
+test("Save as a note waits for an Undo that waits, and a question doesn't", async () => {
   // A save that commits before an Undo that waits can make git refuse that Undo, which has one try. So while an Undo waits (here it is
   // held at the library's door), the newest turn's offer is disabled, with no spinner (a spinner is work in progress, and the Undo that
   // was pressed has it), and no save can begin. A question touches no commit: it goes on.
@@ -856,7 +856,7 @@ test("Save again waits for an Undo that waits, as the offer does", async () => {
   await agentMode(app, "noop");
   await saveOffer(ask).click();
   const alert = ask.getByRole("alert");
-  await expect(alert.getByText("fake didn't save a page.", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(alert.getByText("fake didn't save a note.", { exact: true })).toBeVisible({ timeout: 60_000 });
   await agentMode(app, "ok");
   const again = alert.getByRole("button", { name: "Save again", exact: true });
   await expect(again).toBeEnabled();
@@ -1010,7 +1010,7 @@ test("a save that takes 10 s counts its seconds beside Stop, in the flow of its 
     process.env.FAKE_AGENT_DELAY_MS = "30000";
   });
   await saveOffer(ask).click();
-  const counting = turnAt(ask).getByText(/^Saving the answer as a page: \d+ s$/);
+  const counting = turnAt(ask).getByText(/^Saving the answer as a note: \d+ s$/);
   await expect(counting).toBeVisible({ timeout: 20_000 });
   await expect(saveRegion(ask)).toHaveText("");
   await snap(ask, "9-ask-save-counting");

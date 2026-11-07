@@ -1,0 +1,67 @@
+/* A field that can be said: the field (or, while it listens, the voice) and the microphone beside it. The two in the slot cross: the
+   one that comes rises in and fades up, so the row never jumps. */
+.av-spoken-field {
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-8);
+  min-width: 0;
+}
+/* One width for the field and the voice, whatever is typed or heard: the row and the button beside it never move. */
+.av-spoken-field-slot {
+  flex: 0 1 200px;
+  width: 200px;
+  min-width: 0;
+  min-height: var(--av-size-control);
+  display: grid;
+  align-items: center;
+}
+.av-spoken-field-input,
+.av-spoken-field-voice { animation: av-spoken-field-in var(--av-duration-base) var(--av-ease-land) backwards; }
+@keyframes av-spoken-field-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+/* The voice, where the field was: a box of the field's size, a red dot that breathes, and the wave filling the rest. */
+.av-spoken-field-voice {
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-10);
+  height: var(--av-size-control);
+  padding: 0 var(--av-space-12);
+  border-radius: var(--av-radius-control);
+  background: var(--av-surface-control);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--av-accent-fill) 55%, transparent);
+  color: var(--av-ink-accent);
+}
+.av-spoken-field-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-ink-danger);
+  animation: av-spoken-field-breathe 1.2s ease-in-out infinite;
+}
+@keyframes av-spoken-field-breathe { 50% { opacity: 0.35; transform: scale(0.8); } }
+.av-spoken-field-voice .av-wave { color: var(--av-ink-accent); }
+/* The microphone, a round button; while it listens it is Stop, with a ring that pulses out from it. */
+.av-spoken-field-button { position: relative; display: inline-flex; flex: none; }
+.av-spoken-field-button .av-button { border-radius: var(--av-radius-pill); }
+.av-spoken-field[data-listening] .av-spoken-field-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--av-radius-pill);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--av-accent-fill) 60%, transparent);
+  animation: av-spoken-field-ring 1.4s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes av-spoken-field-ring {
+  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--av-accent-fill) 55%, transparent); }
+  to { box-shadow: 0 0 0 10px color-mix(in srgb, var(--av-accent-fill) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .av-spoken-field-input,
+  .av-spoken-field-voice,
+  .av-spoken-field-dot,
+  .av-spoken-field[data-listening] .av-spoken-field-button::after { animation: none; }
+}

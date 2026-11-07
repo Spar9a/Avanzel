@@ -1,5 +1,34 @@
 /* A pop-up button and its menu, in the style of the window's other controls: a pill that says what is chosen, with a chevron
    that turns down while the menu is open; the menu a raised rounded card with a check by the chosen choice. */
+.av-select-box {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+}
+/* A clearable choice: the × sits inside the pill's end, where the chevron was; the pill keeps room for it. */
+.av-select-box[data-clearable] .av-select[data-size="small"] { padding-right: 28px; }
+.av-select-box[data-clearable] .av-select[data-size="regular"] { padding-right: 32px; }
+.av-select-clear {
+  appearance: none;
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--av-radius-pill);
+  background: transparent;
+  color: var(--av-ink-secondary);
+  transform: translateY(-50%);
+  transition: background var(--av-duration-quick) var(--av-ease-out), color var(--av-duration-quick) var(--av-ease-out);
+}
+.av-select-clear:hover { background: color-mix(in srgb, var(--av-ink) 12%, transparent); color: var(--av-ink); }
 .av-select {
   appearance: none;
   display: inline-flex;
@@ -11,7 +40,6 @@
   border-radius: var(--av-radius-pill);
   background: var(--av-surface-fill);
   color: var(--av-ink);
-  cursor: default;
   white-space: nowrap;
   transition: background var(--av-duration-quick) var(--av-ease-out);
 }
@@ -75,9 +103,23 @@
   font: var(--av-text-body);
   letter-spacing: var(--av-text-body-tracking);
   white-space: nowrap;
-  cursor: default;
   transition: background var(--av-duration-quick) var(--av-ease-out), color var(--av-duration-quick) var(--av-ease-out);
 }
 .av-select-option[data-active] { background: var(--av-accent-fill); color: var(--av-ink-on-accent); }
 .av-select-check { display: inline-flex; width: 16px; justify-content: center; color: var(--av-ink-accent); }
 .av-select-option[data-active] .av-select-check { color: var(--av-ink-on-accent); }
+
+/* A shelf among the choices: its glyph in its colour and its name tinted with it; under the pointer, the shelf's own colour behind it.
+   Chosen, the button wears the shelf as its chip does: a tint and a ring of the colour, the glyph in it. */
+.av-select-option[data-shelf] { color: color-mix(in srgb, var(--_shelf) 55%, var(--av-ink)); }
+.av-select-option[data-shelf] .av-shelf-glyph { color: var(--_shelf); }
+.av-select-option[data-shelf][data-active] { background: color-mix(in srgb, var(--_shelf) 28%, var(--av-surface-raised)); color: var(--av-ink); }
+.av-select-option[data-shelf][data-active] .av-select-check { color: var(--av-ink); }
+.av-select[data-shelf] {
+  background: color-mix(in srgb, var(--_shelf) 16%, var(--av-surface-fill));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--_shelf) 45%, transparent);
+  color: color-mix(in srgb, var(--_shelf) 40%, var(--av-ink));
+}
+.av-select[data-shelf] .av-shelf-glyph { color: var(--_shelf); }
+.av-select[data-shelf]:hover:not(:disabled),
+.av-select[data-shelf][data-open] { background: color-mix(in srgb, var(--_shelf) 24%, var(--av-surface-fill)); }

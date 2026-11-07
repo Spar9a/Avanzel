@@ -66,6 +66,16 @@
 .settings-words {
   padding: var(--av-space-10) var(--av-space-12);
 }
+/* A shortcut's place in its row: the keys, or while it listens the ask and how to stop. One width and height for both, wide
+   enough for the ask, so the button beside it and the row never move. */
+.settings-shortcut {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  width: 160px;
+  height: 36px;
+}
 /* The speech model's progress bar, a short one beside the megabytes it has. */
 .settings-meter {
   width: 120px;

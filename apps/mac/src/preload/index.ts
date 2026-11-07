@@ -1,5 +1,5 @@
 // The only door between the renderers and the main process: a typed, minimal `window.avanzel`.
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import type { AvanzelBridge, CapsuleCommand, CapsuleState, PanelSnapshot, PanelTab, SettingsPane, SettingsSnapshot, SetupSnapshot } from "../shared/ipc.ts";
 
 function listen<T>(channel: string, callback: (value: T) => void): () => void {
@@ -12,9 +12,17 @@ const bridge: AvanzelBridge = {
   capsule: {
     onState: (callback) => listen<CapsuleState>("capsule:state", callback),
     ready: () => ipcRenderer.send("capsule:ready"),
+    addFiles: () => ipcRenderer.send("capsule:add-files"),
+    addScreenshot: (area) => ipcRenderer.send("capsule:add-screenshot", area === true),
+    addVideo: () => ipcRenderer.send("capsule:add-video"),
+    addMarked: () => ipcRenderer.send("capsule:add-marked"),
+    attachToRecording: (files) => ipcRenderer.send("capsule:attach-recording", files.map((file) => webUtils.getPathForFile(file))),
+    removeAttachment: (index) => ipcRenderer.send("capsule:remove-attachment", index),
+    setDropZone: (zone) => ipcRenderer.send("capsule:drop-zone", zone),
     onCommand: (callback) => listen<CapsuleCommand>("capsule:command", callback),
     sendAudio: (samples) => ipcRenderer.invoke("capsule:audio", samples),
     sendCallAudio: (call, samples, last) => ipcRenderer.invoke("capsule:call-audio", call, samples, last),
+    sendTriggerAudio: (samples) => ipcRenderer.invoke("capsule:trigger-audio", samples),
     stopCall: () => ipcRenderer.send("capsule:stop-call"),
     reportMicError: (message) => ipcRenderer.send("capsule:mic-error", message),
     setInteractive: (interactive) => ipcRenderer.send("capsule:interactive", interactive),
@@ -44,6 +52,7 @@ const bridge: AvanzelBridge = {
     onChanged: (callback) => listen<SettingsSnapshot>("settings:changed", callback),
     onShowPane: (callback) => listen<SettingsPane>("settings:show-pane", callback),
     setApp: (patch) => ipcRenderer.invoke("settings:set-app", patch),
+    recordingShortcut: (recording) => ipcRenderer.send("settings:recording-shortcut", recording === true),
     setCursorDictation: (patch) => ipcRenderer.invoke("settings:set-cursor-dictation", patch),
     cursorPermissions: () => ipcRenderer.invoke("settings:cursor-permissions"),
     askCursorPermissions: () => ipcRenderer.invoke("settings:ask-cursor-permissions"),
@@ -113,6 +122,12 @@ const bridge: AvanzelBridge = {
     typeIt: () => ipcRenderer.send("up-here:type-it"),
     close: () => ipcRenderer.send("up-here:close"),
   },
+  area: {
+    get: () => ipcRenderer.invoke("area:get"),
+    setInteractive: (interactive) => ipcRenderer.send("area:interactive", interactive),
+    done: (video, mime) => ipcRenderer.invoke("area:done", video, mime),
+    cancel: () => ipcRenderer.send("area:cancel"),
+  },
   panel: {
     get: () => ipcRenderer.invoke("panel:get"),
     onChanged: (callback) => listen<PanelSnapshot>("panel:changed", callback),
@@ -121,6 +136,21 @@ const bridge: AvanzelBridge = {
     onShown: (callback) => listen<PanelTab | null>("panel:shown", callback),
     hide: () => ipcRenderer.send("panel:hide"),
     onLevel: (callback) => listen<number>("panel:level", callback),
+    type: (text) => ipcRenderer.invoke("panel:type", text),
+    callApps: () => ipcRenderer.invoke("panel:call-apps"),
+    thumbnail: (rel) => ipcRenderer.invoke("panel:thumbnail", rel),
+    hearTriggerWord: (samples) => ipcRenderer.invoke("panel:hear-trigger-word", samples),
+    hearingTriggerWord: (on) => ipcRenderer.send("panel:hearing-trigger-word", on),
+    copyPrompt: (rel) => ipcRenderer.invoke("panel:copy-prompt", rel),
+    onPickCall: (callback) => listen<void>("panel:pick-call", callback),
+    ask: (question) => ipcRenderer.invoke("panel:ask", question),
+    onAskProgress: (callback) => listen<string>("ask:progress", callback),
+    cancelAsk: () => ipcRenderer.send("panel:cancel-ask"),
+    onOpenPage: (callback) => listen<string>("panel:open-page", callback),
+    // A dropped file's path is known only here, in the preload (webUtils); the page hands the File, main gets the path.
+    attachToPage: (rel, files) => ipcRenderer.send("panel:attach-page", rel, files.map((file) => webUtils.getPathForFile(file))),
+    attachToRecording: (files) => ipcRenderer.send("panel:attach-recording", files.map((file) => webUtils.getPathForFile(file))),
+    removeAttachment: (index) => ipcRenderer.send("panel:remove-attachment", index),
   },
 };
 

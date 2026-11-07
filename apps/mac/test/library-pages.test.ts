@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { frontMatter, libraryPages, pageText, plainWords } from "../src/main/library-pages.ts";
+import { attachmentNamesIn, attachmentsIn, frontMatter, libraryPages, pagePrompt, pageText, sourcesOnlyOf, plainWords, withoutItem } from "../src/main/library-pages.ts";
 import { inboxLine, pageDay, reviewOutcome, reviewState, sortPages, when } from "../src/renderer/panel/copy.ts";
 import type { PanelReview } from "../src/shared/ipc.ts";
 
@@ -63,6 +63,57 @@ describe("page text", () => {
   });
 });
 
+describe("pagePrompt", () => {
+  it("is the page for an agent: what it is, the title and its fields, its words, and its files as full paths", () => {
+    const root = library();
+    mkdirSync(path.join(root, "raw", "attachments", "2026", "11"), { recursive: true });
+    writeFileSync(path.join(root, "raw", "attachments", "2026", "11", "shot.png"), "png");
+    const text = "---\ntitle: Fix the light\nshelf: problems\nstatus: open\ntags: [work, graphics]\n---\n# Fix the light\n\nSee [the shot](raw/attachments/2026/11/shot.png) and raw/attachments/2026/11/gone.mov.\n\n## Next steps\n- [ ] Ask Dana\n";
+    const prompt = pagePrompt(root, "problems/fix-light.md", text);
+    const shot = path.join(root, "raw/attachments/2026/11/shot.png");
+    expect(prompt).toBe(
+      [
+        "Here is a note from my notes in Avanzel. Read it, look at the files it names, and help me with it.",
+        "",
+        "# Fix the light",
+        "Shelf: problems. Status: open. Tags: work, graphics.",
+        "",
+        `See [the shot](${shot}) and raw/attachments/2026/11/gone.mov.\n\n## Next steps\n- [ ] Ask Dana`,
+        "",
+        "Files (on this Mac):",
+        `- ${shot}`,
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("names the shelf by its folder when the front matter doesn't, and leaves out what isn't there", () => {
+    const prompt = pagePrompt(library(), "ideas/plain.md", "Just words.\n");
+    expect(prompt).toBe("Here is a note from my notes in Avanzel. Read it, look at the files it names, and help me with it.\n\n# plain\nShelf: ideas.\n\nJust words.\n");
+  });
+});
+
+describe("sourcesOnlyOf", () => {
+  it("is the captures a page names in its sources, in the inbox or raw/, but those another page names too", () => {
+    const root = library();
+    mkdirSync(path.join(root, "inbox"));
+    mkdirSync(path.join(root, "raw", "2026", "11"), { recursive: true });
+    mkdirSync(path.join(root, "problems"));
+    mkdirSync(path.join(root, "ideas"));
+    writeFileSync(path.join(root, "raw", "2026", "11", "a.md"), "capture a");
+    writeFileSync(path.join(root, "raw", "2026", "11", "shared.md"), "capture shared");
+    writeFileSync(path.join(root, "inbox", "b.md"), "capture b");
+    writeFileSync(path.join(root, "ideas", "other.md"), "---\nsources: [\"[[shared]]\"]\n---\n# Other\n");
+    const text = "---\nsources: [\"[[a]]\", \"[[shared]]\", \"[[b]]\", \"[[missing]]\"]\n---\n# Fix\n";
+    writeFileSync(path.join(root, "problems", "fix.md"), text);
+    expect(sourcesOnlyOf(root, "problems/fix.md", text).map((file) => path.relative(root, file)).sort()).toEqual(["inbox/b.md", "raw/2026/11/a.md"]);
+  });
+
+  it("is none for a page that names no sources", () => {
+    expect(sourcesOnlyOf(library(), "ideas/x.md", "# X\n")).toEqual([]);
+  });
+});
+
 describe("library pages", () => {
   it("lists the shelves' pages, newest change first, with their shelf, status and tags", () => {
     const root = library();
@@ -116,7 +167,7 @@ describe("panel copy", () => {
 
   it("sorts pages by change, by making, by title and by shelf", () => {
     const page = (path: string, title: string, shelf: string | null, created: string, updated: string) =>
-      ({ path, title, shelf, status: null, tags: [], created, updated, summary: "", sections: [] });
+      ({ path, title, shelf, status: null, tags: [], created, updated, summary: "", sections: [], attachments: [], attachmentNames: [] });
     const pages = [
       page("a", "Beta", "topics", "2026-11-01", "2026-11-06"),
       page("b", "Alpha", "goals", "2026-11-05", "2026-11-05"),
@@ -133,5 +184,50 @@ describe("panel copy", () => {
     expect(inboxLine(0)).toBe("The inbox is empty.");
     expect(inboxLine(1)).toBe("1 note waits in the inbox.");
     expect(inboxLine(3)).toBe("3 notes wait in the inbox.");
+  });
+});
+
+describe("withoutItem", () => {
+  const page = "# Fix\n\n## Next steps\n\n- [ ] Ask Dana\n  - which project\n- [x] Book\n\n## Log\n\n- [ ] Ask Dana\n";
+
+  it("takes out the step the panel names, in its section only, with what is indented under it", () => {
+    expect(withoutItem(page, "Next steps", "☐ Ask Dana")).toBe("# Fix\n\n## Next steps\n\n- [x] Book\n\n## Log\n\n- [ ] Ask Dana\n");
+    expect(withoutItem(page, "Next steps", "☑ Book")).toBe("# Fix\n\n## Next steps\n\n- [ ] Ask Dana\n  - which project\n\n## Log\n\n- [ ] Ask Dana\n");
+  });
+
+  it("writes nothing for a line or a section the page hasn't", () => {
+    expect(withoutItem(page, "Next steps", "☐ Something else")).toBeNull();
+    expect(withoutItem(page, "Questions", "☐ Ask Dana")).toBeNull();
+  });
+});
+
+describe("attachmentsIn", () => {
+  it("names each file of raw/attachments a page mentions, once and in order, that is there", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "avanzel-att-"));
+    mkdirSync(path.join(root, "raw/attachments/2026/11"), { recursive: true });
+    writeFileSync(path.join(root, "raw/attachments/2026/11/a.mov"), "x");
+    writeFileSync(path.join(root, "raw/attachments/2026/11/b.png"), "x");
+    const text = "Videos raw/attachments/2026/11/a.mov, raw/attachments/2026/11/gone.mov and (raw/attachments/2026/11/b.png). Again raw/attachments/2026/11/a.mov.";
+    expect(attachmentsIn(root, text)).toEqual(["raw/attachments/2026/11/a.mov", "raw/attachments/2026/11/b.png"]);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe("plainWords and files", () => {
+  it("keeps a link to a file of raw/attachments as it is, and makes any other link its words", () => {
+    expect(plainWords("Watch [the recording](raw/attachments/2026/11/a.mov) and [the site](https://example.com).")).toBe(
+      "Watch [the recording](raw/attachments/2026/11/a.mov) and the site.",
+    );
+  });
+});
+
+describe("attachmentNamesIn", () => {
+  it("reads the name a file had from where the page writes it beside its path, for a file that is there", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "avanzel-names-"));
+    mkdirSync(path.join(root, "raw/attachments/2026/11"), { recursive: true });
+    writeFileSync(path.join(root, "raw/attachments/2026/11/a.mov"), "x");
+    const text = "Added raw/attachments/2026/11/a.mov («Запись экрана 2026-11-07 в 10.54.48.mov») and raw/attachments/2026/11/gone.mov (Old.mov).";
+    expect(attachmentNamesIn(root, text)).toEqual([{ name: "Запись экрана 2026-11-07 в 10.54.48.mov", path: "raw/attachments/2026/11/a.mov" }]);
+    rmSync(root, { recursive: true, force: true });
   });
 });

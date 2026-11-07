@@ -39,7 +39,7 @@ const GLYPHS: Record<Shelf, ReactElement> = {
 };
 
 /** The shelf's glyph alone. It is decoration: put it next to the shelf's visible name. */
-export function ShelfGlyph({ shelf, size = 12 }: { shelf: Shelf; size?: 9 | 10 | 12 }) {
+export function ShelfGlyph({ shelf, size = 12 }: { shelf: Shelf; size?: 9 | 10 | 12 | 14 | 16 }) {
   return (
     <svg className="av-shelf-glyph" width={size} height={size} viewBox="0 0 12 12" aria-hidden="true">
       {GLYPHS[shelf]}
@@ -51,20 +51,21 @@ export interface ShelfTagProps {
   shelf: Shelf;
   /** chip: inline, as in a receipt or under an answer. tab: a divider tab, as in the drawer. */
   variant?: "chip" | "tab";
-  /** A count badge on a tab: how many pages. VoiceOver reads it as "1 page" or "3 pages". */
+  /** A count badge on a tab: how many pages. VoiceOver reads it as "1 note" or "3 notes". */
   count?: number;
   /** The count is how many pages the shelf holds, not how many just went in, so it shows at 0 too. */
   total?: boolean;
 }
 
-const pages = (count: number) => `${count} ${count === 1 ? "page" : "pages"}`;
+const pages = (count: number) => `${count} ${count === 1 ? "note" : "notes"}`;
 
 /** A shelf with its colour, its glyph and its name, always all three. */
 export function ShelfTag({ shelf, variant = "chip", count, total }: ShelfTagProps) {
   const counted = variant === "tab" && count !== undefined && (total || count > 0);
   return (
     <span className="av-shelf-tag" data-variant={variant} data-shelf={shelf}>
-      <ShelfGlyph shelf={shelf} size={variant === "tab" ? 9 : 10} />
+      {/* At least 16 px, on a tab as on a chip: a sign that small is still read at a glance. */}
+      <ShelfGlyph shelf={shelf} size={16} />
       <span className="av-shelf-name">{SHELF_NAMES[shelf]}</span>
       {counted && <span className="av-shelf-count" aria-label={pages(count)}>{count}</span>}
     </span>

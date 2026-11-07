@@ -1,0 +1,55 @@
+/* A file as a chip: its sign in violet and its name, a link that opens it; under the pointer, or with the focus in it, an × at its end,
+   which turns red under the pointer and takes the file away. */
+.av-file-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  height: 26px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-surface-fill);
+  box-shadow: inset 0 0 0 0.5px var(--av-line-hair);
+  transition: background var(--av-duration-quick) var(--av-ease-out);
+}
+.av-file-chip:hover { background: var(--av-surface-control); }
+.av-file-chip-open {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--av-space-6);
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0 10px;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--av-ink-accent);
+  font: var(--av-text-footnote);
+  letter-spacing: var(--av-text-footnote-tracking);
+}
+.av-file-chip-open:hover .av-file-chip-name { text-decoration: underline; }
+.av-file-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--av-ink); }
+.av-file-chip-remove {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0;
+  height: 20px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  border-radius: var(--av-radius-pill);
+  background: transparent;
+  color: var(--av-ink-secondary);
+  opacity: 0;
+  overflow: hidden;
+  transition: width var(--av-duration-quick) var(--av-ease-out), opacity var(--av-duration-quick) var(--av-ease-out), color var(--av-duration-quick) var(--av-ease-out), background var(--av-duration-quick) var(--av-ease-out);
+}
+.av-file-chip:hover .av-file-chip-remove,
+.av-file-chip:focus-within .av-file-chip-remove {
+  width: 20px;
+  margin-right: 4px;
+  opacity: 1;
+}
+.av-file-chip-remove:hover { color: var(--av-ink-danger); background: color-mix(in srgb, var(--av-ink-danger) 14%, transparent); }

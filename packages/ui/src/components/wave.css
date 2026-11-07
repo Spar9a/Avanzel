@@ -1,4 +1,6 @@
 .av-wave { display: inline-flex; flex: none; align-items: center; gap: 2px; height: 24px; }
+/* Filling its row: as wide as the room left, the bars spread to its ends (no bar ever wider than the rest). */
+.av-wave[data-fill] { flex: 1 1 auto; min-width: 48px; justify-content: space-between; overflow: hidden; }
 .av-wave > i {
   display: block;
   width: 3px;

@@ -30,7 +30,17 @@ export interface FilePromptOptions {
   names?: readonly string[];
   /** The owner's standing instructions for this run (a shadow task's body). */
   instructions?: string | null;
+  /** The library-relative page the owner recorded this capture from, to continue it: it is updated first. */
+  continues?: string | null;
+  /** The capture names files of raw/attachments (videos, screenshots, files added to it): the pages link them in their words. */
+  files?: boolean;
 }
+
+// Self-contained, as CALL is: libraries made before files could be added keep their old AGENTS.md.
+const FILES =
+  "This capture adds files (they are named in it, under raw/attachments/). Where a page speaks of one, link it in those words, as a " +
+  "Markdown link to its path: [the screen recording](raw/attachments/2026/11/2026-11-07-131109.mov). Link each file once on each page " +
+  "that mentions it, and never move, rename or change the files.";
 
 // Self-contained: libraries made before calls keep their old AGENTS.md.
 const CALL =
@@ -62,15 +72,22 @@ export function filePrompt(
   captureRel: string,
   captureId: string,
   now: Date,
-  { attachments = [], call = false, names = [], instructions = null }: FilePromptOptions = {},
+  { attachments = [], call = false, names = [], instructions = null, continues = null, files = false }: FilePromptOptions = {},
 ): string {
   const notes: string[] = [];
+  if (continues) {
+    notes.push(
+      `The owner recorded this capture from the page \`${continues}\` to continue it. Update that page with it first: answer its open ` +
+        "questions, tick the next steps it says are done, add the next steps it names, and refresh its summary. File anything else in it as usual.",
+    );
+  }
   if (attachments.length === 1) {
     notes.push(`This capture has a screenshot: ${attachments[0]}. Open it to see what the owner was looking at.`);
   } else if (attachments.length > 1) {
     notes.push(`This capture has screenshots: ${attachments.join(", ")}. Open them to see what the owner was looking at.`);
   }
   if (call) notes.push(CALL);
+  if (files) notes.push(FILES);
   const spelled = boundedNames(names);
   if (spelled.length > 0) notes.push(`The owner uses these names and terms. Spell them exactly this way: ${spelled.join(", ")}.`);
   const standing = instructions?.trim();

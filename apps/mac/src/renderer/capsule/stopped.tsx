@@ -19,7 +19,7 @@ export function stoppedScene(state: StateOf<"cancelled">): Scene {
 
 function StoppedCard({ state }: { state: StateOf<"cancelled"> }) {
   return (
-    <Card label="Thought" footer={<Text variant="footnote">{stoppedLine(state.agent, state.partial, state.leftovers, state.review)}</Text>}>
+    <Card look="panel" label="Thought" footer={<Text variant="footnote">{stoppedLine(state.agent, state.partial, state.leftovers, state.review)}</Text>}>
       <Words>{state.text}</Words>
     </Card>
   );
@@ -34,5 +34,5 @@ export function recordedScene(state: StateOf<"recorded">): Scene {
 }
 
 function RecordedCard({ state }: { state: StateOf<"recorded"> }) {
-  return <Card label="Recording" placeholder="Your recording" footer={<Text variant="footnote">{recordedLine(state.review)}</Text>} />;
+  return <Card look="panel" label="Recording" placeholder="Your recording" footer={<Text variant="footnote">{recordedLine(state.review)}</Text>} />;
 }

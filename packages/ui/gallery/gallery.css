@@ -50,6 +50,8 @@
   text-align: center;
 }
 .g-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 4px; padding-top: 8px; }
+/* A stand-in screen for the area picker, which fills its window: the transform makes it fill this box instead. */
+.g-screen { position: relative; height: 200px; overflow: hidden; border-radius: var(--av-radius-group); transform: translateZ(0); background: var(--av-surface-window); }
 .g-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(82px, 1fr)); gap: 10px 8px; }
 .g-icon { display: flex; align-items: center; gap: var(--av-space-6); min-width: 0; font: var(--av-text-caption); color: var(--av-ink-secondary); }
 .g-icon .av-icon, .g-icon .av-shelf-glyph { color: var(--av-ink); }

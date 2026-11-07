@@ -1,0 +1,70 @@
+/* A bar of the capsule's glass that rises in with what was just done, Undo, and an × in a ring. The ring empties, as a clock hand
+   sweeps, over the seconds it can still be taken back; the seconds left show in it, and turn into the × under the pointer. */
+.av-undo-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--av-space-8);
+  max-width: 100%;
+  padding: 4px 4px 4px var(--av-space-16);
+  border-radius: var(--av-radius-pill);
+  background: var(--av-hud-surface-solid);
+  box-shadow: var(--av-shadow-hud);
+  color: var(--av-hud-ink);
+  animation: av-undo-bar-in var(--av-duration-card) var(--av-ease-land) both;
+}
+@keyframes av-undo-bar-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+.av-undo-bar-message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--av-text-footnote);
+  letter-spacing: var(--av-text-footnote-tracking);
+}
+.av-undo-bar .av-button[data-variant="quiet"] { color: var(--av-hud-ink-accent); }
+.av-undo-bar-close {
+  appearance: none;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  border-radius: var(--av-radius-pill);
+  background: transparent;
+  color: var(--av-hud-ink);
+}
+.av-undo-bar-close > * { grid-area: 1 / 1; }
+@property --_sweep {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+.av-undo-bar-ring {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--av-radius-pill);
+  background: conic-gradient(var(--av-hud-ink-accent) var(--_sweep), color-mix(in srgb, var(--av-hud-ink) 16%, transparent) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), var(--av-hud-ink) calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), var(--av-hud-ink) calc(100% - 2px));
+  animation: av-undo-bar-sweep var(--_seconds, 5s) linear forwards;
+}
+@keyframes av-undo-bar-sweep { to { --_sweep: 0%; } }
+/* Paused (a still picture of it): the ring stays full and the bar stays where it rests. */
+.av-undo-bar[data-paused],
+.av-undo-bar[data-paused] .av-undo-bar-ring { animation: none; }
+.av-undo-bar-count {
+  font: var(--av-text-caption);
+  font-variant-numeric: tabular-nums;
+  transition: opacity var(--av-duration-quick) var(--av-ease-out);
+}
+.av-undo-bar-x { display: inline-flex; opacity: 0; transition: opacity var(--av-duration-quick) var(--av-ease-out); }
+.av-undo-bar-close:hover .av-undo-bar-count,
+.av-undo-bar-close:focus-visible .av-undo-bar-count { opacity: 0; }
+.av-undo-bar-close:hover .av-undo-bar-x,
+.av-undo-bar-close:focus-visible .av-undo-bar-x { opacity: 1; }

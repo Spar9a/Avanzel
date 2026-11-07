@@ -836,7 +836,7 @@ console.log("Filed into [[tulips]] and [[run]].");
   writeFileSync(path.join(library, "goals", "run.md"), "# Run a marathon\n\nStatus: active.\n");
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-  // The new page comes first, as the engine lists them, and the one that was changed after it; the log isn't a page.
+  // The new note comes first, as the engine lists them, and the one that was changed after it; the log isn't a page.
   expect(await call(app, "capsuleStateForTests")).toMatchObject({
     kind: "filed",
     noted: false,
@@ -864,7 +864,7 @@ test("a log-only filing is noted", async () => {
   // The card says nothing new was filed: stamped Noted, with the agent's word that it only logged the capture. Without git there is
   // no commit to take back, so the card offers Hide alone, in its corner.
   const card = capsule.getByRole("article");
-  await expect(card.getByRole("status")).toHaveText("Nothing new to file. fake noted it in the log.");
+  await expect(card.getByRole("status")).toHaveText("No note was made. fake noted it in the log.");
   expect(await cardButtons(capsule)).toEqual(["Hide"]);
   await expect(card.getByText("Nothing in this is worth a page", { exact: true })).toBeVisible();
   await expect(card.getByRole("img", { name: /^Noted, / })).toBeVisible();
@@ -1776,7 +1776,7 @@ test("a filing's card is the words on paper with Hide in its corner and Edit and
   expect(await seconds.evaluate((el) => el.closest('[role="status"],[aria-live]')?.tagName ?? null)).toBeNull();
   await expect(chip).not.toContainText(" s");
   // The agent's steps come as the card's newest line, one after another, outside the live region too.
-  const step = card.getByText(/^(Reading your library index|New idea page: Plant tulips in October|Updated your library index|Added a line to the log)$/);
+  const step = card.getByText(/^(Reading your library index|New idea note: Plant tulips in October|Updated your library index|Added a line to the log)$/);
   await expect(step).toBeVisible({ timeout: 30_000 });
   expect(await step.evaluate((el) => el.closest('[role="status"],[aria-live]')?.tagName ?? null)).toBeNull();
   await expect(chip).toHaveText("Filing with Claude Code"); // the chip stayed as it was
@@ -1824,7 +1824,7 @@ test("a filing card's line is the agent's newest step, or says it is still worki
     { kind: "read", path: "index.md", title: "index", shelf: "" },
     { kind: "new", path: "ideas/podcast.md", title: "Indie game dev podcast", shelf: "ideas" },
   ];
-  const newest = card.getByText("New idea page: Indie game dev podcast", { exact: true });
+  const newest = card.getByText("New idea note: Indie game dev podcast", { exact: true });
   const working = card.getByText("Claude Code is still working…", { exact: true });
   // Before the first step there is no line, only how the words were made.
   await call(app, "setCapsule", filingCard({ transcribedIn: 1.4 }));
@@ -1877,7 +1877,7 @@ test("a long thought is cut off after four lines and keeps its line breaks, and 
   expect(cut.shown).toBe(4 * cut.pitch);
   expect(cut.whole).toBeGreaterThan(cut.shown);
   // A step with a long title stays on one line: it is cut off, and the card is as wide as the stack (560 px), no wider.
-  const step = card.getByText(`New idea page: ${title}`, { exact: true });
+  const step = card.getByText(`New idea note: ${title}`, { exact: true });
   await expect(step).toBeVisible();
   expect(await step.evaluate((el) => ({ lines: Math.round(el.clientHeight / parseFloat(getComputedStyle(el).lineHeight)), cut: el.scrollWidth > el.clientWidth }))).toEqual({ lines: 1, cut: true });
   const cardBox = (await card.boundingBox())!;

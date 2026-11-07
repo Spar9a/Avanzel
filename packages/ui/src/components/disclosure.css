@@ -1,0 +1,47 @@
+/* A part that folds away: its quiet heading with a chevron that turns down as it opens, and its body growing from nothing. */
+.av-disclosure { display: flex; flex-direction: column; min-width: 0; }
+.av-disclosure-head {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--av-space-6);
+  margin: 0 0 0 -4px;
+  border: 0;
+  padding: 2px 6px 2px 4px;
+  border-radius: var(--av-radius-small);
+  background: transparent;
+  color: var(--av-ink-secondary);
+  font: var(--av-text-footnote);
+  letter-spacing: var(--av-text-footnote-tracking);
+  transition: color var(--av-duration-quick) var(--av-ease-out), background var(--av-duration-quick) var(--av-ease-out);
+}
+.av-disclosure-head:hover { color: var(--av-ink); background: var(--av-surface-fill); }
+.av-disclosure-chevron { display: inline-flex; transition: transform var(--av-duration-base) var(--av-ease-land); }
+.av-disclosure[data-open] .av-disclosure-chevron { transform: rotate(90deg); }
+.av-disclosure-count {
+  padding: 0 6px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-surface-fill);
+  font: var(--av-text-caption);
+  font-variant-numeric: tabular-nums;
+}
+.av-disclosure-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--av-duration-base) var(--av-ease-leave);
+}
+.av-disclosure[data-open] .av-disclosure-fold {
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--av-duration-card) var(--av-ease-land);
+}
+.av-disclosure-clip { min-height: 0; overflow: hidden; }
+.av-disclosure-body {
+  padding-top: var(--av-space-6);
+  opacity: 0;
+  transition: opacity var(--av-duration-quick) var(--av-ease-leave);
+}
+.av-disclosure[data-open] .av-disclosure-body {
+  opacity: 1;
+  transition: opacity var(--av-duration-base) var(--av-ease-land) var(--av-duration-quick);
+}

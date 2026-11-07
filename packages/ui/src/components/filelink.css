@@ -1,0 +1,71 @@
+/* A file named in a page's text: its sign and words in violet, a link. Under the pointer (or with the focus in it) it becomes a chip, a
+   ring and a wash drawn around it without taking room, and a red bin floats right after it, over the words that follow. */
+.av-file-link {
+  position: relative;
+  display: inline;
+}
+.av-file-link-open {
+  appearance: none;
+  display: inline;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  border-radius: var(--av-radius-small);
+  background: transparent;
+  color: var(--av-ink-accent);
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--av-ink-accent) 40%, transparent);
+  text-underline-offset: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background var(--av-duration-quick) var(--av-ease-out), box-shadow var(--av-duration-quick) var(--av-ease-out);
+}
+.av-file-link-sign { display: inline-flex; vertical-align: -1px; margin-right: 3px; }
+.av-file-link:hover .av-file-link-open,
+.av-file-link:focus-within .av-file-link-open {
+  text-decoration-color: transparent;
+  background: color-mix(in srgb, var(--av-accent-fill) 14%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--av-accent-fill) 14%, transparent), 0 0 0 3px color-mix(in srgb, var(--av-accent-fill) 70%, transparent);
+}
+.av-file-link-remove {
+  appearance: none;
+  position: absolute;
+  left: calc(100% + 6px);
+  bottom: -5px;
+  z-index: var(--av-layer-raised);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-surface-raised);
+  box-shadow: 0 0 0 1px var(--av-line-control), var(--av-shadow-button);
+  color: var(--av-ink-danger);
+  opacity: 0;
+  transform: scale(0.6);
+  pointer-events: none;
+  transition: opacity var(--av-duration-quick) var(--av-ease-out), transform var(--av-duration-base) var(--av-ease-land);
+}
+/* A bridge over the gap between the link and the bin: the pointer crossing it stays on the link, so the bin doesn't go. */
+.av-file-link-remove::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  left: -12px;
+  right: -4px;
+}
+.av-file-link:hover .av-file-link-remove,
+.av-file-link:focus-within .av-file-link-remove {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.av-file-link-remove:hover { background: color-mix(in srgb, var(--av-ink-danger) 16%, var(--av-surface-raised)); }

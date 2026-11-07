@@ -1,4 +1,5 @@
-.av-capsule-zel { position: relative; flex: none; width: 34px; height: 38px; margin-top: -6px; }
+/* Zel sits in from the pill's round end, so the waves its listening sends out to both sides stay inside the bar. */
+.av-capsule-zel { position: relative; flex: none; width: 34px; height: 38px; margin-top: -6px; margin-left: var(--av-space-8); }
 .av-capsule-zel .av-zel { position: absolute; left: 0; top: 0; }
 .av-capsule-live {
   display: flex;
@@ -15,6 +16,8 @@
   -webkit-mask-image: linear-gradient(90deg, transparent, var(--av-ink) 28%);
   mask-image: linear-gradient(90deg, transparent, var(--av-ink) 28%);
 }
+/* A steady label while listening: as wide as its words, at the left, and the wave after it takes the rest. */
+.av-capsule-live[data-flow="label"] { flex: 0 1 auto; }
 .av-capsule-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .av-capsule-live[data-flow="stream"] .av-capsule-text { flex: none; overflow: visible; }
 .av-capsule-time {
@@ -27,6 +30,11 @@
   color: var(--av-ink-secondary);
 }
 .av-capsule-actions { display: flex; flex: none; gap: var(--av-space-6); }
+/* The voice's box adds none of its own: the wave sits in the bar as if it were the bar's own child, and keeps its room. */
+.av-capsule-voice { display: contents; }
+/* Paused: the voice and the time stand still where they were, dimmed, so the bar keeps its size and reads as held. */
+.av-capsule-voice[data-paused] .av-wave,
+.av-capsule-time[data-paused] { opacity: 0.45; transition: opacity var(--av-duration-base) var(--av-ease-out); }
 
 .av-capsule-notice { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--av-space-12); align-items: start; }
 .av-capsule-notice .av-zel { margin: -2px 0 0 -4px; }
@@ -34,3 +42,139 @@
 .av-capsule-notice-body { font: var(--av-text-footnote); color: var(--av-ink-secondary); }
 .av-capsule-notice-body p { margin: 0; }
 .av-capsule-notice-actions { margin-top: var(--av-space-10); }
+
+/* A file dragged over a bar that takes files: a dashed violet ring and wash over the whole pill, and the words saying what a drop does. */
+.av-capsule-drop-zone { position: relative; display: block; }
+.av-capsule-drop {
+  position: absolute;
+  inset: 0;
+  z-index: var(--av-layer-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--av-radius-pill);
+  border: 1.5px dashed var(--av-accent-fill);
+  background: color-mix(in srgb, var(--av-accent-fill) 70%, var(--av-hud-surface-solid));
+  color: var(--av-ink-on-accent);
+  font: var(--av-text-headline);
+  letter-spacing: var(--av-text-headline-tracking);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--av-duration-quick) var(--av-ease-out);
+}
+.av-capsule-drop-zone[data-dropping] .av-capsule-drop { opacity: 1; }
+
+/* The menu over the capsule's bar (the recording's +): it rises in from the bar as it opens and sinks back as it closes. Its choices
+   are rows one under another, each lit under the pointer. */
+.av-capsule-menu {
+  width: 280px;
+  max-width: 100%;
+  transform-origin: bottom center;
+  animation: av-capsule-menu-in var(--av-duration-card) var(--av-ease-land) both;
+}
+.av-capsule-menu[data-leaving] { animation: av-capsule-menu-out var(--av-duration-base) var(--av-ease-leave) both; }
+/* A file dragged over the menu: the same violet wash and words as over the bar. */
+.av-capsule-menu { position: relative; }
+.av-capsule-menu-drop {
+  position: absolute;
+  inset: 0;
+  z-index: var(--av-layer-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--av-radius-hud);
+  border: 1.5px dashed var(--av-accent-fill);
+  background: color-mix(in srgb, var(--av-accent-fill) 70%, var(--av-hud-surface-solid));
+  color: var(--av-ink-on-accent);
+  font: var(--av-text-headline);
+  letter-spacing: var(--av-text-headline-tracking);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--av-duration-quick) var(--av-ease-out);
+}
+.av-capsule-menu[data-dropping] .av-capsule-menu-drop { opacity: 1; }
+/* The capsule as a whole, coming up from the bottom of the screen and going back down (`CapsuleAppear`). It holds what it shows as
+   the window's own layout would: in a column, centred, never wider than the window. */
+.av-capsule-appear {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 100%;
+  transform-origin: 50% 100%;
+  animation: av-capsule-appear-in var(--av-duration-card) var(--av-ease-land) backwards;
+}
+.av-capsule-appear[data-leaving] {
+  pointer-events: none;
+  animation: av-capsule-appear-out var(--av-duration-base) var(--av-ease-leave) forwards;
+}
+.av-capsule-appear[data-leaving] * { pointer-events: none; }
+@keyframes av-capsule-appear-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes av-capsule-appear-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(16px) scale(0.96); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .av-capsule-appear { animation: none; }
+  .av-capsule-appear[data-leaving] { animation: av-capsule-appear-fade var(--av-duration-base) linear forwards; }
+}
+@keyframes av-capsule-appear-fade { to { opacity: 0; } }
+@keyframes av-capsule-menu-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes av-capsule-menu-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(12px) scale(0.96); }
+}
+.av-capsule-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--av-space-8);
+  height: 28px; /* whole pixels, here and in each choice's line, so what is under the menu never lands between them */
+  margin: -4px -6px 4px 0;
+}
+.av-capsule-menu-title {
+  font: var(--av-text-footnote);
+  letter-spacing: var(--av-text-footnote-tracking);
+  color: var(--av-ink-secondary);
+}
+.av-capsule-menu-items { display: flex; flex-direction: column; gap: 2px; margin: 0 -8px; }
+.av-capsule-menu-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: var(--av-space-10);
+  margin: 0;
+  border: 0;
+  padding: 8px 10px;
+  border-radius: var(--av-radius-tab);
+  background: transparent;
+  color: var(--av-ink);
+  font: var(--av-text-body);
+  line-height: 20px;
+  letter-spacing: var(--av-text-body-tracking);
+  text-align: left;
+  transition: background var(--av-duration-quick) var(--av-ease-out);
+}
+.av-capsule-menu-item .av-icon { color: var(--av-ink-accent); }
+/* The icon's place, as wide as the icon, so a spinner in it leaves the words where they were. */
+.av-capsule-menu-sign { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; }
+/* Its list's lines on the same 20 px as its choices: whole pixels, so nothing under the menu lands between them. */
+.av-capsule-menu-foot .av-item { line-height: 20px; }
+.av-capsule-menu-item[data-busy] { color: var(--av-ink-secondary); cursor: progress; }
+.av-capsule-menu-item:hover,
+.av-capsule-menu-item:focus-visible { background: color-mix(in srgb, var(--av-ink) 10%, transparent); }
+/* What the choices have done so far: as tall as it needs up to about three entries of two lines, then it scrolls in place, so the menu
+   never grows past the capsule's window however many files are added. */
+.av-capsule-menu-foot {
+  max-height: 168px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: var(--av-space-10) -8px 0 0;
+  padding: var(--av-space-10) 8px 0 0;
+  box-shadow: inset 0 0.5px 0 var(--av-line-hair);
+}

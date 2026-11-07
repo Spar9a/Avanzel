@@ -1,0 +1,11 @@
+/* The area window's layout: the page is the whole display, and the picker (`ScreenArea`) paints everything on it. */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+.area {
+  position: fixed;
+  inset: 0;
+}

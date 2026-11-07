@@ -17,8 +17,8 @@ const search: NarrationRow = { kind: "search", path: null, title: "", shelf: "" 
 
 describe("rowLine: a read", () => {
   it("of a page in people/ says whose page it is", () => {
-    expect(rowLine(row("read", "people/mark.md", "Mark"))).toBe("Reading Mark's page");
-    expect(rowLine(row("read", "people/team/ana.md", "Ana"))).toBe("Reading Ana's page"); // a folder inside the shelf is still people/
+    expect(rowLine(row("read", "people/mark.md", "Mark"))).toBe("Reading Mark's note");
+    expect(rowLine(row("read", "people/team/ana.md", "Ana"))).toBe("Reading Ana's note"); // a folder inside the shelf is still people/
   });
 
   it("of a file in people/ that isn't a page names the file", () => {
@@ -49,28 +49,28 @@ describe("rowLine: a search, a write and a removal", () => {
     expect(rowLine(search)).toBe("Searching your library");
   });
 
-  it("a new page on a shelf is a page of that shelf's kind, each shelf with its own noun", () => {
+  it("a new note on a shelf is a page of that shelf's kind, each shelf with its own noun", () => {
     const shelves = ["goals", "ideas", "problems", "memories", "people", "topics"];
     expect(shelves.map((shelf) => rowLine(row("new", `${shelf}/p.md`, "Indie game dev podcast")))).toEqual([
-      "New goal page: Indie game dev podcast",
-      "New idea page: Indie game dev podcast",
-      "New problem page: Indie game dev podcast",
-      "New memory page: Indie game dev podcast",
-      "New person page: Indie game dev podcast",
-      "New topic page: Indie game dev podcast",
+      "New goal note: Indie game dev podcast",
+      "New idea note: Indie game dev podcast",
+      "New problem note: Indie game dev podcast",
+      "New memory note: Indie game dev podcast",
+      "New person note: Indie game dev podcast",
+      "New topic note: Indie game dev podcast",
     ]);
     // The first folder of the path is the shelf: a deeper page is on it too.
-    expect(rowLine(row("new", "topics/deep/er/p.md", "Deep"))).toBe("New topic page: Deep");
+    expect(rowLine(row("new", "topics/deep/er/p.md", "Deep"))).toBe("New topic note: Deep");
   });
 
-  it("a new page anywhere else is only a page", () => {
-    expect(rowLine(row("new", "projects/launch.md", "Launch"))).toBe("New page: Launch");
-    expect(rowLine(row("new", "notes.md", "Notes"))).toBe("New page: Notes"); // at the root
+  it("a new note anywhere else is only a page", () => {
+    expect(rowLine(row("new", "projects/launch.md", "Launch"))).toBe("New note: Launch");
+    expect(rowLine(row("new", "notes.md", "Notes"))).toBe("New note: Notes"); // at the root
     // A folder is a shelf by its exact name only, and never by a name every object has.
-    expect(rowLine(row("new", "idea/p.md", "P"))).toBe("New page: P");
-    expect(rowLine(row("new", "Ideas/p.md", "P"))).toBe("New page: P");
-    expect(rowLine(row("new", "constructor/p.md", "P"))).toBe("New page: P");
-    expect(rowLine(row("new", "toString/p.md", "P"))).toBe("New page: P");
+    expect(rowLine(row("new", "idea/p.md", "P"))).toBe("New note: P");
+    expect(rowLine(row("new", "Ideas/p.md", "P"))).toBe("New note: P");
+    expect(rowLine(row("new", "constructor/p.md", "P"))).toBe("New note: P");
+    expect(rowLine(row("new", "toString/p.md", "P"))).toBe("New note: P");
   });
 
   it("a new file that isn't Markdown is a file, not a page", () => {
@@ -81,7 +81,7 @@ describe("rowLine: a search, a write and a removal", () => {
     expect(rowLine(row("updated", "topics/data.json", "data.json"))).toBe("Updated: data.json");
   });
 
-  it("an updated page says which", () => {
+  it("an updated note says which", () => {
     expect(rowLine(row("updated", "people/mark.md", "Mark"))).toBe("Updated: Mark");
     expect(rowLine(row("updated", "ideas/p.md", "Indie game dev podcast"))).toBe("Updated: Indie game dev podcast");
     expect(rowLine(row("updated", "notes.md", "Notes"))).toBe("Updated: Notes");
@@ -97,7 +97,7 @@ describe("rowLine: a search, a write and a removal", () => {
   it("the rules, written, and the index or log of a folder are pages like any other", () => {
     expect(rowLine(row("updated", "AGENTS.md", "Avanzel library"))).toBe("Updated: Avanzel library");
     expect(rowLine(row("updated", "topics/index.md", "Topics"))).toBe("Updated: Topics");
-    expect(rowLine(row("new", "ideas/log.md", "Idea log"))).toBe("New idea page: Idea log");
+    expect(rowLine(row("new", "ideas/log.md", "Idea log"))).toBe("New idea note: Idea log");
   });
 
   it("a removed page is named by its file name", () => {
@@ -122,8 +122,8 @@ describe("rowLine: a search, a write and a removal", () => {
     expect(rows.map(rowLine)).toEqual([
       "Reading your library index",
       "Searching your library",
-      "Reading Mark's page",
-      "New idea page: Call the vet on Monday",
+      "Reading Mark's note",
+      "New idea note: Call the vet on Monday",
       "Updated: Mark",
       "Updated your library index",
       "Added a line to the log",
@@ -184,7 +184,7 @@ describe("filingLine: the capsule's filing card's one line of what is going on",
 
   it("is the agent's newest step, in the words of a row", () => {
     expect(filingLine(filing({ rows: [read] }), now)).toBe("Reading your library index");
-    expect(filingLine(filing({ rows: [read, made] }), now)).toBe("New idea page: Indie game dev podcast");
+    expect(filingLine(filing({ rows: [read, made] }), now)).toBe("New idea note: Indie game dev podcast");
   });
 
   it("is nothing before the first step, while the agent has not been quiet long", () => {
@@ -201,7 +201,7 @@ describe("filingLine: the capsule's filing card's one line of what is going on",
 
   it("puts the quiet before the newest step: a step long ago is no news", () => {
     expect(filingLine(filing({ rows: [read, made], stepAt: now - 9_000 }), now)).toBe("Claude Code is still working…");
-    expect(filingLine(filing({ rows: [read, made], stepAt: now - 7_999 }), now)).toBe("New idea page: Indie game dev podcast");
+    expect(filingLine(filing({ rows: [read, made], stepAt: now - 7_999 }), now)).toBe("New idea note: Indie game dev podcast");
   });
 
   it("is taken back by a step, even one that adds no row: the quiet is measured from the newest step of any kind", () => {

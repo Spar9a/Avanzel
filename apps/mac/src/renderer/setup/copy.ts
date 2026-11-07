@@ -208,8 +208,8 @@ export function failedAnswer(answer: Extract<SetupAnswer, { kind: "failed" }>, n
   return askProblem(answer.failure ?? avanzelFailure(answer.line), answer.changedFiles, now);
 }
 
-/** `count` pages of a `kind`, in words: "1 new page", "2 updated pages". */
-const counted = (count: number, kind: string) => `${count} ${kind} ${count === 1 ? "page" : "pages"}`;
+/** `count` pages of a `kind`, in words: "1 new note", "2 updated notes". */
+const counted = (count: number, kind: string) => `${count} ${kind} ${count === 1 ? "note" : "notes"}`;
 
 /**
  * What a filing wrote on the six shelves, under its heading: how many pages are new and how many updated, and where.

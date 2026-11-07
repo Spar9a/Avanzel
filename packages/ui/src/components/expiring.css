@@ -1,0 +1,30 @@
+/* A violet line round a panel card's edge that empties over the time it has left (`--_seconds`), from the top's middle, clockwise. */
+.av-expiring { position: relative; }
+.av-expiring-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.av-expiring-ring rect {
+  x: 0.75px;
+  y: 0.75px;
+  width: calc(100% - 1.5px);
+  height: calc(100% - 1.5px);
+  rx: var(--av-radius-panel);
+  fill: none;
+  stroke: var(--av-accent-fill);
+  stroke-width: 1.5px;
+  stroke-dasharray: 100 100;
+  stroke-linecap: round;
+  animation: av-expiring-run var(--_seconds, 5s) linear forwards;
+}
+@keyframes av-expiring-run {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -100; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .av-expiring-ring rect { animation: none; opacity: 0.6; }
+}

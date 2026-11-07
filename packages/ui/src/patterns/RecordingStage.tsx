@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { useFileDrop } from "../components/file-drop.ts";
 import { Zel } from "../components/Zel.tsx";
 import "../foundations.css";
 import "./recording.css";
@@ -18,6 +19,12 @@ export interface RecordingStageProps {
   controls: ReactNode;
   /** What the place shows when nothing records, such as the ways to start something new. */
   children: ReactNode;
+  /**
+   * Given, files can be dropped on the recording while it listens: while one is dragged over it the stage turns violet and says
+   * `dropLabel` ("Drop to add to this recording"), and the files dropped are handed over.
+   */
+  onDropFiles?: (files: File[]) => void;
+  dropLabel?: string;
 }
 
 /**
@@ -25,12 +32,18 @@ export interface RecordingStageProps {
  * and in its place Zel listens over a wide wave of the voice and a large time, with the recording's controls under them and nothing
  * else until it ends. When it ends the recording lifts away and what was there comes back.
  */
-export function RecordingStage({ active, paused = false, line, time, levels, controls, children }: RecordingStageProps) {
+export function RecordingStage({ active, paused = false, line, time, levels, controls, children, onDropFiles, dropLabel = "Drop to add to this recording" }: RecordingStageProps) {
+  const drop = useFileDrop(active ? onDropFiles : undefined);
   // The newest level in the middle, the older ones spreading out to both sides: the wave grows from the centre, as a voice does.
   const half = levels.slice(-14);
   const bars = [...[...half].reverse().slice(1), ...half];
   return (
-    <div className="av-rec-stage" data-active={active ? "" : undefined} data-paused={paused ? "" : undefined}>
+    <div className="av-rec-stage" data-active={active ? "" : undefined} data-paused={paused ? "" : undefined} data-dropping={drop.over ? "" : undefined} {...drop.handlers}>
+      {onDropFiles && (
+        <span className="av-rec-drop" aria-hidden="true">
+          <span className="av-rec-drop-words">{dropLabel}</span>
+        </span>
+      )}
       <div className="av-rec-idle" inert={active}>{children}</div>
       <div className="av-rec-live" inert={!active} role={active ? "group" : undefined} aria-label={active ? line : undefined}>
         <span className="av-rec-line">{line}</span>

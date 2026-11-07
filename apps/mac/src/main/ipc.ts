@@ -16,8 +16,10 @@ export function registerIpc(controller: Controller): void {
   // only the capsule's own page sends a call's microphone, and stops a call from its card
   handle("capsule:call-audio", (e, call: number, samples: Float32Array, last: boolean) => controller.onCallAudio(e.sender, call, samples, last));
   on("capsule:stop-call", (e) => void controller.stopCall(e.sender));
+  handle("capsule:trigger-audio", (e, samples: unknown) => controller.onTriggerAudio(e.sender, samples));
   on("capsule:mic-error", (e, message: string) => controller.micErrorFrom(e.sender, message)); // only the capsule's own page ends a recording or a call
   on("capsule:interactive", (_e, interactive: boolean) => controller.setInteractive(interactive));
+  on("capsule:drop-zone", (e, zone: unknown) => controller.setDropZone(e.sender, zone));
   on("capsule:edit", () => controller.edit());
   on("capsule:edit-draft", (_e, text: string) => controller.editDraft(text));
   on("capsule:submit-edit", (_e, text: string) => controller.submitEdit(text));
@@ -50,10 +52,33 @@ export function registerIpc(controller: Controller): void {
   on("panel:hide", (e) => {
     if (controller.isPanelPage(e.sender)) controller.hidePanel();
   });
+  handle("panel:type", (e, text: unknown) => controller.typeFromPanel(e.sender, text));
+  handle("panel:call-apps", (e) => controller.panelCallApps(e.sender));
+  handle("panel:thumbnail", (e, rel: unknown) => controller.panelThumbnail(e.sender, rel));
+  handle("panel:hear-trigger-word", (e, samples: unknown) => controller.hearTriggerWord(e.sender, samples));
+  on("panel:hearing-trigger-word", (e, on: unknown) => controller.hearingTriggerWord(e.sender, on));
+  handle("panel:copy-prompt", (e, rel: unknown) => controller.copyPagePrompt(e.sender, rel));
+  handle("panel:ask", (e, question: unknown) => (typeof question === "string" ? controller.askFromPanel(e.sender, question) : Promise.reject(new Error("No question."))));
+  on("panel:cancel-ask", (e) => controller.cancelAsk(e.sender));
+  on("panel:attach-page", (e, rel: unknown, files: unknown) => controller.attachToPage(e.sender, rel, files));
+  on("panel:attach-recording", (e, files: unknown) => controller.attachToRecording(e.sender, files));
+  on("capsule:add-files", (e) => void controller.addFilesToRecording(e.sender));
+  on("capsule:add-screenshot", (e, area: unknown) => void controller.addScreenshotToRecording(e.sender, area === true));
+  on("capsule:add-video", (e) => void controller.addVideoToRecording(e.sender));
+  on("capsule:add-marked", (e) => void controller.addVideoToRecording(e.sender, "marks"));
+  // the area window: only its own page is heard
+  handle("area:get", (e) => controller.areaSetup(e.sender));
+  on("area:interactive", (e, interactive: unknown) => controller.areaInteractive(e.sender, interactive === true));
+  handle("area:done", (e, video: unknown, mime: unknown) => controller.areaDone(e.sender, video, mime));
+  on("area:cancel", (e) => controller.areaCancel(e.sender));
+  on("capsule:attach-recording", (e, files: unknown) => controller.attachToRecording(e.sender, files));
+  on("capsule:remove-attachment", (e, index: unknown) => controller.removeAttachment(e.sender, index));
+  on("panel:remove-attachment", (e, index: unknown) => controller.removeAttachment(e.sender, index));
 
   // settings
   handle("settings:get", () => controller.snapshot());
   handle("settings:set-app", (_e, patch: Partial<AppSettings>) => controller.setApp(patch));
+  on("settings:recording-shortcut", (e, recording: unknown) => controller.shortcutRecording(e.sender, recording));
   handle("settings:set-cursor-dictation", (_e, patch: Partial<AppSettings["cursorDictation"]>) => controller.setCursorDictation(patch));
   handle("settings:cursor-permissions", () => controller.cursorPermissions());
   handle("settings:ask-cursor-permissions", () => controller.askCursorPermissions());

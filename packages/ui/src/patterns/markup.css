@@ -1,0 +1,78 @@
+/* Marking a screenshot over the part of the screen it was taken of: the picture in place, the rest dimmed (the box's own huge shadow),
+   a violet edge, and the bar of tools under it on the capsule's glass. The marks' inks are the design's own colours. */
+.av-markup {
+  --_mark-red: var(--av-hud-ink-danger);
+  --_mark-yellow: var(--av-shelf-ideas);
+  --_mark-green: var(--av-hud-ink-ok);
+  --_mark-violet: var(--av-accent-fill);
+  position: fixed;
+  inset: 0;
+  user-select: none;
+}
+.av-markup-box {
+  position: absolute;
+  left: var(--_x);
+  top: var(--_y);
+  width: var(--_w);
+  height: var(--_h);
+  outline: 2px solid var(--av-accent-fill);
+  box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--av-hud-surface-solid) 35%, transparent);
+}
+.av-markup-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+/* Under the picture, centred on it; it never takes the picture's room. */
+.av-markup-bar {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 10px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  animation: av-markup-bar-in var(--av-duration-card) var(--av-ease-land) backwards;
+}
+.av-markup-box[data-bar-above] .av-markup-bar { top: auto; bottom: calc(100% + 10px); }
+@keyframes av-markup-bar-in {
+  from { opacity: 0; transform: translate(-50%, -6px); }
+  to { opacity: 1; transform: translateX(-50%); }
+}
+.av-markup-bar .av-hud { gap: var(--av-space-6); padding-left: var(--av-space-8); }
+.av-markup-group { display: inline-flex; align-items: center; gap: 2px; }
+.av-markup-rule { width: 1px; height: 20px; background: var(--av-hud-line); }
+.av-markup-tool,
+.av-markup-ink {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--av-size-control-small);
+  height: var(--av-size-control-small);
+  margin: 0;
+  border: 0;
+  padding: 0;
+  border-radius: var(--av-radius-pill);
+  background: transparent;
+  color: var(--av-hud-ink-secondary);
+  cursor: pointer;
+  transition: background var(--av-duration-quick) var(--av-ease-out), color var(--av-duration-quick) var(--av-ease-out);
+}
+.av-markup-tool:hover,
+.av-markup-ink:hover { background: var(--av-hud-fill); }
+.av-markup-tool[aria-checked="true"] { background: var(--av-hud-fill); color: var(--av-hud-ink); }
+.av-markup-tool:focus-visible,
+.av-markup-ink:focus-visible { outline: 2px solid var(--av-hud-focus); outline-offset: 1px; }
+.av-markup-ink > i {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--av-radius-pill);
+  transition: box-shadow var(--av-duration-quick) var(--av-ease-out);
+}
+.av-markup-ink[data-color="red"] > i { background: var(--_mark-red); }
+.av-markup-ink[data-color="yellow"] > i { background: var(--_mark-yellow); }
+.av-markup-ink[data-color="green"] > i { background: var(--_mark-green); }
+.av-markup-ink[data-color="violet"] > i { background: var(--_mark-violet); }
+.av-markup-ink[aria-checked="true"] > i { box-shadow: 0 0 0 2px var(--av-hud-surface-solid), 0 0 0 3.5px var(--av-hud-ink); }

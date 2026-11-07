@@ -14,6 +14,16 @@
   box-sizing: border-box;
 }
 
+/* Whatever acts on a click shows the pointing hand: buttons, tabs, tiles, rows, links, a menu's choices and a switch's whole row.
+   Turned off, it goes back to the arrow. No specificity, so a component can still say otherwise (a busy button's progress). */
+:where(button, a[href], summary, [role="option"], [role="menuitem"], [role="tab"], [role="radio"], [role="switch"], .av-switch-row) {
+  cursor: pointer;
+}
+:where(button, [role="option"], [role="tab"], [role="radio"], [role="switch"]):where(:disabled, [aria-disabled="true"]),
+:where(.av-switch-row[data-disabled]) {
+  cursor: default;
+}
+
 [class^="av-"]:focus-visible,
 [class*=" av-"]:focus-visible {
   outline: 2px solid var(--av-accent-focus);

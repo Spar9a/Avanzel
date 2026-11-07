@@ -5,6 +5,13 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isSetupStep, SETUP_STEPS, type AppSettings, type CursorKey, type SetupStep, type Shortcuts } from "../shared/ipc.ts";
 
+/** The voice trigger's word until the person picks one: the app's own name. */
+export const TRIGGER_WORD = "Avanzel";
+/** The word that stops a recording by voice until the person picks one. */
+export const STOP_WORD = "Avanzel stop";
+/** The longest trigger word or phrase kept, in characters. */
+const TRIGGER_MAX = 40;
+
 export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
   version: 1,
   libraryPath: null,
@@ -14,12 +21,18 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
     type: "Alt+Shift+Space",
     ask: "Alt+Shift+A",
     undo: "Alt+Shift+Z",
+    call: "Alt+Shift+C",
+    region: "Alt+Shift+R",
+    shot: "Alt+Shift+X",
+    shotScreen: "Alt+Shift+E",
+    shotMarks: "Alt+Shift+M",
   }),
   fileMode: "now",
   microphoneId: null,
   launchAtLogin: false,
   callConsent: false,
   cursorDictation: Object.freeze({ enabled: false, key: "right-option" }),
+  voiceTrigger: Object.freeze({ enabled: false, word: TRIGGER_WORD, stopWord: STOP_WORD }),
 }) as AppSettings;
 
 const CURSOR_KEYS: readonly CursorKey[] = ["right-option", "left-option", "right-command", "right-control"];
@@ -29,6 +42,13 @@ function cursorDictationOf(raw: unknown): AppSettings["cursorDictation"] {
   const given = isRecord(raw) ? raw : {};
   const key = CURSOR_KEYS.find((known) => known === given.key) ?? "right-option";
   return { enabled: given.enabled === true, key };
+}
+
+function voiceTriggerOf(raw: unknown): AppSettings["voiceTrigger"] {
+  const given = isRecord(raw) ? raw : {};
+  const word = typeof given.word === "string" ? given.word.trim().slice(0, TRIGGER_MAX) : "";
+  const stopWord = typeof given.stopWord === "string" ? given.stopWord.trim().slice(0, TRIGGER_MAX) : "";
+  return { enabled: given.enabled === true, word: word || TRIGGER_WORD, stopWord: stopWord || STOP_WORD };
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -62,6 +82,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
     launchAtLogin: r.launchAtLogin === true,
     callConsent: r.callConsent === true,
     cursorDictation: cursorDictationOf(r.cursorDictation),
+    voiceTrigger: voiceTriggerOf(r.voiceTrigger),
   };
 }
 

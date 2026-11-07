@@ -13,7 +13,7 @@ import {
 } from "../src/main/shortcuts.ts";
 import { DEFAULT_SETTINGS } from "../src/main/store.ts";
 
-const handlers = () => ({ dictate: vi.fn(), capture: vi.fn(), type: vi.fn(), ask: vi.fn(), undo: vi.fn() });
+const handlers = () => ({ dictate: vi.fn(), capture: vi.fn(), type: vi.fn(), ask: vi.fn(), undo: vi.fn(), call: vi.fn(), region: vi.fn(), shot: vi.fn(), shotScreen: vi.fn(), shotMarks: vi.fn() });
 
 /** Global shortcuts as other apps leave them: `taken` are held elsewhere, `invalid` throw, and `registered` is what this app holds. */
 function fakeApi({ taken = [], invalid = [] }: { taken?: readonly string[]; invalid?: readonly string[] } = {}) {
@@ -45,7 +45,7 @@ describe("global shortcuts", () => {
     };
     const { problems, taken } = registerShortcuts(DEFAULT_SETTINGS.shortcuts, handlers(), api);
     expect(api.unregisterAll).toHaveBeenCalledOnce();
-    expect(registered).toEqual(["Alt+Shift+S", "Alt+Shift+Space", "Alt+Shift+A", "Alt+Shift+Z"]);
+    expect(registered).toEqual(["Alt+Shift+S", "Alt+Shift+Space", "Alt+Shift+A", "Alt+Shift+Z", "Alt+Shift+C", "Alt+Shift+R", "Alt+Shift+X", "Alt+Shift+E", "Alt+Shift+M"]);
     expect(problems).toEqual({ dictate: "⌥Space is used by another app. Pick another shortcut." });
     expect(taken).toEqual(["dictate"]);
   });
@@ -56,7 +56,7 @@ describe("global shortcuts", () => {
     const { problems, taken } = registerShortcuts({ ...DEFAULT_SETTINGS.shortcuts, type: "Option+space" }, handlers(), api, ["Alfred"]);
     expect(problems).toEqual({ type: "⌥Space is already the shortcut for Record a thought. Pick another shortcut." });
     expect(taken).toEqual([]); // so no launch notice and no free ones
-    expect([...registered]).toEqual(["Alt+Space", "Alt+Shift+S", "Alt+Shift+A", "Alt+Shift+Z"]); // and it isn't tried again
+    expect([...registered]).toEqual(["Alt+Space", "Alt+Shift+S", "Alt+Shift+A", "Alt+Shift+Z", "Alt+Shift+C", "Alt+Shift+R", "Alt+Shift+X", "Alt+Shift+E", "Alt+Shift+M"]); // and it isn't tried again
   });
 
   it("a shortcut an earlier action has is that action's even when another app holds it", () => {
@@ -74,7 +74,7 @@ describe("global shortcuts", () => {
     const { problems, taken } = registerShortcuts({ ...DEFAULT_SETTINGS.shortcuts, undo: "Alt+Shift+A" }, handlers(), api);
     expect(problems).toEqual({ undo: "⌥⇧A is already the shortcut for Ask your library. Pick another shortcut." });
     expect(taken).toEqual([]); // it isn't another app's, so no launch notice and no free ones
-    expect([...registered]).toEqual(["Alt+Space", "Alt+Shift+S", "Alt+Shift+Space", "Alt+Shift+A"]);
+    expect([...registered]).toEqual(["Alt+Space", "Alt+Shift+S", "Alt+Shift+Space", "Alt+Shift+A", "Alt+Shift+C", "Alt+Shift+R", "Alt+Shift+X", "Alt+Shift+E", "Alt+Shift+M"]);
   });
 
   it("a shortcut without ⌃ or ⌥, such as one a hand-edited settings.json holds, isn't registered: apps use it themselves", () => {
@@ -82,7 +82,7 @@ describe("global shortcuts", () => {
     const { problems, taken } = registerShortcuts({ ...DEFAULT_SETTINGS.shortcuts, type: "Command+W" }, handlers(), api);
     expect(problems).toEqual({ type: "⌘W is a shortcut apps use themselves, so Avanzel doesn't take it. Pick one with ⌃ or ⌥." });
     expect(taken).toEqual(["type"]); // so its free ones are offered, as for one another app holds
-    expect([...registered]).toEqual(["Alt+Space", "Alt+Shift+S", "Alt+Shift+A", "Alt+Shift+Z"]); // the others are; ⌘W never was
+    expect([...registered]).toEqual(["Alt+Space", "Alt+Shift+S", "Alt+Shift+A", "Alt+Shift+Z", "Alt+Shift+C", "Alt+Shift+R", "Alt+Shift+X", "Alt+Shift+E", "Alt+Shift+M"]); // the others are; ⌘W never was
   });
 
   it("leftToApps: a shortcut needs Control or Alt, or is a bare F-key", () => {

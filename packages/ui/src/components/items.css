@@ -1,0 +1,66 @@
+/* A list of points: a short violet dash before each, a check before a step that is done. */
+.av-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--av-space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.av-item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--av-space-6);
+  font: var(--av-text-callout);
+  letter-spacing: var(--av-text-callout-tracking);
+  color: var(--av-ink);
+}
+.av-item[data-removable] { grid-template-columns: 16px minmax(0, 1fr) auto; }
+/* Each point's ×: quiet until the point is under the pointer or has the focus, and never taller than the point's first line. */
+.av-item-remove {
+  display: flex;
+  align-items: center;
+  height: 1lh;
+  opacity: 0.45;
+  transition: opacity var(--av-duration-quick) var(--av-ease-out);
+}
+.av-item:hover .av-item-remove,
+.av-item-remove:focus-within { opacity: 1; }
+.av-item-mark {
+  display: flex;
+  align-items: center;
+  height: 1lh;
+  color: var(--av-ink-accent);
+}
+.av-item-mark > i {
+  display: block;
+  width: 10px;
+  height: 2px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-accent-fill);
+}
+.av-item[data-done] { color: var(--av-ink-secondary); }
+/* When an entry happened, first, in violet, with room after it: the eye runs down the dates. */
+.av-item-when {
+  margin-right: var(--av-space-8);
+  color: var(--av-ink-accent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* One on its way: its words quieter beside the spinner, and it comes in as the others do. */
+.av-item[data-busy] { color: var(--av-ink-secondary); animation: av-item-in var(--av-duration-base) var(--av-ease-land) backwards; }
+@keyframes av-item-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.av-item[data-done] .av-item-text { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--av-ink-secondary) 60%, transparent); }
+/* Said, not shown: VoiceOver hears that a step is done, the eye sees the check. */
+.av-item-state {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

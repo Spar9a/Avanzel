@@ -221,7 +221,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
         stepAt: Date.now(),
         cancelling: true,
       },
-      "New idea page: Indie game dev podcast",
+      "New idea note: Indie game dev podcast",
     ],
     [
       "filing, still working",
@@ -280,7 +280,7 @@ function capsuleStates(): [string, CapsuleState, string][] {
     [
       "filed, nothing new",
       { kind: "filed", text: said, agent: "Claude Code", seconds: 4, pages: [], canUndo: true, noted: true },
-      "Nothing new to file",
+      "No note was made",
     ],
     [
       "saved, a dictation",
@@ -406,9 +406,9 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   // The window is opaque: its page draws the window's own surface, so what lies under it doesn't show through.
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
-  for (const pane of ["General", "Voice", "Agents", "Reviews", "Privacy"]) {
+  for (const pane of ["General", "Voice", "Shortcuts", "Agents", "Reviews", "Privacy"]) {
     await settings.getByRole("radio", { name: pane, exact: true }).click();
-    await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
+    await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
     if (pane === "Reviews") await expect(settings.getByText(/Unknown schedule "sometimes"/)).toBeVisible();
     // launch()'s stand-ins for Claude Code and Codex read their sign-in as the pane opens: read the pane once both
     // are done, not while a Check button spins.
@@ -480,7 +480,7 @@ test("Ask's saved, undone and refused turns are readable in light and dark", asy
   await field.press("Enter");
   await expect(ask.getByText("Q: Summarize my ideas")).toBeVisible({ timeout: 60_000 });
   const turn = ask.locator("article").first();
-  const offer = turn.getByRole("button", { name: "Save as a page", exact: true });
+  const offer = turn.getByRole("button", { name: "Save as a note", exact: true });
   const undo = turn.getByRole("button", { name: "Undo", exact: true });
   const saved = turn.getByText("Saved as “Answer” in Topics.", { exact: true });
   // The answer saved as a page: the saved line, with Undo and Open.
@@ -558,14 +558,14 @@ test("every setup step and the bubble are readable in light and dark", async () 
   await expect(setup.getByRole("img", { name: /^Filed, / })).toBeVisible();
   found.push(...(await readable(app, setup, "Setup › Filing, filed", desktops)));
 
-  // Ask, answered: the question names the new page, so the answer shows the page it used.
+  // Ask, answered: the question names the new note, so the answer shows the page it used.
   await setup.getByRole("button", { name: "Continue" }).click();
   await expect(setup.getByRole("heading", { name: "Ask me about it." })).toBeVisible();
   const [idea = ""] = filesUnder(path.join(home, "Avanzel"), "ideas");
   const question = setup.getByRole("textbox", { name: "Ask your library" });
   await question.fill(`What is in [[${idea.replace(/\.md$/, "")}]]?`);
   await question.press("Enter");
-  await expect(setup.getByText("Pages I used:", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(setup.getByText("Notes I used:", { exact: true })).toBeVisible({ timeout: 30_000 });
   found.push(...(await readable(app, setup, "Setup › Ask, answered", desktops)));
 
   // Done, with its two switches (opening at login, the evening review).

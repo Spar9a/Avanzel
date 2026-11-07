@@ -24,7 +24,6 @@
   background: transparent;
   color: var(--av-ink-secondary);
   white-space: nowrap;
-  cursor: default;
   transition: color var(--av-duration-base) var(--av-ease-out), background var(--av-duration-base) var(--av-ease-out);
 }
 /* The ring is drawn inside the tab: the row scrolls sideways, which would cut a ring drawn outside it. */
@@ -47,8 +46,24 @@
   font: var(--av-text-footnote);
   letter-spacing: var(--av-text-footnote-tracking);
 }
-.av-tabs[data-level="secondary"] .av-tabs-tab:hover { background: var(--av-surface-fill); }
-.av-tabs[data-level="secondary"] .av-tabs-tab[aria-selected="true"] { font-weight: 600; background: var(--av-surface-fill); }
+/* The pill is drawn once and slides to the chosen tab (`.av-tabs-pill`). It comes first in the row, so the tabs, positioned after it,
+   are painted over it. */
+.av-tabs[data-level="secondary"] .av-tabs-tab { position: relative; }
+.av-tabs[data-level="secondary"] .av-tabs-tab:hover:not([aria-selected="true"]) { background: var(--av-surface-fill); }
+.av-tabs[data-level="secondary"] .av-tabs-tab[aria-selected="true"] { font-weight: 600; }
+
+/* A label holds room for itself in bold: the bold copy (`data-label`) is out of sight and takes no height, only width, so a tab is as
+   wide chosen as not and the row never shifts as the choice moves. The copy has an empty alternative text, so it is never read. */
+.av-tabs[data-level="secondary"] .av-tabs-label { display: inline-flex; flex-direction: column; }
+.av-tabs[data-level="secondary"] .av-tabs-label::after {
+  content: attr(data-label) / "";
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
+  pointer-events: none;
+  user-select: none;
+}
 
 /* A shelf's tab: its glyph in the shelf's colour before the name. */
 .av-tabs-shelf { display: inline-flex; align-self: center; color: var(--_shelf); }
@@ -105,6 +120,20 @@
   border-radius: var(--av-radius-pill);
   background: var(--av-accent-fill);
   transform: translateX(var(--_x));
+  transition: transform var(--av-duration-card) var(--av-ease-land), width var(--av-duration-card) var(--av-ease-land);
+  pointer-events: none;
+}
+
+/* The pill behind the chosen secondary tab: it slides and stretches to the next one, as the primary row's line does. */
+.av-tabs-pill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--_width);
+  height: var(--_height);
+  border-radius: var(--av-radius-tab);
+  background: var(--av-surface-fill);
+  transform: translate(var(--_x), var(--_y));
   transition: transform var(--av-duration-card) var(--av-ease-land), width var(--av-duration-card) var(--av-ease-land);
   pointer-events: none;
 }

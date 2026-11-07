@@ -13,6 +13,7 @@ import { Dictations } from "./panes/Dictations.tsx";
 import { General } from "./panes/General.tsx";
 import { Privacy } from "./panes/Privacy.tsx";
 import { Reviews, useReviewEdits, type ReviewEdits } from "./panes/Reviews.tsx";
+import { ShortcutsPane } from "./panes/Shortcuts.tsx";
 import { useVoiceDrafts, Voice, type VoiceDrafts } from "./panes/Voice.tsx";
 import { EmbeddedSettings, NoLibrary, type PaneProps } from "./parts.tsx";
 import "./styles.css";
@@ -45,6 +46,8 @@ function paneContent(pane: SettingsPane, props: PaneProps, edits: ReviewEdits, d
       return <General {...props} edits={edits} />;
     case "voice":
       return <Voice {...props} drafts={drafts} />;
+    case "shortcuts":
+      return <ShortcutsPane {...props} />;
     case "dictations":
       return <Dictations />;
     case "agents":

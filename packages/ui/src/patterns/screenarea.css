@@ -1,0 +1,74 @@
+/* Picking a part of the screen, then recording it. The window is the whole screen; outside the picked part the screen is dimmed (by
+   the box's own huge shadow, so the part itself stays clear), and the part has a dashed violet edge, solid once it records. */
+.av-screen-area {
+  position: fixed;
+  inset: 0;
+  cursor: crosshair;
+  user-select: none;
+}
+.av-screen-area[data-recording] { cursor: default; pointer-events: none; }
+.av-screen-area-dim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--av-hud-surface-solid) 35%, transparent);
+}
+.av-screen-area-box {
+  position: absolute;
+  left: var(--_x);
+  top: var(--_y);
+  width: var(--_w);
+  height: var(--_h);
+  border: 1.5px dashed var(--av-accent-fill);
+  box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--av-hud-surface-solid) 35%, transparent);
+}
+.av-screen-area[data-recording] .av-screen-area-box {
+  border-style: solid;
+  border-width: 2px;
+  box-shadow: none;
+}
+.av-screen-area-size {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  padding: 2px 8px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-accent-fill);
+  color: var(--av-ink-on-accent);
+  font: var(--av-text-caption);
+  letter-spacing: var(--av-text-caption-tracking);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.av-screen-area-hint {
+  position: absolute;
+  top: 18%;
+  left: 50%;
+  transform: translateX(-50%);
+  font: var(--av-text-body);
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* Recording: the time and Stop under the part, or over it at the screen's foot; only they take the pointer. */
+.av-screen-area-bar {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 10px);
+  transform: translateX(-50%);
+  pointer-events: auto;
+  white-space: nowrap;
+}
+.av-screen-area-bar .av-hud { gap: var(--av-space-10); padding-left: var(--av-space-12); }
+.av-screen-area-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-ink-danger);
+  animation: av-screen-area-pulse 1.2s ease-in-out infinite;
+}
+@keyframes av-screen-area-pulse { 50% { opacity: 0.35; } }
+.av-screen-area-time {
+  min-width: 36px;
+  font: var(--av-text-footnote);
+  font-variant-numeric: tabular-nums;
+  color: var(--av-ink);
+}

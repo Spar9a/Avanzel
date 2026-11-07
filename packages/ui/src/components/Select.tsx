@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
+import type { Shelf } from "../generated/tokens.ts";
 import { Icon, type IconName } from "./Icon.tsx";
+import { ShelfGlyph } from "./Shelf.tsx";
 import "../foundations.css";
+import "./button.css";
 import "./select.css";
 
 export interface SelectOption<T extends string> {
@@ -9,6 +12,13 @@ export interface SelectOption<T extends string> {
   label: string;
   /** A heading the option starts a run of, as "Shelves" over the shelves and "Status" over the statuses. */
   section?: string;
+  /**
+   * The shelf the option is: it shows the shelf's glyph and is set in the shelf's colour, and while it is chosen the button wears the
+   * shelf's colour too, as a shelf chip does.
+   */
+  shelf?: Shelf;
+  /** An icon before the choice's words, as a menu of actions has: `folder` for Attach a file. */
+  icon?: IconName;
 }
 
 export interface SelectProps<T extends string> {
@@ -26,6 +36,24 @@ export interface SelectProps<T extends string> {
   buttonLabel?: string;
   size?: "small" | "regular";
   disabled?: boolean;
+  /**
+   * Given, a choice that can be undone, as a filter: while `clearable`, an × in the button's own pill, in place of its chevron, calls
+   * it (named `clearLabel`, "Clear the filter"), and the rest of the pill still opens the menu.
+   */
+  onClear?: () => void;
+  clearable?: boolean;
+  clearLabel?: string;
+  /**
+   * Given, the button is a round icon button, as the recording's +, and the Select a menu of actions: nothing is chosen (`value` null),
+   * `label` is the button's name and its tooltip, and picking a choice calls `onChange` with it.
+   */
+  trigger?: {
+    icon: IconName;
+    size?: "regular" | "large" | "xlarge";
+    variant?: "primary" | "secondary";
+    /** How many it holds, as `Button`'s `count`: the recording's Add counts its files. `label` says it too. */
+    count?: number;
+  };
 }
 
 /** The menu's room inside the window: it never goes past its edges, by this much. */
@@ -36,7 +64,7 @@ const EDGE = 8;
  * the window (above the button when there is no room below). The arrow keys move through the choices, Return or a click picks one,
  * and Esc or a click elsewhere closes it.
  */
-export function Select<T extends string>({ label, options, value, onChange, placeholder = "Choose…", icon, buttonLabel, size = "small", disabled }: SelectProps<T>) {
+export function Select<T extends string>({ label, options, value, onChange, placeholder = "Choose…", icon, buttonLabel, size = "small", disabled, onClear, clearable = false, clearLabel, trigger }: SelectProps<T>) {
   const id = useId();
   const button = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -52,7 +80,7 @@ export function Select<T extends string>({ label, options, value, onChange, plac
   }, []);
   const pick = (option: SelectOption<T>) => {
     close(true);
-    if (option.value !== value) onChange(option.value);
+    if (trigger || option.value !== value) onChange(option.value);
   };
   const show = () => {
     if (disabled) return;
@@ -133,34 +161,78 @@ export function Select<T extends string>({ label, options, value, onChange, plac
   };
 
   const shown = buttonLabel ?? chosen?.label ?? placeholder;
+  const clears = !!onClear && clearable && !disabled;
   return (
-    <>
+    <span className="av-select-box" data-clearable={clears ? "" : undefined}>
+      {trigger ? (
+        <button
+          ref={button}
+          type="button"
+          className="av-button"
+          data-variant={trigger.variant ?? "secondary"}
+          data-size={trigger.size ?? "regular"}
+          data-icon-only=""
+          data-open={open ? "" : undefined}
+          aria-label={label}
+          title={label}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-controls={open ? `${id}-menu` : undefined}
+          aria-activedescendant={open ? `${id}-${active}` : undefined}
+          disabled={disabled}
+          onClick={() => (open ? close(true) : show())}
+          onKeyDown={onKey}
+        >
+          <Icon name={trigger.icon} size={trigger.size === "xlarge" ? 20 : trigger.size === "large" ? 16 : 12} />
+          {!!trigger.count && (
+            <span key={trigger.count} className="av-button-count" aria-hidden="true">
+              {trigger.count > 99 ? "99+" : trigger.count}
+            </span>
+          )}
+        </button>
+      ) : (
       <button
-        ref={button}
-        type="button"
-        className="av-select"
-        data-size={size}
-        data-open={open ? "" : undefined}
-        aria-label={`${label}: ${chosen?.label ?? placeholder}`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? `${id}-menu` : undefined}
-        aria-activedescendant={open ? `${id}-${active}` : undefined}
-        disabled={disabled}
-        onClick={() => (open ? close(true) : show())}
-        onKeyDown={onKey}
-      >
-        {icon && <Icon name={icon} size={12} />}
-        <span className="av-select-label">{shown}</span>
-        <span className="av-select-chevron"><Icon name="chevron" size={12} /></span>
-      </button>
+          ref={button}
+          type="button"
+          className="av-select"
+          data-size={size}
+          data-open={open ? "" : undefined}
+          data-shelf={chosen?.shelf}
+          aria-label={`${label}: ${chosen?.label ?? placeholder}`}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={open ? `${id}-menu` : undefined}
+          aria-activedescendant={open ? `${id}-${active}` : undefined}
+          disabled={disabled}
+          onClick={() => (open ? close(true) : show())}
+          onKeyDown={onKey}
+        >
+          {chosen?.shelf ? <ShelfGlyph shelf={chosen.shelf} /> : icon && <Icon name={icon} size={12} />}
+          <span className="av-select-label">{shown}</span>
+          {!clears && <span className="av-select-chevron"><Icon name="chevron" size={12} /></span>}
+        </button>
+      )}
+      {clears && (
+        <button
+          type="button"
+          className="av-select-clear"
+          aria-label={clearLabel ?? `Clear ${label.toLowerCase()}`}
+          title={clearLabel ?? `Clear ${label.toLowerCase()}`}
+          onClick={() => {
+            close(false);
+            onClear?.();
+          }}
+        >
+          <Icon name="close" size={12} />
+        </button>
+      )}
       {open &&
         createPortal(
           <div
             ref={menu}
             id={`${id}-menu`}
             className="av-select-menu"
-            role="listbox"
+            role={trigger ? "menu" : "listbox"}
             aria-label={label}
             data-above={place?.above ? "" : undefined}
             data-placed={place ? "" : undefined}
@@ -177,13 +249,16 @@ export function Select<T extends string>({ label, options, value, onChange, plac
                   id={`${id}-${i}`}
                   data-index={i}
                   className="av-select-option"
-                  role="option"
-                  aria-selected={option.value === value}
+                  role={trigger ? "menuitem" : "option"}
+                  aria-selected={trigger ? undefined : option.value === value}
                   data-active={i === active ? "" : undefined}
+                  data-shelf={option.shelf}
                   onPointerMove={() => setActive(i)}
                   onClick={() => pick(option)}
                 >
                   <span className="av-select-check">{option.value === value && <Icon name="check" size={12} />}</span>
+                  {option.shelf && <ShelfGlyph shelf={option.shelf} />}
+                  {option.icon && <Icon name={option.icon} size={12} />}
                   {option.label}
                 </div>
               </div>
@@ -191,6 +266,6 @@ export function Select<T extends string>({ label, options, value, onChange, plac
           </div>,
           document.body,
         )}
-    </>
+    </span>
   );
 }

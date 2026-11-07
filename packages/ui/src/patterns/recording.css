@@ -5,6 +5,30 @@
   display: grid;
   min-height: 100%;
 }
+/* A file dragged over the recording: a dashed violet edge and a violet wash, with the words saying what a drop does. */
+.av-rec-drop {
+  position: absolute;
+  inset: 8px;
+  z-index: var(--av-layer-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--av-radius-group);
+  border: 1.5px dashed var(--av-accent-fill);
+  background: color-mix(in srgb, var(--av-accent-fill) 22%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--av-duration-quick) var(--av-ease-out);
+}
+.av-rec-stage[data-dropping] .av-rec-drop { opacity: 1; }
+.av-rec-drop-words {
+  padding: 4px 12px;
+  border-radius: var(--av-radius-pill);
+  background: var(--av-accent-fill);
+  color: var(--av-ink-on-accent);
+  font: var(--av-text-headline);
+  letter-spacing: var(--av-text-headline-tracking);
+}
 .av-rec-idle,
 .av-rec-live {
   grid-area: 1 / 1;
@@ -76,7 +100,8 @@
   font-variant-numeric: tabular-nums;
   color: var(--av-ink);
 }
-.av-rec-stage[data-paused] .av-rec-time { animation: av-rec-blink 1.2s steps(2, start) infinite; }
-@keyframes av-rec-blink { 50% { opacity: 0.35; } }
+/* Paused, the time stands still and breathes slowly between full and faint: a calm "on hold", not a flicker. */
+.av-rec-stage[data-paused] .av-rec-time { animation: av-rec-breathe 2.4s ease-in-out infinite alternate; }
+@keyframes av-rec-breathe { to { opacity: 0.4; } }
 
 .av-rec-controls { display: flex; justify-content: center; width: 100%; padding-top: 4px; }

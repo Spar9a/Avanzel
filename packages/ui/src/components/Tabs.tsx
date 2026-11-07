@@ -24,7 +24,8 @@ export interface TabsProps<T extends string> {
   onChange: (value: T) => void;
   /**
    * primary: the window's own places, in the headline face, with a violet line under the chosen one that slides to the next.
-   * secondary: a quieter row under it, in the footnote face, where the chosen one is brighter and bolder.
+   * secondary: a quieter row under it, in the footnote face, where the chosen one is brighter and bolder on a pill that slides to the
+   * next. Neither row shifts as the choice changes: each tab keeps room for its label in bold.
    */
   level?: "primary" | "secondary";
   /** The id of the panel the tabs show (`TabPanel`). Each tab's id is made from it, `<controls>-tab-<value>`, for the panel to be named by. */
@@ -42,12 +43,13 @@ export function Tabs<T extends string>({ label, options, value, onChange, level 
   const list = useRef<HTMLDivElement>(null);
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
   const selected = Math.max(0, options.findIndex((o) => o.value === value));
-  // Where the line under the chosen tab is: measured from the tab itself, so it slides there as the choice changes.
-  const [line, setLine] = useState<{ x: number; width: number } | null>(null);
+  // Where the chosen tab is: measured from the tab itself, so the primary row's line, or the secondary row's pill, slides there as the
+  // choice changes.
+  const [line, setLine] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   useLayoutEffect(() => {
     const measure = () => {
       const tab = buttons.current[selected];
-      if (tab) setLine({ x: tab.offsetLeft, width: tab.offsetWidth });
+      if (tab) setLine({ x: tab.offsetLeft, y: tab.offsetTop, width: tab.offsetWidth, height: tab.offsetHeight });
     };
     measure();
     const box = list.current;
@@ -65,6 +67,14 @@ export function Tabs<T extends string>({ label, options, value, onChange, level 
   };
   return (
     <div ref={list} className="av-tabs" data-level={level} role="tablist" aria-label={label}>
+      {/* First in the row, so the tabs are painted over it: the line under the chosen primary tab, the pill behind a secondary one. */}
+      {line && (
+        <i
+          className={level === "primary" ? "av-tabs-line" : "av-tabs-pill"}
+          aria-hidden="true"
+          style={{ "--_x": `${line.x}px`, "--_y": `${line.y}px`, "--_width": `${line.width}px`, "--_height": `${line.height}px` } as CSSProperties}
+        />
+      )}
       {options.map((option, i) => (
         <button
           key={option.value}
@@ -89,19 +99,13 @@ export function Tabs<T extends string>({ label, options, value, onChange, level 
               <ShelfGlyph shelf={option.shelf} size={10} />
             </span>
           )}
-          <span className="av-tabs-label">{option.label}</span>
+          {/* data-label: the label again, bold and out of sight, so the tab is as wide chosen as not and the row never shifts. */}
+          <span className="av-tabs-label" data-label={option.label}>{option.label}</span>
           {option.count !== undefined && (
             <span className="av-tabs-count" aria-label={option.countLabel}>{option.count}</span>
           )}
         </button>
       ))}
-      {level === "primary" && line && (
-        <i
-          className="av-tabs-line"
-          aria-hidden="true"
-          style={{ "--_x": `${line.x}px`, "--_width": `${line.width}px` } as CSSProperties}
-        />
-      )}
     </div>
   );
 }
