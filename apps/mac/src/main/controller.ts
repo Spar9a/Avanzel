@@ -235,7 +235,7 @@ const DROP_WATCH_MS = 80;
 const DROP_MARGIN = 12;
 // The longest a video of a part of the screen runs before it stops by itself.
 const AREA_MAX_SECONDS = 600;
-/** The capsule's cards the panel shows instead (`CAPSULE_IN_PANEL`): the capsule keeps the state and shows nothing for them. */
+/** The capsule's cards the panel shows too, in Processing (`CAPSULE_IN_PANEL`): the panel follows them as they come and go. */
 const IN_PANEL = CAPSULE_IN_PANEL;
 /**
  * How long the capsule takes to sink away before its window hides (`CapsuleAppear`'s leaving: `--av-duration-base`, 200 ms), with a
@@ -1392,7 +1392,7 @@ export class Controller {
     this.capsuleState = state;
     // The panel shows a recording as the capsule does: it follows as one starts, switches or ends.
     if ((was.kind === "listening") !== (state.kind === "listening") || state.kind === "listening") this.refreshPanel();
-    // A filing and what came of it show in the panel alone (`IN_PANEL`): it follows as their cards come and go.
+    // A filing and what came of it show in the panel too (`IN_PANEL`): it follows as their cards come and go.
     else if (IN_PANEL.has(was.kind) || IN_PANEL.has(state.kind)) this.refreshPanel();
     this.cardCapture = capture ?? null;
     this.reprint = null; // a reprint is the card of whoever puts one up (`showLastReceipt`), which sets it after this
@@ -1402,9 +1402,7 @@ export class Controller {
     this.hideAt = null;
     const win = this.capsule;
     win.webContents.send("capsule:state", state);
-    // A filing's card and what came of it are the panel's now (its Processing tab): the capsule keeps the state, for Edit, Stop and
-    // Undo, and shows nothing.
-    if (state.kind === "hidden" || IN_PANEL.has(state.kind)) {
+    if (state.kind === "hidden") {
       // A hidden panel can't be hovered, and no leave reaches it: the pointer that was on it (to press Hide, say) lets go of the hold
       // now, or the next card that hides itself would wait for a pointer that has gone (`scheduleHide`).
       this.keepOpen = false;
@@ -1415,7 +1413,7 @@ export class Controller {
       // The page sinks the capsule away first (`CapsuleAppear`), then the window hides: unless something shows in it meanwhile.
       if (this.capsuleLeaveTimer) clearTimeout(this.capsuleLeaveTimer);
       this.capsuleLeaveTimer = null;
-      if (win.isVisible() && (was.kind !== "hidden" && !IN_PANEL.has(was.kind))) {
+      if (win.isVisible() && was.kind !== "hidden") {
         this.capsuleLeaveTimer = setTimeout(() => {
           this.capsuleLeaveTimer = null;
           if (!win.isDestroyed()) win.hide();

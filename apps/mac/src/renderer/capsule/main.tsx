@@ -3,7 +3,7 @@ import { Actions, Button, CapsuleAppear, CapsuleMenu, CapsuleNotice, Hud, Items,
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
-import { CAPSULE_IN_PANEL, type AddingKind, type AttachedItem, type CapsuleState } from "../../shared/ipc.ts";
+import type { AddingKind, AttachedItem, CapsuleState } from "../../shared/ipc.ts";
 import { addChoices, attachedItems } from "../common/attached.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
 import { CALL_RUNNING_LINE, DICTATION_REFUSED_LINE } from "../../shared/transcribing.ts";
@@ -286,8 +286,8 @@ function AddMenu({ open, attached, adding, onClose }: { open: boolean; attached:
   );
 }
 
-/** Whether the capsule shows anything for `state`: not while hidden, nor for the cards the panel shows instead. */
-const showsSomething = (state: CapsuleState) => state.kind !== "hidden" && !CAPSULE_IN_PANEL.has(state.kind);
+/** Whether the capsule shows anything for `state`: all but hidden, a filing and what came of it among them (Processing shows those too). */
+const showsSomething = (state: CapsuleState) => state.kind !== "hidden";
 
 /**
  * What the capsule draws, as it comes and goes (`CapsuleAppear`): the state while it shows something; once it shows nothing, the last

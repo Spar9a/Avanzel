@@ -329,8 +329,9 @@ export type CapsuleState =
   | { kind: "dictation-refused" };
 
 /**
- * The capsule's cards the panel shows instead, in its Processing tab: a filing, and what came of it (filed, stopped, or a problem). The
- * capsule keeps the state, which the panel draws, and shows nothing for them: its page lets the capsule go as for "hidden".
+ * The capsule's cards the panel shows too, in its Processing tab: a filing, and what came of it (filed, stopped, or a problem). The
+ * capsule shows them as well: the panel is up only when the person opens it, and a thought whose recording ended with nothing on the
+ * screen would look lost.
  */
 export const CAPSULE_IN_PANEL: ReadonlySet<CapsuleState["kind"]> = new Set(["transcribing", "filing", "filed", "cancelled", "error"]);
 
