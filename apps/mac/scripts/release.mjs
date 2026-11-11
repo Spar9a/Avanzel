@@ -13,7 +13,7 @@
 // push main and the tag v<version> before --publish.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, createReadStream, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request } from "node:https";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -69,6 +69,17 @@ if (options.notes && !existsSync(options.notes)) stop(`There's no file ${options
 const token = process.env.GH_TOKEN ?? "";
 const childEnv = { ...process.env };
 for (const key of ["ELECTRON_RUN_AS_NODE", "GH_TOKEN", "GITHUB_TOKEN"]) delete childEnv[key];
+
+// The temporary folders this run makes, the copy of the app sent to Apple among them: gone when it ends, however it ends.
+const scratch = [];
+function scratchDir(prefix) {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix));
+  scratch.push(dir);
+  return dir;
+}
+process.on("exit", () => {
+  for (const dir of scratch) rmSync(dir, { recursive: true, force: true });
+});
 
 // ---- Output and commands
 
@@ -374,7 +385,7 @@ async function main() {
     inherit: path.join(mac, "build/entitlements.mac.inherit.plist"),
   };
   if (options.local) {
-    const dir = mkdtempSync(path.join(tmpdir(), "avanzel-entitlements-"));
+    const dir = scratchDir("avanzel-entitlements-");
     for (const kind of ["app", "inherit"]) {
       const copy = path.join(dir, path.basename(entitlements[kind]));
       copyFileSync(entitlements[kind], copy);
@@ -401,7 +412,7 @@ async function main() {
 
   if (notarizing) {
     step("Notarizing the app");
-    const zip = path.join(mkdtempSync(path.join(tmpdir(), "avanzel-notarize-")), "Avanzel.zip");
+    const zip = path.join(scratchDir("avanzel-notarize-"), "Avanzel.zip");
     run("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, zip]);
     notarize(zip, "the app");
     run("xcrun", ["stapler", "staple", app]);
@@ -535,6 +546,12 @@ async function main() {
       if (notarizing) mustRun("xcrun", ["stapler", "validate", inside]);
     } finally {
       if (capture("hdiutil", ["detach", mount]).status !== 0) capture("hdiutil", ["detach", "-force", mount]);
+      // Only once nothing is mounted there any more: rmdir refuses a folder that isn't empty.
+      try {
+        rmdirSync(mount);
+      } catch {
+        note(`The DMG may still be mounted at ${mount}: hdiutil detach ${mount}`);
+      }
     }
     return `${megabytes(dmg)}`;
   });
