@@ -13,7 +13,6 @@ import {
   shell,
   type WebContents,
 } from "electron";
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -38,7 +37,6 @@ import {
   git,
   harnesses as listHarnesses,
   idStamp,
-  installHook,
   lastDue,
   loadSettings,
   loadTasksReport,
@@ -6499,21 +6497,6 @@ export class Controller {
   /** What Install git would have run, oldest first ("xcode-select --install"); recorded only with AVANZEL_TEST=1, which runs nothing. */
   spawnedForTests(): string[] {
     return this.spawned;
-  }
-
-  /**
-   * What the filing guard's hook prints for a Write of `filePath` by an agent working in `root`: its deny, or "" when it
-   * lets the write through. The hook runs as in a filing, through the shell, with this binary as Node.
-   */
-  guardForTests(root: string, filePath: string): string {
-    const dir = mkdtempSync(path.join(tmpdir(), "avanzel-guard-"));
-    try {
-      const command = installHook(dir, root, process.execPath);
-      const input = JSON.stringify({ tool_name: "Write", tool_input: { file_path: filePath }, cwd: root });
-      return execFileSync("/bin/sh", ["-c", command], { input, encoding: "utf8" });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   }
 }
 

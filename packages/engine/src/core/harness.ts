@@ -3,7 +3,8 @@
 // Every run happens with cwd = the library, so the harness picks up AGENTS.md / CLAUDE.md, and with
 // the narrowest permissions each CLI offers: file tools only for Claude Code, the workspace sandbox
 // for Codex, the library's opencode.json for OpenCode. Claude Code's write runs also carry the write
-// guard (guard-hook.ts), which refuses writes to the owner's words and the library's settings.
+// guard (guard-hook.ts), which refuses writes to the owner's words and the library's settings: the run
+// serves it on 127.0.0.1 while it lasts, and Claude Code asks it before each write.
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -13,7 +14,7 @@ import { StringDecoder } from "node:string_decoder";
 import { AvanzelError } from "../types.ts";
 import { ClaudeStream, type RateLimit, type ToolStep } from "./claude-stream.ts";
 import type { CustomHarness, Env, Settings } from "./config.ts";
-import { guardSettings, installHook } from "./guard-hook.ts";
+import { guardSettings, serveGuard, type Guard } from "./guard-hook.ts";
 import { which } from "./proc.ts";
 import { tailKeeper } from "./tail.ts";
 
@@ -364,15 +365,18 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
   const cancelled = `${harness.name} was cancelled`;
   if (signal?.aborted) return result(130, "", cancelled);
   const tmp = mkdtempSync(join(tmpdir(), "avanzel-"));
+  let guard: Guard | null = null;
   try {
     const outputFile = join(tmp, "last-message.txt");
     // A guarded write run is refused writes to the owner's words and the library's settings before they happen. Its
-    // hook goes into this run's own folder, so it is gone with it.
-    const settings = write && harness.guard ? guardSettings(vault, installHook(tmp, vault)) : null;
+    // guard listens only while the run lasts, and its settings point the hook at it.
+    guard = write && harness.guard ? await serveGuard(vault) : null;
+    const settings = guard ? guardSettings(vault, guard.hook) : null;
     const argv = harness.headlessArgv(prompt, vault, { write, model, outputFile, images, settings });
     // Claude Code prints a JSON event per line. Reading them as they arrive hands over each step while the agent works,
     // and its reply is the result event's text: what comes back as `output` is plain text, as for every other agent.
     const stream = harness.streams ? new ClaudeStream(onStep ?? (() => {})) : null;
+    const env = childEnv(process.env);
     const run = await collect(
       argv,
       vault,
@@ -380,6 +384,7 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
       signal,
       stream ? (line) => stream.line(line) : undefined,
       harness.name,
+      guard ? guardReachable(env) : env,
     );
     const stdout = stream ? stream.reply : run.stdout;
     const refused = stream ? stream.refused : [];
@@ -396,8 +401,20 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
     const output = harness.readsOutputFile && existsSync(outputFile) ? readFileSync(outputFile, "utf8") : stdout;
     return result(run.exitCode, output, run.stderr, refused, rateLimit);
   } finally {
+    await guard?.close(); // nothing listens once the run has ended
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+/**
+ * `env` for a guarded run: Claude Code reaches its guard on 127.0.0.1 directly, never through a proxy the environment
+ * names (HTTP_PROXY and the like), which can't reach it and so would get every write refused. Both spellings of NO_PROXY
+ * get 127.0.0.1, beside every host either named.
+ */
+function guardReachable(env: Record<string, string>): Record<string, string> {
+  const named = [env.NO_PROXY, env.no_proxy].flatMap((list) => list?.split(",") ?? []).map((host) => host.trim());
+  const hosts = [...new Set([...named.filter(Boolean), "127.0.0.1"])].join(",");
+  return { ...env, NO_PROXY: hosts, no_proxy: hosts };
 }
 
 /**
@@ -538,7 +555,8 @@ interface Collected {
  * Runs `argv` and collects what it printed. `onLine` is given each line of stdout as it arrives, without its line end
  * (`\n` or `\r\n`), and the last one at close if it had none; every line is given, however much stdout there is, but only
  * the last `OUTPUT_TAIL_BYTES` of stdout are collected, and of stderr. A program that is not there rejects with a
- * `NoAgentError` that names `agent`, the harness the run is for.
+ * `NoAgentError` that names `agent`, the harness the run is for. It runs in `env`, this process's own (`childEnv`) unless
+ * given.
  */
 function collect(
   argv: readonly string[],
@@ -547,11 +565,12 @@ function collect(
   signal?: AbortSignal,
   onLine?: (line: string) => void,
   agent: string | null = null,
+  env: Record<string, string> = childEnv(process.env),
 ): Promise<Collected> {
   const [file = "", ...args] = argv;
   return new Promise((resolve, reject) => {
     // In a process group of its own, so stopping the agent stops whatever it started too.
-    const child = spawn(file, args, { cwd, env: childEnv(process.env), stdio: ["ignore", "pipe", "pipe"], detached: true });
+    const child = spawn(file, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
     const stdout = tailKeeper(OUTPUT_TAIL_BYTES);
     const stderr = tailKeeper(OUTPUT_TAIL_BYTES);
     let stopped: Collected["stopped"] = null;
