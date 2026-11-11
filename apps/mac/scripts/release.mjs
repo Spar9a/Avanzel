@@ -3,8 +3,8 @@
 //
 //   node scripts/release.mjs              signed with the Developer ID in the keychain, with the hardened runtime, and
 //                                         notarized and stapled when the notary profile avanzel-notary works
-//   node scripts/release.mjs --local      signed with Avanzel Local (scripts/signing.mjs) instead. Apple can't notarize
-//                                         that, so Gatekeeper asks people to allow the app once, in System Settings
+//   node scripts/release.mjs --local      a dry run signed with Avanzel Local (scripts/signing.mjs), for a Mac without
+//                                         the Developer ID. Apple can't notarize it, and it is never published
 //   add --publish [--notes <file>]        then the GitHub release v<version>, with a token in GH_TOKEN: the DMG, the ZIP
 //                                         and its blockmap, latest-mac.yml and SHA256SUMS.txt
 //   add --allow-dirty                     build with uncommitted changes, to try the script out; never with --publish
@@ -26,18 +26,6 @@ const OWNER = "Spar9a";
 const REPO = "Avanzel";
 const PROFILE = "avanzel-notary";
 const BUNDLE_ID = "app.avanzel.mac";
-
-// Avanzel Local's certificate. Builds signed with it have had the requirement LOCAL_REQUIREMENT, which the owner's
-// macOS permissions are kept under, and every --local release must be signed with this same certificate, or the
-// copies people have installed refuse its updates.
-const LOCAL_LEAF = "c369f49c1dd6c338179529aa083720bb48534802";
-const LOCAL_REQUIREMENT = `identifier "${BUNDLE_ID}" and certificate leaf = H"${LOCAL_LEAF}"`;
-// Any Developer ID Application certificate: Apple's root, the Developer ID intermediate and a Developer ID leaf.
-const DEVELOPER_ID = "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13]";
-// A --local build's designated requirement: Avanzel Local, or any Developer ID build of the app. Squirrel.Mac installs an
-// update only when it satisfies the running app's designated requirement, so with this a --local release can update
-// itself to the first Developer ID release. Developer ID builds keep codesign's own, which also pins their team.
-const REQUIREMENT = `identifier "${BUNDLE_ID}" and (certificate leaf = H"${LOCAL_LEAF}" or (${DEVELOPER_ID}))`;
 // A self-made identity has no Team ID, and library validation then refuses to load Electron's own framework. Only
 // --local builds turn it off; in a Developer ID build every library carries the same Team ID.
 const LIBRARY_VALIDATION = "com.apple.security.cs.disable-library-validation";
@@ -72,6 +60,7 @@ const options = { local: false, publish: false, notes: null, allowDirty: false }
     else stop(`${arg === "--notes" ? "--notes needs a file." : `I don't know ${arg}.`}\n${USAGE}`);
   }
 }
+if (options.publish && options.local) stop("A --local build is a dry run: Apple can't notarize it, so it isn't published.");
 if (options.publish && options.allowDirty) stop("A published release is exactly a commit, so --publish doesn't go with --allow-dirty.");
 if (options.notes && !options.publish) stop("--notes is the text of the GitHub release, so it goes with --publish.");
 if (options.notes && !existsSync(options.notes)) stop(`There's no file ${options.notes}.`);
@@ -122,16 +111,10 @@ function mustRun(command, args) {
 
 // ---- Signing
 
-/** Avanzel Local, after checking it is the certificate the --local releases are signed with. */
+/** Avanzel Local, for a dry run. */
 function localSigner() {
   const hash = localIdentity();
   if (!hash) stop(`"${LOCAL_NAME}" isn't on this Mac. Make it once with: npm run signing:setup -w @avanzel/mac`);
-  if (hash.toLowerCase() !== LOCAL_LEAF) {
-    stop(
-      `This Mac's "${LOCAL_NAME}" (${hash}) isn't the certificate Avanzel's --local releases are signed with (${LOCAL_LEAF}). ` +
-        "Copies people have installed would refuse updates signed with it.",
-    );
-  }
   unlock();
   return { hash, name: LOCAL_NAME, team: null };
 }
@@ -181,21 +164,6 @@ function signature(file) {
     entitlements: [...entitlements.matchAll(/<key>([^<]+)<\/key>/g)].map((match) => match[1]).sort(),
     requirement,
   };
-}
-
-/** Whether `file` satisfies the requirement `text` (codesign --verify -R). */
-const satisfies = (file, text) => capture("codesign", ["--verify", `-R=${text}`, file]).status === 0;
-
-/** An app in /Applications signed with a Developer ID, to try the requirement's Developer ID branch on. */
-function developerIdApp() {
-  if (!existsSync("/Applications")) return null;
-  for (const name of readdirSync("/Applications").filter((entry) => entry.endsWith(".app")).sort()) {
-    const file = path.join("/Applications", name);
-    const shown = capture("codesign", ["-dvv", file]).all;
-    const identifier = /^Identifier=(.*)$/m.exec(shown)?.[1];
-    if (identifier && /^Authority=Developer ID Application: /m.test(shown)) return { file, identifier };
-  }
-  return null;
 }
 
 /** The states of Electron's fuses, read from the fuse wire in Electron's framework. */
@@ -301,16 +269,14 @@ async function checkPublishable(tag, head) {
 }
 
 function defaultNotes(version, dmg) {
-  const lines = [`Avanzel ${version} for Macs with Apple silicon.`, "", `To install it, download ${dmg}, open it, and drag Avanzel to Applications.`];
-  if (options.local) {
-    lines.push(
-      "",
-      "This build is signed with Avanzel's own certificate, not yet with an Apple Developer ID, so macOS stops it the first time it opens. " +
-        "To allow it, open System Settings, then Privacy & Security, and click Open Anyway beside the line about Avanzel. You do this once.",
-    );
-  }
-  lines.push("", "SHA256SUMS.txt lists the SHA-256 sum of each file.");
-  return `${lines.join("\n")}\n`;
+  return [
+    `Avanzel ${version} for Macs with Apple silicon.`,
+    "",
+    `To install it, download ${dmg}, open it, and drag Avanzel to Applications.`,
+    "",
+    "SHA256SUMS.txt lists the SHA-256 sum of each file.",
+    "",
+  ].join("\n");
 }
 
 async function publish({ tag, version, files, yml, notes }) {
@@ -380,8 +346,8 @@ async function main() {
   let notarizing = false;
   if (options.local) {
     note(
-      "A --local release: hardened runtime with library validation off, and a designated requirement that also accepts Developer ID builds.\n" +
-        "It isn't notarized and Gatekeeper doesn't accept it: Apple notarizes Developer ID builds only. People allow it once, in System Settings.",
+      "A --local dry run: the release as it would be, with the hardened runtime but library validation off, which a self-made identity needs.\n" +
+        "It isn't notarized, and Gatekeeper rejects it: Apple notarizes Developer ID builds only.",
     );
   } else {
     const history = capture("xcrun", ["notarytool", "history", "--keychain-profile", PROFILE]);
@@ -433,11 +399,7 @@ async function main() {
   run("npx", [...builder, "--mac", "dir", `-c.mac.identity=${signer.hash}`, `-c.mac.entitlements=${entitlements.app}`, `-c.mac.entitlementsInherit=${entitlements.inherit}`], { env: builderEnv });
   if (!existsSync(app)) stop(`electron-builder made no ${app}.`);
 
-  if (options.local) {
-    step("Giving the app its designated requirement");
-    // The app bundle only: the helpers and frameworks inside keep their own requirements, and their signatures.
-    run("codesign", ["--force", "--sign", signer.hash, "--options", "runtime", "--timestamp", "--entitlements", entitlements.app, "--requirements", `=designated => ${REQUIREMENT}`, app]);
-  } else if (notarizing) {
+  if (notarizing) {
     step("Notarizing the app");
     const zip = path.join(mkdtempSync(path.join(tmpdir(), "avanzel-notarize-")), "Avanzel.zip");
     run("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, zip]);
@@ -458,16 +420,12 @@ async function main() {
   const blockmap = `${zip}.blockmap`;
   const yml = path.join(out, "latest-mac.yml");
 
-  if (!options.local) {
-    step("Signing the DMG");
-    // A --local DMG stays unsigned: macOS opens an unsigned disk image and checks the app inside when it first opens,
-    // while a disk image signed with a certificate Apple doesn't know is stopped once more, before that.
-    run("codesign", ["--force", "--sign", signer.hash, "--timestamp", dmg]);
-    if (notarizing) {
-      step("Notarizing the DMG");
-      notarize(dmg, "the DMG");
-      run("xcrun", ["stapler", "staple", dmg]);
-    }
+  step("Signing the DMG");
+  run("codesign", ["--force", "--sign", signer.hash, "--timestamp", dmg]);
+  if (notarizing) {
+    step("Notarizing the DMG");
+    notarize(dmg, "the DMG");
+    run("xcrun", ["stapler", "staple", dmg]);
   }
 
   step("Checking the release");
@@ -512,27 +470,12 @@ async function main() {
     });
   }
 
-  if (options.local) {
-    check("The app's designated requirement accepts Avanzel Local and any Developer ID build of the app", () => {
-      const line = built.requirement;
-      must(line.includes(`identifier "${BUNDLE_ID}"`) && line.includes(`certificate leaf = H"${LOCAL_LEAF}"`), `it is ${line || "missing"}`);
-      must(line.includes("certificate 1[field.1.2.840.113635.100.6.2.6]") && line.includes("certificate leaf[field.1.2.840.113635.100.6.1.13]"), `it has no Developer ID branch: ${line}`);
-      return line;
-    });
-    check("The app satisfies the requirement of earlier Avanzel Local builds, so macOS keeps their permissions", () => {
-      must(satisfies(app, LOCAL_REQUIREMENT), `it doesn't satisfy ${LOCAL_REQUIREMENT}`);
-    });
-    const other = developerIdApp();
-    if (other) {
-      check(`The requirement's Developer ID branch accepts a Developer ID app (${path.basename(other.file)}), and refuses what isn't one`, () => {
-        must(satisfies(other.file, REQUIREMENT.replace(`identifier "${BUNDLE_ID}"`, `identifier "${other.identifier}"`)), `${other.file} doesn't satisfy it`);
-        must(!satisfies(app, DEVELOPER_ID), "Avanzel Local passed for a Developer ID");
-        must(!satisfies("/System/Applications/Calculator.app", DEVELOPER_ID), "an Apple app passed for a Developer ID");
-      });
-    } else {
-      skip("The requirement's Developer ID branch against a Developer ID app", "no app in /Applications is signed with a Developer ID");
-    }
-  }
+  check(`The app's designated requirement names ${BUNDLE_ID}${signer.team ? ` and the team ${signer.team}` : ""}`, () => {
+    const line = built.requirement;
+    must(line.includes(`identifier "${BUNDLE_ID}"`), `it is ${line || "missing"}`);
+    if (signer.team) must(line.includes(`certificate leaf[subject.OU] = ${signer.team}`) || line.includes(`certificate leaf[subject.OU] = "${signer.team}"`), `it doesn't name the team: ${line}`);
+    return line.replace(/^designated => /, "");
+  });
 
   check("Electron's fuses", () => {
     const states = fuseStates(app);
@@ -578,12 +521,10 @@ async function main() {
     return `${megabytes(zip)}`;
   });
 
-  check(`The DMG is whole${options.local ? "" : ", signed"} and holds this same app`, () => {
+  check("The DMG is whole, signed, and holds this same app", () => {
     mustRun("hdiutil", ["verify", dmg]);
-    if (!options.local) {
-      const found = signature(dmg);
-      must(found.authority === signer.name && found.timestamp, `signed by ${found.authority ?? "nobody"}${found.timestamp ? "" : ", without a secure timestamp"}`);
-    }
+    const found = signature(dmg);
+    must(found.authority === signer.name && found.timestamp, `signed by ${found.authority ?? "nobody"}${found.timestamp ? "" : ", without a secure timestamp"}`);
     const mount = mkdtempSync(path.join(tmpdir(), "avanzel-dmg-"));
     mustRun("hdiutil", ["attach", dmg, "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount]);
     try {
@@ -645,10 +586,7 @@ async function main() {
   console.log(`\nThe release is in ${out}:`);
   for (const file of [...uploads, sums]) console.log(`   ${path.basename(file)}  ${megabytes(file)}`);
   if (options.local) {
-    console.log(
-      "\nSigned with Avanzel Local: not notarized, and Gatekeeper stops it until a person clicks Open Anyway in System Settings, once.\n" +
-        "Its designated requirement accepts Developer ID builds, so it can update itself to the first one.",
-    );
+    console.log("\nA dry run signed with Avanzel Local: not notarized, Gatekeeper rejects it, and it isn't for publishing.");
   } else if (!notarizing) {
     console.log("\nNot notarized: Gatekeeper rejects this build. Make the notary profile (RELEASING.md) and build again before publishing.");
   }

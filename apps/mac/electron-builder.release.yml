@@ -1,9 +1,9 @@
 # The public release of Avanzel for Mac, as scripts/release.mjs builds it (RELEASING.md says how). It extends
 # electron-builder.yml, which review builds use unchanged, and changes only what a signed release needs.
-# release.mjs runs electron-builder twice with it: --mac dir packages and signs the app, then --prepackaged makes the
-# DMG, the ZIP and latest-mac.yml from that app once release.mjs has finished it (its designated requirement, or
-# notarization). It passes the signing identity (-c.mac.identity), the output folder and, for a build signed with
-# Avanzel Local, entitlements that also turn library validation off.
+# release.mjs runs electron-builder twice with it: --mac dir packages and signs the app, then, once release.mjs has
+# notarized and stapled that app, --prepackaged makes the DMG, the ZIP and latest-mac.yml from it. It passes the
+# signing identity (-c.mac.identity), the output folder and, for a --local dry run signed with Avanzel Local,
+# entitlements that also turn library validation off.
 extends: electron-builder.yml
 directories:
   output: release/${version}
