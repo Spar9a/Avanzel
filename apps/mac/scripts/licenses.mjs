@@ -13,8 +13,17 @@ import { fileURLToPath } from "node:url";
 const mac = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const repo = path.resolve(mac, "..", "..");
 
-/** The npm packages esbuild bundles into dist: React in the windows, smol-toml in the main process. */
-const BUNDLED = ["react", "react-dom", "scheduler", "smol-toml"];
+/**
+ * The npm packages esbuild bundles into dist: React in the windows; smol-toml, and electron-updater with what it needs, in the
+ * main process.
+ */
+const BUNDLED = [
+  "react", "react-dom", "scheduler", "smol-toml",
+  "electron-updater", "builder-util-runtime", "lazy-val", "debug", "ms", "has-flag", "supports-color", "fs-extra", "graceful-fs",
+  "jsonfile", "universalify", "js-yaml", "lodash.escaperegexp", "lodash.isequal", "sax", "semver",
+];
+/** Bundled packages that carry no licence file of their own. Their texts are in apps/mac/licenses. */
+const BUNDLED_TEXTS = { "lazy-val": "lazy-val-LICENSE.txt" };
 /** The fonts @avanzel/ui bundles. Each licence lies beside the font files. */
 const FONTS = ["Nunito", "Literata", "Newsreader"];
 /** Packages the app ships that carry no licence file of their own. Their texts are in apps/mac/licenses. */
@@ -116,7 +125,10 @@ export async function afterExtract(context) {
   for (const name of BUNDLED) {
     const dir = packageDir(name);
     if (!dir) fail(`${name} isn't installed. Run npm ci.`);
-    fromNpm(dir, name, "bundled into the app's code");
+    if (BUNDLED_TEXTS[name]) {
+      const { version } = manifest(dir);
+      put(path.join(mac, "licenses", BUNDLED_TEXTS[name]), `${name}-${version}-LICENSE.txt`, `${name} ${version}, bundled into the app's code`);
+    } else fromNpm(dir, name, "bundled into the app's code");
   }
 
   for (const [dir, name] of shippedPackages()) {
