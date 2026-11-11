@@ -373,7 +373,10 @@ async function main() {
 
   step("Building the helpers, the icon and the app's code");
   rmSync(out, { recursive: true, force: true });
-  for (const script of ["build-calltap.mjs", "build-cursor.mjs", "make-icon.mjs", "build.mjs"]) run(process.execPath, [path.join("scripts", script)]);
+  // build.mjs makes a release's bundle, which refuses a debugger's switches (src/main/debug-switches.ts).
+  for (const script of ["build-calltap.mjs", "build-cursor.mjs", "make-icon.mjs", "build.mjs"]) {
+    run(process.execPath, [path.join("scripts", script)], { env: { ...childEnv, AVANZEL_RELEASE_BUILD: "1" } });
+  }
   for (const helper of HELPERS) {
     if (!existsSync(path.join(mac, helper.built))) stop(`${helper.built} wasn't built, and a release needs it. Is swiftc installed? (xcode-select --install)`);
   }

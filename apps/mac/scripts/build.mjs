@@ -51,6 +51,8 @@ const parts = [
       format: "esm",
       target: "node22",
       external: ["electron", "onnxruntime-node"],
+      // A release's bundle refuses a debugger's switches (src/main/debug-switches.ts); release.mjs sets AVANZEL_RELEASE_BUILD=1.
+      define: { __AVANZEL_RELEASE__: process.env.AVANZEL_RELEASE_BUILD === "1" ? "true" : "false" },
       banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
     },
   },

@@ -4,8 +4,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { appIconPng } from "./app-icon.ts";
 import { Controller } from "./controller.ts";
+import { debugSwitch } from "./debug-switches.ts";
 import { registerIpc } from "./ipc.ts";
 import { loginShellPath, widenedPath } from "./shell-path.ts";
+
+/** True in a release's bundle (scripts/build.mjs, with AVANZEL_RELEASE_BUILD=1 from scripts/release.mjs), and false otherwise. */
+declare const __AVANZEL_RELEASE__: boolean | undefined;
+
+// A release won't start with a debugger's port open, since through it any program could use Avanzel's microphone (debug-switches.ts).
+if (typeof __AVANZEL_RELEASE__ !== "undefined" && __AVANZEL_RELEASE__ && debugSwitch((name) => app.commandLine.hasSwitch(name))) {
+  app.exit(1);
+}
 
 const DIST = path.dirname(fileURLToPath(import.meta.url));
 process.env.AVANZEL_TEMPLATES ??= path.join(DIST, "templates");
