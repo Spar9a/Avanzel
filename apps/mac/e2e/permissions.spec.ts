@@ -235,8 +235,11 @@ test("Settings → Privacy follows System Settings: a permission allowed there s
   });
   await expect(microphone.getByText("Allowed", { exact: true })).toBeVisible();
   await expect(screen.getByText("Allowed", { exact: true })).toBeVisible();
-  await expect(settings.getByRole("button", { name: "Open System Settings" })).toHaveCount(0);
-  await expect(settings.getByRole("button", { name: "Quit and reopen" })).toHaveCount(0);
+  // Nothing left to offer for the two the stand-in answers. Dictation's Accessibility and Input Monitoring rows, below them,
+  // read this Mac's own answer through the cursor helper, so they offer Open System Settings wherever the helper is built
+  // and those aren't allowed: they're outside what this test fakes.
+  await expect(microphone.getByRole("button")).toHaveCount(0);
+  await expect(screen.getByRole("button")).toHaveCount(0);
   // And back again: a permission taken away there reads as not allowed.
   await app.evaluate(({ BrowserWindow }) => {
     process.env.AVANZEL_FAKE_PERMISSIONS = "microphone:denied,screen:granted";
