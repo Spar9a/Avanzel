@@ -19,7 +19,28 @@ extraResources:
   - from: native/cursor/build
     to: cursor
     filter: ["avanzel-cursor"]
+  # Avanzel's own licence and NOTICE, in Contents/Resources. scripts/release.mjs refuses to build without them.
+  - from: ../../LICENSE
+    to: LICENSE
+  - from: ../../NOTICE
+    to: NOTICE
+# The licence texts of everything the app bundles, in Contents/Resources/licenses (scripts/licenses.mjs).
+afterExtract: ./scripts/licenses.mjs
 npmRebuild: false
+# Electron's fuses, switches in its binary flipped before signing (https://www.electronjs.org/docs/latest/tutorial/fuses).
+# This is the review build's set, which `npm run dist` and the flight pack's review builds use. The public release
+# (electron-builder.release.yml) turns the --inspect arguments off as well: Playwright drives a packaged app through
+# them (e2e/packaged.spec.ts), so review builds keep them.
+electronFuses:
+  # On for now: the engine's write guard runs Avanzel's own binary as Node (packages/engine/src/core/guard-hook.ts).
+  # Turn it off once the guard no longer needs it.
+  runAsNode: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: true
+  onlyLoadAppFromAsar: true
+  enableEmbeddedAsarIntegrityValidation: true
+  # Signs the flipped binary ad hoc, so the app opens even before its real signature (signing.mjs, or the release's).
+  resetAdHocDarwinSignature: true
 mac:
   target: dir
   category: public.app-category.productivity

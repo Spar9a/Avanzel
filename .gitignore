@@ -15,6 +15,10 @@ playwright-report/
 *.tsbuildinfo
 .claude/worktrees/
 apps/mac/.e2e-running
+# apps/mac/build holds the made icon (scripts/make-icon.mjs) beside the signing entitlements, which are kept
+!apps/mac/build/
+apps/mac/build/*
+!apps/mac/build/entitlements*.plist
 
 # JetBrains IDE settings (Rider, WebStorm): per machine, never shared
 .idea/

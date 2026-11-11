@@ -1,0 +1,44 @@
+# The public release of Avanzel for Mac, as scripts/release.mjs builds it (RELEASING.md says how). It extends
+# electron-builder.yml, which review builds use unchanged, and changes only what a signed release needs.
+# release.mjs runs electron-builder twice with it: --mac dir packages and signs the app, then, once release.mjs has
+# notarized and stapled that app, --prepackaged makes the DMG, the ZIP and latest-mac.yml from it. It passes the
+# signing identity (-c.mac.identity), the output folder and, for a --local dry run signed with Avanzel Local,
+# entitlements that also turn library validation off.
+extends: electron-builder.yml
+directories:
+  output: release/${version}
+mac:
+  # The DMG is for a first install; electron-updater installs updates from the ZIP. Apple silicon only.
+  target:
+    - target: dmg
+      arch: arm64
+    - target: zip
+      arch: arm64
+  hardenedRuntime: true
+  # The app: allow-jit for V8 (Avanzel's own binary also runs as Node for the write guard), audio-input for the
+  # microphone, apple-events for asking the browser in front which page it shows (src/main/front-app.ts).
+  entitlements: build/entitlements.mac.plist
+  # Electron's helper apps (renderer, GPU, network) and every other binary electron-builder signs: allow-jit only.
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  # release.mjs signs the two native helpers before packaging, each with its own entitlements (calltap: audio-input;
+  # cursor: none). Left to electron-builder, they would get the Electron helpers' set.
+  signIgnore:
+    - /Contents/Resources/calltap/avanzel-calltap$
+    - /Contents/Resources/cursor/avanzel-cursor$
+  # release.mjs notarizes the app and the DMG itself.
+  notarize: false
+dmg:
+  # release.mjs signs the DMG, with a secure timestamp, which electron-builder's own signing leaves out.
+  sign: false
+  # electron-updater reads only the ZIP. The DMG is signed and notarized after it is built, which would leave its entry
+  # in latest-mac.yml and its blockmap out of date, so it has neither.
+  writeUpdateInfo: false
+electronFuses:
+  # Nothing may attach a debugger to the released app. The other fuses are electron-builder.yml's.
+  enableNodeCliInspectArguments: false
+# Written into latest-mac.yml and the app's app-update.yml. release.mjs builds with --publish never and uploads itself.
+publish:
+  provider: github
+  owner: Spar9a
+  repo: Avanzel
+  releaseType: release
