@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const builderConfig = readFileSync(fileURLToPath(new URL("../electron-builder.yml", import.meta.url)), "utf8");
+const releaseConfig = readFileSync(fileURLToPath(new URL("../electron-builder.release.yml", import.meta.url)), "utf8");
+/** The fuse settings under electronFuses in a config's text. */
+const fuses = (config: string) => /^electronFuses:\n((?:[ \t]+.*\n)+)/m.exec(config)?.[1] ?? "";
 
 describe("build config", () => {
   it("the microphone is asked for with the purpose setup promises", () => {
@@ -24,7 +27,17 @@ describe("build config", () => {
   });
 
   it("the build keeps Electron's run-as-node fuse, which the filing guard needs", () => {
-    // The guard's hook runs with Avanzel's own binary as Node (ELECTRON_RUN_AS_NODE=1). Fuses could turn that off.
-    expect(builderConfig).not.toMatch(/^\s*electronFuses\s*:/m);
+    // The guard's hook runs with Avanzel's own binary as Node (ELECTRON_RUN_AS_NODE=1). Its fuse could turn that off.
+    expect(fuses(builderConfig)).toMatch(/^[ \t]+runAsNode: true$/m);
+    expect(releaseConfig).toMatch(/^extends: electron-builder\.yml$/m);
+    expect(fuses(releaseConfig)).not.toMatch(/runAsNode/);
+  });
+
+  it("a release can't be debugged, while a review build keeps --inspect for Playwright (e2e/packaged.spec.ts)", () => {
+    expect(fuses(builderConfig)).toMatch(/^[ \t]+enableNodeCliInspectArguments: true$/m);
+    expect(fuses(releaseConfig)).toMatch(/^[ \t]+enableNodeCliInspectArguments: false$/m);
+    for (const line of ["enableNodeOptionsEnvironmentVariable: false", "onlyLoadAppFromAsar: true", "enableEmbeddedAsarIntegrityValidation: true"]) {
+      expect(fuses(builderConfig)).toContain(line);
+    }
   });
 });
