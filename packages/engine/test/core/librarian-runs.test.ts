@@ -168,6 +168,53 @@ describe("the steps of a filing", () => {
     expect(outcome.refused).toEqual([join(tmp(), "outside.md")]);
   });
 
+  /**
+   * claudeLibrarian's, but its stand-in gets all of Claude Code's arguments, and so asks the run's own guard before each
+   * write, as Claude Code does. `asked` gives each question it put and the answer, in order (FAKE_AGENT_GUARD_LOG).
+   */
+  function guardedLibrarian(): { librarian: Librarian; asked: () => Array<Record<string, unknown>> } {
+    vi.stubEnv("PATH", binScripts(tmp(), { claude: `exec '${process.execPath}' '${FAKE_AGENT}' "$@"` }));
+    vi.stubEnv("FAKE_AGENT_STREAM", "claude");
+    const log = join(tmp(), "guard.jsonl");
+    vi.stubEnv("FAKE_AGENT_GUARD_LOG", log);
+    const settings = { ...defaultSettings(), harness: "claude", timeoutSeconds: 30 };
+    return {
+      librarian: new Librarian(vault, settings, { clock: () => NOW }),
+      asked: () => read(log).split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>),
+    };
+  }
+
+  it("a Claude Code filing asks the run's guard before each write: raw/ is refused with its reason, pages go through", async () => {
+    const { librarian: guarded, asked } = guardedLibrarian();
+    vi.stubEnv("FAKE_AGENT_REFUSE", "raw/2026/10/x.md");
+    const capture = guarded.captureText("Build a tiny greenhouse");
+    const outcome = await only(guarded.file());
+    expect(outcome.ok).toBe(true);
+    expect(outcome.refused).toEqual(["raw/2026/10/x.md"]);
+    expect(existsSync(join(vault.root, "raw", "2026", "10", "x.md"))).toBe(false);
+    expect(existsSync(join(vault.root, "ideas", `idea-${capture.id}.md`))).toBe(true);
+    const through = { status: 200, decision: null, reason: null };
+    expect(asked()).toEqual([
+      { tool: "Write", path: join(vault.root, `ideas/idea-${capture.id}.md`), ...through },
+      { tool: "Write", path: join(vault.root, "raw/2026/10/x.md"), status: 200, decision: "deny", reason: expect.stringContaining("own words") },
+      { tool: "Edit", path: join(vault.root, "index.md"), ...through },
+      { tool: "Edit", path: join(vault.root, "log.md"), ...through },
+    ]);
+  });
+
+  it("the run's guard refuses a Claude Code write outside the library, and names the library", async () => {
+    const { librarian: guarded, asked } = guardedLibrarian();
+    vi.stubEnv("FAKE_AGENT_REFUSE", "../outside.md");
+    guarded.captureText("Build a tiny greenhouse");
+    const outcome = await only(guarded.file());
+    expect(outcome.refused).toEqual([join(tmp(), "outside.md")]);
+    expect(existsSync(join(tmp(), "outside.md"))).toBe(false);
+    expect(asked().find((question) => question.decision === "deny")).toMatchObject({
+      path: join(tmp(), "outside.md"),
+      reason: `This run may only write inside the library, ${vault.root}.`,
+    });
+  });
+
   it("names paths relative to the library when it is reached through a symlink", async () => {
     // The agent works in the real folder and names real paths; the library is known by the link to it.
     const link = join(tmp(), "link");

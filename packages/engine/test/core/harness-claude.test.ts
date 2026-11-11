@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolStep } from "../../src/core/claude-stream.ts";
+import type { GuardHook } from "../../src/core/guard-hook.ts";
 import { Harness, checkAgent, classifyFailure, errorLine, harnesses, runHeadless, type RunOptions } from "../../src/core/harness.ts";
 import { builtin, script, settingsWith } from "./harness-fixtures.ts";
 import { binScripts, useTmp } from "./helpers.ts";
@@ -10,6 +11,12 @@ import { binScripts, useTmp } from "./helpers.ts";
 // A Claude Code filing run, one JSON event per line (see claude-stream.test.ts).
 const FILING = fileURLToPath(new URL("../fixtures/claude-filing.jsonl", import.meta.url));
 const tmp = useTmp();
+
+/** The --settings of a guarded write run. */
+interface GuardedSettings {
+  permissions: { deny: string[] };
+  hooks: { PreToolUse: Array<{ matcher: string; hooks: GuardHook[] }> };
+}
 
 describe("runHeadless with Claude Code", () => {
   // A test that moves the clock by hand and runs out of time before it puts the real one back leaves it to this, so the
@@ -230,10 +237,7 @@ describe("runHeadless with Claude Code", () => {
   /** The --settings the agent was given, parsed. */
   const recordedSettings = () => {
     const args = recordedArgs();
-    return JSON.parse(args[args.indexOf("--settings") + 1] ?? "") as {
-      permissions: { deny: string[] };
-      hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> };
-    };
+    return JSON.parse(args[args.indexOf("--settings") + 1] ?? "") as GuardedSettings;
   };
 
   it("Claude Code's write runs carry the guard; reads and other agents don't", async () => {
@@ -251,23 +255,63 @@ describe("runHeadless with Claude Code", () => {
     expect((harnesses(settingsWith({ harnesses: { claude: mine } })).claude as Harness).guard).toBe(false);
   });
 
-  it("the hook works during the run and is gone after", async () => {
-    // A stand-in Claude Code that runs its own hook, as Claude Code does before a Write of raw/x.md, and replies with
-    // what the hook said. (Shell-quoted, so no single quote in it.)
-    const standIn = [
-      'const args = process.argv; const settings = JSON.parse(args[args.indexOf("--settings") + 1]);',
-      "const { command } = settings.hooks.PreToolUse[0].hooks[0];",
-      'const input = JSON.stringify({ tool_name: "Write", tool_input: { file_path: process.cwd() + "/raw/x.md" }, cwd: process.cwd() });',
-      'const said = require("child_process").execFileSync("/bin/sh", ["-c", command], { input, encoding: "utf8" });',
-      'console.log(JSON.stringify({ type: "result", is_error: false, result: said }));',
-    ].join(" ");
-    onPath(`${recordArgs}; exec '${process.execPath}' -e '${standIn}' -- "$@"`);
+  it("the run's guard answers its hook while it runs, only with its token, and nothing listens after", async () => {
+    // A stand-in Claude Code that posts a Write of raw/x.md to the hook in its settings, as Claude Code does, once with the
+    // hook's headers and once without them, and replies with what the guard said to each.
+    const standIn = join(tmp(), "stand-in.mjs");
+    writeFileSync(
+      standIn,
+      [
+        'const args = process.argv; const settings = JSON.parse(args[args.indexOf("--settings") + 1]);',
+        "const [{ hooks: [hook] }] = settings.hooks.PreToolUse;",
+        'const body = JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Write", tool_input: { file_path: process.cwd() + "/raw/x.md" }, cwd: process.cwd() });',
+        'const asked = async (headers) => { const response = await fetch(hook.url, { method: "POST", headers, body }); return { status: response.status, body: await response.text() }; };',
+        "const said = { withToken: await asked(hook.headers), withoutToken: await asked({}) };",
+        'console.log(JSON.stringify({ type: "result", is_error: false, result: JSON.stringify(said) }));',
+      ].join("\n"),
+    );
+    onPath(`${recordArgs}; exec '${process.execPath}' '${standIn}' "$@"`);
     const result = await runClaude();
-    expect(result.output).toContain('"permissionDecision":"deny"');
-    const command = recordedSettings().hooks.PreToolUse[0]?.hooks[0]?.command ?? "";
-    const script = /'([^']*\/guard-hook\.mjs)'/.exec(command)?.[1] ?? "";
-    expect(script).not.toBe("");
-    expect(existsSync(script)).toBe(false);
+    const said = JSON.parse(result.output) as Record<"withToken" | "withoutToken", { status: number; body: string }>;
+    expect(said.withToken.status).toBe(200);
+    expect(JSON.parse(said.withToken.body)).toMatchObject({
+      hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: expect.stringContaining("own words") },
+    });
+    expect(said.withoutToken).toEqual({ status: 403, body: "" });
+    const hook = recordedSettings().hooks.PreToolUse[0]?.hooks[0];
+    expect(hook).toMatchObject({ type: "http", url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/guard$/), onFailure: "block" });
+    await expect(fetch(hook?.url ?? "", { method: "POST", headers: hook?.headers, body: "{}" })).rejects.toThrow();
+  });
+
+  it("each write run serves a guard of its own: another port, another token", async () => {
+    // Two runs at once: each stand-in keeps the settings it was given in a file of its own, then waits a moment, so both
+    // guards listen together.
+    const keep = `while [ "$#" -gt 0 ]; do if [ "$1" = --settings ]; then printf '%s' "$2" > "SETTINGS-$$"; fi; shift; done; /bin/sleep 0.5`;
+    onPath(keep);
+    const runs = await Promise.all([runClaude(), runClaude()]);
+    expect(runs.map((run) => run.ok)).toEqual([true, true]);
+    const hooks = readdirSync(tmp())
+      .filter((name) => name.startsWith("SETTINGS-"))
+      .map((name) => (JSON.parse(readFileSync(join(tmp(), name), "utf8")) as GuardedSettings).hooks.PreToolUse[0]?.hooks[0]);
+    expect(hooks).toHaveLength(2);
+    expect(new Set(hooks.map((hook) => new URL(hook?.url ?? "").port)).size).toBe(2);
+    expect(new Set(hooks.map((hook) => hook?.headers.Authorization)).size).toBe(2);
+  });
+
+  it("a guarded run reaches its guard directly, past any proxy the environment names", async () => {
+    // Claude Code sends its hook through HTTP_PROXY unless NO_PROXY names the host: a proxy can't reach 127.0.0.1.
+    vi.stubEnv("NO_PROXY", "corp.example, localhost");
+    vi.stubEnv("no_proxy", "localhost,.internal");
+    vi.stubEnv("HTTPS_PROXY", "http://proxy.example:3128");
+    onPath(`printf '%s\\n%s\\n%s\\n' "$NO_PROXY" "$no_proxy" "$HTTPS_PROXY" > PROXY`);
+    const proxyOf = async (write: boolean) => {
+      await runClaude({ write });
+      return readFileSync(join(tmp(), "PROXY"), "utf8").split("\n").slice(0, 3);
+    };
+    const both = "corp.example,localhost,.internal,127.0.0.1";
+    expect(await proxyOf(true)).toEqual([both, both, "http://proxy.example:3128"]);
+    // A run without a guard keeps the environment as it is.
+    expect(await proxyOf(false)).toEqual(["corp.example, localhost", "localhost,.internal", "http://proxy.example:3128"]);
   });
 
   // `claude auth status` says nothing a check understands here, so the check asks Claude Code one short question.

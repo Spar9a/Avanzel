@@ -19,6 +19,8 @@ if (typeof __AVANZEL_RELEASE__ !== "undefined" && __AVANZEL_RELEASE__ && debugSw
 const DIST = path.dirname(fileURLToPath(import.meta.url));
 process.env.AVANZEL_TEMPLATES ??= path.join(DIST, "templates");
 process.env.AVANZEL_ASSETS ??= path.join(DIST, "engine-assets");
+// Nothing the app starts runs as Node (the packaged app can't: its runAsNode fuse is off). A shell that set this, as
+// some terminals do, doesn't pass it on to the agents either.
 delete process.env.ELECTRON_RUN_AS_NODE;
 // The tests' first runs keep PATH exactly as given (AVANZEL_EXACT_PATH), so no agent CLI of this Mac's own is found.
 if (!(process.env.AVANZEL_TEST === "1" && process.env.AVANZEL_EXACT_PATH === "1")) {

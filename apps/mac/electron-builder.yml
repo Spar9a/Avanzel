@@ -32,9 +32,9 @@ npmRebuild: false
 # (electron-builder.release.yml) turns the --inspect arguments off as well: Playwright drives a packaged app through
 # them (e2e/packaged.spec.ts), so review builds keep them.
 electronFuses:
-  # On for now: the engine's write guard runs Avanzel's own binary as Node (packages/engine/src/core/guard-hook.ts).
-  # Turn it off once the guard no longer needs it.
-  runAsNode: true
+  # Off: nothing the app runs needs its binary to run as Node (the filing guard is an HTTP hook on 127.0.0.1), and with it
+  # on, any other process on the Mac could run code as Avanzel, with its microphone and screen recording permissions.
+  runAsNode: false
   enableNodeOptionsEnvironmentVariable: false
   enableNodeCliInspectArguments: true
   onlyLoadAppFromAsar: true

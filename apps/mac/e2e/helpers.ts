@@ -112,6 +112,15 @@ export function filingClaude(env: Record<string, string> = {}): string {
 }
 
 /**
+ * A `claude` for agentStubs that files as filingClaude's does, but hands the engine's fake agent all of Claude Code's
+ * arguments, its settings among them. So it asks the run's guard before each write, as Claude Code does, and keeps
+ * each question and answer in FAKE_AGENT_GUARD_LOG when that is set. `env` steers this stand-in alone.
+ */
+export function guardedClaude(env: Record<string, string> = {}): string {
+  return `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else ${steering(env)}exec '${process.execPath}' '${fakeAgent}' "$@"; fi`;
+}
+
+/**
  * A `claude` for agentStubs that isn't signed in: its sign-in command says so and exits 1, as Claude Code's does, and any
  * other call fails asking to sign in ("not logged in"). A test signs it in, as the person would in Terminal, with
  * answerAs(dir, "claude", filingClaude()). `env` steers this stand-in alone, as filingClaude's does. With `readable` false

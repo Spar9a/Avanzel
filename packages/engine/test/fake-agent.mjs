@@ -36,6 +36,12 @@
 // FAKE_AGENT_REFUSE=<rel> (stream mode) also reports a Write of the library path <rel> that was refused, and does not
 // write it: a tool_result with is_error and "PreToolUse:Write hook error: …", and the path in the result event's
 // permission_denials. A filing makes it after the idea page; a noop run, which writes nothing, makes it and gives up.
+// Given all of Claude Code's arguments (`-p <prompt> … --settings <json> …`), it reads the prompt after -p, and asks the
+// HTTP PreToolUse hook in the settings before each Write and Edit it makes, as Claude Code does: it posts the tool call
+// to the hook's url with its headers, and a write is refused when the answer denies it, or, when the hook says
+// `onFailure: "block"`, when the hook can't be reached, answers with an error or answers too late. FAKE_AGENT_REFUSE's
+// write is then asked about too, and made when the hook lets it through. FAKE_AGENT_GUARD_LOG=<file> appends one JSON
+// line for each question: {tool, path, status, decision, reason, error}.
 // FAKE_AGENT_READS=<n> (stream mode) reports n Reads of ideas/seen-<i>.md before the agent files, back to back, with
 // no wait between them. The pages need not exist: each is answered as read all the same.
 // FAKE_AGENT_MODE=limit hits a usage limit and exits 1, as an agent does when its owner has used up their quota, right
@@ -64,7 +70,10 @@ import { basename, dirname, extname, join } from "node:path";
 
 const argv = process.argv.slice(2);
 const asCodex = argv[0] === "exec";
-const prompt = argv.at(-1) ?? "";
+const asClaude = argv[0] === "-p"; // all of Claude Code's arguments, the prompt first
+const prompt = (asClaude ? argv[1] : argv.at(-1)) ?? "";
+const settings = asClaude && argv.includes("--settings") ? JSON.parse(argv[argv.indexOf("--settings") + 1]) : null;
+const guardHook = settings?.hooks?.PreToolUse?.flatMap((group) => group.hooks ?? []).find((hook) => hook.type === "http") ?? null;
 const valuesOf = (flag) => argv.flatMap((arg, i) => (arg === flag && i + 1 < argv.length - 1 ? [argv[i + 1]] : []));
 const outputFile = asCodex ? valuesOf("-o")[0] : undefined;
 const images = asCodex ? valuesOf("-i") : [];
@@ -127,6 +136,44 @@ const reply = async (text) => {
   }
 };
 const append = (rel, text) => appendFileSync(join(root, rel), text, "utf8");
+
+/**
+ * What Claude Code's HTTP hook in the settings (guardHook) says of a `name` call with `input`: the tool error of a write it
+ * refuses, as Claude Code words it, or null when the write may go ahead (and when there is no hook).
+ */
+const askGuard = async (name, input) => {
+  if (!guardHook) return null;
+  const call = { session_id: "fake-session", cwd: root, permission_mode: "acceptEdits", hook_event_name: "PreToolUse", tool_name: name, tool_input: input };
+  const asked = { tool: name, path: input.file_path };
+  let refusal = null;
+  try {
+    const response = await fetch(guardHook.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...guardHook.headers },
+      body: JSON.stringify(call),
+      signal: AbortSignal.timeout((guardHook.timeout ?? 600) * 1000),
+    });
+    const text = await response.text();
+    asked.status = response.status;
+    if (!response.ok) throw new Error(`HTTP ${response.status} from ${guardHook.url}`);
+    const output = text ? JSON.parse(text).hookSpecificOutput : undefined;
+    asked.decision = output?.permissionDecision ?? null;
+    asked.reason = output?.permissionDecisionReason ?? null;
+    if (asked.decision === "deny") refusal = `PreToolUse:${name} hook error: ${asked.reason}`;
+  } catch (error) {
+    asked.error = error.message;
+    if (guardHook.onFailure === "block") {
+      refusal = `PreToolUse:${name} hook error: [${guardHook.url}]: failed; blocking because onFailure is "block"\n${error.message}`;
+    }
+  }
+  if (process.env.FAKE_AGENT_GUARD_LOG) appendFileSync(process.env.FAKE_AGENT_GUARD_LOG, `${JSON.stringify(asked)}\n`);
+  return refusal;
+};
+/** A call the hook refused: its error is its answer, it is among the result's permission_denials, and nothing is written. */
+const refuse = (id, name, input, refusal) => {
+  answerTool(id, refusal, true);
+  refusals.push({ tool_name: name, tool_use_id: id, tool_input: input });
+};
 const isDir = (path) => existsSync(path) && statSync(path).isDirectory();
 const logStamp = () => /^\s*- (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \| file \|/m.exec(prompt)[1];
 
@@ -141,14 +188,20 @@ const readStep = async (path) => {
 const writeStep = async (rel, text) => {
   const path = join(root, rel);
   await beat();
-  const id = callTool("Write", { file_path: path, content: text });
+  const input = { file_path: path, content: text };
+  const id = callTool("Write", input);
+  const refusal = await askGuard("Write", input);
+  if (refusal) return refuse(id, "Write", input, refusal);
   writeFileSync(path, text);
   answerTool(id, `File created successfully at: ${path}`);
 };
 const editStep = async (rel, added) => {
   const path = join(root, rel);
   await beat();
-  const id = callTool("Edit", { file_path: path, old_string: "", new_string: added, replace_all: false });
+  const input = { file_path: path, old_string: "", new_string: added, replace_all: false };
+  const id = callTool("Edit", input);
+  const refusal = await askGuard("Edit", input);
+  if (refusal) return refuse(id, "Edit", input, refusal);
   append(rel, added);
   answerTool(id, `The file ${path} has been updated successfully.`);
 };
@@ -159,15 +212,21 @@ const lookAround = () => {
     answerTool(callTool("Read", { file_path: join(root, "ideas", `seen-${i}.md`) }), "(a page)");
   }
 };
-// FAKE_AGENT_REFUSE: a write that is refused. It is reported, and never made.
+// FAKE_AGENT_REFUSE: a write that is refused. It is reported, and never made. With a hook in the settings, the hook is
+// asked, and the write is made when the hook lets it through.
 const tryRefusedWrite = async () => {
   const rel = process.env.FAKE_AGENT_REFUSE;
   if (!streaming || !rel) return;
   await beat();
   const input = { file_path: join(root, rel), content: "Words that were not kept.\n" };
   const id = callTool("Write", input);
-  answerTool(id, "PreToolUse:Write hook error: This file keeps the owner's own words, so it was left as it is.", true);
-  refusals.push({ tool_name: "Write", tool_use_id: id, tool_input: input });
+  const refusal = guardHook
+    ? await askGuard("Write", input)
+    : "PreToolUse:Write hook error: This file keeps the owner's own words, so it was left as it is.";
+  if (refusal) return refuse(id, "Write", input, refusal);
+  mkdirSync(dirname(input.file_path), { recursive: true });
+  writeFileSync(input.file_path, input.content);
+  answerTool(id, `File created successfully at: ${input.file_path}`);
 };
 
 if (streaming) {

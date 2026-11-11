@@ -289,9 +289,12 @@ Avanzel enforces a few guarantees no matter how the agent behaves:
   starts with a dot (`.obsidian/` too), the files listed below or anywhere outside the library is
   refused before it happens. So is a write to any file named `CLAUDE.md`, `CLAUDE.local.md` or
   `AGENTS.md`, in any folder, because Claude Code reads such files as instructions. The reason the
-  agent is told, and the refusal of anything outside the library, come from a hook. Claude Code
-  skips hooks under `--bare` or with `disableAllHooks`, and then only the deny rules for the paths
-  listed here hold;
+  agent is told, and the refusal of anything outside the library, come from a hook: before each
+  write, Claude Code asks the app on 127.0.0.1, with a token only that run has, and the app listens
+  only while the run lasts. From Claude Code 2.1.295 on, a write is refused when the app doesn't
+  answer; older versions let it through then, and versions before 2.1.63 have no such hook. Claude
+  Code skips hooks under `--bare` or with `disableAllHooks`, and then only the deny rules for the
+  paths listed here hold;
 - your captured words are restored byte-for-byte if the agent touches them;
 - a capture is archived only after a run that actually filed it (an agent that only talks
   leaves it in the inbox), and never over an earlier capture with the same name;
