@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Target } from "../src/main/cursor-helper.ts";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { expectInPanel } from "./capsule-helpers.ts";
+import { capsuleAtRest, expectInPanel } from "./capsule-helpers.ts";
 import { call, capsuleKind, launch, makeLibrary, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
 
 const WORDS = "hello Kowalczyk";
@@ -87,6 +87,7 @@ test("the panel is one row until there are words and grows upward as they come, 
   await dictating(app);
   const row = capsule.getByRole("status");
   const panel = capsule.locator(".stack .av-hud");
+  await capsuleAtRest(capsule); // the row's place is its place at rest: the capsule rises in, and grows from 96 %, as it comes up
   const before = (await row.boundingBox())!;
   await expect(heard(capsule)).toHaveCount(0);
   expect((await panel.boundingBox())!.height).toBe(before.height);

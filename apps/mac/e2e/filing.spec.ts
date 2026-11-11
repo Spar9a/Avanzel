@@ -1396,7 +1396,9 @@ test("Stop in a library without git leaves the stopped run's edits as they are, 
   await dictate(app);
   await expect.poll(() => exists(library, "goals/half.md"), { timeout: 30_000 }).toBe(true);
   await stop(capsule);
-  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("cancelled");
+  // Looked for every 100 ms, so `stopped` is within a moment of the card coming: the poll's own steps grow to a second, which is the
+  // whole of the margin the check below leaves.
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000, intervals: [100] }).toBe("cancelled");
   const stopped = Date.now();
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "cancelled", partial: false, leftovers: 1 });
   // The card says that what the run wrote stays as it is, since nothing recorded it.
@@ -1408,9 +1410,10 @@ test("Stop in a library without git leaves the stopped run's edits as they are, 
   // What the run wrote stays, as the state says; the words are in the inbox.
   expect(exists(library, "goals/half.md")).toBe(true);
   expect(inboxWords(library)).toEqual([expect.stringContaining("Plant tulips in October")]);
-  // The card hides itself after 6 s, as a card that is filed does after 8.
+  // The card hides itself after 5 s, the time Processing's ring takes to empty for a thought that came to no note (a card that is filed
+  // goes after 8): not at once.
   await expect.poll(() => capsuleKind(app), { timeout: 15_000, intervals: [100] }).toBe("hidden");
-  expect(Date.now() - stopped).toBeGreaterThanOrEqual(5_000);
+  expect(Date.now() - stopped).toBeGreaterThanOrEqual(4_000);
   await app.close();
 });
 

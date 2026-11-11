@@ -23,7 +23,7 @@ import {
   windowFor,
   toolbarItem,
 } from "./helpers.ts";
-import { expectInPanel, expectProblem, expectStoppedRecording, letTranscriptionGo, noteTranscriptions, stopTranscribing, transcriptions } from "./capsule-helpers.ts";
+import { capsuleAtRest, expectInPanel, expectProblem, expectStoppedRecording, letTranscriptionGo, noteTranscriptions, stopTranscribing, transcriptions } from "./capsule-helpers.ts";
 import { pressShortcut, sentToCapsule, watchCapsule, zel } from "./setup-helpers.ts";
 
 const WAIT_FOR_AUDIO_MS = 3000; // AVANZEL_AUDIO_TIMEOUT_MS: how long the app waits for audio after a stop (15 s outside tests)
@@ -203,7 +203,7 @@ test("a long transcription offers Stop, and its recording waits in the inbox", a
   expect(filesUnder(library, "raw")).toEqual([]);
   // A recording the library keeps counts toward the first ten, as the others do.
   expect(capturesKept(userData)).toBe(1);
-  // The card hides itself after 6 s, as the card of a stopped filing does.
+  // The card hides itself after 6 s (a stopped filing's goes after 5, the time of Processing's ring for a thought that came to no note).
   await expect.poll(() => capsuleKind(app), { timeout: 15_000, intervals: [100] }).toBe("hidden");
   expect(Date.now() - stopped).toBeGreaterThanOrEqual(5_000);
   await app.close();
@@ -777,6 +777,7 @@ test("a screen comment keeps its screenshot card while its words are made: the s
   const picture = card.getByRole("img", { name: "Screenshot of Safari", exact: true });
   await expect(card.getByText("Safari", { exact: true })).toBeVisible(); // the card is labelled with the app
   await expect(picture).toBeVisible();
+  await capsuleAtRest(capsule); // measured once the capsule has risen in: on its way up it is drawn smaller than its size
   const listening = (await picture.boundingBox())!;
   await card.evaluate((el) => Object.assign(el, { listeningCard: true })); // a card drawn again would not carry this
   await call(app, "toggleCapture");
