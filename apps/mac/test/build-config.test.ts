@@ -1,5 +1,6 @@
-// What the packaged app tells macOS, as electron-builder.yml writes it into Info.plist.
-import { readFileSync } from "node:fs";
+// What the packaged app tells macOS, as electron-builder.yml writes it into Info.plist, and how it is built.
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -23,8 +24,30 @@ describe("build config", () => {
     expect(dist).toContain("build-cursor.mjs");
   });
 
-  it("the build keeps Electron's run-as-node fuse, which the filing guard needs", () => {
-    // The guard's hook runs with Avanzel's own binary as Node (ELECTRON_RUN_AS_NODE=1). Fuses could turn that off.
-    expect(builderConfig).not.toMatch(/^\s*electronFuses\s*:/m);
+  it("the build turns Electron's run-as-node fuse off", () => {
+    // Else any process on the Mac could run code as the signed app, with its microphone and screen recording permissions.
+    const fuses = /^electronFuses:\n((?:[ \t]+.*\n)+)/m.exec(builderConfig)?.[1] ?? "";
+    expect(fuses).toMatch(/^[ \t]+runAsNode: false$/m);
+  });
+
+  it("nothing the app runs needs its binary to run as Node", () => {
+    // With the fuse off, the variable does nothing, and a fork() in main would start a second app instead of a script.
+    const sources = [
+      ...filesUnder(fileURLToPath(new URL("../src", import.meta.url))),
+      ...filesUnder(fileURLToPath(new URL("../../../packages/engine/src", import.meta.url))),
+    ].filter((file) => /\.(ts|tsx|mjs|js)$/.test(file));
+    expect(sources.length).toBeGreaterThan(50);
+    for (const file of sources) {
+      const text = readFileSync(file, "utf8");
+      expect(text, file).not.toMatch(/ELECTRON_RUN_AS_NODE\s*(=|:)\s*["'`]?1/);
+      expect(text, file).not.toMatch(/\bfork\(|utilityProcess/);
+    }
   });
 });
+
+/** Every file below `dir`, at any depth. */
+function filesUnder(dir: string): string[] {
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.join(entry.parentPath, entry.name));
+}

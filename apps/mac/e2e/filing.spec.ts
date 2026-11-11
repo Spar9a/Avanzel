@@ -1,7 +1,7 @@
 // Filing with the agent: Edit or Stop while it runs, quitting while it runs, and a run that leaves edits behind. The cards a failed filing
 // ends in are capsule-problems.spec.ts's, and the result cards are capsule-results.spec.ts's.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault, git, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
@@ -16,6 +16,7 @@ import {
   filesUnder,
   filingClaude,
   gitOut,
+  guardedClaude,
   launch,
   makeLibrary,
   onceMarker,
@@ -563,11 +564,36 @@ test("a failed filing says its partial edits are kept as their own commit", asyn
   await app.close();
 });
 
-test("the filing guard's hook runs with Avanzel's own binary as Node", async () => {
-  const library = await makeLibrary();
-  const app = await launch({ AVANZEL_LIBRARY: library });
-  expect(await call(app, "guardForTests", library, path.join(library, "raw", "2026", "x.md"))).toContain('"permissionDecision":"deny"');
-  expect(await call(app, "guardForTests", library, path.join(library, "ideas", "a.md"))).toBe("");
+test("a Claude Code filing asks Avanzel's own guard before each write, which stops listening when the run ends", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "avz-e2e-guard-"));
+  const asked = path.join(dir, "asked.jsonl");
+  const runs = path.join(dir, "runs.jsonl");
+  // The stand-in tries a write to the owner's words after the idea's page, and asks the guard about each write it makes.
+  const claude = guardedClaude({ FAKE_AGENT_STREAM: "claude", FAKE_AGENT_REFUSE: "raw/2026/x.md", FAKE_AGENT_GUARD_LOG: asked, FAKE_AGENT_RECORD: runs });
+  const { library, app } = await claudeLibrary(agentStubs({ claude }), { eveningReview: false });
+  await dictate(app);
+  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
+  const root = realpathSync(library);
+  const lines = (file: string) => readFileSync(file, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
+  // The guard answered every question: the owner's words were refused, with the reason the agent reads, and the page,
+  // the index and the log went through.
+  const questions = lines(asked);
+  expect(questions.map((question) => question.status)).toEqual([200, 200, 200, 200]);
+  expect(questions.filter((question) => question.decision === "deny")).toEqual([
+    expect.objectContaining({ tool: "Write", path: path.join(root, "raw", "2026", "x.md"), reason: expect.stringContaining("own words") }),
+  ]);
+  expect(questions.filter((question) => question.decision !== "deny").map((question) => [question.tool, path.relative(root, String(question.path))])).toEqual([
+    ["Write", expect.stringMatching(/^ideas\/idea-.+\.md$/)],
+    ["Edit", "index.md"],
+    ["Edit", "log.md"],
+  ]);
+  expect(existsSync(path.join(root, "raw", "2026", "x.md"))).toBe(false);
+  // The hook the run was given, on 127.0.0.1 with the run's token: nothing listens there once the run is over.
+  const argv = lines(runs).map((run) => run.argv as string[]).find((args) => args.includes("--settings")) ?? [];
+  const settings = JSON.parse(argv[argv.indexOf("--settings") + 1] ?? "{}") as { hooks: { PreToolUse: Array<{ hooks: Array<{ url: string; headers: Record<string, string> }> }> } };
+  const hook = settings.hooks.PreToolUse[0]?.hooks[0];
+  expect(hook).toMatchObject({ type: "http", url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/guard$/), onFailure: "block" });
+  await expect(fetch(hook?.url ?? "", { method: "POST", headers: hook?.headers, body: "{}" })).rejects.toThrow();
   await app.close();
 });
 

@@ -20,6 +20,10 @@ extraResources:
     to: cursor
     filter: ["avanzel-cursor"]
 npmRebuild: false
+# Nothing the app runs needs its binary to run as Node (the filing guard is an HTTP hook on 127.0.0.1), so the fuse is
+# off: no other process can run code as Avanzel, with its microphone and screen recording permissions.
+electronFuses:
+  runAsNode: false
 mac:
   target: dir
   category: public.app-category.productivity
