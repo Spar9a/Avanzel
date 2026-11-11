@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "description": "Avanzel engine: the Markdown library, agent harness adapters, filing contract and local speech-to-text.",
+  "license": "Apache-2.0",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

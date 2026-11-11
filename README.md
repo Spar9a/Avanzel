@@ -343,3 +343,7 @@ AVANZEL_TEST_HARNESS=claude uv run pytest tests/test_integration.py -k harness  
 
 Designs: [`docs/superpowers/specs/2026-10-20-avanzel-design.md`](docs/superpowers/specs/2026-10-20-avanzel-design.md) (v0.1),
 [`docs/superpowers/specs/2026-10-20-avanzel-mac-design.md`](docs/superpowers/specs/2026-10-20-avanzel-mac-design.md) (Mac app).
+
+## Licence
+
+Apache License 2.0: see [LICENSE](LICENSE). Third-party material and its licences are listed in [NOTICE](NOTICE).

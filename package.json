@@ -2,6 +2,7 @@
   "name": "avanzel",
   "private": true,
   "description": "Voice-first second brain that runs on the AI agent you already have.",
+  "license": "Apache-2.0",
   "workspaces": [
     "packages/*",
     "apps/*"

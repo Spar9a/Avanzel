@@ -1,0 +1,43 @@
+Avanzel
+Copyright 2026 Anton Parfenyuk and the Avanzel contributors
+
+Avanzel is licensed under the Apache License, Version 2.0. The full text is
+in the LICENSE file.
+
+This repository includes third-party material under its own licence:
+
+onnx-asr 0.12.0 (https://github.com/istupakov/onnx-asr)
+  Copyright (c) 2025 Ilya Stupakov. MIT License.
+  The ONNX files in packages/engine/assets/ (nemo128.onnx and
+  resample_{8,11,22,24,32,44,48}_16.onnx) are copied from it unchanged.
+  packages/engine/src/voice/parakeet.ts and vad.ts port parts of its Python
+  code to TypeScript. The licence text is in packages/engine/assets/NOTICE.md,
+  which the Mac app ships beside the ONNX files.
+
+Nunito (https://github.com/googlefonts/nunito)
+  Copyright 2014 The Nunito Project Authors. SIL Open Font License 1.1.
+Newsreader (https://github.com/productiontype/Newsreader)
+  Copyright 2020 The Newsreader Project Authors. SIL Open Font License 1.1.
+Literata (https://github.com/googlefonts/literata)
+  Copyright 2017 The Literata Project Authors. SIL Open Font License 1.1.
+  Subsets of these three fonts are in packages/ui/src/fonts/, each beside its
+  licence text. The Mac app bundles them.
+
+The Mac app built from this repository also bundles:
+
+Electron (https://github.com/electron/electron)
+  Copyright (c) Electron contributors. Copyright (c) 2013-2020 GitHub Inc.
+  MIT License. Electron includes Chromium, Node.js and other components under
+  their own licences, listed in the LICENSES.chromium.html file of its
+  distribution.
+React, react-dom and scheduler (https://github.com/react/react)
+  Copyright (c) Meta Platforms, Inc. and affiliates. MIT License.
+smol-toml (https://github.com/squirrelchat/smol-toml)
+  Copyright (c) Squirrel Chat et al. BSD 3-Clause License.
+ONNX Runtime: onnxruntime-node and onnxruntime-common
+  (https://github.com/microsoft/onnxruntime)
+  Copyright (c) Microsoft Corporation. MIT License. The notices for the
+  components it includes are in ThirdPartyNotices.txt in its repository.
+  The other packages onnxruntime-node depends on (adm-zip, global-agent and
+  their own dependencies) are under the MIT, ISC or BSD 3-Clause licences, and
+  their licence files ship inside the app.
