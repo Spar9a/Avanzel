@@ -6,12 +6,14 @@
 //   node scripts/signing.mjs sign <app>       signs the app with it; without it, ad-hoc, with a warning
 //
 // AVANZEL_SIGN_IDENTITY overrides the identity (a name or SHA-1 hash from `security find-identity -p codesigning`).
+// scripts/release.mjs imports localIdentity and unlock for its dry run (--local).
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const NAME = "Avanzel Local";
+export const NAME = "Avanzel Local";
 const KEYCHAIN = join(homedir(), "Library/Keychains/avanzel-dev.keychain-db");
 // The keychain holds one throwaway key and nothing else, so its password protects nothing worth guarding.
 const PASSWORD = "avanzel";
@@ -19,14 +21,14 @@ const PASSWORD = "avanzel";
 const run = (cmd, args, options = {}) => execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...options });
 
 /** The SHA-1 of the identity in the Avanzel keychain, or null when it has not been made. */
-function localIdentity() {
+export function localIdentity() {
   if (!existsSync(KEYCHAIN)) return null;
   const out = spawnSync("security", ["find-identity", "-v", "-p", "codesigning", KEYCHAIN], { encoding: "utf8" }).stdout ?? "";
   return new RegExp(`([0-9A-F]{40}) "${NAME}"`).exec(out)?.[1] ?? null;
 }
 
 /** codesign only finds an identity in a keychain on the user's search list (its own --keychain option is not enough). */
-function unlock() {
+export function unlock() {
   run("security", ["unlock-keychain", "-p", PASSWORD, KEYCHAIN]);
   const listed = run("security", ["list-keychains", "-d", "user"]).split("\n").map((line) => line.trim().replace(/^"|"$/g, "")).filter(Boolean);
   if (!listed.includes(KEYCHAIN)) run("security", ["list-keychains", "-d", "user", "-s", ...listed, KEYCHAIN]);
@@ -90,10 +92,13 @@ function sign(app) {
   console.log(`Signed ${app}\n${requirement ?? ""}`);
 }
 
-const [command, target] = process.argv.slice(2);
-if (command === "setup") setup();
-else if (command === "sign") sign(target);
-else {
-  console.error("Use: node scripts/signing.mjs setup | sign <path to Avanzel.app>");
-  process.exit(1);
+// Run as a command, not when release.mjs imports it.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const [command, target] = process.argv.slice(2);
+  if (command === "setup") setup();
+  else if (command === "sign") sign(target);
+  else {
+    console.error("Use: node scripts/signing.mjs setup | sign <path to Avanzel.app>");
+    process.exit(1);
+  }
 }
