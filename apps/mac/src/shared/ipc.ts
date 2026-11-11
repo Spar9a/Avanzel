@@ -1061,6 +1061,8 @@ export interface AvanzelBridge {
      * (`UpdateStatus` ready's `waitingFor`).
      */
     restartToUpdate(): Promise<SettingsSnapshot>;
+    /** Not now, on a restart to update that waits for work in progress: it is called off, and the update stays ready. */
+    cancelRestartToUpdate(): Promise<SettingsSnapshot>;
     /** A pop-up button: a native menu of `options` pops up at `at` (window points; null: at the pointer). Resolves with the
         value picked, or null when the menu closes without one. Only the Settings window's own page is answered: sent from any
         other window, it resolves null and shows no menu. */

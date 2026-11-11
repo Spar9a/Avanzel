@@ -524,6 +524,36 @@ describe("the restart, which never cuts work in progress short", () => {
     expect(engine.installs).toBe(1);
   });
 
+  it("calls a waiting restart off on Not now, and the update stays ready for the next Restart to update", async () => {
+    const { updater, engine, state } = await ready();
+    state.busy = "call";
+    updater.restart();
+    expect(status(updater)).toMatchObject({ waitingFor: "call" });
+    updater.cancelRestart();
+    expect(status(updater)).toEqual({ kind: "ready", version: "0.3.1", waitingFor: null, restarting: false });
+    // The call ends: nothing restarts.
+    state.busy = null;
+    vi.advanceTimersByTime(WAIT_LOOK_MS * 10);
+    expect(engine.installs).toBe(0);
+    expect(updater.restarting).toBe(false);
+    // Asked again, with nothing in progress now, it restarts.
+    updater.restart();
+    vi.advanceTimersByTime(1);
+    expect(engine.installs).toBe(1);
+  });
+
+  it("has nothing to call off while no restart waits, nor once one has begun", async () => {
+    const { updater, engine, state } = await ready();
+    const told = state.changes;
+    updater.cancelRestart();
+    expect(state.changes).toBe(told);
+    updater.restart();
+    updater.cancelRestart();
+    expect(status(updater)).toEqual({ kind: "ready", version: "0.3.1", waitingFor: null, restarting: true });
+    vi.advanceTimersByTime(1);
+    expect(engine.installs).toBe(1);
+  });
+
   it("waits no more when the update fails meanwhile, or when Avanzel quits", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const failing = await ready();

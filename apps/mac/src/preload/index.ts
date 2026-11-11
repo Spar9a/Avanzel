@@ -76,6 +76,7 @@ const bridge: AvanzelBridge = {
     requestPermission: (kind) => ipcRenderer.invoke("settings:request-permission", kind),
     checkForUpdates: () => ipcRenderer.invoke("settings:check-for-updates"),
     restartToUpdate: () => ipcRenderer.invoke("settings:restart-to-update"),
+    cancelRestartToUpdate: () => ipcRenderer.invoke("settings:cancel-restart-to-update"),
     pick: (options, at) => ipcRenderer.invoke("settings:pick", options, at),
     fit: (height) => ipcRenderer.send("settings:fit", height),
     surface: (color) => ipcRenderer.send("settings:surface", color),

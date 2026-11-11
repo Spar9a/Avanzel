@@ -353,12 +353,12 @@ export const versionLabel = (version: string): string => `Avanzel ${version}`;
 /** An update that has downloaded: "Avanzel 0.3.1 is ready." */
 export const updateReadyLine = (version: string): string => `Avanzel ${version} is ready.`;
 
-/** What a restart to update waits for, as the line says it ends. */
+/** What a restart to update waits for, as the line says it ends. A call's is the notes, as Stop taking notes ends them, not the call. */
 const UPDATE_WAITS: Readonly<Record<UpdateWait, string>> = {
   recording: "the recording ends",
   transcription: "the recording is transcribed",
   filing: "the filing ends",
-  call: "the call notes end",
+  call: "it stops taking notes on the call",
   answer: "the answer comes",
   save: "the answer is saved",
   review: "the review ends",
@@ -366,6 +366,9 @@ const UPDATE_WAITS: Readonly<Record<UpdateWait, string>> = {
 
 /** A restart to update asked for while something is in progress: it comes once that ends, and cuts nothing short. */
 export const updateWaitLine = (wait: UpdateWait): string => `Avanzel restarts once ${UPDATE_WAITS[wait]}. Nothing is lost.`;
+
+/** The button that calls off a restart to update that waits, leaving the update ready: as macOS defers its own updates. */
+export const UPDATE_NOT_NOW = "Not now";
 
 /** A restart to update that has begun. */
 export const UPDATE_RESTARTING = "Restarting…";
@@ -528,3 +531,6 @@ export const UPDATE_CHECK_NOT_STARTED = "The check for updates didn't start.";
 
 /** The title of the Notice for a Restart to update that did not start. */
 export const RESTART_NOT_STARTED = "Avanzel didn't restart.";
+
+/** The title of the Notice for a Not now that didn't call off the restart that waits. */
+export const RESTART_NOT_CALLED_OFF = "The restart wasn't called off.";

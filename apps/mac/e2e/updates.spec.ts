@@ -50,9 +50,9 @@ test("a build that doesn't check for updates names its version and says so, with
   await expect(row).toBeVisible();
   await expect(row.getByText("This build doesn't check for updates.", { exact: true })).toBeVisible();
   await expect(settings.getByRole("button", { name: "Check now" })).toHaveCount(0);
-  const automatic = settings.getByRole("switch", { name: "Check for updates automatically" });
-  await expect(automatic).toBeDisabled();
-  await expect(automatic).toHaveAttribute("aria-checked", "true");
+  // Nor a switch that would promise checks the build doesn't make, though the setting itself is kept, on.
+  await expect(settings.getByRole("switch", { name: "Check for updates automatically" })).toHaveCount(0);
+  expect((await snapshot(app)).app.checkForUpdates).toBe(true);
   // The group sits after "After you speak" and before Startup, as Software Update comes before Login Items on a Mac.
   expect(await settings.getByRole("heading", { level: 3 }).allTextContents()).toEqual(expect.arrayContaining(["Updates", "Startup"]));
   const headings = await settings.getByRole("heading", { level: 3 }).allTextContents();
@@ -107,8 +107,8 @@ test("an update downloads in the background with its progress, and Restart to up
   await send(app, "update-downloaded", { version: NEXT });
   await expect(row.getByText(`Avanzel ${NEXT} is ready. It installs when you quit Avanzel.`, { exact: true })).toBeVisible();
   const restart = row.getByRole("button", { name: "Restart to update" });
-  // The one thing to do here now: the pane's primary.
-  await expect(restart).toHaveAttribute("data-variant", "primary");
+  // A secondary: an update is never urgent, and the pane's one primary belongs to its Notices (here Set up Avanzel…).
+  await expect(restart).toHaveAttribute("data-variant", "secondary");
   await snap(settings, "updates-ready");
   await shotInDark(settings, "updates-ready-dark");
   await restart.click();
@@ -133,7 +133,9 @@ test("Restart to update during a recording says it waits for it, and restarts on
   await restart.click();
   await expect(row.getByText("Avanzel restarts once the recording ends. Nothing is lost.", { exact: true })).toBeVisible();
   await snap(settings, "updates-waiting");
-  await expect(restart).toHaveAttribute("aria-busy", "true");
+  // While it waits, the way out is Not now, a quiet one, in Restart to update's place.
+  await expect(row.getByRole("button", { name: "Not now" })).toHaveAttribute("data-variant", "quiet");
+  await expect(restart).toHaveCount(0);
   expect((await snapshot(app)).update.status).toEqual({ kind: "ready", version: NEXT, waitingFor: "recording", restarting: false });
   expect(await installs(app)).toBe(0);
   // Esc gives the recording up (through the shortcut stand-in, so no real Esc is taken from this Mac): nothing is in progress then.
@@ -141,6 +143,7 @@ test("Restart to update during a recording says it waits for it, and restarts on
   await expect.poll(() => capsuleKind(app)).not.toBe("listening");
   await expect.poll(() => installs(app), { timeout: 15_000 }).toBe(1);
   await expect(row.getByText("Restarting…", { exact: true })).toBeVisible();
+  await expect(restart).toHaveAttribute("aria-busy", "true");
   await app.close();
 });
 
@@ -196,7 +199,7 @@ test("Avanzel looks by itself until the switch is turned off, which is kept, and
   await off.close();
 });
 
-test("the panel's foot shows an update that is ready, beside Quit Avanzel, and its Restart to update waits for a recording", async () => {
+test("the panel's foot shows an update that is ready, beside Quit Avanzel, and Not now calls off a restart that waits for a recording", async () => {
   const app = await launchWithUpdates({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_AUDIO: speechWav("hello") });
   // The e2e tests drive the menu, so the icon opens no panel here: the controller brings it up as a click on the icon would.
   await call(app, "showPanel", "library");
@@ -214,17 +217,36 @@ test("the panel's foot shows an update that is ready, beside Quit Avanzel, and i
   const restart = foot.getByRole("button", { name: "Restart to update" });
   // Calm: a secondary beside the quiet ones, never the panel's primary.
   await expect(restart).toHaveAttribute("data-variant", "secondary");
+  // The line starts where Open library's sign does under it.
+  const line = await foot.getByText(`Avanzel ${NEXT} is ready.`, { exact: true }).boundingBox();
+  const openLibrary = await foot.getByRole("button", { name: "Open library" }).locator("svg").boundingBox();
+  expect(Math.abs(line!.x - openLibrary!.x)).toBeLessThanOrEqual(2);
   await snap(panel, "panel-update-ready");
   await shotInDark(panel, "panel-update-ready-dark");
+  // On the Settings tab, General's Updates group makes the offer, so the foot doesn't make it twice.
+  await panel.getByRole("tab", { name: "Settings", exact: true }).click();
+  await expect(panel.getByText(`Avanzel ${NEXT} is ready. It installs when you quit Avanzel.`, { exact: true })).toBeVisible();
+  await expect(foot.getByRole("button", { name: "Restart to update" })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Restart to update" })).toHaveCount(1);
+  await panel.getByRole("tab", { name: /^Library/ }).click(); // its name goes on with how many notes it lists
+  await expect(restart).toBeVisible();
+  // Pressed during a recording, the restart waits for it, and Not now calls it off: once the recording is given up, nothing restarts.
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await restart.click();
   await expect(foot.getByText("Avanzel restarts once the recording ends. Nothing is lost.", { exact: true })).toBeVisible();
   await snap(panel, "panel-update-waiting");
-  await expect(restart).toHaveAttribute("aria-busy", "true");
-  expect(await installs(app)).toBe(0);
+  const notNow = foot.getByRole("button", { name: "Not now" });
+  await expect(notNow).toHaveAttribute("data-variant", "quiet");
+  await notNow.click();
+  await expect(foot.getByText(`Avanzel ${NEXT} is ready.`, { exact: true })).toBeVisible();
   await expect.poll(() => call(app, "pressShortcutForTests", "Escape")).toBe(true);
-  await expect.poll(() => installs(app), { timeout: 15_000 }).toBe(1);
+  await expect.poll(() => capsuleKind(app)).not.toBe("listening");
+  await new Promise((resolve) => setTimeout(resolve, 3_000)); // past the two looks a waiting restart takes once the work ends
+  expect(await installs(app)).toBe(0);
+  // Asked again with nothing in progress, it restarts at once.
+  await restart.click();
+  await expect.poll(() => installs(app)).toBe(1);
   await expect(foot.getByText("Restarting…", { exact: true })).toBeVisible();
   await app.close();
 });

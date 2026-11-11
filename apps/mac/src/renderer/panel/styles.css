@@ -75,6 +75,10 @@
 .panel-foot {
   padding: var(--av-space-6) var(--av-space-12) var(--av-space-8);
 }
+/* The foot's line on an update that is ready starts where Open library's sign does under it, inside that quiet button's own padding. */
+.panel-update {
+  padding-left: var(--av-space-12);
+}
 /* What takes the room left in its row: Library's search field beside the filters, the waiting line beside Stop. */
 .panel-grow {
   flex: 1 1 auto;

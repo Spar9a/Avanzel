@@ -4702,6 +4702,12 @@ export class Controller {
     return this.snapshot();
   }
 
+  /** Not now, on a restart to update that waits for work in progress: it is called off, and the update stays ready (`Updater.cancelRestart`). */
+  async cancelRestartToUpdate(): Promise<SettingsSnapshot> {
+    this.updates.cancelRestart();
+    return this.snapshot();
+  }
+
   // ---------------------------------------------------------------- panel
 
   /** The panel's window, made the first time: Settings' page lives in its third tab, so it is Settings' window too. */
@@ -4790,8 +4796,9 @@ export class Controller {
   /** The panel asked for one of the menu's actions (`PANEL_ACTIONS`), a page (`open:`) or a review (`task:`). */
   panelAction(action: unknown): void {
     if (typeof action !== "string") return;
-    // The foot's Restart to update: the panel stays up, saying what the restart waits for while something is in progress.
+    // The foot's Restart to update: the panel stays up, saying what the restart waits for while something is in progress, with Not now.
     if (action === "restart-to-update") return this.updates.restart();
+    if (action === "cancel-restart-to-update") return this.updates.cancelRestart();
     // The recording shown in the panel: its file mode switches as the capsule's does, and Cancel gives it up as Esc does.
     if (action === "file-mode:now" || action === "file-mode:evening") return this.switchFileMode(action === "file-mode:now" ? "now" : "evening");
     if (action === "cancel-recording") return this.listeningAction("cancel");

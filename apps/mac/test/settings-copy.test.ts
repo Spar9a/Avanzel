@@ -51,8 +51,10 @@ import {
   SHOW_MORE_DICTATIONS,
   speechModelLine,
   SPEECH_MODEL_DESCRIPTION,
+  RESTART_NOT_CALLED_OFF,
   RESTART_NOT_STARTED,
   UPDATE_CHECK_NOT_STARTED,
+  UPDATE_NOT_NOW,
   UPDATE_RESTARTING,
   updateLine,
   updateReadyLine,
@@ -652,7 +654,7 @@ describe("what the Updates group says of Avanzel's own update", () => {
     expect(UPDATE_RESTARTING).toBe("Restarting…");
     // The panel's foot says the same, shorter while nothing was asked.
     expect(updateReadyState(ready)).toBe("Avanzel 0.3.1 is ready.");
-    expect(updateReadyState({ ...ready, waitingFor: "call" })).toBe("Avanzel restarts once the call notes end. Nothing is lost.");
+    expect(updateReadyState({ ...ready, waitingFor: "call" })).toBe("Avanzel restarts once it stops taking notes on the call. Nothing is lost.");
     expect(updateReadyState({ ...ready, restarting: true })).toBe("Restarting…");
   });
 
@@ -661,7 +663,7 @@ describe("what the Updates group says of Avanzel's own update", () => {
       "Avanzel restarts once the recording ends. Nothing is lost.",
       "Avanzel restarts once the recording is transcribed. Nothing is lost.",
       "Avanzel restarts once the filing ends. Nothing is lost.",
-      "Avanzel restarts once the call notes end. Nothing is lost.",
+      "Avanzel restarts once it stops taking notes on the call. Nothing is lost.",
       "Avanzel restarts once the answer comes. Nothing is lost.",
       "Avanzel restarts once the answer is saved. Nothing is lost.",
       "Avanzel restarts once the review ends. Nothing is lost.",
@@ -693,7 +695,10 @@ describe("what the Updates group says of Avanzel's own update", () => {
       ...statuses.flatMap((status) => [updateLine(update(status, now), true, now), updateLine(update(status, now), false, now)]),
       UPDATE_CHECK_NOT_STARTED,
       RESTART_NOT_STARTED,
+      RESTART_NOT_CALLED_OFF,
     ];
+    // Not now is a button's label: sentence case, no full stop. It is the words macOS puts on its own deferred updates.
+    expect(UPDATE_NOT_NOW).toBe("Not now");
     for (const line of lines) {
       expect(line).toMatch(/^\p{Lu}/u);
       expect(line).toMatch(/[.…]$/);

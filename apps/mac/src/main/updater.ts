@@ -296,6 +296,17 @@ export class Updater {
     this.waitTimer = setInterval(() => this.lookAgain(), WAIT_LOOK_MS);
   }
 
+  /**
+   * Not now, on a restart that waits for work in progress: it is called off, and the update is ready as before, for the next Restart to
+   * update or the next quit. Nothing once the restart has begun, or while none waits.
+   */
+  cancelRestart(): void {
+    const status = this.status;
+    if (status.kind !== "ready" || status.restarting || status.waitingFor === null) return;
+    this.stopWaiting();
+    this.set({ ...status, waitingFor: null });
+  }
+
   /** While a restart waits: what is in progress now, and the restart once nothing has been for QUIET_LOOKS looks in a row. */
   private lookAgain(): void {
     const status = this.status;
