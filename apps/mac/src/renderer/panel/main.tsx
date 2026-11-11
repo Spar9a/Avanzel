@@ -19,6 +19,7 @@ import { createRoot } from "react-dom/client";
 import { prettyAccelerator } from "../../main/shortcuts.ts";
 import { isSettingsPane, PANEL_TABS, type AskResult, type AvanzelBridge, type PanelFiling, type PanelPage, type PanelReview, type PanelSnapshot, type PanelTab, type SettingsPane, type Shortcuts } from "../../shared/ipc.ts";
 import { SettingsApp } from "../settings/SettingsApp.tsx";
+import { UPDATE_NOT_NOW, updateReadyState } from "../settings/copy.ts";
 import { inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, SORTS, sortLabel, sortPages, type PageFilter, type PageSort } from "./copy.ts";
 import "./styles.css";
 
@@ -1151,6 +1152,30 @@ function Library({ snap, pages, focusAsk }: { snap: PanelSnapshot; pages: PanelP
   );
 }
 
+/**
+ * The foot's line while Avanzel's update is ready, over Quit Avanzel: what is ready, and Restart to update. Pressed while something is in
+ * progress, the line says the restart comes once that ends, and Not now calls it off. Nothing while no update is ready: Settings → General
+ * tells the rest, and on the Settings tab the foot leaves the update to it (`App`), so the offer is never made twice.
+ */
+function UpdateReady({ update }: { update: PanelSnapshot["update"] }) {
+  const status = update.status;
+  if (status.kind !== "ready") return null;
+  return (
+    <Row gap={8} justify="between">
+      <div role="status" className="panel-grow panel-update">
+        <Text variant="footnote" tone="secondary">{updateReadyState(status)}</Text>
+      </div>
+      {status.waitingFor !== null ? (
+        <Button size="small" variant="quiet" onClick={() => act("cancel-restart-to-update")}>{UPDATE_NOT_NOW}</Button>
+      ) : (
+        <Button size="small" variant="secondary" busy={status.restarting} onClick={() => act("restart-to-update")}>
+          Restart to update
+        </Button>
+      )}
+    </Row>
+  );
+}
+
 /** How long a deleted page can still be brought back, before it goes to the Trash. */
 const UNDO_SECONDS = 5;
 
@@ -1239,10 +1264,13 @@ function App() {
         />
       </div>
       <footer className="panel-foot">
-        <Row gap={8} justify="between">
-          <Button size="small" variant="quiet" icon="folder" onClick={() => act("open-library")}>Open library</Button>
-          <Button size="small" variant="quiet" onClick={() => act("quit")}>Quit Avanzel</Button>
-        </Row>
+        <Stack gap={6}>
+          {tab !== "settings" && <UpdateReady update={snap.update} />}
+          <Row gap={8} justify="between">
+            <Button size="small" variant="quiet" icon="folder" onClick={() => act("open-library")}>Open library</Button>
+            <Button size="small" variant="quiet" onClick={() => act("quit")}>Quit Avanzel</Button>
+          </Row>
+        </Stack>
       </footer>
     </div>
     </Aura>

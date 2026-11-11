@@ -51,10 +51,20 @@ import {
   SHOW_MORE_DICTATIONS,
   speechModelLine,
   SPEECH_MODEL_DESCRIPTION,
+  RESTART_NOT_CALLED_OFF,
+  RESTART_NOT_STARTED,
+  UPDATE_CHECK_NOT_STARTED,
+  UPDATE_NOT_NOW,
+  UPDATE_RESTARTING,
+  updateLine,
+  updateReadyLine,
+  updateReadyState,
+  updateWaitLine,
   validTime,
+  versionLabel,
   whenLine,
 } from "../src/renderer/settings/copy.ts";
-import { noSuchReview, SETTINGS_PANES } from "../src/shared/ipc.ts";
+import { noSuchReview, SETTINGS_PANES, type UpdateSnapshot, type UpdateStatus, type UpdateWait } from "../src/shared/ipc.ts";
 import { NO_GIT_LINE } from "../src/shared/problems.ts";
 
 describe("settings copy", () => {
@@ -607,5 +617,94 @@ describe("a scheduled review's copy", () => {
         expect(line).not.toMatch(/\b[A-Z]{2,}\b|Oops|Sorry/);
       }
     });
+  });
+});
+
+describe("what the Updates group says of Avanzel's own update", () => {
+  // A Friday, at noon.
+  const now = new Date(2026, 9, 23, 12, 0);
+  const update = (status: UpdateStatus, checkedAt: Date | null = null): UpdateSnapshot => ({ version: "0.2.0", status, checkedAt: checkedAt?.toISOString() ?? null });
+  const ready = { kind: "ready", version: "0.3.1", waitingFor: null, restarting: false } as const;
+  const WAITS: readonly UpdateWait[] = ["recording", "transcription", "filing", "call", "answer", "save", "review"];
+
+  it("names the row by the version that runs", () => {
+    expect(versionLabel("0.2.0")).toBe("Avanzel 0.2.0");
+  });
+
+  it("says what the update is doing, from nothing checked yet to a download's version", () => {
+    expect(updateLine(update({ kind: "off" }), true, now)).toBe("This build doesn't check for updates.");
+    expect(updateLine(update({ kind: "idle" }), true, now)).toBe("Not checked yet.");
+    expect(updateLine(update({ kind: "checking" }), true, now)).toBe("Checking for updates…");
+    expect(updateLine(update({ kind: "downloading", version: "0.3.1", percent: 42 }), true, now)).toBe("Downloading Avanzel 0.3.1…");
+  });
+
+  it("says it is up to date with when the feed last answered, as a review's last run says when", () => {
+    expect(updateLine(update({ kind: "current" }, new Date(2026, 9, 23, 9, 5)), true, now)).toBe("Up to date. Checked today at 09:05.");
+    expect(updateLine(update({ kind: "current" }, new Date(2026, 9, 22, 21, 0)), true, now)).toBe("Up to date. Checked yesterday at 21:00.");
+    expect(updateLine(update({ kind: "current" }, new Date(2026, 9, 18, 18, 0)), true, now)).toBe("Up to date. Checked on Sunday at 18:00.");
+    expect(updateLine(update({ kind: "current" }, new Date(2026, 9, 2, 18, 0)), true, now)).toBe("Up to date. Checked on 2 Oct at 18:00.");
+    expect(updateLine(update({ kind: "current" }), true, now)).toBe("Up to date.");
+  });
+
+  it("says an update that is ready installs on quit, and what a restart that was asked for waits for", () => {
+    expect(updateReadyLine("0.3.1")).toBe("Avanzel 0.3.1 is ready.");
+    expect(updateLine(update(ready), true, now)).toBe("Avanzel 0.3.1 is ready. It installs when you quit Avanzel.");
+    expect(updateLine(update({ ...ready, waitingFor: "filing" }), true, now)).toBe("Avanzel restarts once the filing ends. Nothing is lost.");
+    expect(updateLine(update({ ...ready, restarting: true }), true, now)).toBe("Restarting…");
+    expect(UPDATE_RESTARTING).toBe("Restarting…");
+    // The panel's foot says the same, shorter while nothing was asked.
+    expect(updateReadyState(ready)).toBe("Avanzel 0.3.1 is ready.");
+    expect(updateReadyState({ ...ready, waitingFor: "call" })).toBe("Avanzel restarts once it stops taking notes on the call. Nothing is lost.");
+    expect(updateReadyState({ ...ready, restarting: true })).toBe("Restarting…");
+  });
+
+  it("names each piece of work a restart waits for", () => {
+    expect(WAITS.map(updateWaitLine)).toEqual([
+      "Avanzel restarts once the recording ends. Nothing is lost.",
+      "Avanzel restarts once the recording is transcribed. Nothing is lost.",
+      "Avanzel restarts once the filing ends. Nothing is lost.",
+      "Avanzel restarts once it stops taking notes on the call. Nothing is lost.",
+      "Avanzel restarts once the answer comes. Nothing is lost.",
+      "Avanzel restarts once the answer is saved. Nothing is lost.",
+      "Avanzel restarts once the review ends. Nothing is lost.",
+    ]);
+  });
+
+  it("tells a problem by what failed, and promises to try again only while Avanzel looks by itself", () => {
+    expect(updateLine(update({ kind: "problem", stage: "check" }), true, now)).toBe("Avanzel couldn't check for updates. It will try again later.");
+    expect(updateLine(update({ kind: "problem", stage: "download" }), true, now)).toBe("Avanzel couldn't download the update. It will try again later.");
+    expect(updateLine(update({ kind: "problem", stage: "install" }), true, now)).toBe("Avanzel couldn't install the update. It will try again later.");
+    expect(updateLine(update({ kind: "problem", stage: "check" }), false, now)).toBe("Avanzel couldn't check for updates. Nothing has changed.");
+  });
+
+  it("keeps to the copy rules: sentence case, the one-character ellipsis, no exclamation mark, no shouting", () => {
+    const statuses: UpdateStatus[] = [
+      { kind: "off" },
+      { kind: "idle" },
+      { kind: "checking" },
+      { kind: "current" },
+      { kind: "downloading", version: "0.3.1", percent: 7 },
+      ready,
+      { ...ready, restarting: true },
+      ...WAITS.map((waitingFor) => ({ ...ready, waitingFor })),
+      { kind: "problem", stage: "check" },
+      { kind: "problem", stage: "download" },
+      { kind: "problem", stage: "install" },
+    ];
+    const lines = [
+      ...statuses.flatMap((status) => [updateLine(update(status, now), true, now), updateLine(update(status, now), false, now)]),
+      UPDATE_CHECK_NOT_STARTED,
+      RESTART_NOT_STARTED,
+      RESTART_NOT_CALLED_OFF,
+    ];
+    // Not now is a button's label: sentence case, no full stop. It is the words macOS puts on its own deferred updates.
+    expect(UPDATE_NOT_NOW).toBe("Not now");
+    for (const line of lines) {
+      expect(line).toMatch(/^\p{Lu}/u);
+      expect(line).toMatch(/[.…]$/);
+      expect(line).not.toContain("!");
+      expect(line).not.toContain("...");
+      expect(line).not.toMatch(/\b[A-Z]{2,}\b|Oops|Sorry|successfully/);
+    }
   });
 });

@@ -1,4 +1,5 @@
-// App-level preferences (not per library): where the library is, shortcuts, how notes are filed. And, apart from
+// App-level preferences (not per library): where the library is, shortcuts, how notes are filed, whether Avanzel looks for its
+// own updates. And, apart from
 // them, the taken shortcuts the capsule has named, the times a first run reached setup's milestones, and how many
 // recordings the library has kept.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -33,6 +34,7 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
   callConsent: false,
   cursorDictation: Object.freeze({ enabled: false, key: "right-option" }),
   voiceTrigger: Object.freeze({ enabled: false, word: TRIGGER_WORD, stopWord: STOP_WORD }),
+  checkForUpdates: true,
 }) as AppSettings;
 
 const CURSOR_KEYS: readonly CursorKey[] = ["right-option", "left-option", "right-command", "right-control"];
@@ -83,6 +85,8 @@ export function normalizeSettings(raw: unknown): AppSettings {
     callConsent: r.callConsent === true,
     cursorDictation: cursorDictationOf(r.cursorDictation),
     voiceTrigger: voiceTriggerOf(r.voiceTrigger),
+    // On unless the person turned it off: a settings file from before the setting has it on.
+    checkForUpdates: r.checkForUpdates !== false,
   };
 }
 

@@ -373,6 +373,43 @@ export interface AppSettings {
    * Off until the person turns it on.
    */
   voiceTrigger: { enabled: boolean; word: string; stopWord: string };
+  /** Avanzel looks for its own updates by itself (main/updater.ts): 30 s after it starts, then every 6 hours. On until the person turns it off; Check now works either way. */
+  checkForUpdates: boolean;
+}
+
+/**
+ * What a restart to update waits for (`Updater.restart`): the work in progress that restarting now would cut short. Settings and the
+ * panel say the restart comes once it ends.
+ */
+export type UpdateWait = "recording" | "transcription" | "filing" | "call" | "answer" | "save" | "review";
+
+/**
+ * Where Avanzel's own update is (main/updater.ts):
+ * - `off`: this build doesn't look for updates (a development build, or a test run without AVANZEL_UPDATE_FEED);
+ * - `idle`: nothing has been checked yet in this app run;
+ * - `checking`: the feed is being asked;
+ * - `current`: the feed has nothing newer (`UpdateSnapshot.checkedAt` says when it last answered);
+ * - `downloading`: `version` downloads in the background, `percent` of it so far (0 to 100);
+ * - `ready`: `version` is downloaded, and installs when Avanzel quits, or at once on Restart to update. `waitingFor`: the restart that
+ *   was asked for waits for that work to end; `restarting`: it has begun;
+ * - `problem`: the last check, download or install (`stage`) failed. The next automatic check tries again; Try again tries at once.
+ */
+export type UpdateStatus =
+  | { kind: "off" }
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "current" }
+  | { kind: "downloading"; version: string; percent: number }
+  | { kind: "ready"; version: string; waitingFor: UpdateWait | null; restarting: boolean }
+  | { kind: "problem"; stage: "check" | "download" | "install" };
+
+/** Avanzel's own version and its update, as Settings → General shows them and the panel's foot shows an update that is ready. */
+export interface UpdateSnapshot {
+  /** The running app's version (app.getVersion()): "0.2.0". */
+  version: string;
+  status: UpdateStatus;
+  /** When the feed last answered a check (ISO), in this app run; null before it has. */
+  checkedAt: string | null;
 }
 
 export type PermissionStatus = "granted" | "denied" | "not-determined" | "restricted" | "unknown";
@@ -519,6 +556,8 @@ export interface SettingsSnapshot {
   obsidian: boolean;
   /** Open in Obsidian works: Obsidian is installed, and the library has .obsidian/ (obsidianUrl). */
   opensInObsidian: boolean;
+  /** Avanzel's version and its update, for General's Updates group. */
+  update: UpdateSnapshot;
 }
 
 /** One choice of a native pop-up menu, as Settings' pop-up buttons offer it. */
@@ -1015,6 +1054,15 @@ export interface AvanzelBridge {
      */
     relaunch(): void;
     requestPermission(kind: "microphone" | "screen"): Promise<SettingsSnapshot>;
+    /** Check now, or Try again after a problem: Avanzel looks for an update at once, whether it looks by itself or not. */
+    checkForUpdates(): Promise<SettingsSnapshot>;
+    /**
+     * Restart to update: Avanzel quits and opens again on the update that is ready, at once, or once the work in progress ends
+     * (`UpdateStatus` ready's `waitingFor`).
+     */
+    restartToUpdate(): Promise<SettingsSnapshot>;
+    /** Not now, on a restart to update that waits for work in progress: it is called off, and the update stays ready. */
+    cancelRestartToUpdate(): Promise<SettingsSnapshot>;
     /** A pop-up button: a native menu of `options` pops up at `at` (window points; null: at the pointer). Resolves with the
         value picked, or null when the menu closes without one. Only the Settings window's own page is answered: sent from any
         other window, it resolves null and shows no menu. */
@@ -1331,6 +1379,8 @@ export interface PanelSnapshot {
   showableReceipt: boolean;
   undoableReview: boolean;
   opensInObsidian: boolean;
+  /** Avanzel's update: the foot offers Restart to update while one is ready (`act("restart-to-update")`). */
+  update: UpdateSnapshot;
 }
 
 /** A file or screenshot added to a recording, as its Add list shows it: its name and when it was added (Date.now()). */

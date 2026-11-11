@@ -116,6 +116,25 @@ describe("settings store", () => {
     new SettingsStore(file).update({ cursorDictation: { enabled: true, key: "left-option" } });
     expect(new SettingsStore(file).get().cursorDictation).toEqual({ enabled: true, key: "left-option" });
   });
+
+  it("checks for updates by itself until the person turns it off, a settings file from before the setting included", () => {
+    expect(DEFAULT_SETTINGS.checkForUpdates).toBe(true);
+    expect(normalizeSettings({}).checkForUpdates).toBe(true);
+    expect(normalizeSettings({ libraryPath: "/Users/me/Brain", fileMode: "evening" }).checkForUpdates).toBe(true);
+    expect(normalizeSettings({ checkForUpdates: "no" }).checkForUpdates).toBe(true);
+    expect(normalizeSettings({ checkForUpdates: false }).checkForUpdates).toBe(false);
+  });
+
+  it("keeps checking for updates turned off across an update and a new launch", () => {
+    const file = path.join(tmp(), "settings.json");
+    new SettingsStore(file).update({ checkForUpdates: false });
+    const store = new SettingsStore(file);
+    expect(store.get().checkForUpdates).toBe(false);
+    store.update({ fileMode: "evening" });
+    expect(new SettingsStore(file).get().checkForUpdates).toBe(false);
+    store.update({ checkForUpdates: true });
+    expect(new SettingsStore(file).get().checkForUpdates).toBe(true);
+  });
 });
 
 describe("noticed shortcuts", () => {

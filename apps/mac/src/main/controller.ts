@@ -192,6 +192,7 @@ import { bringForward, showWhenReady, stealFocus } from "./stage.ts";
 import { MenuBar } from "./tray.ts";
 import { nextTrayWake, reviewEndedAt, sleepsAfterReview, trayView, wholePercent, type TrayInput, type TrayView } from "./tray-state.ts";
 import { UndoRecordStore, type FilingReceipt } from "./undo-records.ts";
+import { Updater, updaterOptions, type UpdaterHost } from "./updater.ts";
 import {
   createAskWindow,
   createCapsuleWindow,
@@ -207,7 +208,7 @@ import {
 } from "./windows.ts";
 import { libraryPages, pagePrompt, sourcesOnlyOf, withoutItem } from "./library-pages.ts";
 import { heardTrigger, withoutStopWord } from "../shared/trigger.ts";
-import type { AddingKind, FileMode, PanelPage, PanelSnapshot, PanelTab } from "../shared/ipc.ts";
+import type { AddingKind, FileMode, PanelPage, PanelSnapshot, PanelTab, UpdateWait } from "../shared/ipc.ts";
 
 /**
  * The panel under the menu bar icon stands in for the menu and for the Settings window: a click on the icon brings it up, and
@@ -676,6 +677,8 @@ export class Controller {
   private relaunching = false;
   /** How many relaunches Quit and reopen began while AVANZEL_TEST=1, which relaunches nothing: for the e2e tests only. */
   private relaunched = 0;
+  /** Avanzel's own update (updater.ts): Settings → General shows it, and the panel's foot an update that is ready. */
+  private readonly updates: Updater;
 
   constructor(userData: string) {
     this.store = new SettingsStore(path.join(userData, "settings.json"));
@@ -688,6 +691,7 @@ export class Controller {
     this.calls = new CallNotes(this.callHost(path.join(userData, "calls")));
     this.dictations = new DictationHistory(path.join(userData, "dictations.jsonl"), () => this.dictationsChanged());
     this.cursor = new CursorDictation(this.cursorHost()); // after the history, which the host hands it
+    this.updates = new Updater(this.updaterHost(), updaterOptions(process.env, app.isPackaged, userData));
     this.setup = new Setup(this.setupHost()); // last: the host hands setup the stores made above
   }
 
@@ -700,7 +704,11 @@ export class Controller {
     this.capsule.webContents.on("did-start-loading", () => {
       this.capsuleListening = false;
     });
-    this.capsule.on("closed", () => app.quit());
+    // A restart to update closes every window and then lets macOS's updater quit Avanzel and open it again: quitting here first could
+    // cut that short. Should the restart fail, the updater quits as this would have (`updaterHost`'s restartFailed).
+    this.capsule.on("closed", () => {
+      if (!this.updates.restarting) app.quit();
+    });
     this.menuBar = new MenuBar((action) => void this.menuAction(action), USE_PANEL ? () => this.togglePanel() : undefined);
     const envLibrary = process.env.AVANZEL_LIBRARY;
     if (envLibrary) this.store.update({ libraryPath: envLibrary });
@@ -717,6 +725,7 @@ export class Controller {
     powerMonitor.on("unlock-screen", () => this.tick());
     this.tick();
     if (!this.vault) this.showHome();
+    this.updates.start();
   }
 
   /**
@@ -4645,6 +4654,60 @@ export class Controller {
 
   // ---------------------------------------------------------------- settings
 
+  // ---------------------------------------------------------------- updates
+
+  /** What the updater asks of the app (updater.ts). */
+  private updaterHost(): UpdaterHost {
+    return {
+      version: app.getVersion(),
+      automatic: () => this.store.get().checkForUpdates,
+      busy: () => this.updateWait(),
+      changed: () => {
+        this.refreshSettings();
+        this.refreshPanel();
+      },
+      // The restart closed every window, the capsule's too, before it failed: Avanzel quits as a closed capsule makes it quit.
+      restartFailed: () => {
+        if (this.capsule.isDestroyed()) app.quit();
+      },
+    };
+  }
+
+  /**
+   * What a restart to update would cut short now, which it waits for (`Updater.restart`): notes on a call; a recording, a thought's or a
+   * dictation's, or a video of a part of the screen; its words being made; an answer being saved as a page, or a question being answered;
+   * a review; or a filing, which is what `busy` counts (its run, the queue, an edit still to settle, words still to save) and a thought in
+   * the capsule's editor or on its way to it (`capturing`). The most pressing first; null when nothing is in progress.
+   */
+  private updateWait(): UpdateWait | null {
+    if (this.calls.running) return "call";
+    if (this.recording !== null || this.areaWindow !== null) return "recording";
+    if (this.transcribing !== null || this.cursorRecognising || this.capsuleState.kind === "transcribing") return "transcription";
+    if (this.savesGoing > 0) return "save";
+    if (this.giveUpAsk !== null) return "answer";
+    if (this.running.size > 0) return "review";
+    if (this.busy() || this.capturing()) return "filing";
+    return null;
+  }
+
+  /** Settings' Check now, or Try again after a problem: the updater looks at once (its answer comes to Settings as it comes). */
+  async checkForUpdates(): Promise<SettingsSnapshot> {
+    void this.updates.check();
+    return this.snapshot();
+  }
+
+  /** Restart to update, in Settings or the panel's foot: at once, or once the work in progress ends (`Updater.restart`). */
+  async restartToUpdate(): Promise<SettingsSnapshot> {
+    this.updates.restart();
+    return this.snapshot();
+  }
+
+  /** Not now, on a restart to update that waits for work in progress: it is called off, and the update stays ready (`Updater.cancelRestart`). */
+  async cancelRestartToUpdate(): Promise<SettingsSnapshot> {
+    this.updates.cancelRestart();
+    return this.snapshot();
+  }
+
   // ---------------------------------------------------------------- panel
 
   /** The panel's window, made the first time: Settings' page lives in its third tab, so it is Settings' window too. */
@@ -4733,6 +4796,9 @@ export class Controller {
   /** The panel asked for one of the menu's actions (`PANEL_ACTIONS`), a page (`open:`) or a review (`task:`). */
   panelAction(action: unknown): void {
     if (typeof action !== "string") return;
+    // The foot's Restart to update: the panel stays up, saying what the restart waits for while something is in progress, with Not now.
+    if (action === "restart-to-update") return this.updates.restart();
+    if (action === "cancel-restart-to-update") return this.updates.cancelRestart();
     // The recording shown in the panel: its file mode switches as the capsule's does, and Cancel gives it up as Esc does.
     if (action === "file-mode:now" || action === "file-mode:evening") return this.switchFileMode(action === "file-mode:now" ? "now" : "evening");
     if (action === "cancel-recording") return this.listeningAction("cancel");
@@ -5452,6 +5518,7 @@ export class Controller {
       showableReceipt: input.showableReceipt,
       undoableReview: input.undoableReview,
       opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
+      update: this.updates.snapshot(),
     };
   }
 
@@ -5644,6 +5711,7 @@ export class Controller {
       shortcutAlternatives: Object.fromEntries(this.takenShortcuts.map((taken) => [taken.key, taken.alternatives])),
       obsidian: this.obsidianInstalled(),
       opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
+      update: this.updates.snapshot(),
     };
   }
 
@@ -5960,10 +6028,12 @@ export class Controller {
   /**
    * When Avanzel quits, busy or not: stops every agent check still going on, its agent too (it runs detached, and its
    * timeout lives here), and no check starts after it. Quitting doesn't wait for them, and what they find is dropped.
-   * The scratch folder the checks ran in goes too, and so does the menu bar's timer.
+   * The scratch folder the checks ran in goes too, and so does the menu bar's timer. The updater looks no more either, and a restart to
+   * update that waited for work in progress is dropped: the person quit, and the update installs as Avanzel quits.
    */
   stopAgentChecks(): void {
     this.checksStopped = true;
+    this.updates.stop();
     if (this.trayTimer) clearTimeout(this.trayTimer); // the menu bar's count stops where it is, and `showTray` sets no timer again
     this.trayTimer = null;
     this.dropLibraryTimers();
@@ -6479,6 +6549,25 @@ export class Controller {
   /** How many relaunches Quit and reopen began; the app relaunches nothing with AVANZEL_TEST=1, which only counts. */
   relaunchedForTests(): number {
     return this.relaunched;
+  }
+
+  /**
+   * For the e2e tests, launched with AVANZEL_FAKE_UPDATES=1: the stand-in for electron-updater tells what a feed would. `event` is one of
+   * electron-updater's ("update-not-available", "update-available", "download-progress", "update-downloaded", "error"), and `value` what it
+   * would pass: { version } for an update, { percent } for progress, and a message for an error.
+   */
+  updateEventForTests(event: string, value?: unknown): void {
+    const standIn = this.updates.standIn;
+    if (!standIn) throw new Error("Launch with AVANZEL_FAKE_UPDATES=1 to drive the updater.");
+    standIn.emit(event, event === "error" ? new Error(String(value)) : value);
+  }
+
+  /** For the e2e tests: what the stand-in for electron-updater was asked (checks, installs) and how the updater set it up; null without one. */
+  updateEngineForTests(): { checks: number; installs: number; feed: unknown; autoDownload: boolean; autoInstallOnAppQuit: boolean; allowPrerelease: boolean; allowDowngrade: boolean } | null {
+    const standIn = this.updates.standIn;
+    if (!standIn) return null;
+    const { checks, installs, feed, autoDownload, autoInstallOnAppQuit, allowPrerelease, allowDowngrade } = standIn;
+    return { checks, installs, feed, autoDownload, autoInstallOnAppQuit, allowPrerelease, allowDowngrade };
   }
 
   /** The capture of the note the capsule's failure card is about, while it shows one (what its button files again); else null. */
