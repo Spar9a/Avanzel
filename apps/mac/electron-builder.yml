@@ -19,6 +19,13 @@ extraResources:
   - from: native/cursor/build
     to: cursor
     filter: ["avanzel-cursor"]
+  # Avanzel's own licence and NOTICE, in Contents/Resources. scripts/release.mjs refuses to build without them.
+  - from: ../../LICENSE
+    to: LICENSE
+  - from: ../../NOTICE
+    to: NOTICE
+# The licence texts of everything the app bundles, in Contents/Resources/licenses (scripts/licenses.mjs).
+afterExtract: ./scripts/licenses.mjs
 npmRebuild: false
 # Electron's fuses, switches in its binary flipped before signing (https://www.electronjs.org/docs/latest/tutorial/fuses).
 # This is the review build's set, which `npm run dist` and the flight pack's review builds use. The public release
