@@ -8,7 +8,7 @@ import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
 import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { CapsuleState, SettingsSnapshot } from "../src/shared/ipc.ts";
-import { dictate, filedFromTheCapsule, holdTheQueue, inbox, launchOn, letTheQueueGo, notified, reachedUndo, undoCalls, undone, watchUndos, type Left } from "./capsule-helpers.ts";
+import { capsuleAtRest, dictate, filedFromTheCapsule, holdTheQueue, inbox, launchOn, letTheQueueGo, notified, reachedUndo, undoCalls, undone, watchUndos, type Left } from "./capsule-helpers.ts";
 import { call, capsuleKind, emptyHfCache, firstRun, launch, makeLibrary, openSettings, settingsRow, snap, toolbarItem, windowFor } from "./helpers.ts";
 import { zel } from "./setup-helpers.ts";
 
@@ -66,7 +66,9 @@ test("the picked shortcut's bar is a piece of the stack: as wide as its line, it
   const line = bar.getByText("Capture screen now uses ⌃⌥⇧⌘Space", { exact: true });
   await expect(line).toBeVisible();
   expect(await line.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
-  // The bar is as wide as what is in it (never narrower than a bar's least), and the whole line fits in it.
+  // The bar is as wide as what is in it (never narrower than a bar's least), and the whole line fits in it. Measured once the capsule has
+  // risen in: on its way up it is drawn smaller than its size.
+  await capsuleAtRest(capsule);
   expect((await bar.boundingBox())!.width).toBeGreaterThanOrEqual(320);
   // The pointer on it holds it past its time, as it holds any card (it took no pointer, and hid under it, when it was no piece of the stack) ...
   await bar.hover();

@@ -966,12 +966,14 @@ test("a note dictated while a question is answered says it waits for the library
   const waiting = capsule.getByText("Waiting for another Avanzel run to finish…");
   await expect(waiting).toBeVisible({ timeout: 30_000 });
   await snap(capsule, "2-filing-waiting");
-  // The card's foot says why, outside its live region, whose chip says only "Waiting to file"; the card has no seconds to count meanwhile.
+  // The card's foot says why, outside its live region, whose chip says only "Waiting to file"; the card has no seconds to count meanwhile:
+  // its foot's line starts with how the words were made, not with a count ("6 s of about 15 · "), though that line ends in seconds of its own.
   const card = capsule.getByRole("article");
   await expect(card.getByText("Waiting for another Avanzel run to finish…")).toBeVisible();
   await expect(card.getByRole("status")).toHaveText("Waiting to file");
   await expect(barOf(capsule)).toHaveCount(0);
-  await expect(capsule.getByText(/\d+ s( of about \d+)?/)).toHaveCount(0);
+  await expect(card.getByText(/^Transcribed on this Mac in \d+\.\d s$/)).toBeVisible();
+  await expect(capsule.getByText(/^\d+ s( of about \d+)?( · |$)/)).toHaveCount(0);
   // The question is answered and the filing has the library: the line goes while the card still says it files.
   await expect(ask.getByText("Q: What are my goals?")).toBeVisible({ timeout: 60_000 });
   await expect(waiting).toBeHidden();
@@ -1103,22 +1105,25 @@ test("the speech engine that other [voice] settings or another library replace i
   const other = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   await call(app, "capsuleStateForTests"); // the controller is up
-  // Engines that note their release stand in for the controller's current one, set by hand.
+  // The controller keeps its engine in its speech cache (`TranscriberCache`). A cache of the same kind stands in for it, whose engines
+  // note their release, named in the order the cache makes them.
   const releasedAfter = await app.evaluate(async (_electron, otherLibrary) => {
     type Engine = { engine: string; transcribe(): Promise<unknown>; release(): Promise<void> };
+    type Cache = { for(voice: object): Promise<unknown> };
     const controller = (globalThis as unknown as {
-      __avanzel: { transcriber: Engine | null; transcriberKey: string; transcriberFor(voice: object): Promise<Engine>; openLibrary(root: string): void };
+      __avanzel: { speech: Cache; transcriberFor(voice: object): Promise<unknown>; openLibrary(root: string): void };
     }).__avanzel;
     const released: string[] = [];
     const noting = (engine: string): Engine => ({ engine, transcribe: async () => ({ text: "", engine, seconds: 0 }), release: async () => void released.push(engine) });
-    const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600 };
+    const names = ["old settings", "old library", "other library"];
+    const TranscriberCache = controller.speech.constructor as new (make: () => Promise<Engine>) => Cache;
+    controller.speech = new TranscriberCache(async () => noting(names.shift() ?? "more"));
+    const voice = { backend: "command", model: "", quantization: "", command: ["true"], maxRecordSeconds: 600, dictionary: [], dictionarySoundAlike: false };
     const steps: string[][] = [];
-    controller.transcriber = noting("old settings");
-    controller.transcriberKey = "{}";
+    await controller.transcriberFor({ ...voice, command: ["false"] }); // the engine of the settings before
     await controller.transcriberFor(voice); // other [voice] settings
     steps.push([...released]);
-    controller.transcriber = noting("old library");
-    await controller.transcriberFor(voice); // the same settings again
+    await controller.transcriberFor({ ...voice, dictionary: ["Kowalczyk"] }); // the same settings again, with only the dictionary changed
     steps.push([...released]);
     controller.openLibrary(otherLibrary); // another library
     steps.push([...released]);

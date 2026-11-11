@@ -436,7 +436,8 @@ export async function openSettings(app: ElectronApplication, pane = "General"): 
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
   await toolbarItem(settings, pane).click();
-  await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
+  // The pane's own heading, the window's title (level 2): a group in the pane may have its name too, as Shortcuts' does.
+  await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
   return settings;
 }
 

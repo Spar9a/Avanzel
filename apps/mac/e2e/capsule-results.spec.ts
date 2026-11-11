@@ -20,6 +20,7 @@ import {
 import {
   archived,
   barOf,
+  capsuleAtRest,
   cardButtons,
   claudeLibrary,
   dictate,
@@ -781,6 +782,8 @@ test("a page's title shows the whole of its focus ring: nothing above it clips i
   const { app, capsule } = await launchOn(await makeLibrary());
   await call(app, "setCapsule", filedCard());
   const link = capsule.getByRole("listitem").first().getByRole("button");
+  await expect(link).toBeVisible();
+  await capsuleAtRest(capsule); // the ring's reach is in CSS pixels: the boxes it is held to must be at their size, not rising in
   await link.focus();
   await expect(link).toBeFocused();
   // The ring is the design system's, 2 px wide and 2 px off the button, so 4 px beyond it. The title's column clips what overflows it

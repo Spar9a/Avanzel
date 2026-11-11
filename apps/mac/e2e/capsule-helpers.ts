@@ -64,6 +64,15 @@ export const barOf = (capsule: Page) => capsule.locator('[role="status"]:not(art
 export const cardButtons = (capsule: Page) => namesOf(capsule.getByRole("article").locator(".av-card-actions, .av-card-close").getByRole("button"));
 
 /**
+ * Waits for the capsule to stand still: as it comes up it rises in from 96 % of its size (`CapsuleAppear`), and until that ends every box
+ * in it measures smaller than its CSS says, though nothing in it has moved. What a test works out from a CSS length and a box (the focus
+ * ring's 4 px against its column) needs the boxes at rest.
+ */
+export async function capsuleAtRest(capsule: Page): Promise<void> {
+  await capsule.waitForFunction(() => [...document.querySelectorAll(".av-capsule-appear")].every((el) => el.getAnimations().length === 0));
+}
+
+/**
  * The card and the bar fit the panel: the card is below its top and above the bar, and the bar is no lower than its bottom. A state with
  * no bar (filing, filed) has its card no lower than the panel's bottom.
  */

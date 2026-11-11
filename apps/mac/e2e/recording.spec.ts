@@ -117,7 +117,13 @@ test("a recording whose audio never arrives is given up, and the capsule is told
     action: "open-settings:voice",
     actionLabel: "Choose microphone",
   });
-  expect(await app.evaluate(() => (globalThis as unknown as { __commands: unknown[] }).__commands)).toEqual(["start", "stop", "cancel"]);
+  // The recorder was started, stopped and then told to let go. The page also hears whether the voice trigger listens (it is told as it
+  // loads, and here it may have loaded while the first two waited for it), which in this library it never does: nothing else holds the
+  // microphone once the recording is given up.
+  const commands = await app.evaluate(() => (globalThis as unknown as { __commands: unknown[] }).__commands);
+  const isTrigger = (command: unknown) => typeof command === "object" && command !== null && (command as { kind?: string }).kind === "trigger";
+  expect(commands.filter((command) => !isTrigger(command))).toEqual(["start", "stop", "cancel"]);
+  expect(commands.filter(isTrigger).every((command) => (command as { on: boolean }).on === false)).toBe(true);
   // Nothing was saved, as the card says.
   expect(filesUnder(library, "inbox")).toEqual([]);
   expect(filesUnder(library, "raw")).toEqual([]);

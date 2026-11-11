@@ -40,6 +40,7 @@ import {
   expectStoppedFiling,
   filingSends,
   barOf,
+  capsuleAtRest,
   cardButtons,
   inbox,
   launchOn,
@@ -1001,7 +1002,7 @@ test("the seconds a filing took leave out the time it waited behind another", as
   await expect.poll(() => factsOf(app), { timeout: 10_000 }).toMatchObject({ kind: "filing", text: "Call the plumber on Monday", waiting: true });
   const card = capsule.getByRole("article");
   await expect(card.getByText("Waiting for another Avanzel run to finish…", { exact: true })).toBeVisible();
-  await expect(capsule.getByText(/\d+ s( of about \d+)?/)).toHaveCount(0);
+  await expect(capsule.getByText(/^\d+ s( of about \d+)?( · |$)/)).toHaveCount(0); // a count starts the foot's line
   // Its turn ends the wait and starts its seconds: its card is the one that counts, with its own run.
   await expect.poll(async () => (await factsOf(app)).waiting ?? false, { timeout: 30_000, intervals: [100] }).toBe(false);
   expect(await factsOf(app)).toMatchObject({ kind: "filing", text: "Call the plumber on Monday" });
@@ -1744,7 +1745,7 @@ const filingCard = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-test("a filing's card is the words on paper with Hide in its corner and Edit and Stop at its foot, and the paper holds what counts and changes", async () => {
+test("a filing's card is the words on the panel's card with Hide in its corner and Edit and Stop at its foot, and the card holds what counts and changes", async () => {
   const { app, capsule } = await steppedClaude(1000);
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filing");
@@ -1769,7 +1770,9 @@ test("a filing's card is the words on paper with Hide in its corner and Edit and
   // they were made, on one line.
   await expect(card.getByText("Thought", { exact: true })).toBeVisible();
   await expect(card.getByText("Plant tulips in October", { exact: true })).toBeVisible();
-  await expect(card).toHaveAttribute("data-ruled", ""); // the words are written on the card's ruling
+  // The capsule's cards have the menu bar panel's look: the window's surface, a hairline edge, and the words with room around them, unruled.
+  await expect(card).toHaveAttribute("data-look", "panel");
+  await expect(card).not.toHaveAttribute("data-ruled");
   const seconds = card.getByText(/^\d+ s of about 15 · Transcribed on this Mac in \d+\.\d s$/);
   await expect(seconds).toBeVisible();
   // None of it is in the card's live region, so VoiceOver hears a filing start and end, and not each second or each step.
@@ -1812,7 +1815,7 @@ test("a filing card counts its seconds on the paper, towards the estimate and pa
   await call(app, "setCapsule", filingCard({ waiting: true, startedAt: Date.now() - 6_000 }));
   await expect(card.getByText("Waiting for another Avanzel run to finish…", { exact: true })).toBeVisible();
   await expect(card.getByText("Typed note", { exact: true })).toBeVisible();
-  await expect(capsule.getByText(/\d+ s( of about \d+)?/)).toHaveCount(0);
+  await expect(capsule.getByText(/^\d+ s( of about \d+)?( · |$)/)).toHaveCount(0); // a count starts the foot's line
   await app.close();
 });
 
@@ -1871,8 +1874,8 @@ test("a long thought is cut off after four lines and keeps its line breaks, and 
   const card = capsule.getByRole("article");
   const words = card.getByText(long, { exact: true });
   await expect(words).toBeVisible();
-  // All the words are in the page (to select and to read aloud), and four lines of the card's ruling show: the box is as tall as
-  // four of the card's own lines (21 px each now), whatever its line pitch is.
+  // All the words are in the page (to select and to read aloud), and four of the card's lines show: the box is as tall as four of
+  // the card's own lines, whatever its line pitch is.
   const cut = await words.evaluate((el) => ({ shown: el.clientHeight, whole: el.scrollHeight, pitch: parseFloat(getComputedStyle(el).lineHeight) }));
   expect(cut.shown).toBe(4 * cut.pitch);
   expect(cut.whole).toBeGreaterThan(cut.shown);
@@ -1880,6 +1883,7 @@ test("a long thought is cut off after four lines and keeps its line breaks, and 
   const step = card.getByText(`New idea note: ${title}`, { exact: true });
   await expect(step).toBeVisible();
   expect(await step.evaluate((el) => ({ lines: Math.round(el.clientHeight / parseFloat(getComputedStyle(el).lineHeight)), cut: el.scrollWidth > el.clientWidth }))).toEqual({ lines: 1, cut: true });
+  await capsuleAtRest(capsule); // risen in, and landed: a card measured on its way is a little smaller, or past its size
   const cardBox = (await card.boundingBox())!;
   expect(cardBox.width).toBeCloseTo(560, 0);
   // And the panel holds it all, from the top of the card to its foot (a filing has no bar), with a little room to spare.
@@ -1889,11 +1893,11 @@ test("a long thought is cut off after four lines and keeps its line breaks, and 
   expect(cardBox.y + cardBox.height).toBeLessThanOrEqual(panel.height);
   expect(cardBox.x).toBeGreaterThanOrEqual(0);
   expect(cardBox.x + cardBox.width).toBeLessThanOrEqual(panel.width);
-  // The person's line breaks are kept: two lines of words stand on two lines of the ruling, as they were written.
+  // The person's line breaks are kept: two lines of words stand on two of the card's lines, as they were written.
   await call(app, "setCapsule", filingCard({ text: "First line of a corrected thought.\nSecond line." }));
   const broken = card.getByText("First line of a corrected thought. Second line.", { exact: true });
   await expect(broken).toBeVisible();
-  expect(await broken.evaluate((el) => el.clientHeight)).toBe(42);
+  expect(await broken.evaluate((el) => el.clientHeight / parseFloat(getComputedStyle(el).lineHeight))).toBe(2);
   await app.close();
 });
 
