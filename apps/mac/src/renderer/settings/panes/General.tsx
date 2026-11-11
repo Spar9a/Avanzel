@@ -1,10 +1,10 @@
 // Settings → General: the library, where it is and what it holds, with its six shelves under it; when a thought is
-// filed; and opening at login. Without a library, the Notice that says why stands where the library would be,
-// and the other groups follow as usual. Each control applies at once. The shortcuts have a pane of their own.
-import { Actions, Button, Group, GroupRow, Notice, Row, Segmented, ShelfDrawer, Stack, Switch, type SegmentedOption } from "@avanzel/ui";
-import type { ReactNode } from "react";
-import type { FileMode } from "../../../shared/ipc.ts";
-import { fileModeLine, libraryLine } from "../copy.ts";
+// filed; Avanzel's version and its updates; and opening at login. Without a library, the Notice that says why stands where
+// the library would be, and the other groups follow as usual. Each control applies at once. The shortcuts have a pane of their own.
+import { Actions, Button, Group, GroupRow, Notice, Progress, Row, Segmented, ShelfDrawer, Stack, Switch, Text, type SegmentedOption } from "@avanzel/ui";
+import { useState, type ReactNode } from "react";
+import type { FileMode, UpdateStatus } from "../../../shared/ipc.ts";
+import { fileModeLine, libraryLine, RESTART_NOT_STARTED, UPDATE_CHECK_NOT_STARTED, updateLine, versionLabel } from "../copy.ts";
 import { attemptChange, NoLibrary, type PaneProps } from "../parts.tsx";
 import type { ReviewEdits } from "./Reviews.tsx";
 
@@ -15,6 +15,69 @@ const FILE_MODES: readonly SegmentedOption<FileMode>[] = [
   { value: "now", label: "Right away" },
   { value: "evening", label: "Tonight" },
 ];
+
+/** The Updates row's control, at its right, as the update is: Check now, the download's progress, Restart to update, or Try again. */
+function UpdateControl({ status, onCheck, onRestart }: { status: UpdateStatus; onCheck(): void; onRestart(): void }): ReactNode {
+  switch (status.kind) {
+    case "off":
+      return null;
+    case "idle":
+    case "current":
+      return <Button size="small" variant="secondary" onClick={onCheck}>Check now</Button>;
+    case "checking":
+      return <Button size="small" variant="secondary" busy>Check now</Button>;
+    case "downloading":
+      return (
+        <Row gap={8}>
+          <div className="settings-meter">
+            <Progress label="Downloading the update" value={status.percent / 100} />
+          </div>
+          <Text variant="footnote" tone="secondary" as="span" numeric>{`${status.percent}%`}</Text>
+        </Row>
+      );
+    case "ready":
+      // Busy once pressed: the restart has begun, or waits for what is in progress, as the line says.
+      return (
+        <Button size="small" variant="primary" busy={status.restarting || status.waitingFor !== null} onClick={onRestart}>
+          Restart to update
+        </Button>
+      );
+    case "problem":
+      return <Button size="small" variant="secondary" onClick={onCheck}>Try again</Button>;
+  }
+}
+
+/**
+ * Avanzel's version and its update: the row's line says what the update is doing, its button what can be done about it, and the switch
+ * lets Avanzel look by itself (on until the person turns it off; Check now works either way). A screen reader hears the line change once
+ * the person has asked for something here. A build that doesn't look for updates says so, and has neither the button nor a switch to use.
+ */
+function UpdatesGroup(props: PaneProps): ReactNode {
+  const { snap } = props;
+  const { update } = snap;
+  const [asked, setAsked] = useState(false);
+  const check = () => {
+    setAsked(true);
+    void attemptChange(props, () => api.checkForUpdates(), UPDATE_CHECK_NOT_STARTED);
+  };
+  const restart = () => {
+    setAsked(true);
+    void attemptChange(props, () => api.restartToUpdate(), RESTART_NOT_STARTED);
+  };
+  return (
+    <Group label="Updates">
+      <GroupRow label={versionLabel(update.version)} description={updateLine(update, snap.app.checkForUpdates, new Date())} live={asked}>
+        <UpdateControl status={update.status} onCheck={check} onRestart={restart} />
+      </GroupRow>
+      <Switch
+        label="Check for updates automatically"
+        checked={snap.app.checkForUpdates}
+        disabled={update.status.kind === "off"}
+        onChange={(checkForUpdates) => attemptChange(props, () => api.setApp({ checkForUpdates }))}
+      />
+    </Group>
+  );
+}
 
 /**
  * The General pane. `edits` are the Settings window's (useReviewEdits): turning the evening review on here saves it as
@@ -78,6 +141,7 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
           They're safe there.
         </Notice>
       )}
+      <UpdatesGroup {...props} />
       <Group label="Startup">
         <Switch
           label="Open Avanzel when you log in"

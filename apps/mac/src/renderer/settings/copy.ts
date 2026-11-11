@@ -1,9 +1,21 @@
 // Settings' words that panes share or make from values: the name of each pane on the toolbar, the library's line, a
 // message ended as a sentence, the microphone's name, what the speech model row says, when Tonight files, and a
 // scheduled review's schedule, last run and kind, with the checks its editor makes and what a failed save says, and what
-// the window says of a change main refused.
+// the window says of a change main refused, and what the Updates group says of Avanzel's own update.
 import { SHELVES } from "@avanzel/ui";
-import { DICTATION_PAGE, noSuchReview, type CursorKey, type CursorPermissionState, type PickOption, type SettingsPane, type SettingsSnapshot, type TaskInfo } from "../../shared/ipc.ts";
+import {
+  DICTATION_PAGE,
+  noSuchReview,
+  type CursorKey,
+  type CursorPermissionState,
+  type PickOption,
+  type SettingsPane,
+  type SettingsSnapshot,
+  type TaskInfo,
+  type UpdateSnapshot,
+  type UpdateStatus,
+  type UpdateWait,
+} from "../../shared/ipc.ts";
 import { NO_GIT_LINE, ownLine } from "../../shared/problems.ts";
 import { CURSOR_KEYS, cursorKeyName } from "../../shared/transcribing.ts";
 
@@ -313,22 +325,81 @@ export function fileModeLine(evening: Pick<TaskInfo, "schedule" | "enabled"> | n
 const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 
 /**
- * "Running now…", "Not run yet.", or "Last run today at 21:00." / "yesterday at …" / "on Sunday at …" for a run in the
- * last 6 days / "on 2 Oct at …" before that ("on 30 Dec 2025 at …" in another year). Formatted by hand, never with
+ * When something past happened, as a sentence goes on: "today at 21:00", "yesterday at 21:00", "on Sunday at 21:00" for a day in
+ * the last 6, "on 2 Oct at 21:00" before that ("on 30 Dec 2025 at 21:00" in another year). Formatted by hand, never with
  * toLocale*, so tests don't depend on locale.
  */
+function pastWhen(then: Date, now: Date): string {
+  const at = `at ${twoDigits(then.getHours())}:${twoDigits(then.getMinutes())}`;
+  // Whole days between the two calendar days: a day that changes the clock is an hour short or long, which rounds away.
+  const daysAgo = Math.round((midnight(now) - midnight(then)) / 86_400_000);
+  if (daysAgo === 0) return `today ${at}`;
+  if (daysAgo === 1) return `yesterday ${at}`;
+  if (daysAgo > 1 && daysAgo < 7) return `on ${DAYS[then.getDay()]!.label} ${at}`;
+  const year = then.getFullYear() === now.getFullYear() ? "" : ` ${then.getFullYear()}`;
+  return `on ${then.getDate()} ${MONTHS[then.getMonth()]}${year} ${at}`;
+}
+
+/** "Running now…", "Not run yet.", or "Last run today at 21:00." and the rest of `pastWhen`'s ways of saying when. */
 export function lastRunLine(task: Pick<TaskInfo, "running" | "lastRun">, now: Date): string {
   if (task.running) return "Running now…";
   if (!task.lastRun) return "Not run yet.";
-  const ran = new Date(task.lastRun);
-  const at = `at ${twoDigits(ran.getHours())}:${twoDigits(ran.getMinutes())}.`;
-  // Whole days between the two calendar days: a day that changes the clock is an hour short or long, which rounds away.
-  const daysAgo = Math.round((midnight(now) - midnight(ran)) / 86_400_000);
-  if (daysAgo === 0) return `Last run today ${at}`;
-  if (daysAgo === 1) return `Last run yesterday ${at}`;
-  if (daysAgo > 1 && daysAgo < 7) return `Last run on ${DAYS[ran.getDay()]!.label} ${at}`;
-  const year = ran.getFullYear() === now.getFullYear() ? "" : ` ${ran.getFullYear()}`;
-  return `Last run on ${ran.getDate()} ${MONTHS[ran.getMonth()]}${year} ${at}`;
+  return `Last run ${pastWhen(new Date(task.lastRun), now)}.`;
+}
+
+/** The Updates row's name, in General: Avanzel and the version that runs, "Avanzel 0.2.0". */
+export const versionLabel = (version: string): string => `Avanzel ${version}`;
+
+/** An update that has downloaded: "Avanzel 0.3.1 is ready." */
+export const updateReadyLine = (version: string): string => `Avanzel ${version} is ready.`;
+
+/** What a restart to update waits for, as the line says it ends. */
+const UPDATE_WAITS: Readonly<Record<UpdateWait, string>> = {
+  recording: "the recording ends",
+  transcription: "the recording is transcribed",
+  filing: "the filing ends",
+  call: "the call notes end",
+  answer: "the answer comes",
+  save: "the answer is saved",
+  review: "the review ends",
+};
+
+/** A restart to update asked for while something is in progress: it comes once that ends, and cuts nothing short. */
+export const updateWaitLine = (wait: UpdateWait): string => `Avanzel restarts once ${UPDATE_WAITS[wait]}. Nothing is lost.`;
+
+/** A restart to update that has begun. */
+export const UPDATE_RESTARTING = "Restarting…";
+
+/** What the panel's foot says of an update that is ready: that it is, what its restart waits for, or that the restart has begun. */
+export function updateReadyState(status: Extract<UpdateStatus, { kind: "ready" }>): string {
+  if (status.restarting) return UPDATE_RESTARTING;
+  return status.waitingFor ? updateWaitLine(status.waitingFor) : updateReadyLine(status.version);
+}
+
+/**
+ * The Updates row's line, under the version: what Avanzel's update is doing (`UpdateStatus`). A problem says what failed, then that the
+ * next automatic check tries again, while Avanzel looks by itself (`automatic`, AppSettings.checkForUpdates); without, that nothing changed.
+ */
+export function updateLine(update: UpdateSnapshot, automatic: boolean, now: Date): string {
+  const status = update.status;
+  switch (status.kind) {
+    case "off":
+      return "This build doesn't check for updates.";
+    case "idle":
+      return "Not checked yet.";
+    case "checking":
+      return "Checking for updates…";
+    case "current":
+      return update.checkedAt ? `Up to date. Checked ${pastWhen(new Date(update.checkedAt), now)}.` : "Up to date.";
+    case "downloading":
+      return `Downloading Avanzel ${status.version}…`;
+    case "ready":
+      return status.restarting || status.waitingFor ? updateReadyState(status) : `${updateReadyLine(status.version)} It installs when you quit Avanzel.`;
+    case "problem": {
+      const failed = status.stage === "check" ? "check for updates" : status.stage === "download" ? "download the update" : "install the update";
+      return `Avanzel couldn't ${failed}. ${automatic ? "It will try again later." : "Nothing has changed."}`;
+    }
+  }
 }
 
 /** HH:MM with an hour under 24 and minutes under 60, as parseSchedule takes it, zero-padded ("7:30" → "07:30"); else null. */
@@ -451,3 +522,9 @@ export const PERMISSION_NOT_ASKED = "Avanzel couldn't ask macOS.";
 
 /** The title of the Notice for a Download, or the Try again of one that failed, that did not start. */
 export const DOWNLOAD_NOT_STARTED = "The download didn't start.";
+
+/** The title of the Notice for a Check now, or the Try again of one that failed, that did not start. */
+export const UPDATE_CHECK_NOT_STARTED = "The check for updates didn't start.";
+
+/** The title of the Notice for a Restart to update that did not start. */
+export const RESTART_NOT_STARTED = "Avanzel didn't restart.";
