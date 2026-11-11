@@ -65,8 +65,8 @@ Every check prints `pass`, `fail` or `skip`, and one failure stops the release b
   and team, a secure timestamp, and exactly their own entitlements.
 - The app's designated requirement names `app.avanzel.mac` and the team. Updates must satisfy it, so only builds
   signed by the same team can update a release.
-- Electron's fuses: `RunAsNode` on (see below), `NODE_OPTIONS` and the `--inspect` arguments off, and the app
-  loaded only from its asar, whose integrity is checked.
+- Electron's fuses: `RunAsNode`, `NODE_OPTIONS` and the `--inspect` arguments off, and the app loaded only from its
+  asar, whose integrity is checked.
 - `Info.plist` has the bundle ID, the version and the asar's integrity hash.
 - `Contents/Resources` has the repo's `LICENSE` and `NOTICE`, and `licenses/` has the licence texts of everything
   the app bundles.
@@ -109,8 +109,10 @@ the two helpers itself, before packaging, because electron-builder would give th
 `NODE_OPTIONS`, load the app only from its asar and check the asar's integrity. Releases also ignore `--inspect`,
 so nothing can attach a debugger to them. Review builds keep it, because Playwright drives a packaged app through
 it: `e2e/packaged.spec.ts` runs against a review build (`npm run dist`), and can't attach to a release build.
-`RunAsNode` stays on for now, because the engine's write guard runs Avanzel's own binary as Node
-(`packages/engine/src/core/guard-hook.ts`); turn it off in `electron-builder.yml` once that changes.
+`RunAsNode` is off in both, so no other program can run code as Avanzel, with its microphone and screen recording
+permissions. The engine's write guard, which once needed it, is an HTTP hook on 127.0.0.1 now
+(`packages/engine/src/core/guard-hook.ts`). A release also refuses to start with a DevTools port or pipe
+(`src/main/debug-switches.ts`), which no fuse covers.
 
 **Notarizing comes before the DMG and the ZIP.** The app is notarized and stapled first, so the ZIP the updater
 downloads holds the stapled app, and `latest-mac.yml`, made from that ZIP, matches it. The DMG is signed and

@@ -38,7 +38,7 @@ const HELPERS = [
 // Electron's fuses as the two electron-builder configs set them, by their place in the fuse wire (@electron/fuses).
 const FUSE_SENTINEL = "dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX";
 const FUSES = [
-  { name: "RunAsNode", index: 0, on: true }, // for the write guard, for now (electron-builder.yml)
+  { name: "RunAsNode", index: 0, on: false }, // nothing may run Avanzel's binary as Node (electron-builder.yml)
   { name: "EnableNodeOptionsEnvironmentVariable", index: 2, on: false },
   { name: "EnableNodeCliInspectArguments", index: 3, on: false },
   { name: "EnableEmbeddedAsarIntegrityValidation", index: 4, on: true },
