@@ -35,6 +35,11 @@ interface Labelled extends Common {
   label?: never;
   /** Its shortcut as macOS writes it (`⌥⇧R`), after the label, when it has one: the key that does the same from any app. */
   shortcut?: string;
+  /**
+   * Let a label too long for the room the button is given end in "…" where the room ends, on its one line: the button gets narrower
+   * than its words rather than run past what is beside it (a filed page's title, with its badge right after it). Not with `wrap`.
+   */
+  truncate?: boolean;
 }
 
 /** A button with only an icon. `label` is its accessible name and its tooltip. */
@@ -62,6 +67,7 @@ export function Button(props: ButtonProps) {
   const count = "count" in props && props.count ? props.count : 0;
   const shortcut = "shortcut" in props ? props.shortcut : undefined;
   const iconOnly = children === undefined;
+  const truncate = "truncate" in props && props.truncate === true && !iconOnly && !wrap;
   const tip = useTip(iconOnly && !expanded ? label : undefined);
   return (
     <button
@@ -71,6 +77,7 @@ export function Button(props: ButtonProps) {
       data-variant={variant}
       data-size={size}
       data-wrap={wrap ? "" : undefined}
+      data-truncate={truncate ? "" : undefined}
       data-icon-only={iconOnly ? "" : undefined}
       disabled={disabled}
       aria-busy={busy || undefined}
@@ -84,7 +91,7 @@ export function Button(props: ButtonProps) {
       {...tip.handlers}
     >
       {busy ? <Spinner size="small" /> : icon && <Icon name={icon} size={iconSize(icon, size)} />}
-      {children}
+      {truncate ? <span className="av-button-label">{children}</span> : children}
       {shortcut && <span className="av-button-key"><Kbd>{shortcut}</Kbd></span>}
       {count > 0 && (
         <span key={count} className="av-button-count" aria-hidden="true">

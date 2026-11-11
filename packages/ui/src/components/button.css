@@ -75,6 +75,10 @@
 }
 .av-button[data-wrap][data-size="small"] { min-height: var(--av-size-control-small); padding-block: 4px; }
 .av-button[data-wrap][data-variant="page"] { min-height: 0; padding-block: 2px; }
+/* A label cut where its room ends: the button may be narrower than its words, which then end in "…" at its far side, never at both.
+   The focus ring is the button's own, so the cut never takes it. */
+.av-button[data-truncate] { min-width: 0; }
+.av-button-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .av-button[data-size="small"] { height: var(--av-size-control-small); padding: 0 11px; font: var(--av-text-button-small); }
 .av-button[data-size="large"] { height: var(--av-size-control-large); padding: 0 18px; font: var(--av-text-button-large); }

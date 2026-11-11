@@ -51,15 +51,15 @@ test("a filed thought shows its stamp, its page and how to undo it, and Undo put
   await expect(setup.getByRole("listitem")).toHaveText(["Plant tulips in OctoberIdeas"]);
   await expect(setup.getByText(KEPT, { exact: true })).toBeVisible(); // the agent left the words be: the line is there all the same
   await expect(setup.getByText(SAVED, { exact: true })).toBeVisible();
-  // The whole step reads: the receipt's row, the proof's two lines, Undo, then Open the page. No ⌘Z line comes before the receipt.
+  // The whole step reads: the receipt's row, the proof's two lines, Undo, then Open the note. No ⌘Z line comes before the receipt.
   await expect(setup.getByRole("main")).toHaveText(
-    /^All filed\. .+Your first thought has a home\.1 new note, all plain Markdown in ~\/Avanzel\.Plant tulips in OctoberIdeasKept your exact words in raw\/\.Saved a snapshot\. Press ⌘Z or Undo to put everything back\.UndoOpen the page$/,
+    /^All filed\. .+Your first thought has a home\.1 new note, all plain Markdown in ~\/Avanzel\.Plant tulips in OctoberIdeasKept your exact words in raw\/\.Saved a snapshot\. Press ⌘Z or Undo to put everything back\.UndoOpen the note$/,
   );
   // Continue is the one primary, and there is no Back.
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Continue"]);
   await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
   expect(await recentlyFiled(app)).toEqual(["Plant tulips in October"]);
-  // Open the page opens the new note.
+  // Open the note opens the new note.
   await stubOpening(app);
   await setup.getByRole("button", { name: "Open the note" }).click();
   await expect.poll(() => openedWith(app)).toHaveLength(1);

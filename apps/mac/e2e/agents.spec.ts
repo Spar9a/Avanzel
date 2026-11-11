@@ -128,8 +128,11 @@ test("Use on Codex's row makes Codex the agent that files, Use on the last row h
   await expect(codex.getByRole("img", { name: "Chosen" })).toHaveCount(0);
   await expect(codex.getByRole("button", { name: "Use", exact: true })).toBeVisible();
   await expect(settings.getByRole("heading", { name: "Claude Code", exact: true })).toBeVisible();
-  // Claude Code's model is chosen from a list, which starts on the agent's own default.
-  await expect(settings.getByRole("group", { name: "Claude Code model: Agent's default" }).getByRole("button", { name: "Choose…" })).toBeVisible();
+  // Claude Code's model is chosen from a list, which starts on the agent's own default: a pop-up button that says so, and no field.
+  const claudeModel = settings.getByRole("button", { name: "Claude Code model: Agent's default", exact: true });
+  await expect(claudeModel).toBeVisible();
+  await expect(claudeModel).toHaveAttribute("aria-haspopup", "menu");
+  await expect(settings.getByRole("textbox", { name: "Claude Code model" })).toHaveCount(0);
   await app.close();
 });
 

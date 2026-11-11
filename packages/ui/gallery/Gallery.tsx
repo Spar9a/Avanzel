@@ -368,7 +368,7 @@ export function Gallery() {
         )}
       </Specimen>
 
-      <Specimen id="parts" title="Page buttons, badges and totals" use="A page button opens a page of the library and may wrap. A badge says one thing about its row. A shelf tab can carry its total." code={'<Button variant="page" wrap>Plant tulips in October</Button>\n<Badge>Best results</Badge>\n<ShelfTag shelf="ideas" variant="tab" total count={12} />'}>
+      <Specimen id="parts" title="Page buttons, badges and totals" use="A page button opens a page of the library and may wrap. A title that shares its line ends in … where its room ends. A badge says one thing about its row. A shelf tab can carry its total." code={'<Button variant="page" wrap>Plant tulips in October</Button>\n<Button variant="link" truncate>Move the trading system…</Button>\n<Badge>Best results</Badge>\n<ShelfTag shelf="ideas" variant="tab" total count={12} />'}>
         {() => (
           <Stack gap={16}>
             <Stack gap={6}>
@@ -376,6 +376,9 @@ export function Gallery() {
               <Row gap={6} wrap align="center"><ShelfTag shelf="topics" /><Button variant="page">Plant tulips in October</Button></Row>
               <Row gap={6} wrap align="start"><ShelfTag shelf="ideas" /><Button variant="page" wrap>Move the trading system from Voxfor to new hosting before the end of the month</Button></Row>
             </Stack>
+            <div className="g-narrow">
+              <Row gap={6} align="center"><Button variant="link" truncate>Move the trading system from Voxfor to new hosting</Button><Badge tone="neutral">updated</Badge></Row>
+            </div>
             <Button size="small" wrap>Ask about the voice capture tests and the other things to try this week</Button>
             <Row gap={8} wrap align="center">
               <Text variant="footnote" tone="secondary" as="span">Claude Code</Text>

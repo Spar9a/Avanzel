@@ -150,8 +150,9 @@ test("with no free shortcut, setup offers Settings, and the shortcut set there i
   const open = taken.getByRole("button", { name: "Open Settings" });
   await expect(open).toHaveAttribute("data-variant", "primary");
   await open.click();
+  // Settings opens on Shortcuts, as the line says.
   const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("heading", { name: "General" })).toBeVisible();
+  await expect(settings.getByRole("heading", { name: "Shortcuts", exact: true, level: 2 })).toBeVisible();
   // A shortcut set in Settings is the one the step listens for now, from the start of a new wait.
   await call(app, "setApp", { shortcuts: { ...(await settingsSnap(app)).app.shortcuts, dictate: "Control+Alt+K" } });
   await expect(taken).toHaveCount(0);

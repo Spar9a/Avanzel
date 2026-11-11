@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Target } from "../src/main/cursor-helper.ts";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import { expectInPanel } from "./capsule-helpers.ts";
+import { capsuleAtRest, expectInPanel } from "./capsule-helpers.ts";
 import { call, capsuleKind, launch, makeLibrary, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
 
 const WORDS = "hello Kowalczyk";
@@ -87,6 +87,7 @@ test("the panel is one row until there are words and grows upward as they come, 
   await dictating(app);
   const row = capsule.getByRole("status");
   const panel = capsule.locator(".stack .av-hud");
+  await capsuleAtRest(capsule); // the row's place is its place at rest: the capsule rises in, and grows from 96 %, as it comes up
   const before = (await row.boundingBox())!;
   await expect(heard(capsule)).toHaveCount(0);
   expect((await panel.boundingBox())!.height).toBe(before.height);
@@ -206,7 +207,7 @@ test("Esc takes the words with it: a recognition still running shows nothing, an
   await app.close();
 });
 
-test("a thought shows its words too, in place of the first recordings' hint, with Zel, and its button still takes the pointer", async () => {
+test("a thought shows its words too, in place of the first recordings' hint, with Zel, and its buttons still take the pointer", async () => {
   const { script } = fakeCursor();
   const { app, capsule } = await launchWith(script);
   await call(app, "toggleDictate");
@@ -217,9 +218,13 @@ test("a thought shows its words too, in place of the first recordings' hint, wit
   await expect(heard(capsule).getByText(WORDS, { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(capsule.getByText("⌥Space to finish, Esc to cancel", { exact: true })).toHaveCount(0);
   await expect(capsule.locator("svg[data-mood]")).toHaveAttribute("data-mood", "listening");
-  const button = capsule.getByRole("status").getByRole("button");
-  await expect(button).toBeVisible();
-  expect(await button.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe("auto");
+  // The row's controls (Add, Cancel, Pause and Stop) all take the pointer: the words above them don't let it through to the app below.
+  const buttons = capsule.getByRole("status").getByRole("button");
+  await expect(capsule.getByRole("status").getByRole("button", { name: /^Stop/ })).toBeVisible();
+  for (const button of await buttons.all()) {
+    await expect(button).toBeVisible();
+    expect(await button.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe("auto");
+  }
   await snap(capsule, "live-words-thought");
   await app.close();
 });
@@ -247,14 +252,25 @@ test("a screen comment's screenshot and two lines of its words fit the panel tog
   await app.close();
 });
 
-test("a call's row keeps its line whole, beside a shorter voice and Stop", async () => {
+test("a call's row keeps its line whole, and its voice takes the rest of the row, beside the time and Stop", async () => {
   const { script } = fakeCursor();
   const { app, capsule } = await launchWith(script);
   await call(app, "setCapsule", { kind: "listening", mode: "call", startedAt: Date.now(), fakeMic: true, microphoneId: null, fileMode: null, hint: null, review: null });
   const line = capsule.locator(".av-capsule-text");
   await expect(line).toHaveText("Taking notes on the call");
   expect(await line.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
-  await expect(capsule.locator(".av-wave > i")).toHaveCount(16);
+  // The line is a steady label at the left, and the voice fills what the row leaves after it: as many bars as fit, no fewer than a
+  // thought's 24, the last at the room's end, and none under the line or past it.
+  const wave = capsule.locator(".av-wave");
+  await expect(wave).toHaveAttribute("data-fill", "");
+  expect(await capsule.locator(".av-wave > i").count()).toBeGreaterThanOrEqual(24);
+  const room = await capsule.evaluate(() => {
+    const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+    return { line: box(".av-capsule-live"), wave: box(".av-wave"), last: box(".av-wave > i:last-child"), middle: box(".av-capsule-middle") };
+  });
+  expect(room.wave.left).toBeGreaterThan(room.line.right);
+  expect(room.wave.right).toBeCloseTo(room.middle.right, 0);
+  expect(room.last.right).toBeCloseTo(room.wave.right, 0);
   await expect(capsule.getByRole("status").getByRole("button", { name: "Stop", exact: true })).toBeVisible();
   await app.close();
 });

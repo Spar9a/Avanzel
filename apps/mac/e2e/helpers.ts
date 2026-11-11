@@ -34,6 +34,21 @@ export async function makeLibrary({ git = false }: { git?: boolean } = {}): Prom
 /** What `say` made for each `${voice}\n${text}` in this process: the suite says few texts, and `say` takes about 0.8 s a call. */
 const spoken = new Map<string, string>();
 
+/** How long one `say` may take before it is stopped. It takes about 0.8 s; one has hung for 26 minutes, and the whole run with it. */
+const SAY_TIMEOUT_MS = 15_000;
+
+/** `voice` saying `text` into the WAV file `file`, tried once more if `say` fails or is stopped: a second failure fails the test that asked. */
+function say(voice: string, text: string, file: string): void {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      execFileSync("say", ["-v", voice, "-o", file, "--data-format=LEI16@16000", text], { timeout: SAY_TIMEOUT_MS, killSignal: "SIGKILL" });
+      return;
+    } catch (error) {
+      if (attempt === 2) throw new Error(`say made no speech for “${text}” in two tries of at most ${SAY_TIMEOUT_MS / 1000} s: ${String(error)}`);
+    }
+  }
+}
+
 /**
  * A new WAV file of `voice` saying `text`. `say` speaks each voice and text once per process; the file it made stays here,
  * and every call (the first too) hands out a copy of it in its own folder, so a test may delete or move its file.
@@ -43,7 +58,7 @@ export function speechWav(text: string, voice = "Samantha"): string {
   let made = spoken.get(key);
   if (made === undefined) {
     made = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-wav-")), "speech.wav");
-    execFileSync("say", ["-v", voice, "-o", made, "--data-format=LEI16@16000", text]);
+    say(voice, text, made);
     spoken.set(key, made);
   }
   const file = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-wav-")), "speech.wav");
@@ -436,7 +451,8 @@ export async function openSettings(app: ElectronApplication, pane = "General"): 
   await call(app, "showSettings");
   const settings = await windowFor(app, "settings");
   await toolbarItem(settings, pane).click();
-  await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
+  // The pane's own heading, the window's title (level 2): a group in the pane may have its name too, as Shortcuts' does.
+  await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
   return settings;
 }
 

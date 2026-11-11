@@ -1,8 +1,8 @@
 // Avanzel for Mac: a menu-bar app. No main window, and no Dock icon except while setup is open.
-import { app, BrowserWindow, Menu, nativeImage, session } from "electron";
+import { app, BrowserWindow, Menu, session } from "electron";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { appIconPng } from "./app-icon.ts";
 import { Controller } from "./controller.ts";
 import { debugSwitch } from "./debug-switches.ts";
 import { registerIpc } from "./ipc.ts";
@@ -62,10 +62,12 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     app.dock?.hide();
     // A development build runs inside Electron's own app, whose atom the Dock and the app switcher would show: Zel's icon instead, as the
-    // packaged app has it (build/icon.icns, made from the same drawing).
-    if (!app.isPackaged) {
+    // packaged app has it (build/icon.icns, made from the same drawing). The build draws it into dist (scripts/build.mjs): drawn here, at
+    // each launch, it held the main process for two seconds before anything else could start.
+    const icon = path.join(DIST, "app-icon.png");
+    if (!app.isPackaged && existsSync(icon)) {
       try {
-        app.dock?.setIcon(nativeImage.createFromBuffer(appIconPng(512)));
+        app.dock?.setIcon(icon);
       } catch (error) {
         console.warn("app icon", error);
       }

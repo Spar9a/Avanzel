@@ -92,7 +92,9 @@ async function texts(page: Page): Promise<Sample[]> {
     const name = (el: Element) => el.tagName.toLowerCase() + [...el.classList].map((c) => `.${c}`).join("");
     const found: Sample[] = [];
     for (const el of document.body.querySelectorAll("*")) {
-      if (el.matches("option, optgroup, script, style") || el.closest(":disabled")) continue;
+      // A disabled control, its words included: a Switch marks its whole row (its label and description too) with data-disabled, as
+      // the gallery's check reads it. Settings → Dictation's "Dictate into any app" is one on a Mac without the cursor helper built.
+      if (el.matches("option, optgroup, script, style") || el.closest(":disabled, [data-disabled]")) continue;
       if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
       let text: string;
       let pseudo: string | null = null;
@@ -137,6 +139,13 @@ async function readable(app: ElectronApplication, page: Page, surface: string, b
     for (const base of under) found.push(...failures(all, base, `${mode} ${surface}${under.length > 1 ? ` over ${base}` : ""}`));
   }
   return found;
+}
+
+/** `state` with its times (when it started, its newest step) `ms` later, so how long ago each was stays as it was made. */
+function movedOn(state: CapsuleState, ms: number): CapsuleState {
+  const moved: Record<string, unknown> = { ...state };
+  for (const key of ["startedAt", "stepAt"]) if (typeof moved[key] === "number") moved[key] = (moved[key] as number) + ms;
+  return moved as CapsuleState;
 }
 
 function capsuleStates(): [string, CapsuleState, string][] {
@@ -426,7 +435,8 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   const settings = await windowFor(app, "settings");
   for (const pane of ["General", "Voice", "Shortcuts", "Dictation", "Agents", "Reviews", "Privacy"]) {
     await toolbarItem(settings, pane).click();
-    await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
+    // The pane's name is the window's title, its one heading of level 2: a group of the pane may share it (Shortcuts holds "Shortcuts").
+    await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
     if (pane === "Reviews") await expect(settings.getByText(/Unknown schedule "sometimes"/)).toBeVisible();
     // launch()'s stand-ins for Claude Code and Codex read their sign-in as the pane opens: read the pane once both
     // are done, not while a Check button spins.
@@ -466,19 +476,28 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   found.push(...(await readable(app, ask, "Ask, answered", desktops)));
 
   const capsule = await windowFor(app, "capsule");
+  // The states' times are set as the list is made, and reading each state takes a few seconds: each is sent with its times moved on by
+  // as long as the list has waited, so a step that was new when it was made is new when it shows, and not eight quiet seconds old.
+  const made = Date.now();
   for (const [name, state, shows] of capsuleStates()) {
-    await call(app, "setCapsule", state);
+    await call(app, "setCapsule", movedOn(state, Date.now() - made));
     await expect(capsule.getByText(shows)).toBeVisible();
-    // Every piece the page draws takes the pointer. The page's wrapper and the stack take none (the transparent corners pass it to the
-    // apps below), so a state whose root were a bare piece, and not a notice or a stack, could not be hovered, and would be put away
-    // under the pointer: each state's pieces are the stack's children, or the notice itself. A recording's panel with nothing to press alone
-    // takes none: it may stand over the box a dictation goes into, and a recording that listens is not put away.
-    const pieces = await capsule.evaluate(() =>
-      [...document.querySelectorAll(".app > *")]
-        .flatMap((root) => (root.matches(".stack") ? [...root.children] : [root]))
-        .map((piece) => ({ piece: piece.className || piece.tagName.toLowerCase(), pointerEvents: getComputedStyle(piece).pointerEvents })),
-    );
+    // Every piece the page draws takes the pointer. What holds the pieces takes none, so the transparent corners and the gaps between
+    // pieces pass it to the apps below: the page's wrapper, the box the capsule comes and goes in (`CapsuleAppear`), the stack, and
+    // the place for dropped files around the Add menu and the bar. A state whose root were a bare piece, and not a notice or a stack,
+    // could not be hovered, and would be put away under the pointer: each state's pieces are what those hold, or the notice itself. A
+    // recording's panel with nothing to press alone takes none: it may stand over the box a dictation goes into, and a recording that
+    // listens is not put away.
+    const { holders, pieces } = await capsule.evaluate(() => {
+      const holding = ".av-capsule-appear, .stack, .stack-drop";
+      const holders: Element[] = [];
+      const piecesOf = (el: Element): Element[] => (el.matches(holding) ? (holders.push(el), [...el.children].flatMap(piecesOf)) : [el]);
+      const pieces = [...document.querySelectorAll(".app > *")].flatMap(piecesOf);
+      const named = (el: Element) => ({ piece: el.className || el.tagName.toLowerCase(), pointerEvents: getComputedStyle(el).pointerEvents });
+      return { holders: holders.map(named), pieces: pieces.map(named) };
+    });
     expect(pieces.length, `capsule ${name}: pieces`).toBeGreaterThan(0);
+    for (const { piece, pointerEvents } of holders) expect(pointerEvents, `capsule ${name}: ${piece}`).toBe("none");
     for (const { piece, pointerEvents } of pieces) expect(pointerEvents, `capsule ${name}: ${piece}`).toBe(piece.includes("through") ? "none" : "auto");
     found.push(...(await readable(app, capsule, `capsule ${name}`, desktops)));
   }

@@ -84,10 +84,10 @@ body {
 .words.lines-2 {
   max-height: 2lh;
 }
-/* The filed card's pages, a row each, in two columns that line up from row to row: the shelf (a chip, or the folder's name, which
-   the column takes whole, uncapped, so a chip never runs under the title), and the title with, right after it, whether the page is new or updated.
-   The columns are 2 px apart because the title's column has 4 px of its own on each side (see .page-title), which makes 6 px between
-   the chip and the link. */
+/* The filed card's pages, a row each, in two columns that line up from row to row: the shelf (a chip, which the column takes whole, so
+   a chip never runs under the title, or the folder's name, cut off at 96 px: see .page-folder), and the title with, right after it,
+   whether the page is new or updated. The columns are 2 px apart because the title's column has 4 px of its own on each side (see
+   .page-title), which makes 6 px between the chip and the link. */
 .page-list {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
@@ -101,10 +101,18 @@ body {
   grid-column: 1 / -1;
   align-items: center;
 }
-/* The title's link is clipped across where its column ends, which is how a title too long for it is cut, and not above or below it
-   (`clip`, with the other axis left visible). The clip must not cut the link's focus ring, which stands 4 px outside it (2 px wide,
-   2 px off): the column has 4 px of padding on each side for the ring, and the gaps beside it are 4 px narrower for that (see
-   .page-list), so the link stands where it did and the row is no taller. */
+/* A folder's name is no wider than a chip: a long one is cut off with "…" (its Text truncates) and never takes the title's room, so the
+   shelf's column is as wide as the longest name it holds, at most this. */
+.page-folder {
+  display: flex;
+  min-width: 0;
+  max-width: 96px;
+}
+/* The title's link takes the room its badge leaves, and a title too long for that ends in "…" there (the link truncates), so the
+   badge always shows whole after it. Anything that still runs past the column is clipped across where the column ends, and not above
+   or below it (`clip`, with the other axis left visible). The clip must not cut the link's focus ring, which stands 4 px outside it
+   (2 px wide, 2 px off): the column has 4 px of padding on each side for the ring, and the gaps beside it are 4 px narrower for that
+   (see .page-list), so the link stands where it did and the row is no taller. */
 .page-title {
   display: flex;
   align-items: center;

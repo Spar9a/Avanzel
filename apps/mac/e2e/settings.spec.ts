@@ -577,7 +577,7 @@ test("a change the app can't keep says so wherever it is made, and stays as it w
   const fresh = async (pane: string) => {
     await toolbarItem(settings, pane === "Privacy" ? "General" : "Privacy").click();
     await toolbarItem(settings, pane).click();
-    await expect(settings.getByRole("heading", { name: pane, exact: true })).toBeVisible();
+    await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible(); // the pane's title, not a group of it
     await expect(problem).toHaveCount(0);
   };
   blockWriting("settings.json");
@@ -596,12 +596,12 @@ test("a change the app can't keep says so wherever it is made, and stays as it w
   await expect(settings.getByRole("radio", { name: "Right away", exact: true })).toHaveAttribute("aria-checked", "true");
   expect((await snapshot(app)).app.fileMode).toBe("now");
 
-  // Voice: the microphone. General: a shortcut.
+  // Voice: the microphone. Shortcuts, a pane of its own: a shortcut.
   await fresh("Voice");
   await answerMenus(app, "System default");
   await settings.getByRole("button", { name: /^Microphone: / }).click();
   await refused();
-  await fresh("General");
+  await fresh("Shortcuts");
   const row = settingsRow(settings, "Type a thought");
   await row.getByRole("button", { name: /\. Change$/ }).click();
   await settings.keyboard.press("Control+Alt+K");

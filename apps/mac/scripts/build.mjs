@@ -3,9 +3,10 @@
 // With --watch it keeps rebuilding each part as its sources change (theirs and @avanzel/ui's, @avanzel/engine's alike), and, when
 // started with an IPC channel (scripts/dev.mjs), tells its parent which part was rebuilt: { built: "main" | "preload" | "renderer" }.
 import { build, context } from "esbuild";
-import { cpSync, mkdirSync, readdirSync, rmSync, existsSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { appIconPng } from "../src/main/app-icon.ts";
 import { distDir, runningMessage, suiteRunning } from "./e2e-lock.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -91,6 +92,8 @@ function copyStatic() {
   const engineAssets = path.join(root, "..", "..", "packages", "engine", "assets");
   if (existsSync(engineAssets)) cpSync(engineAssets, path.join(dist, "engine-assets"), { recursive: true });
   if (existsSync(path.join(root, "assets"))) cpSync(path.join(root, "assets"), path.join(dist, "assets"), { recursive: true });
+  // A development build's Dock icon (src/main/index.ts sets it), drawn once here rather than at each launch.
+  writeFileSync(path.join(dist, "app-icon.png"), appIconPng(512));
 }
 
 const shown = dist === path.join(root, "dist") ? "dist" : dist;

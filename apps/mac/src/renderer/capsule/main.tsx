@@ -1,6 +1,6 @@
 import "@avanzel/ui/base.css";
 import { Actions, Button, CapsuleAppear, CapsuleMenu, CapsuleNotice, Hud, Items, Kbd, Progress, Row, Stack, Text, Zel } from "@avanzel/ui";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createRoot } from "react-dom/client";
 import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortcuts.ts";
 import type { AddingKind, AttachedItem, CapsuleState } from "../../shared/ipc.ts";
@@ -316,6 +316,35 @@ function useAppearing(state: CapsuleState): { drawn: CapsuleState | null; leavin
   return appearing;
 }
 
+/**
+ * Whether the pointer is on a piece the capsule draws, told to main as it changes: the window takes the pointer, and holds a card up
+ * (`keepOpen`), only while it is. It is read from the element each `mouseover` lands on, not from leave events: a piece taken away
+ * under the pointer (a taken shortcut's notice, which the picked bar replaces after its Use is clicked) sends none as it goes, and the
+ * pointer's next move was then no leave to React's onMouseLeave either. The capsule went on taking every click over its empty corners,
+ * and held its bar up, until the pointer crossed a piece again. A `mouseout` to nothing is the pointer leaving the window.
+ */
+function usePointerOnPieces(app: RefObject<HTMLDivElement | null>): void {
+  useEffect(() => {
+    let on = false;
+    const set = (now: boolean) => {
+      if (now === on) return;
+      on = now;
+      api.setInteractive(now);
+      api.keepOpen(now);
+    };
+    const over = (event: MouseEvent) => set(event.target instanceof Node && !!app.current?.contains(event.target));
+    const out = (event: MouseEvent) => {
+      if (event.relatedTarget === null) set(false);
+    };
+    document.addEventListener("mouseover", over);
+    document.addEventListener("mouseout", out);
+    return () => {
+      document.removeEventListener("mouseover", over);
+      document.removeEventListener("mouseout", out);
+    };
+  }, [app]);
+}
+
 function App() {
   const [state, setState] = useState<CapsuleState>({ kind: "hidden" });
   const stateRef = useRef(state);
@@ -402,10 +431,13 @@ function App() {
     }
   }), []);
 
-  // The panel is click-through where nothing is drawn: the pointer entering a piece that is drawn makes the window take it (and hold
-  // a card up), and leaving it gives it back. The wrapper takes no pointer itself (see `.app` in styles.css), only the pieces in it do.
+  // The panel is click-through where nothing is drawn: the pointer on a piece that is drawn makes the window take it (and hold a card
+  // up), and the pointer off every piece gives it back (`usePointerOnPieces`). The wrapper takes no pointer itself (see `.app` in
+  // styles.css), only the pieces in it do.
+  const app = useRef<HTMLDivElement>(null);
+  usePointerOnPieces(app);
   return (
-    <div className="app" onMouseEnter={() => { api.setInteractive(true); api.keepOpen(true); }} onMouseLeave={() => { api.setInteractive(false); api.keepOpen(false); }}>
+    <div ref={app} className="app">
       {appearing.drawn && (
         <CapsuleAppear key={appearing.time} leaving={appearing.leaving}>
           <Capsule state={appearing.drawn} levels={levels} adding={adding} onAdd={() => setAdding(!adding)} onAddDone={() => setAdding(false)} />
