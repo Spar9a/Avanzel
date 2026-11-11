@@ -98,6 +98,9 @@ export function registerIpc(controller: Controller): void {
   handle("settings:check-agents", () => controller.checkAgents());
   handle("settings:check-agent", (_e, name: string) => controller.checkAgent(name));
   handle("settings:request-permission", (_e, kind: "microphone" | "screen") => controller.requestPermission(kind));
+  // Avanzel's own update: Check now (or Try again), and Restart to update, which waits while something is in progress.
+  handle("settings:check-for-updates", () => controller.checkForUpdates());
+  handle("settings:restart-to-update", () => controller.restartToUpdate());
   // What the page sends is checked where it is used: this takes anything, and shows a menu only for a request that reads. Every
   // window has the same bridge, so it also hands over the page that sent it: only the Settings window's own is answered.
   handle("settings:pick", (e, options: unknown, at: unknown) => controller.pickFromSettings(e.sender, options, at));
