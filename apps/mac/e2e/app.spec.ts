@@ -32,7 +32,7 @@ import {
   windowFor,
   toolbarItem,
 } from "./helpers.ts";
-import { barOf, cardButtons, expectProblem, launchOn } from "./capsule-helpers.ts";
+import { barOf, capsuleAtRest, cardButtons, expectProblem, launchOn } from "./capsule-helpers.ts";
 
 const inbox = (root: string) => readdirSync(path.join(root, "inbox")).filter((n) => !n.startsWith("."));
 const archived = (root: string) => {
@@ -1522,6 +1522,7 @@ test("a pointer crossing the gap between a card and its bar keeps the card up, t
   const TIME_MS = 2_000;
   await call(app, "setCapsule", { kind: "saved", text: "Plant tulips in October", note: "Saved to the inbox." }, TIME_MS);
   const shownAt = Date.now(); // the card's time began a moment before: the call's own round trip
+  await capsuleAtRest(capsule); // the gap is measured at rest: the capsule rises in, and grows from 96 %, as the card comes up
   const card = (await capsule.getByRole("article").boundingBox())!;
   const bar = (await capsule.getByRole("status").boundingBox())!;
   const onCard = { x: card.x + card.width / 2, y: card.y + card.height / 2 };
