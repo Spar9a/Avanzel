@@ -23,8 +23,9 @@ export function notedLine(agent: string): string {
 export const SHOWN_PAGES = 3;
 
 /**
- * The most a page's title may take across in its link, in cells (`titleCells`): a row is 396 px wide, and the widest chip and caption
- * leave about 250 px, which is 32 Latin letters of the link's face.
+ * The most a page's title may take across in its link, in cells (`titleCells`): 32 Latin letters of the link's face, about 215 px. A
+ * row is about 380 px wide beside the card's Undo and Open, which leaves the title that much beside most chips and badges; beside the
+ * widest chip and "updated" it has about 200 px, and there the link ends the title in "…" where its room ends (`truncate` in pages.tsx).
  */
 export const TITLE_CELLS = 32;
 
