@@ -18,6 +18,8 @@ describe("patchedSettings with a private model", () => {
     const next = patchedSettings(base, { private: { enabled: true, baseUrl: "  http://127.0.0.1:8765/v1 ", model: " m " } });
     expect(next.private).toEqual({
       enabled: true,
+      source: "own",
+      hostedModel: "qwen3.5-4b",
       baseUrl: "http://127.0.0.1:8765/v1",
       model: "m",
       api: "chat",
@@ -31,6 +33,12 @@ describe("patchedSettings with a private model", () => {
   it("leaves the private model alone when the patch has none", () => {
     expect(patchedSettings(base, { harness: "pi" }).private).toEqual(base.private);
     expect(patchedSettings(base, { harness: "pi" }).harness).toBe("pi");
+  });
+
+  it("takes the hosted model as the source, and refuses a source or a model that doesn't exist", () => {
+    expect(patchedSettings(base, { private: { enabled: true, source: "hosted" } }).private).toMatchObject({ source: "hosted", hostedModel: "qwen3.5-4b" });
+    expect(() => patchedSettings(base, { private: { source: "cloud" as never } })).toThrow(/your own server or on a model Avanzel hosts/);
+    expect(() => patchedSettings(base, { private: { hostedModel: "nope" } })).toThrow(/doesn't host that model/);
   });
 
   it("refuses a kind of server or a context size the settings file would not read back", () => {

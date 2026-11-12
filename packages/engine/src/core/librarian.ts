@@ -13,6 +13,7 @@ import { Changes, diff, snapshot, type Snapshot } from "./changes.ts";
 import type { ToolStep } from "./claude-stream.ts";
 import type { Settings } from "./config.ts";
 import { localDate } from "./dates.ts";
+import type { HostedProvider } from "./hosted-model.ts";
 import { flowItems, frontmatterFields, splitFrontmatter } from "./frontmatter.ts";
 import * as gitops from "./git.ts";
 import { protectedState, undoProtected } from "./guard.ts";
@@ -161,6 +162,8 @@ export interface LibrarianOptions {
   clock?: () => Date;
   /** The app's own key for the library's private model, read when a run starts; null when it keeps none. */
   privateKey?: () => string | null;
+  /** The hosted model's server, for a private model whose source is "hosted". */
+  hosted?: HostedProvider | null;
 }
 
 /** What one agent run is asked to do. */
@@ -191,14 +194,16 @@ export class Librarian {
   readonly clock: () => Date;
   readonly #transcriber: Transcriber | null;
   readonly #privateKey: () => string | null;
+  readonly #hosted: HostedProvider | null;
   #harness: Harness | null = null;
 
   constructor(
     vault: Vault,
     settings: Settings,
-    { harnessName = null, transcriber = null, clock = () => new Date(), privateKey = () => null }: LibrarianOptions = {},
+    { harnessName = null, transcriber = null, clock = () => new Date(), privateKey = () => null, hosted = null }: LibrarianOptions = {},
   ) {
     this.#privateKey = privateKey;
+    this.#hosted = hosted;
     this.vault = vault;
     this.settings = settings;
     this.harnessName = harnessName;
@@ -590,6 +595,7 @@ export class Librarian {
           onStep: narration?.onStep,
           private: this.settings.private,
           privateKey: this.#privateKey(),
+          hosted: this.#hosted,
         });
       } finally {
         // Right after the run, before the guard: what the guard puts back is its own doing, not a step of the agent's.

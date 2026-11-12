@@ -533,6 +533,10 @@ export interface LibraryInfo {
 /** The library's `[private]` settings: the same as the engine's PrivateModel. */
 export interface PrivateInfo {
   enabled: boolean;
+  /** "own": the server below. "hosted": a model Avanzel downloads and runs on this Mac, `hostedModel`, and the three fields after it are ignored. */
+  source: "own" | "hosted";
+  /** The hosted model's id (`HostedModelInfo.id`), for source "hosted". */
+  hostedModel: string;
   /** The server's address, as typed. */
   baseUrl: string;
   /** The model's name on the server. */
@@ -550,6 +554,25 @@ export const PRIVATE_AGENTS: Readonly<Record<PrivateInfo["api"], readonly string
   messages: ["claude"],
   responses: ["codex"],
 };
+
+/** The agents that can run the model Avanzel hosts, best first: the engine's `HOSTED_HARNESSES`, which a test keeps in step. */
+export const HOSTED_AGENTS: readonly string[] = ["pi", "opencode", "claude", "codex"];
+
+/** A model Avanzel can host on this Mac, and where it stands. */
+export interface HostedModelInfo {
+  id: string;
+  label: string;
+  licence: string;
+  /** About how much memory it needs while it runs. */
+  memoryBytes: number;
+  /** Why this Mac can't run it (too little memory), or null. */
+  problem: string | null;
+  state:
+    | { kind: "missing"; /** What downloading it fetches. */ bytes: number }
+    | { kind: "downloading"; receivedBytes: number; totalBytes: number }
+    | { kind: "ready" }
+    | { kind: "error"; message: string; resumable: boolean };
+}
 
 /** What each kind of server is called in Settings. */
 export const PRIVATE_API_LABELS: Readonly<Record<PrivateInfo["api"], string>> = {
@@ -580,6 +603,8 @@ export interface SettingsSnapshot {
   /** Why the library at `app.libraryPath` couldn't be opened, if it couldn't. */
   libraryProblem: string | null;
   harnesses: HarnessInfo[];
+  /** The models Avanzel can host on this Mac. */
+  hosted: HostedModelInfo[];
   selectedHarness: string | null;
   model: ModelStatus;
   /**
@@ -1073,6 +1098,11 @@ export interface AvanzelBridge {
     onDictationsChanged(callback: () => void): () => void;
     setLibrary(patch: LibraryPatch): Promise<SettingsSnapshot>;
     /** The private model's key, which the app keeps in the Keychain and never hands to a window: a new one. */
+    /** Starts downloading a hosted model, which goes on in the background; the answer is the snapshot as it is then. */
+    downloadHosted(id: string): Promise<SettingsSnapshot>;
+    cancelHostedDownload(id: string): Promise<SettingsSnapshot>;
+    /** Deletes a hosted model and its server from this Mac. */
+    removeHosted(id: string): Promise<SettingsSnapshot>;
     generatePrivateKey(): Promise<SettingsSnapshot>;
     /** The clipboard's text as the key; refused in plain words when it isn't one. */
     pastePrivateKey(): Promise<SettingsSnapshot>;

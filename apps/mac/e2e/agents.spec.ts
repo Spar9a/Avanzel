@@ -3,7 +3,11 @@
 // so its check is one short prompt, which runs only when Check agents is clicked. Claude Code and Codex are launch()'s
 // stand-ins, which read as signed in when the pane opens.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, writeWav } from "../../../packages/engine/src/index.ts";
@@ -193,7 +197,7 @@ test("a private model is turned on with its server's address and model, saved as
   const toggle = settings.getByRole("switch", { name: "Use a private model" });
   await expect(toggle).not.toBeChecked();
   // Off, its rows are folded away and the agent's own model field is there.
-  const rows = settings.locator(".av-group-reveal");
+  const rows = settings.locator(".av-group-reveal").first();
   await expect(rows).toHaveAttribute("inert", ""); // folded away: its fields can't be reached
   await expect(settings.getByRole("textbox", { name: "fake model" })).toBeVisible();
   await toggle.click();
@@ -207,13 +211,13 @@ test("a private model is turned on with its server's address and model, saved as
   await name.press("Tab"); // the focus leaves the field, which saves it
   await expect
     .poll(() => loadSettings(library).private)
-    .toEqual({ enabled: true, baseUrl: "http://127.0.0.1:8765/v1", model: "mlx-community/Qwen3.5-4B-MLX-4bit", api: "chat", contextWindow: 65_536, keyEnv: "" });
+    .toEqual({ enabled: true, source: "own", hostedModel: "qwen3.5-4b", baseUrl: "http://127.0.0.1:8765/v1", model: "mlx-community/Qwen3.5-4B-MLX-4bit", api: "chat", contextWindow: 65_536, keyEnv: "" });
   // The agent's own model is replaced by the private one, so its field is gone. The fake agent doesn't speak the server, and pi and
   // OpenCode aren't installed here, so the window says what is wrong and what is safe, and what to install.
   await expect(settings.getByRole("textbox", { name: "fake model" })).toHaveCount(0);
   await expect(settings.getByText("A server that speaks OpenAI chat completions works with pi or opencode.", { exact: true })).toBeVisible();
   await expect(settings.getByText("Filing stops until this is fixed, and nothing is sent to any other server.", { exact: true })).toBeVisible();
-  await expect(settings.getByText("Install pi or OpenCode to use this kind of server.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Install pi or OpenCode to use this model.", { exact: true })).toBeVisible();
   // Off again, the agent's own model field is back and the private settings are kept.
   await toggle.click();
   await expect.poll(() => loadSettings(library).private.enabled).toBe(false);
@@ -226,7 +230,7 @@ test("turning a private model on moves the library to an installed agent that sp
   const library = await makeLibrary();
   saveSettings(library, {
     ...loadSettings(library),
-    private: { enabled: false, baseUrl: "http://127.0.0.1:1234/v1", model: "local-model", api: "messages", contextWindow: 65_536, keyEnv: "" },
+    private: { enabled: false, source: "own", hostedModel: "qwen3.5-4b", baseUrl: "http://127.0.0.1:1234/v1", model: "local-model", api: "messages", contextWindow: 65_536, keyEnv: "" },
   });
   const app = await launch({ AVANZEL_LIBRARY: library, ...onlyAgentsIn(agentStubs()) });
   const settings = await openSettings(app, "Agents");
@@ -242,11 +246,105 @@ test("turning a private model on moves the library to an installed agent that sp
   await app.close();
 });
 
+/** A stand-in for llama-server that answers /health and wants its key (a Bearer token) on /v1/models. */
+const STAND_IN_SERVER = `#!${process.execPath}
+const fs = require("node:fs");
+const http = require("node:http");
+const args = process.argv.slice(2);
+const get = (flag) => args[args.indexOf(flag) + 1];
+const key = fs.readFileSync(get("--api-key-file"), "utf8");
+http.createServer((req, res) => {
+  if (req.url === "/health") return res.end("ok");
+  if (req.headers.authorization !== "Bearer " + key) { res.statusCode = 401; return res.end("no"); }
+  res.end(JSON.stringify({ models: [get("--alias")] }));
+}).listen(Number(get("--port")), "127.0.0.1");
+`;
+
+/** The server's tarball and the model's file, as GitHub and Hugging Face would give them, and the file the app reads to use them. */
+async function hostedStand(): Promise<{ env: Record<string, string>; close: () => void }> {
+  const weights = "pretend weights ".repeat(64);
+  const src = mkdtempSync(path.join(tmpdir(), "avz-e2e-hosted-"));
+  mkdirSync(path.join(src, "llama-t1"));
+  writeFileSync(path.join(src, "llama-t1", "llama-server"), STAND_IN_SERVER, { mode: 0o755 });
+  execFileSync("/usr/bin/tar", ["-czf", path.join(src, "e.tgz"), "-C", src, "llama-t1"]);
+  const tar = readFileSync(path.join(src, "e.tgz"));
+  const server = createServer((req, res) => {
+    if (req.url === "/e.tgz") return void res.end(tar);
+    if (req.url?.endsWith("/tiny.gguf")) return void res.end(weights);
+    res.statusCode = 404;
+    res.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
+  const stub = path.join(src, "stub.json");
+  writeFileSync(
+    stub,
+    JSON.stringify({
+      modelsUrl: base,
+      idleMs: 1500,
+      engine: { tag: "t1", url: `${base}/e.tgz`, size: tar.length, sha256: sha(tar) },
+      model: { file: { repo: "test/tiny", revision: "abc", name: "tiny.gguf", size: Buffer.byteLength(weights), sha256: sha(weights) } },
+    }),
+  );
+  return { env: { AVANZEL_HOSTED_STUB: stub }, close: () => server.close() };
+}
+
+test("a model Avanzel hosts is downloaded in Settings, chosen, run by its own server for the agent, and stopped when nothing needs it", async () => {
+  const stand = await hostedStand();
+  const seen = path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-seen-")), "claude.txt");
+  const library = await makeLibrary();
+  // Only stand-ins for Claude Code and Codex are installed. This Claude Code notes where its run was pointed.
+  const app = await launch({
+    AVANZEL_LIBRARY: library,
+    ...stand.env,
+    ...onlyAgentsIn(agentStubs({ claude: `echo "$ANTHROPIC_BASE_URL $ANTHROPIC_AUTH_TOKEN" >> '${seen}'; echo ready` })),
+  });
+  const settings = await openSettings(app, "Agents");
+  await settings.getByRole("switch", { name: "Use a private model" }).click();
+  const row = settingsRow(settings, "Qwen3.5-4B on this Mac");
+  await expect(row).toBeVisible();
+  await expect(row.getByText("Apache 2.0", { exact: true })).toBeVisible();
+  await expect(row.getByText(/Runs on this Mac only, and works offline\./)).toBeVisible();
+
+  // Download fetches the server and the model, and ends with Remove download.
+  await row.getByRole("button", { name: /^Download/ }).click();
+  await expect(row.getByRole("button", { name: "Remove download", exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(row.getByText(/It starts when a note is filed, and stops after ten idle minutes\./)).toBeVisible();
+
+  // Use makes it the model, moves the library to an installed agent that can run it, and folds the server's own rows away.
+  await row.getByRole("button", { name: "Use", exact: true }).click();
+  await expect.poll(() => loadSettings(library).private.source).toBe("hosted");
+  await expect.poll(() => loadSettings(library).harness).toBe("claude");
+  await expect(row.getByRole("img", { name: "Chosen" })).toBeVisible();
+  await expect(settings.locator(".av-group-reveal .av-group-reveal")).toHaveAttribute("inert", "");
+  await expect(settings.getByText("Filing stops until this is fixed", { exact: false })).toHaveCount(0);
+
+  // A run starts the server on this Mac, with a key of its own, and the agent is pointed at it.
+  // A check already under way is left to finish, so the one this asks for waits for the sign-in read the pane started as it opened.
+  await expect.poll(async () => (await statusOf(app, "claude"))?.kind, { timeout: 20_000 }).not.toBe("checking");
+  await call(app, "checkAgent", "claude");
+  // (Its own sign-in read, before the private model was on, noted a blank line first.)
+  await expect.poll(() => (existsSync(seen) ? readFileSync(seen, "utf8") : ""), { timeout: 20_000 }).toMatch(/^http:\/\/127\.0\.0\.1:\d+ avz-/m);
+  const [base, key] = readFileSync(seen, "utf8").trim().split("\n").at(-1)!.split(" ") as [string, string];
+  expect((await fetch(`${base}/v1/models`)).status).toBe(401);
+  expect((await fetch(`${base}/v1/models`, { headers: { authorization: `Bearer ${key}` } })).status).toBe(200);
+  // Nothing holds it once the run is over, so it stops after its idle time.
+  await expect.poll(() => fetch(`${base}/health`).then(() => "up", () => "down"), { timeout: 15_000 }).toBe("down");
+
+  // Remove download takes the model and the server away.
+  await row.getByRole("button", { name: "Remove download", exact: true }).click();
+  await expect(row.getByRole("button", { name: /^Download/ })).toBeVisible();
+  await expect(settings.getByText("Qwen3.5-4B isn't downloaded yet.", { exact: true })).toBeVisible();
+  await app.close();
+  stand.close();
+});
+
 test("the private model's key is generated or pasted, kept by the app and never in the library, copied to give the server, and removed", async () => {
   const library = await makeLibrary();
   saveSettings(library, {
     ...loadSettings(library),
-    private: { enabled: true, baseUrl: "http://127.0.0.1:8765/v1", model: "m", api: "chat", contextWindow: 65_536, keyEnv: "" },
+    private: { enabled: true, source: "own", hostedModel: "qwen3.5-4b", baseUrl: "http://127.0.0.1:8765/v1", model: "m", api: "chat", contextWindow: 65_536, keyEnv: "" },
   });
   const app = await launch({ AVANZEL_LIBRARY: library, ...onlyAgentsIn(agentStubs()) });
   const settings = await openSettings(app, "Agents");

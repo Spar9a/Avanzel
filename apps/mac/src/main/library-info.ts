@@ -2,7 +2,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, type Stats } from "node:fs";
 import path from "node:path";
 import { defaultSettings, localDate, privateProblem, type Settings } from "@avanzel/engine";
-import type { FiledPage, LibraryInfo } from "../shared/ipc.ts";
+import { type FiledPage, HOSTED_AGENTS, type HostedModelInfo, type LibraryInfo } from "../shared/ipc.ts";
 import { pageName, WIKILINK } from "../shared/wikilinks.ts";
 import { answerSources } from "./setup-model.ts";
 
@@ -48,9 +48,23 @@ export function dictationInfo(settings: Settings | null): Pick<LibraryInfo, "dic
  * The `[private]` settings as Settings shows them, and the problem that keeps them from running with `agent` (the one in use, null when
  * none is). Without settings they are the defaults: off.
  */
-export function privateInfo(settings: Settings | null, agent: string | null): Pick<LibraryInfo, "private" | "privateProblem"> {
+export function privateInfo(
+  settings: Settings | null,
+  agent: string | null,
+  hosted: readonly HostedModelInfo[] = [],
+): Pick<LibraryInfo, "private" | "privateProblem"> {
   const model = (settings ?? defaultSettings()).private;
-  return { private: { ...model }, privateProblem: model.enabled && agent ? privateProblem(model, agent) : null };
+  return { private: { ...model }, privateProblem: model.enabled && agent ? problemOf(model, agent, hosted) : null };
+}
+
+/** What stops the private model from running with `agent`: for a model Avanzel hosts, an agent that can't take one, then the model not being downloaded. */
+function problemOf(model: Settings["private"], agent: string, hosted: readonly HostedModelInfo[]): string | null {
+  if (model.source !== "hosted") return privateProblem(model, agent);
+  if (!HOSTED_AGENTS.includes(agent)) return "This agent can't run a model on this Mac. Use pi, OpenCode, Claude Code or Codex.";
+  const info = hosted.find((entry) => entry.id === model.hostedModel);
+  if (!info) return "Avanzel doesn't host that model.";
+  if (info.problem) return info.problem;
+  return info.state.kind === "ready" ? null : `${info.label} isn't downloaded yet.`;
 }
 
 /**

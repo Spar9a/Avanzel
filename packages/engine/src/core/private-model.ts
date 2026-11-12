@@ -12,9 +12,18 @@ export type PrivateApi = "chat" | "messages" | "responses";
 
 export const PRIVATE_APIS: readonly PrivateApi[] = ["chat", "messages", "responses"];
 
+/** Where the model runs: on a server the person gives, or on one Avanzel hosts on this Mac (see hosted-model.ts). */
+export type PrivateSource = "own" | "hosted";
+
+export const PRIVATE_SOURCES: readonly PrivateSource[] = ["own", "hosted"];
+
 export interface PrivateModel {
   /** On: the library's agent runs against the server below, whatever its own login says. */
   enabled: boolean;
+  /** "own": the address, model and kind below. "hosted": Avanzel's own server runs `hostedModel`, and those three are ignored. */
+  source: PrivateSource;
+  /** The hosted model's id, for source "hosted". */
+  hostedModel: string;
   /** The server's address, such as http://127.0.0.1:8080/v1. */
   baseUrl: string;
   /** The model's name on that server. */
@@ -30,7 +39,7 @@ export interface PrivateModel {
 }
 
 export function defaultPrivateModel(): PrivateModel {
-  return { enabled: false, baseUrl: "", model: "", api: "chat", contextWindow: 65_536, keyEnv: "" };
+  return { enabled: false, source: "own", hostedModel: "qwen3.5-4b", baseUrl: "", model: "", api: "chat", contextWindow: 65_536, keyEnv: "" };
 }
 
 /** The agents that speak each kind of server, best first (pi and OpenCode take chat completions, Claude Code Messages, Codex Responses). */
@@ -39,6 +48,12 @@ const HARNESSES: Readonly<Record<PrivateApi, readonly string[]>> = {
   messages: ["claude"],
   responses: ["codex"],
 };
+
+/**
+ * The agents that can run against the model Avanzel hosts, best first: its server speaks all three kinds, so any agent that
+ * takes a private model can use it.
+ */
+export const HOSTED_HARNESSES: readonly string[] = ["pi", "opencode", "claude", "codex"];
 
 /** The built-in agents that can run against a server speaking `api`. */
 export function privateHarnesses(api: PrivateApi): readonly string[] {

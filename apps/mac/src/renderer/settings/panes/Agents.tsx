@@ -3,21 +3,24 @@
 // hands the choice back to Avanzel, one Check agents asks all of them again, and the agent in use names its model: picked from a list for
 // an agent that lists its models (Codex, OpenCode) or whose aliases Avanzel knows (Claude Code), typed for any other. Each control applies at once. The pane needs a library: without one the shell
 // draws NoLibrary in its place.
-import { Actions, Button, ChoiceRow, Group, GroupReveal, GroupRow, Notice, Row, Stack, Switch, Text, TextField } from "@avanzel/ui";
+import { Actions, Button, ChoiceRow, Group, GroupReveal, GroupRow, Notice, Progress, Row, Stack, Switch, Text, TextField } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { harnessName } from "../../../main/jobs.ts";
 import {
   AGENT_INSTALLS,
+  HOSTED_AGENTS,
   isAgentProblem,
   PRIVATE_AGENTS,
   PRIVATE_API_LABELS,
   type AgentInstall,
   type HarnessInfo,
+  type HostedModelInfo,
   type LibraryInfo,
   type PickOption,
   type PrivateInfo,
+  type SettingsSnapshot,
 } from "../../../shared/ipc.ts";
-import { agentLine, ownLine } from "../../setup/copy.ts";
+import { agentLine, megabytes, ownLine } from "../../setup/copy.ts";
 import { agentNotChecked, AGENTS_NOT_CHECKED } from "../copy.ts";
 import { attemptChange, PickButton, type PaneProps } from "../parts.tsx";
 
@@ -185,14 +188,68 @@ const CONTEXT_SIZES: readonly number[] = [16_384, 32_768, 65_536, 131_072, 262_1
 
 const tokens = (count: number) => `${count.toLocaleString("en-US")} tokens`;
 
-/** The words of a list of agents: "pi or OpenCode". */
-const orList = (names: readonly string[]) => names.map(harnessName).join(" or ");
+/** The words of a list of agents: "pi or OpenCode", "pi, OpenCode, Claude Code or Codex". */
+const orList = (names: readonly string[]) => {
+  const words = names.map(harnessName);
+  return words.length < 3 ? words.join(" or ") : `${words.slice(0, -1).join(", ")} or ${words.at(-1)}`;
+};
+
+/** What a model on this Mac says under its name: why it can't run, how it stands, or what it takes. */
+function hostedWords(info: HostedModelInfo): ReactNode {
+  const { state } = info;
+  const memory = Math.round(info.memoryBytes / 1e9);
+  let words: string;
+  let tone: "secondary" | "danger" = "secondary";
+  if (info.problem) {
+    words = info.problem;
+    tone = "danger";
+  } else if (state.kind === "error") {
+    words = state.message;
+    tone = "danger";
+  } else if (state.kind === "downloading") {
+    // The count and the bar go under the words, where there is room: beside the buttons they squeeze the name into one word a line.
+    const count = state.totalBytes > 0 ? `${megabytes(state.receivedBytes).toLocaleString("en-US")} of ${megabytes(state.totalBytes).toLocaleString("en-US")} MB. ` : "";
+    return (
+      <>
+        <Text variant="footnote" tone="secondary" as="span">{`Downloading. ${count}You can close this window, and it goes on.`}</Text>
+        <Progress label={`Downloading ${info.label}`} value={state.totalBytes > 0 ? state.receivedBytes / state.totalBytes : undefined} />
+      </>
+    );
+  } else if (state.kind === "ready") {
+    words = "Runs on this Mac only. It starts when a note is filed, and stops after ten idle minutes.";
+  } else {
+    words = `Runs on this Mac only, and works offline. It needs about ${memory} GB of memory while it runs.`;
+  }
+  return <Text variant="footnote" tone={tone} as="span">{words}</Text>;
+}
+
+/** The buttons of a model on this Mac: Download, the download's progress with Cancel, Remove download, or Try again. Nothing where this Mac can't run it. */
+function HostedControls({ info, act }: { info: HostedModelInfo; act: (run: () => Promise<SettingsSnapshot>) => void }): ReactNode {
+  if (info.problem) return null;
+  const { state } = info;
+  switch (state.kind) {
+    case "missing":
+      return (
+        <Button size="small" variant="secondary" onClick={() => act(() => api.downloadHosted(info.id))}>
+          {state.bytes > 0 ? `Download (${megabytes(state.bytes).toLocaleString("en-US")} MB)` : "Download"}
+        </Button>
+      );
+    case "downloading":
+      return <Button size="small" variant="quiet" onClick={() => act(() => api.cancelHostedDownload(info.id))}>Cancel</Button>;
+    case "ready":
+      return <Button size="small" variant="secondary" onClick={() => act(() => api.removeHosted(info.id))}>Remove download</Button>;
+    case "error":
+      return <Button size="small" variant="secondary" onClick={() => act(() => api.downloadHosted(info.id))}>{state.resumable ? "Continue" : "Try again"}</Button>;
+  }
+}
 
 interface PrivateGroupProps extends Pick<PaneProps, "onChange" | "attempt"> {
   lib: LibraryInfo;
   /** The agent in use, by name, or null when none is. */
   inUse: string | null;
   harnesses: readonly HarnessInfo[];
+  /** The models Avanzel can host on this Mac. */
+  hosted: readonly HostedModelInfo[];
 }
 
 /**
@@ -203,19 +260,25 @@ interface PrivateGroupProps extends Pick<PaneProps, "onChange" | "attempt"> {
  * of an agent is. The key is never typed or shown: Generate makes one, Paste takes the clipboard's, Copy gives it to the server and
  * Remove forgets it; main keeps it in the Keychain. A private model that can't run with the agent in use says why in a Notice.
  */
-function PrivateGroup({ lib, inUse, harnesses, onChange, attempt }: PrivateGroupProps): ReactNode {
+function PrivateGroup({ lib, inUse, harnesses, hosted, onChange, attempt }: PrivateGroupProps): ReactNode {
   const model = lib.private;
   const keySaved = lib.privateKeySaved;
   const [address, setAddress] = useState(model.baseUrl);
   const [name, setName] = useState(model.model);
   const change = (patch: Partial<PrivateInfo>, harness?: string) =>
     attemptChange({ onChange, attempt }, () => api.setLibrary({ private: patch, ...(harness ? { harness } : {}) }));
-  const installed = (kind: PrivateInfo["api"]) =>
-    PRIVATE_AGENTS[kind].filter((agent) => harnesses.some((h) => h.name === agent && h.available));
-  const withAgent = (kind: PrivateInfo["api"]): string | undefined => {
-    const first = installed(kind)[0];
-    return first && !(inUse && PRIVATE_AGENTS[kind].includes(inUse)) ? first : undefined;
+  const act = (run: () => Promise<SettingsSnapshot>) => void attemptChange({ onChange, attempt }, run);
+  // The model on this Mac any agent can run, or a server of the person's own, which one kind of agent speaks.
+  const onThisMac = model.source === "hosted";
+  const mine = hosted.find((entry) => entry.id === model.hostedModel);
+  const speaking = onThisMac ? HOSTED_AGENTS : PRIVATE_AGENTS[model.api];
+  const installedOf = (names: readonly string[]) => names.filter((agent) => harnesses.some((h) => h.name === agent && h.available));
+  /** The installed agent to move the library to, when the one in use isn't among `names`; none when it is, or none is installed. */
+  const agentFrom = (names: readonly string[]): string | undefined => {
+    const first = installedOf(names)[0];
+    return first && !(inUse && names.includes(inUse)) ? first : undefined;
   };
+  const withAgent = (kind: PrivateInfo["api"]): string | undefined => agentFrom(PRIVATE_AGENTS[kind]);
   const save = (field: "baseUrl" | "model", value: string) => {
     if (value.trim() !== model[field]) void change({ [field]: value.trim() });
   };
@@ -224,7 +287,7 @@ function PrivateGroup({ lib, inUse, harnesses, onChange, attempt }: PrivateGroup
     label: PRIVATE_API_LABELS[kind],
     checked: kind === model.api,
   }));
-  const agents = installed(model.api).map((agent) => ({ value: agent, label: harnessName(agent), checked: agent === inUse }));
+  const agents = installedOf(speaking).map((agent) => ({ value: agent, label: harnessName(agent), checked: agent === inUse }));
   const sizes = [...new Set([...CONTEXT_SIZES, model.contextWindow])]
     .sort((a, b) => a - b)
     .map((size) => ({ value: String(size), label: tokens(size), checked: size === model.contextWindow }));
@@ -232,34 +295,57 @@ function PrivateGroup({ lib, inUse, harnesses, onChange, attempt }: PrivateGroup
     <>
       <Group
         label="Private model"
-        note="Run your agent against a model of your own, on this Mac or on your company's server. What you say and what is filed goes to that server and nowhere else."
+        note="Run your agent against a model that stays on this Mac, or on a server you run. What you say and what is filed goes to that model and nowhere else."
       >
         <Switch
           label="Use a private model"
           description="The agent below files and answers with it, in place of the agent's own models."
           checked={model.enabled}
-          onChange={(on) => void change({ enabled: on }, on ? withAgent(model.api) : undefined)}
+          onChange={(on) => void change({ enabled: on }, on ? agentFrom(speaking) : undefined)}
         />
         <GroupReveal open={model.enabled}>
-          <GroupRow label="Server speaks" description="What your server understands. A server on this Mac that runs mlx-lm speaks OpenAI chat completions.">
-            <PickButton label="Server speaks" value={PRIVATE_API_LABELS[model.api]} options={kinds} onChoose={(kind) => void change({ api: kind as PrivateInfo["api"] }, withAgent(kind as PrivateInfo["api"]))} />
-          </GroupRow>
+          {mine && (
+            <ChoiceRow
+              label={`${mine.label} on this Mac`}
+              description={hostedWords(mine)}
+              // Its progress moves all the time: VoiceOver hears where it stands, not each step.
+              live={model.enabled && mine.state.kind !== "downloading"}
+              badge={mine.licence}
+              chosen={model.enabled && onThisMac}
+              unavailable={mine.problem !== null}
+              chooseLabel="Use"
+              onChoose={() => void change({ source: "hosted" }, agentFrom(HOSTED_AGENTS))}
+            >
+              <HostedControls info={mine} act={act} />
+            </ChoiceRow>
+          )}
+          <ChoiceRow
+            label="Your own server"
+            description={<Text variant="footnote" tone="secondary" as="span">Your Mac, a company server, or a hosted model. You give its address and key.</Text>}
+            chosen={model.enabled && !onThisMac}
+            chooseLabel="Use"
+            onChoose={() => void change({ source: "own" }, withAgent(model.api))}
+          />
           <GroupRow
             label="Agent"
             description={
               agents.length
-                ? `${orList(PRIVATE_AGENTS[model.api])} speak${PRIVATE_AGENTS[model.api].length === 1 ? "s" : ""} this kind of server.`
-                : `Install ${orList(PRIVATE_AGENTS[model.api])} to use this kind of server.`
+                ? `${orList(speaking)} can run this model.`
+                : `Install ${orList(speaking)} to use this model.`
             }
           >
             {agents.length > 0 && (
               <PickButton
                 label="Private model agent"
-                value={inUse && PRIVATE_AGENTS[model.api].includes(inUse) ? harnessName(inUse) : "Choose…"}
+                value={inUse && speaking.includes(inUse) ? harnessName(inUse) : "Choose…"}
                 options={agents}
                 onChoose={(agent) => attemptChange({ onChange, attempt }, () => api.setLibrary({ harness: agent }))}
               />
             )}
+          </GroupRow>
+          <GroupReveal open={!onThisMac}>
+          <GroupRow label="Server speaks" description="What your server understands. A server on this Mac that runs mlx-lm speaks OpenAI chat completions.">
+            <PickButton label="Server speaks" value={PRIVATE_API_LABELS[model.api]} options={kinds} onChoose={(kind) => void change({ api: kind as PrivateInfo["api"] }, withAgent(kind as PrivateInfo["api"]))} />
           </GroupRow>
           <GroupRow label="Address" description="Where the server is, such as http://127.0.0.1:8765/v1. A server that isn't on this Mac needs https.">
             <div className="settings-field" onBlur={() => save("baseUrl", address)}>
@@ -296,6 +382,7 @@ function PrivateGroup({ lib, inUse, harnesses, onChange, attempt }: PrivateGroup
               )}
             </Row>
           </GroupRow>
+          </GroupReveal>
         </GroupReveal>
       </Group>
       {model.enabled && lib.privateProblem && (
@@ -374,7 +461,7 @@ export function Agents(props: PaneProps): ReactNode {
           <Button size="small" variant="secondary" busy={checking} onClick={checkAll}>Check agents</Button>
         </Actions>
       )}
-      <PrivateGroup key={lib.private.enabled ? "private" : "own"} lib={lib} inUse={inUse} harnesses={snap.harnesses} onChange={onChange} attempt={attempt} />
+      <PrivateGroup key={lib.private.enabled ? "private" : "own"} lib={lib} inUse={inUse} harnesses={snap.harnesses} hosted={snap.hosted} onChange={onChange} attempt={attempt} />
       {inUse && !lib.private.enabled && (
         <ModelGroup
           key={inUse}

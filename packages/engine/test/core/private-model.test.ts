@@ -18,6 +18,8 @@ const tmp = useTmp();
 
 const local = (over: Partial<PrivateModel> = {}): PrivateModel => ({
   enabled: true,
+  source: "own",
+  hostedModel: "qwen3.5-4b",
   baseUrl: "http://127.0.0.1:8765/v1",
   model: "mlx-community/Qwen3.5-4B-MLX-4bit",
   api: "chat",

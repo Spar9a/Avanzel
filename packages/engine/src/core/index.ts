@@ -11,6 +11,7 @@ export * from "./claude-stream.ts";
 export * from "./guard-hook.ts";
 export * from "./harness.ts";
 export * from "./agent-models.ts";
+export * from "./hosted-model.ts";
 export * from "./private-model.ts";
 export * from "./librarian.ts";
 export * from "./tasks.ts";
