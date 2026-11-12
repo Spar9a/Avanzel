@@ -175,10 +175,10 @@ test("Codex's model is chosen from the models Codex lists, and one saved that it
   );
   const app = await launch({ AVANZEL_LIBRARY: library, CODEX_HOME: codexHome });
   const settings = await openSettings(app, "Agents");
-  // Codex lists its models, so its model is a pop-up button on the saved one, and there is no field.
+  // Codex lists its models, so its model is a choice button on the saved one, and there is no field.
   const model = settings.getByRole("button", { name: "Codex model: typed-model", exact: true });
   await expect(model).toBeVisible();
-  await expect(model).toHaveAttribute("aria-haspopup", "menu");
+  await expect(model).toHaveAttribute("aria-haspopup", "listbox");
   await expect(settings.getByRole("textbox", { name: "Codex model" })).toHaveCount(0);
   const listed = ((await call(app, "snapshot")) as SettingsSnapshot).harnesses.find((h) => h.name === "codex")?.models;
   expect(listed).toEqual([{ value: "gpt-6-luna", label: "GPT-6-Luna" }]);
