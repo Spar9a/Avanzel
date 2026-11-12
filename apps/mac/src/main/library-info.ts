@@ -1,7 +1,7 @@
 // Read-only views of the library for the UI: page titles, recent filings, wikilink lookup.
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, type Stats } from "node:fs";
 import path from "node:path";
-import { defaultSettings, localDate, type Settings } from "@avanzel/engine";
+import { defaultSettings, localDate, privateProblem, type Settings } from "@avanzel/engine";
 import type { FiledPage, LibraryInfo } from "../shared/ipc.ts";
 import { pageName, WIKILINK } from "../shared/wikilinks.ts";
 import { answerSources } from "./setup-model.ts";
@@ -42,6 +42,15 @@ export function pageAt(root: string, rel: string): "page" | "link" | "none" {
 export function dictationInfo(settings: Settings | null): Pick<LibraryInfo, "dictationLog" | "dictationSkipApps" | "dictationSkipSites"> {
   const { log, skipApps, skipSites } = (settings ?? defaultSettings()).dictation;
   return { dictationLog: log, dictationSkipApps: [...skipApps], dictationSkipSites: [...skipSites] };
+}
+
+/**
+ * The `[private]` settings as Settings shows them, and the problem that keeps them from running with `agent` (the one in use, null when
+ * none is). Without settings they are the defaults: off.
+ */
+export function privateInfo(settings: Settings | null, agent: string | null): Pick<LibraryInfo, "private" | "privateProblem"> {
+  const model = (settings ?? defaultSettings()).private;
+  return { private: { ...model }, privateProblem: model.enabled && agent ? privateProblem(model, agent) : null };
 }
 
 /**

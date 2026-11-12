@@ -159,6 +159,8 @@ export interface LibrarianOptions {
   /** Only `captureAudio` (and filing recordings dropped into the inbox) needs one. */
   transcriber?: Transcriber | null;
   clock?: () => Date;
+  /** The app's own key for the library's private model, read when a run starts; null when it keeps none. */
+  privateKey?: () => string | null;
 }
 
 /** What one agent run is asked to do. */
@@ -188,13 +190,15 @@ export class Librarian {
   readonly harnessName: string | null;
   readonly clock: () => Date;
   readonly #transcriber: Transcriber | null;
+  readonly #privateKey: () => string | null;
   #harness: Harness | null = null;
 
   constructor(
     vault: Vault,
     settings: Settings,
-    { harnessName = null, transcriber = null, clock = () => new Date() }: LibrarianOptions = {},
+    { harnessName = null, transcriber = null, clock = () => new Date(), privateKey = () => null }: LibrarianOptions = {},
   ) {
+    this.#privateKey = privateKey;
     this.vault = vault;
     this.settings = settings;
     this.harnessName = harnessName;
@@ -584,6 +588,8 @@ export class Librarian {
           images,
           signal,
           onStep: narration?.onStep,
+          private: this.settings.private,
+          privateKey: this.#privateKey(),
         });
       } finally {
         // Right after the run, before the guard: what the guard puts back is its own doing, not a step of the agent's.

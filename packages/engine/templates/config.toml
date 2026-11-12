@@ -14,6 +14,18 @@ auto_commit = ${auto_commit}
 # e.g. claude = "sonnet", codex = "<model name>", opencode = "<provider>/<model>".
 [models]
 ${models}
+# A model of your own, on this Mac or on your company's server, in place of the agent's own: the agent above is run against it, so
+# nothing is sent to the agent's maker. "chat" is a server that speaks OpenAI chat completions (works with pi and OpenCode),
+# "messages" Anthropic Messages (Claude Code), "responses" OpenAI Responses (Codex). A server that isn't on this Mac needs https.
+# key_env names an environment variable that holds the server's key; leave it empty for a server that needs none.
+[private]
+enabled = ${private_enabled}
+base_url = ${private_base_url}
+model = ${private_model}
+api = ${private_api}
+context_window = ${private_context_window}
+key_env = ${private_key_env}
+
 [voice]
 # "onnx-asr" runs open speech models on this Mac; "command" runs any local speech-to-text
 # CLI that prints the transcript on stdout.

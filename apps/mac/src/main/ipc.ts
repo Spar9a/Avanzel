@@ -91,12 +91,16 @@ export function registerIpc(controller: Controller): void {
   handle("settings:delete-dictation", (e, id: unknown) =>
     controller.isSettingsPage(e.sender) && typeof id === "string" ? controller.deleteDictation(id) : { ok: false, message: "Only Settings can delete a dictation." });
   handle("settings:set-library", (_e, patch: LibraryPatch) => controller.setLibrarySettings(patch));
+  handle("settings:generate-private-key", () => controller.generatePrivateKey());
+  handle("settings:paste-private-key", () => controller.pastePrivateKey());
+  handle("settings:copy-private-key", () => controller.copyPrivateKey());
+  handle("settings:remove-private-key", () => controller.removePrivateKey());
   handle("settings:choose-library", () => controller.chooseLibrary());
   handle("settings:download-model", () => controller.downloadModel());
   handle("settings:save-task", (_e, task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">) =>
     controller.saveTaskFromSettings(task));
   handle("settings:run-task", (_e, id: string) => controller.runTaskFromSettings(id));
-  handle("settings:check-agents", () => controller.checkAgents());
+  handle("settings:check-agents", () => controller.checkAgents(true));
   handle("settings:check-agent", (_e, name: string) => controller.checkAgent(name));
   handle("settings:request-permission", (_e, kind: "microphone" | "screen") => controller.requestPermission(kind));
   // Avanzel's own update: Check now (or Try again), and Restart to update, which waits while something is in progress.

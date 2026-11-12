@@ -11,6 +11,7 @@ import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import {
   agentCalls,
   agentPath,
+  agentStubs,
   alive,
   call,
   capsuleKind,
@@ -18,6 +19,7 @@ import {
   launch,
   makeLibrary,
   noAgents,
+  onlyAgentsIn,
   openSettings,
   settingsRow,
   SIGNED_OUT_CLAUDE,
@@ -158,6 +160,134 @@ test("the model starts from the one saved, saves when the focus leaves the field
   await app.close();
 });
 
+test("Codex's model is chosen from the models Codex lists, and one saved that it doesn't list is shown as it was typed", async () => {
+  const library = await makeLibrary();
+  saveSettings(library, { ...loadSettings(library), harness: "codex", models: { codex: "typed-model" } });
+  const codexHome = mkdtempSync(path.join(tmpdir(), "avz-e2e-codex-list-"));
+  writeFileSync(
+    path.join(codexHome, "models_cache.json"),
+    JSON.stringify({
+      models: [
+        { slug: "gpt-hidden", display_name: "Hidden", visibility: "hide" },
+        { slug: "gpt-6-luna", display_name: "GPT-6-Luna", visibility: "list" },
+      ],
+    }),
+  );
+  const app = await launch({ AVANZEL_LIBRARY: library, CODEX_HOME: codexHome });
+  const settings = await openSettings(app, "Agents");
+  // Codex lists its models, so its model is a choice button on the saved one, and there is no field.
+  const model = settings.getByRole("button", { name: "Codex model: typed-model", exact: true });
+  await expect(model).toBeVisible();
+  await expect(model).toHaveAttribute("aria-haspopup", "listbox");
+  await expect(settings.getByRole("textbox", { name: "Codex model" })).toHaveCount(0);
+  const listed = ((await call(app, "snapshot")) as SettingsSnapshot).harnesses.find((h) => h.name === "codex")?.models;
+  expect(listed).toEqual([{ value: "gpt-6-luna", label: "GPT-6-Luna" }]);
+  await app.close();
+});
+
+test("a private model is turned on with its server's address and model, saved as they are typed, and says why the agent in use can't run it", async () => {
+  const library = await makeLibrary();
+  // Only the stand-ins for Claude Code and Codex are installed: this Mac's own pi or OpenCode would move the library to it.
+  const app = await launch({ AVANZEL_LIBRARY: library, ...onlyAgentsIn(agentStubs()) });
+  const settings = await openSettings(app, "Agents");
+  const toggle = settings.getByRole("switch", { name: "Use a private model" });
+  await expect(toggle).not.toBeChecked();
+  // Off, its rows are folded away and the agent's own model field is there.
+  const rows = settings.locator(".av-group-reveal");
+  await expect(rows).toHaveAttribute("inert", ""); // folded away: its fields can't be reached
+  await expect(settings.getByRole("textbox", { name: "fake model" })).toBeVisible();
+  await toggle.click();
+  await expect(rows).not.toHaveAttribute("inert", "");
+  await expect.poll(() => loadSettings(library).private.enabled).toBe(true);
+  const address = settings.getByRole("textbox", { name: "Server address" });
+  await address.fill(" http://127.0.0.1:8765/v1 ");
+  await address.press("Enter");
+  const name = settings.getByRole("textbox", { name: "Private model name" });
+  await name.fill("mlx-community/Qwen3.5-4B-MLX-4bit");
+  await name.press("Tab"); // the focus leaves the field, which saves it
+  await expect
+    .poll(() => loadSettings(library).private)
+    .toEqual({ enabled: true, baseUrl: "http://127.0.0.1:8765/v1", model: "mlx-community/Qwen3.5-4B-MLX-4bit", api: "chat", contextWindow: 65_536, keyEnv: "" });
+  // The agent's own model is replaced by the private one, so its field is gone. The fake agent doesn't speak the server, and pi and
+  // OpenCode aren't installed here, so the window says what is wrong and what is safe, and what to install.
+  await expect(settings.getByRole("textbox", { name: "fake model" })).toHaveCount(0);
+  await expect(settings.getByText("A server that speaks OpenAI chat completions works with pi or opencode.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Filing stops until this is fixed, and nothing is sent to any other server.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Install pi or OpenCode to use this kind of server.", { exact: true })).toBeVisible();
+  // Off again, the agent's own model field is back and the private settings are kept.
+  await toggle.click();
+  await expect.poll(() => loadSettings(library).private.enabled).toBe(false);
+  await expect(settings.getByRole("textbox", { name: "fake model" })).toBeVisible();
+  expect(loadSettings(library).private.model).toBe("mlx-community/Qwen3.5-4B-MLX-4bit");
+  await app.close();
+});
+
+test("turning a private model on moves the library to an installed agent that speaks the server, and then nothing is wrong", async () => {
+  const library = await makeLibrary();
+  saveSettings(library, {
+    ...loadSettings(library),
+    private: { enabled: false, baseUrl: "http://127.0.0.1:1234/v1", model: "local-model", api: "messages", contextWindow: 65_536, keyEnv: "" },
+  });
+  const app = await launch({ AVANZEL_LIBRARY: library, ...onlyAgentsIn(agentStubs()) });
+  const settings = await openSettings(app, "Agents");
+  await settings.getByRole("switch", { name: "Use a private model" }).click();
+  // Claude Code speaks Anthropic Messages and its stand-in is installed, so it becomes the agent that files.
+  await expect.poll(() => loadSettings(library).harness).toBe("claude");
+  expect(loadSettings(library).private.enabled).toBe(true);
+  await expect(settingsRow(settings, "Claude Code").getByRole("img", { name: "Chosen" })).toBeVisible();
+  await expect(settings.getByRole("button", { name: "Private model agent: Claude Code", exact: true })).toBeVisible();
+  await expect(settings.getByText("Filing stops until this is fixed", { exact: false })).toHaveCount(0);
+  // Claude Code's own model list is gone: the model is the server's.
+  await expect(settings.getByRole("button", { name: /^Claude Code model/ })).toHaveCount(0);
+  await app.close();
+});
+
+test("the private model's key is generated or pasted, kept by the app and never in the library, copied to give the server, and removed", async () => {
+  const library = await makeLibrary();
+  saveSettings(library, {
+    ...loadSettings(library),
+    private: { enabled: true, baseUrl: "http://127.0.0.1:8765/v1", model: "m", api: "chat", contextWindow: 65_536, keyEnv: "" },
+  });
+  const app = await launch({ AVANZEL_LIBRARY: library, ...onlyAgentsIn(agentStubs()) });
+  const settings = await openSettings(app, "Agents");
+  const userData = await app.evaluate(({ app: electron }) => electron.getPath("userData"));
+  const keyFile = path.join(userData, "private-key.bin");
+  const clipboardText = () => app.evaluate(({ clipboard }) => clipboard.readText());
+  const generate = settings.getByRole("button", { name: "Generate", exact: true });
+  await expect(generate).toBeVisible();
+  await expect(settings.getByRole("button", { name: "Copy", exact: true })).toHaveCount(0);
+
+  // Generate keeps a new key, and the buttons become Copy and Remove. The key is in the app's data and not in the library.
+  await generate.click();
+  await expect(settings.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
+  await expect(settings.getByRole("button", { name: "Generate", exact: true })).toHaveCount(0);
+  const generated = readFileSync(keyFile, "utf8");
+  expect(generated).toMatch(/^avz-[A-Za-z0-9_-]{43}$/);
+  expect(readFileSync(path.join(library, ".avanzel", "config.toml"), "utf8")).not.toContain(generated);
+  expect(((await call(app, "snapshot")) as SettingsSnapshot).library?.privateKeySaved).toBe(true);
+  expect(JSON.stringify(await call(app, "snapshot"))).not.toContain(generated); // a window never gets the key back
+
+  // Copy puts it on the clipboard, for the server's own settings.
+  await settings.getByRole("button", { name: "Copy", exact: true }).click();
+  await expect.poll(clipboardText).toBe(generated);
+
+  // Remove forgets it.
+  await settings.getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(generate).toBeVisible();
+  expect(existsSync(keyFile)).toBe(false);
+
+  // Paste takes the clipboard's text as the key, when it is one. A text with spaces in it isn't, and nothing is kept.
+  await app.evaluate(({ clipboard }) => clipboard.writeText("two words here"));
+  await settings.getByRole("button", { name: "Paste", exact: true }).click();
+  await expect(settings.getByText(/isn't a key/)).toBeVisible();
+  expect(existsSync(keyFile)).toBe(false);
+  await app.evaluate(({ clipboard }) => clipboard.writeText("  my-server-key-123\n"));
+  await settings.getByRole("button", { name: "Paste", exact: true }).click();
+  await expect(settings.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
+  expect(readFileSync(keyFile, "utf8")).toBe("my-server-key-123");
+  await app.close();
+});
+
 test("an agent's name stays on one line beside its controls, with its status under it, in a pane that scrolls", async () => {
   // Claude Code is signed out and isn't the agent chosen: its row holds the longest status, "Best results" and Use.
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), PATH: agentPath({ claude: SIGNED_OUT_CLAUDE }) });
@@ -206,7 +336,7 @@ test("with no agent installed, every row says so, and Claude Code and Codex offe
   await expect(row("Claude Code").getByRole("img", { name: "Chosen" })).toBeVisible(); // chosen, installed or not
   await expect(settings.getByRole("img", { name: "Chosen" })).toHaveCount(1);
   await expect(settings.getByText("Best results", { exact: true })).toHaveCount(1);
-  await expect(settings.getByText(/^Experimental\. /)).toHaveCount(1); // Gemini CLI's description
+  await expect(settings.getByText(/^Experimental\. /)).toHaveCount(2); // Gemini CLI's and pi's descriptions
   await snap(settings, "settings-agents-none");
 
   // Only Claude Code and Codex have an install command. Main copies the one it holds for the agent, and the button says so for 2 s.

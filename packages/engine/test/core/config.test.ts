@@ -71,6 +71,7 @@ describe("loadSettings", () => {
     expect(settings).toEqual(defaultSettings());
     expect(settings.voice.model).toBe("nemo-parakeet-tdt-0.6b-v3");
     expect(settings).toEqual({
+      private: { enabled: false, baseUrl: "", model: "", api: "chat", contextWindow: 65_536, keyEnv: "" },
       harness: "auto",
       timeoutSeconds: 900,
       autoCommit: true,
@@ -305,6 +306,7 @@ describe("saveSettings", () => {
 
   it("round-trips every setting, awkward strings included", () => {
     const settings: Settings = {
+      private: { enabled: true, baseUrl: "https://llm.example.com/v1", model: 'org/model "x"', api: "responses", contextWindow: 32768, keyEnv: "LLM_KEY" },
       harness: "my agent",
       timeoutSeconds: 30,
       autoCommit: false,
