@@ -74,11 +74,11 @@ function DictationPermissionRow({ label, description, granted, onAsk }: { label:
 }
 
 /**
- * A list of what is never kept: the row says what the library keeps on it, and Edit… opens its field of lines, with how a line is written and
- * what it can't promise. It is saved when the focus leaves the field, for Done too, and its draft is the window's. A line main refuses is told by the
- * window, and the row goes on saying what is really kept.
+ * A list of what is never kept: the row says what the library keeps on it, and Edit… opens its list, with how an item is written and what it
+ * can't promise. Each change is saved at once, and its draft is Settings'. An item main refuses is told by Settings, and the row goes on saying
+ * what is really kept.
  */
-function SkipRow({ label, summary, help, edit, rows }: { label: string; summary: string; help: string; edit: TextEdit; rows: number }): ReactNode {
+function SkipRow({ label, summary, help, edit }: { label: string; summary: string; help: string; edit: TextEdit }): ReactNode {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -90,7 +90,7 @@ function SkipRow({ label, summary, help, edit, rows }: { label: string; summary:
       {open && (
         <div className="settings-editor">
           <Stack gap={6}>
-            <LinesField label={label} edit={edit} rows={rows} autoFocus />
+            <LinesField label={label} edit={edit} />
             <Text variant="footnote" tone="secondary">{help}</Text>
           </Stack>
         </div>
@@ -132,8 +132,8 @@ export function Privacy({ snap, onChange, attempt, drafts }: PaneProps & { draft
       {/* The lists are the library's: with none open, or one Avanzel can't find, there is nowhere to keep them. */}
       {snap.library?.exists && (
         <Group label="Never kept" note={SKIP_NOTE}>
-          <SkipRow label="Apps to skip" summary={skipAppsSummary(snap.library.dictationSkipApps)} help={SKIP_APPS_HELP} edit={drafts.skipApps} rows={5} />
-          <SkipRow label="Sites to skip" summary={skipSitesSummary(snap.library.dictationSkipSites)} help={SKIP_SITES_HELP} edit={drafts.skipSites} rows={3} />
+          <SkipRow label="Apps to skip" summary={skipAppsSummary(snap.library.dictationSkipApps)} help={SKIP_APPS_HELP} edit={drafts.skipApps} />
+          <SkipRow label="Sites to skip" summary={skipSitesSummary(snap.library.dictationSkipSites)} help={SKIP_SITES_HELP} edit={drafts.skipSites} />
         </Group>
       )}
       <Group label="What leaves this Mac">

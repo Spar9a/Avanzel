@@ -1,10 +1,10 @@
-// The library's fields of lines (the Dictionary on Voice, the skip lists on Privacy): their drafts, which the Settings window keeps so that they
-// outlast the pane, and the field itself, saved when the focus leaves it.
-import { ListField, TextArea } from "@avanzel/ui";
-import { useContext, useRef, useState, type ReactNode } from "react";
+// The library's lists of lines (the Dictionary on Voice, the skip lists on Privacy): their drafts, which Settings keeps so that they
+// outlast the pane, and the list itself, saved at each change.
+import { ListField } from "@avanzel/ui";
+import { useRef, useState, type ReactNode } from "react";
 import type { LibraryPatch, SettingsSnapshot } from "../../shared/ipc.ts";
 import { failed, followSnapshot, saved, sent, startDraft, toSend, typed, type TextDraft } from "./dictionary-draft.ts";
-import { EmbeddedSettings, type PaneProps } from "./parts.tsx";
+import type { PaneProps } from "./parts.tsx";
 
 const api = window.avanzel.settings;
 
@@ -100,7 +100,7 @@ const LIST_PLACEHOLDERS: Record<string, string> = {
   Dictionary: "Avanzel = avant cell",
 };
 
-/** What each list counts, for its closed button in the menu bar panel: "10 apps". */
+/** What each list counts, for its closed button: "10 apps". */
 const LIST_NOUNS: Record<string, { one: string; many: string }> = {
   "Apps to skip": { one: "app", many: "apps" },
   "Sites to skip": { one: "site", many: "sites" },
@@ -108,30 +108,21 @@ const LIST_NOUNS: Record<string, { one: string; many: string }> = {
 };
 
 /**
- * A field of lines, saved when the focus leaves it. TextArea takes no onBlur, so the box around it hears the focus leave (React's onBlur bubbles).
- * In the menu bar panel (`EmbeddedSettings`) it is a pop-up button that says what the list holds, and opens on the field and the items, one at a
- * time, each with its own Remove; each change is saved at once.
+ * A list of the library's lines: a pop-up button that says what the list holds, and opens on the field and the items, one at a time,
+ * each with its own Remove. Each change is saved at once.
  */
-export function LinesField({ label, edit, rows, autoFocus }: { label: string; edit: TextEdit; rows: number; autoFocus?: boolean }): ReactNode {
-  const embedded = useContext(EmbeddedSettings);
-  if (embedded) {
-    const items = edit.draft.split("\n").map((line) => line.trim()).filter(Boolean);
-    return (
-      <ListField
-        label={label}
-        items={items}
-        collapsed={LIST_NOUNS[label] ?? { one: "item", many: "items" }}
-        placeholder={LIST_PLACEHOLDERS[label]}
-        onChange={(next) => {
-          edit.setDraft(next.join("\n"));
-          void edit.save();
-        }}
-      />
-    );
-  }
+export function LinesField({ label, edit }: { label: string; edit: TextEdit }): ReactNode {
+  const items = edit.draft.split("\n").map((line) => line.trim()).filter(Boolean);
   return (
-    <div onBlur={() => void edit.save()}>
-      <TextArea label={label} labelHidden rows={rows} value={edit.draft} onChange={edit.setDraft} autoFocus={autoFocus} />
-    </div>
+    <ListField
+      label={label}
+      items={items}
+      collapsed={LIST_NOUNS[label] ?? { one: "item", many: "items" }}
+      placeholder={LIST_PLACEHOLDERS[label]}
+      onChange={(next) => {
+        edit.setDraft(next.join("\n"));
+        void edit.save();
+      }}
+    />
   );
 }

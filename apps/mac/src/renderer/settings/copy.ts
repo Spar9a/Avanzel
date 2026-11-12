@@ -118,8 +118,8 @@ export const SKIP_NOTE = "What you dictate there still goes in, but is never kep
  * What a line of a skip list holds, under its field. A site can be told only where the browser says which page is open (front-app.ts:
  * Safari and the Chromium set); elsewhere the dictation is kept (cursor-policy.ts), and the line says so rather than promise more.
  */
-export const SKIP_APPS_HELP = "One bundle id per line, such as com.apple.Passwords.";
-export const SKIP_SITES_HELP = "One website per line, such as example.com. Safari and Chrome-based browsers say which site is open. Other browsers can't, so there a dictation is kept.";
+export const SKIP_APPS_HELP = "Add an app by its bundle id, such as com.apple.Passwords.";
+export const SKIP_SITES_HELP = "Add a website by its address, such as example.com. Safari and Chrome-based browsers say which site is open. Other browsers can't, so there a dictation is kept.";
 
 /**
  * The apps a skip list comes with, by the name a person knows them by (DEFAULT_SKIP_APPS, in lower case as the privacy rule compares them).
@@ -232,7 +232,7 @@ export const SPEECH_MODEL_DESCRIPTION =
  * short (Priya) is matched only by its heard-as entry; the engine's sound-alike match leaves it alone.
  */
 export const DICTIONARY_DESCRIPTION =
-  "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an " +
+  "Add one at a time. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an " +
   "equals sign: Ollama = Alema, Polymer. Short names such as Priya, and names with accents, are corrected only with an equals " +
   "entry. The names are also given to your filing agent.";
 

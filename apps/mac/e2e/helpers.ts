@@ -445,12 +445,6 @@ export const toolbarItem = (settings: Page, pane: string) => settings.getByRole(
 /** A row of a Settings group, whole, by its name: what is said of it, and its controls. */
 export const settingsRow = (settings: Page, name: string) => settings.locator(".av-group-row", { has: settings.getByText(name, { exact: true }) });
 
-/**
- * Settings keeps the height it has from here on, whatever its pane needs: a window that fits its pane has nothing to scroll, as a pane
- * has on a short screen or when it is longer than the window's most.
- */
-export const stopFittingSettings = (app: ElectronApplication) => app.evaluate(({ ipcMain }) => void ipcMain.removeAllListeners("settings:fit"));
-
 /** Opens Settings, the panel's Settings tab (showSettings), and moves to `pane` on its tabs; returns the panel once that pane's tab is chosen. */
 export async function openSettings(app: ElectronApplication, pane = "General"): Promise<Page> {
   await call(app, "showSettings");
@@ -585,32 +579,6 @@ export const dialogsAsked = (app: ElectronApplication) => app.evaluate(() => (gl
 /** Answers the alerts that `answerDialogs(app, response, { hold: true })` is holding. */
 export const letDialogsGo = (app: ElectronApplication) =>
   app.evaluate(() => void (globalThis as { dialogsHeld?: (() => void)[] }).dialogsHeld?.splice(0).forEach((resolve) => resolve()));
-
-/**
- * From now on, the native menus Settings pops up record their items and pick the one labelled `choice`, or close
- * without a pick when it is null. Each call starts a new record. The stand-in keeps the order a real menu has on macOS:
- * a picked item's click runs first, then the menu's close callback. No test opens a real native menu, which would hold
- * it until it timed out, so every test that clicks a Choose… button calls this first.
- */
-export async function answerMenus(app: ElectronApplication, choice: string | null): Promise<void> {
-  await app.evaluate(({ Menu }, pick) => {
-    const shown: { label: string; checked: boolean }[][] = [];
-    (globalThis as { shownMenus?: typeof shown }).shownMenus = shown;
-    Menu.prototype.popup = function (this: Electron.Menu, options?: Electron.PopupOptions) {
-      shown.push(this.items.map((item) => ({ label: item.label, checked: item.checked })));
-      this.items.find((item) => item.label === pick)?.click();
-      options?.callback?.();
-    };
-  }, choice);
-}
-
-/**
- * What answerMenus' stand-in was asked to show since it was set, oldest first. A menu opens after an IPC round trip, so
- * a test reads this only once `await expect.poll(() => shownMenus(app)).toHaveLength(n)` has passed.
- */
-export async function shownMenus(app: ElectronApplication): Promise<{ label: string; checked: boolean }[][]> {
-  return app.evaluate(() => (globalThis as { shownMenus?: { label: string; checked: boolean }[][] }).shownMenus ?? []);
-}
 
 /**
  * From now on, what Avanzel would open in this Mac's own apps (a page, the library) is noted for `openedWith`

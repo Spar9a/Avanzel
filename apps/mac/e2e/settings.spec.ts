@@ -7,7 +7,6 @@ import { loadSettings, saveSettings } from "../../../packages/engine/src/index.t
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import {
   agentCalls,
-  answerMenus,
   answerDialogs,
   call,
   emptyHfCache,
@@ -21,7 +20,6 @@ import {
   popUpOptions,
   focusPanel,
   settingsRow,
-  shownMenus,
   snap,
   stubOpening,
   stubPicker,
@@ -126,11 +124,11 @@ test("Settings has no sounds: General ends with its Startup group", async () => 
   await app.close();
 });
 
-test("the Reviews pane names the evening review's Undo as the menu bar menu does", async () => {
+test("the Reviews pane says where the evening review's Undo is: on the panel's Library tab", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app, "Reviews");
   const evening = settings.getByRole("group", { name: "Evening review", exact: true });
-  await expect(evening.getByText("Undo the last evening review, under Scheduled reviews in the menu bar menu, takes back its last run.", { exact: true })).toBeVisible();
+  await expect(evening.getByText("Undo the last evening review, on the Library tab, takes back its last run.", { exact: true })).toBeVisible();
   await app.close();
 });
 
@@ -745,22 +743,5 @@ test("Turn on the evening review that fails says so in General, and the review s
   await expect.poll(() => readFileSync(evening, "utf8")).toContain("enabled: true");
   await expect(notSaved(settings)).toHaveCount(0);
   await expect(notice).toHaveCount(0);
-  await app.close();
-});
-
-test("a pop-up's menu is answered to the Settings window alone, not to another window's page", async () => {
-  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
-  const settings = await openSettings(app, "Voice");
-  await call(app, "openAsk");
-  const ask = await windowFor(app, "ask");
-  await answerMenus(app, "Studio");
-  const options = [{ label: "Studio", value: "studio", checked: false }];
-  // Every window has the same bridge, so the Ask window's page can send settings:pick all the same.
-  const pick = (page: Page) => page.evaluate((list) => window.avanzel.settings.pick(list, null), options);
-  expect(await pick(ask)).toBeNull();
-  expect(await shownMenus(app)).toEqual([]); // main popped up no menu over Settings for it
-  // Settings' own page is answered: the menu shows, and the item picked comes back.
-  expect(await pick(settings)).toBe("studio");
-  expect(await shownMenus(app)).toEqual([[{ label: "Studio", checked: false }]]);
   await app.close();
 });

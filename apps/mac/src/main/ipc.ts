@@ -46,6 +46,7 @@ export function registerIpc(controller: Controller): void {
 
   // the panel under the menu bar icon: only its own page is heard
   handle("panel:get", () => controller.panelSnapshot());
+  handle("panel:opening", (e) => controller.takePanelOpening(e.sender));
   handle("panel:pages", (e) => (controller.isPanelPage(e.sender) ? controller.panelPages() : []));
   on("panel:act", (e, action: unknown) => {
     if (controller.isPanelPage(e.sender)) controller.panelAction(action);
@@ -104,9 +105,6 @@ export function registerIpc(controller: Controller): void {
   handle("settings:cancel-restart-to-update", () => controller.cancelRestartToUpdate());
   // What the page sends is checked where it is used: this takes anything, and shows a menu only for a request that reads. Every
   // window has the same bridge, so it also hands over the page that sent it: only the Settings window's own is answered.
-  handle("settings:pick", (e, options: unknown, at: unknown) => controller.pickFromSettings(e.sender, options, at));
-  on("settings:fit", (e, height: unknown) => controller.fitSettings(e.sender, height));
-  on("settings:surface", (e, color: unknown) => controller.settingsSurface(e.sender, color));
   on("settings:open-library", () => controller.openLibraryFolder());
   on("settings:show-library", () => controller.showLibraryInFinder());
   on("settings:open-setup", () => controller.openSetupFromSettings());

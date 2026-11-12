@@ -1214,6 +1214,11 @@ function App() {
       readPages();
     });
     const offPane = window.avanzel.settings.onShowPane((next) => setPane(isSettingsPane(next) ? next : "general"));
+    // A panel made just now may have been told where to come up before these listened: it asks, once they do.
+    void api.opening().then((opening) => {
+      if (opening?.tab) setTab(opening.tab);
+      if (opening?.pane) setPane(opening.pane);
+    });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !e.defaultPrevented) api.hide();
     };
@@ -1259,7 +1264,7 @@ function App() {
             { value: "capture", content: <Capture snap={snap} onAsk={toAsk} /> },
             ...(processing ? [{ value: "processing" as const, content: <Processing snap={snap} leaving={leaving} onLeft={() => setLeaving(null)} /> }] : []),
             { value: "library", content: <Library snap={snap} pages={pages} focusAsk={focusAsk} /> },
-            { value: "settings", content: <SettingsApp embedded startPane={pane} /> },
+            { value: "settings", content: <SettingsApp startPane={pane} /> },
           ]}
         />
       </div>

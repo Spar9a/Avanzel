@@ -282,7 +282,7 @@ describe("settings copy", () => {
       ),
     ).toBe("The dictionary has 501 lines, and 500 is the most it can hold. Remove the lines you use least. The setting keeps its old value.");
     expect(DICTIONARY_DESCRIPTION).toBe(
-      "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya, and names with accents, are corrected only with an equals entry. The names are also given to your filing agent.",
+      "Add one at a time. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya, and names with accents, are corrected only with an equals entry. The names are also given to your filing agent.",
     );
   });
 
@@ -527,9 +527,9 @@ describe("a scheduled review's copy", () => {
 
   it("the skip lists say that what is said there still goes in but is never kept, and what a line holds", () => {
     expect(SKIP_NOTE).toBe("What you dictate there still goes in, but is never kept.");
-    expect(SKIP_APPS_HELP).toBe("One bundle id per line, such as com.apple.Passwords.");
+    expect(SKIP_APPS_HELP).toBe("Add an app by its bundle id, such as com.apple.Passwords.");
     // Only the browsers that say which page is open can skip a site; the line doesn't promise more.
-    expect(SKIP_SITES_HELP).toBe("One website per line, such as example.com. Safari and Chrome-based browsers say which site is open. Other browsers can't, so there a dictation is kept.");
+    expect(SKIP_SITES_HELP).toBe("Add a website by its address, such as example.com. Safari and Chrome-based browsers say which site is open. Other browsers can't, so there a dictation is kept.");
     for (const line of [dictationLogLine(true), SKIP_NOTE, SKIP_APPS_HELP, SKIP_SITES_HELP]) {
       expect(line).toMatch(/^[A-Z][^!]*\.$/);
       expect(line).not.toMatch(/Oops|Sorry/);

@@ -279,7 +279,7 @@ test("Settings → Privacy says what its skip lists hold, and saves each change 
   await expect(listButton(group, "Apps to skip")).toHaveCount(0);
 
   await editSkip(settings, "Apps to skip");
-  await expect(group.getByText("One bundle id per line, such as com.apple.Passwords.", { exact: true })).toBeVisible();
+  await expect(group.getByText("Add an app by its bundle id, such as com.apple.Passwords.", { exact: true })).toBeVisible();
   const managers = loadSettings(library).dictation.skipApps;
   expect(await listed(group, "Apps to skip")).toEqual(managers); // the password managers, to begin with
   // Each change is saved as it is made: all but Passwords taken out, then Slack put in, its spaces tidied; Passwords again isn't added twice.
@@ -294,7 +294,7 @@ test("Settings → Privacy says what its skip lists hold, and saves each change 
 
   await editSkip(settings, "Sites to skip");
   await expect(
-    group.getByText("One website per line, such as example.com. Safari and Chrome-based browsers say which site is open. Other browsers can't, so there a dictation is kept.", {
+    group.getByText("Add a website by its address, such as example.com. Safari and Chrome-based browsers say which site is open. Other browsers can't, so there a dictation is kept.", {
       exact: true,
     }),
   ).toBeVisible();

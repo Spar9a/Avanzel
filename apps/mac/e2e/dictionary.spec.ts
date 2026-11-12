@@ -35,7 +35,7 @@ test("the Dictionary saves each term as it is added, and a spoken thought is cor
   const group = dictionaryGroup(settings);
   await expect(
     group.getByText(
-      "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya, and names with accents, are corrected only with an equals entry. The names are also given to your filing agent.",
+      "Add one at a time. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya, and names with accents, are corrected only with an equals entry. The names are also given to your filing agent.",
       { exact: true },
     ),
   ).toBeVisible();

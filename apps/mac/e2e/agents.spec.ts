@@ -22,7 +22,6 @@ import {
   settingsRow,
   SIGNED_OUT_CLAUDE,
   snap,
-  stopFittingSettings,
   toolbarItem,
   UNREADABLE_CLAUDE,
   windowFor,
@@ -163,9 +162,9 @@ test("an agent's name stays on one line beside its controls, with its status und
   // Claude Code is signed out and isn't the agent chosen: its row holds the longest status, "Best results" and Use.
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), PATH: agentPath({ claude: SIGNED_OUT_CLAUDE }) });
   const settings = await openSettings(app, "Agents");
-  await stopFittingSettings(app);
   await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/panel/"))?.setSize(680, 400); // short enough that the pane scrolls
+    const panel = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/panel/"))!;
+    panel.setSize(panel.getSize()[0]!, 400); // short enough that the pane scrolls
   });
   await expect.poll(() => settings.evaluate(() => window.innerHeight)).toBe(400);
   // Whether a scrolling pane gives 15 px of every row to a classic scrollbar depends on how this Mac shows scrollbars.
