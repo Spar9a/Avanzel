@@ -1,7 +1,7 @@
 {
   "name": "@avanzel/mac",
   "productName": "Avanzel",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Avanzel for Mac: a voice-first second brain that runs on the agent you already have.",
   "license": "Apache-2.0",
