@@ -15,13 +15,14 @@ import { AvanzelError } from "../types.ts";
 import { ClaudeStream, type RateLimit, type ToolStep } from "./claude-stream.ts";
 import type { CustomHarness, Env, Settings } from "./config.ts";
 import { guardSettings, serveGuard, type Guard } from "./guard-hook.ts";
+import { apiName, privateHarnesses, privateProblem, privateRoute, type PrivateModel, type PrivateRoute } from "./private-model.ts";
 import { which } from "./proc.ts";
 import { tailKeeper } from "./tail.ts";
 
 // A run's result carries it, so it is offered here as well as where it is read.
 export type { RateLimit } from "./claude-stream.ts";
 
-export const BUILTIN_ORDER = ["claude", "codex", "opencode", "cursor-agent", "gemini"] as const;
+export const BUILTIN_ORDER = ["claude", "codex", "opencode", "cursor-agent", "gemini", "pi"] as const;
 
 // The built-in agents by the names a person knows them by, as the apps show them.
 const AGENT_NAMES: Readonly<Record<string, string>> = {
@@ -30,6 +31,7 @@ const AGENT_NAMES: Readonly<Record<string, string>> = {
   opencode: "OpenCode",
   "cursor-agent": "Cursor Agent",
   gemini: "Gemini CLI",
+  pi: "pi",
 };
 
 /** `harness`'s name as a person reads it: "Claude Code" for "claude". A harness of the library's own goes by its own name. */
@@ -72,6 +74,8 @@ export interface HeadlessOptions {
   images?: readonly string[];
   /** Settings JSON for a write run, for CLIs that take it on the command line (Claude Code's `--settings`). */
   settings?: string | null;
+  /** Flags a private model's route adds right after the command (Codex's provider settings, pi's provider name). */
+  extraArgs?: readonly string[];
 }
 
 /** A command that says whether an agent is signed in, which asks the model nothing. */
@@ -127,9 +131,9 @@ export class Harness {
   headlessArgv(
     prompt: string,
     vault: string,
-    { write, model = null, outputFile, images = [], settings = null }: HeadlessOptions,
+    { write, model = null, outputFile, images = [], settings = null, extraArgs = [] }: HeadlessOptions,
   ): string[] {
-    return this.#spec.headless(prompt, vault, { write, model, outputFile, images, settings });
+    return this.#spec.headless(prompt, vault, { write, model, outputFile, images, settings, extraArgs });
   }
 
   interactiveArgv(vault: string, { model = null }: { model?: string | null } = {}): string[] {
@@ -169,6 +173,10 @@ export interface RunOptions {
   signal?: AbortSignal;
   /** Called with each thing the agent does, as it happens, for an agent whose output `streams`. */
   onStep?: (step: ToolStep) => void;
+  /** The library's private model: when it is on, the run goes to that server (through `privateRoute`) and `model` is its. */
+  private?: PrivateModel | null;
+  /** The app's own key for that server, when it keeps one; a variable the model's `keyEnv` names comes first. */
+  privateKey?: string | null;
 }
 
 function opt(flag: string, value: string | null): string[] {
@@ -217,8 +225,8 @@ const BUILTINS: Readonly<Record<string, Harness>> = {
     name: "codex",
     binary: "codex",
     // `-i` takes several values, so `--` ends the images before the prompt.
-    headless: (prompt, vault, { write, model, outputFile, images }) => [
-      "codex", "exec", "--cd", vault, "--skip-git-repo-check", "--color", "never",
+    headless: (prompt, vault, { write, model, outputFile, images, extraArgs }) => [
+      "codex", "exec", ...extraArgs, "--cd", vault, "--skip-git-repo-check", "--color", "never",
       "--sandbox", write ? "workspace-write" : "read-only", "-o", outputFile, ...opt("-m", model),
       ...(images.length ? [...images.flatMap((image) => ["-i", image]), "--"] : []), prompt,
     ],
@@ -251,6 +259,18 @@ const BUILTINS: Readonly<Record<string, Harness>> = {
       "gemini", "-p", prompt, "--approval-mode", write ? "auto_edit" : "default", ...opt("-m", model),
     ],
     interactive: (_vault, model) => ["gemini", ...opt("-m", model)],
+    experimental: true,
+  }),
+  pi: new Harness({
+    name: "pi",
+    binary: "pi",
+    // File tools only, as for the other agents: no shell. `--no-session` keeps the run out of pi's session list, and `--no-skills`
+    // and `--no-extensions` keep the owner's own out of it. pi reads the library's AGENTS.md itself.
+    headless: (prompt, _vault, { write, model, extraArgs }) => [
+      "pi", "-p", ...extraArgs, "--no-session", "--no-skills", "--no-extensions", "--tools",
+      write ? "read,write,edit,ls,grep,find" : "read,ls,grep,find", ...opt("--model", model), prompt,
+    ],
+    interactive: (_vault, model) => ["pi", ...opt("--model", model)],
     experimental: true,
   }),
 };
@@ -297,13 +317,20 @@ export function selectHarness(settings: Settings, requested?: string | null): Ha
   const table = harnesses(settings);
   const choice = requested || settings.harness;
   if (choice === "auto") {
-    for (const name of BUILTIN_ORDER) {
+    // With a private model on, Automatic picks among the agents that speak the server's kind, best first.
+    const order = settings.private.enabled ? privateHarnesses(settings.private.api) : BUILTIN_ORDER;
+    for (const name of order) {
       const harness = table[name];
       if (harness?.available()) return harness;
     }
+    if (settings.private.enabled) {
+      throw new NoAgentError(
+        `A private model that speaks ${apiName(settings.private.api)} needs one of: ${privateHarnesses(settings.private.api).join(", ")}.`,
+      );
+    }
     throw new NoAgentError(
       "No agent CLI found. Install one of: Claude Code (claude), Codex (codex), OpenCode (opencode), " +
-        "Cursor Agent (cursor-agent), Gemini CLI (gemini) — or add [harnesses.<name>] to .avanzel/config.toml.",
+        "Cursor Agent (cursor-agent), Gemini CLI (gemini), pi (pi) — or add [harnesses.<name>] to .avanzel/config.toml.",
     );
   }
   const harness = Object.hasOwn(table, choice) ? table[choice] : undefined;
@@ -344,7 +371,8 @@ export function childEnv(env: Env): Record<string, string> {
 
 /** Run one non-interactive agent turn inside the library and return its final message. */
 export async function runHeadless(harness: Harness, prompt: string, vault: string, options: RunOptions): Promise<RunResult> {
-  const { write, model = null, timeoutSeconds, images = [], signal, onStep } = options;
+  const { write, timeoutSeconds, images = [], signal, onStep } = options;
+  let model = options.model ?? null;
   const started = performance.now();
   const result = (
     exitCode: number,
@@ -372,11 +400,19 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
     // guard listens only while the run lasts, and its settings point the hook at it.
     guard = write && harness.guard ? await serveGuard(vault) : null;
     const settings = guard ? guardSettings(vault, guard.hook) : null;
-    const argv = harness.headlessArgv(prompt, vault, { write, model, outputFile, images, settings });
+    // A private model sends the run to the person's own server: the route says how, in files under this run's folder.
+    let route: PrivateRoute | null = null;
+    if (options.private?.enabled) {
+      const problem = privateProblem(options.private, harness.name);
+      if (problem) throw new AvanzelError(`Private model: ${problem}`);
+      route = privateRoute(harness.name, options.private, tmp, process.env, options.privateKey ?? null);
+      model = route.model;
+    }
+    const argv = harness.headlessArgv(prompt, vault, { write, model, outputFile, images, settings, extraArgs: route?.args ?? [] });
     // Claude Code prints a JSON event per line. Reading them as they arrive hands over each step while the agent works,
     // and its reply is the result event's text: what comes back as `output` is plain text, as for every other agent.
     const stream = harness.streams ? new ClaudeStream(onStep ?? (() => {})) : null;
-    const env = childEnv(process.env);
+    const env = { ...childEnv(process.env), ...route?.env };
     const run = await collect(
       argv,
       vault,
@@ -384,7 +420,7 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
       signal,
       stream ? (line) => stream.line(line) : undefined,
       harness.name,
-      guard ? guardReachable(env) : env,
+      guard || route ? reachDirectly(env, [...(guard ? ["127.0.0.1"] : []), ...(route ? [route.host] : [])]) : env,
     );
     const stdout = stream ? stream.reply : run.stdout;
     const refused = stream ? stream.refused : [];
@@ -407,13 +443,13 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
 }
 
 /**
- * `env` for a guarded run: Claude Code reaches its guard on 127.0.0.1 directly, never through a proxy the environment
- * names (HTTP_PROXY and the like), which can't reach it and so would get every write refused. Both spellings of NO_PROXY
- * get 127.0.0.1, beside every host either named.
+ * `env` for a run that talks to hosts of its own (a guarded run's guard on 127.0.0.1, a private model's server): the agent
+ * reaches them directly, never through a proxy the environment names (HTTP_PROXY and the like), which can't reach a local
+ * server and would get every write refused. Both spellings of NO_PROXY get `hosts`, beside every host either named.
  */
-function guardReachable(env: Record<string, string>): Record<string, string> {
+function reachDirectly(env: Record<string, string>, extra: readonly string[]): Record<string, string> {
   const named = [env.NO_PROXY, env.no_proxy].flatMap((list) => list?.split(",") ?? []).map((host) => host.trim());
-  const hosts = [...new Set([...named.filter(Boolean), "127.0.0.1"])].join(",");
+  const hosts = [...new Set([...named.filter(Boolean), ...extra])].join(",");
   return { ...env, NO_PROXY: hosts, no_proxy: hosts };
 }
 
@@ -435,6 +471,10 @@ export interface CheckOptions {
    * command or its status doesn't say. Without (`false`) the check is `unknown` then. Defaults to true.
    */
   prompt?: boolean;
+  /** The library's private model, when on: the check asks the server, since the agent's own sign-in says nothing about it. */
+  private?: PrivateModel | null;
+  /** The app's own key for it, as in `RunOptions`. */
+  privateKey?: string | null;
 }
 
 const CHECK_PROMPT = "Reply with the single word: ready.";
@@ -509,18 +549,18 @@ function resetFrom(rows: readonly string[]): number | null {
 export async function checkAgent(
   harness: Harness,
   vault: string,
-  { timeoutSeconds = 15, signal, prompt = true }: CheckOptions = {},
+  { timeoutSeconds = 15, signal, prompt = true, private: privateModel = null, privateKey = null }: CheckOptions = {},
 ): Promise<AgentCheck> {
   const started = performance.now();
   const elapsed = () => (performance.now() - started) / 1000;
-  if (harness.signIn && !signal?.aborted) {
+  if (harness.signIn && !signal?.aborted && !privateModel?.enabled) {
     const signedIn = await readSignIn(harness.signIn, vault, timeoutSeconds, signal);
     if (signedIn === true) return { ok: true, how: "signed-in", seconds: elapsed() };
     if (signedIn === false) return { ok: false, why: "signed-out", detail: "", seconds: elapsed() };
   }
   if (!prompt) return { ok: false, why: "unknown", detail: "", seconds: elapsed() };
   try {
-    const run = await runHeadless(harness, CHECK_PROMPT, vault, { write: false, timeoutSeconds, signal });
+    const run = await runHeadless(harness, CHECK_PROMPT, vault, { write: false, timeoutSeconds, signal, private: privateModel, privateKey });
     if (run.ok) return { ok: true, how: "replied", seconds: run.seconds };
     const detail = errorLine(`${run.output}\n${run.stderr}`);
     // 124 is what runHeadless reports for a run that ran out of time.

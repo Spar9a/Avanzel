@@ -3,6 +3,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   desktopCapturer,
   dialog,
   globalShortcut,
@@ -25,6 +26,7 @@ import {
   SHELVES,
   Vault,
   WAITING,
+  type AgentModel,
   checkAgent as checkHarness,
   classifyFailure,
   defaultSettings,
@@ -33,6 +35,7 @@ import {
   downloadSize,
   ensureDefaultTasks,
   errorLine,
+  codexModels,
   formatSchedule,
   git,
   harnesses as listHarnesses,
@@ -42,6 +45,7 @@ import {
   loadTasksReport,
   localDate,
   locateModel,
+  opencodeModels,
   makeTranscriber,
   missingModels,
   nextRun,
@@ -61,6 +65,7 @@ import {
   type FilingStep,
   type Harness,
   type RunFailure,
+  type PrivateModel,
   type Settings,
   type ShadowTask,
   type Transcriber,
@@ -150,9 +155,12 @@ import {
   obsidianUrl,
   pageAt,
   pageInfo,
+  privateInfo,
   recentFromLog,
   savedPage,
 } from "./library-info.ts";
+import { cleanPastedKey, generatePrivateKey, PLAIN_CIPHER, PrivateKeyStore } from "./private-key.ts";
+import { keychainCipher } from "./private-key-keychain.ts";
 import { forgetKept, logDictation } from "./library-log.ts";
 import { LiveWords } from "./live-words.ts";
 import { buildMenuModel, filedLine, MENU_DICTATIONS, menuRows, reviewProgress, speechProblemOf, waitingLine, type MenuDictation, type MenuInput, type MenuItemModel } from "./menu-model.ts";
@@ -582,12 +590,17 @@ export class Controller {
   private takenShortcuts: TakenShortcut[] = [];
   /** The taken shortcuts whose notice the capsule has shown, in this app run or an earlier one. */
   private readonly noticed: NoticedShortcuts;
+  /** The key for the library's private model server, in the app's own data (`<userData>/private-key.bin`), encrypted by the Keychain. */
+  private readonly privateKeys: PrivateKeyStore;
   /** When a first run reached each of setup's milestones (§5.4): kept on this Mac, never sent anywhere. */
   private readonly firstRun: FirstRunLog;
   /** How many recordings the library has kept, in the app's own folder: the first ones get the listening card's hint (`hintFor`). */
   private readonly captureCount: CaptureCount;
   /** What each agent's check found in this app run, by harness name, for Settings → Agents. */
   private readonly agentChecks = new Map<string, AgentStatus>();
+  /** The models OpenCode listed in this app run (`opencode models`), once it has: Settings → Agents picks from them. */
+  private opencodeList: AgentModel[] | null = null;
+  private opencodeListing = false;
   /** The agent checks going on, each by the controller that stops it when Avanzel quits. */
   private readonly runningChecks = new Set<AbortController>();
   /** When the open library's next usage-limit wait comes due (`armWaits`). */
@@ -684,6 +697,8 @@ export class Controller {
     this.runState = new RunStateStore(path.join(userData, "run-state.json"));
     this.undoRecords = new UndoRecordStore(path.join(userData, "undo-records.json"));
     this.noticed = new NoticedShortcuts(path.join(userData, "noticed-shortcuts.json"));
+    // The e2e tests keep the key as it is: the Keychain would ask the person at the desk for access to its item.
+    this.privateKeys = new PrivateKeyStore(path.join(userData, "private-key.bin"), process.env.AVANZEL_TEST === "1" ? PLAIN_CIPHER : keychainCipher);
     this.firstRun = new FirstRunLog(path.join(userData, "first-run.json"));
     this.captureCount = new CaptureCount(path.join(userData, "captures.json"));
     this.calls = new CallNotes(this.callHost(path.join(userData, "calls")));
@@ -848,6 +863,7 @@ export class Controller {
     return new Librarian(vault, settings, {
       harnessName: harnessName && harnessName !== "auto" ? harnessName : undefined,
       transcriber: await this.transcriberFor(settings.voice),
+      privateKey: () => this.privateKeys.get(),
     });
   }
 
@@ -5670,6 +5686,8 @@ export class Controller {
             shelves: exists ? vault.shelfCounts() : {},
             harness: settings?.harness ?? "auto",
             models: settings?.models ?? {},
+            ...privateInfo(settings, selected),
+            privateKeySaved: this.privateKeys.has(),
             timeoutSeconds: settings?.timeoutSeconds ?? 900,
             dictionary: settings?.voice.dictionary ?? [],
             ...dictationInfo(settings),
@@ -5686,6 +5704,8 @@ export class Controller {
               shelves: {},
               harness: "auto",
               models: {},
+              ...privateInfo(null, null),
+              privateKeySaved: this.privateKeys.has(),
               timeoutSeconds: 900,
               dictionary: [],
               ...dictationInfo(null),
@@ -5697,6 +5717,7 @@ export class Controller {
         experimental: h.experimental,
         freeCheck: h.signIn !== undefined,
         status: this.agentChecks.get(h.name) ?? null,
+        models: this.modelsOf(h.name),
       })),
       selectedHarness: selected,
       model: this.model,
@@ -5769,6 +5790,35 @@ export class Controller {
     await this.enqueue(async () => {
       saveSettings(vault.root, patchedSettings(loadSettings(vault.root), patch));
     });
+    this.broadcast();
+    return this.snapshot();
+  }
+
+  /** Settings' Generate, in Private model: a new key, kept in the Keychain, replacing any. Copy puts it on the clipboard to give the server. */
+  generatePrivateKey(): SettingsSnapshot {
+    this.privateKeys.set(generatePrivateKey());
+    this.broadcast();
+    return this.snapshot();
+  }
+
+  /** Settings' Paste: the clipboard's text as the key, when it is one (`cleanPastedKey`). The key is never shown in a field. */
+  async pastePrivateKey(): Promise<SettingsSnapshot> {
+    this.privateKeys.set(cleanPastedKey(await clipboard.readText()));
+    this.broadcast();
+    return this.snapshot();
+  }
+
+  /** Settings' Copy: the kept key on the clipboard, for the server's own settings. Says so in plain words when there is none. */
+  async copyPrivateKey(): Promise<SettingsSnapshot> {
+    const key = this.privateKeys.get();
+    if (!key) throw new AvanzelError("There is no key to copy. Generate one or paste yours first.");
+    await clipboard.writeText(key);
+    return this.snapshot();
+  }
+
+  /** Settings' Remove: forgets the key; runs then send a stand-in, which a server that checks no key accepts. */
+  removePrivateKey(): SettingsSnapshot {
+    this.privateKeys.clear();
     this.broadcast();
     return this.snapshot();
   }
@@ -5960,6 +6010,7 @@ export class Controller {
    * picked meanwhile is asked its question when its sign-in said nothing (`setup.agentChecked`).
    */
   checkAgents(): SettingsSnapshot {
+    this.listOpencodeModels();
     for (const [name, harness] of Object.entries(this.harnessTable())) {
       if (harness.signIn && !this.agentChecks.has(name) && harness.available()) {
         void this.runAgentCheck(name, harness, false).then(() => this.setup.agentChecked(name));
@@ -5995,6 +6046,43 @@ export class Controller {
     const harness = this.harnessNamed(name);
     if (harness && this.agentChecks.get(name)?.kind !== "checking") void this.runAgentCheck(name, harness, true);
     return this.snapshot();
+  }
+
+  /** The models agent `name` says it can run, for the picker in Settings → Agents; none for an agent that lists none. */
+  private modelsOf(name: string): AgentModel[] {
+    if (name === "codex") return codexModels();
+    if (name === "opencode") return this.opencodeList ?? [];
+    return [];
+  }
+
+  /** Asks OpenCode for its models, once per app run when it is installed, and shows them when it answers. */
+  private listOpencodeModels(): void {
+    const harness = this.harnessNamed("opencode");
+    if (this.opencodeList || this.opencodeListing || this.checksStopped || !harness?.available()) return;
+    this.opencodeListing = true;
+    void opencodeModels(harness.binary)
+      .then((models) => {
+        if (this.checksStopped) return;
+        if (models.length) this.opencodeList = models; // a list that came back empty is asked for again at the next check
+        this.broadcast();
+      })
+      .finally(() => {
+        this.opencodeListing = false;
+      });
+  }
+
+  /**
+   * The library's private model when it is on and `name` is the agent that runs against it (the one in use), else null: the check
+   * then asks the person's server, and reads no sign-in, since a login of the agent's own says nothing about it.
+   */
+  private privateFor(name: string): PrivateModel | null {
+    if (!this.vault) return null;
+    try {
+      const settings = loadSettings(this.vault.root);
+      return settings.private.enabled && selectHarness(settings).name === name ? settings.private : null;
+    } catch {
+      return null; // settings that can't be read, or no agent to run it with
+    }
   }
 
   /** The agents by name: the library's (none when its settings don't load), or the built-in ones while there is none. */
@@ -6062,7 +6150,7 @@ export class Controller {
     }
     let status: AgentStatus | null;
     try {
-      status = statusOf(await checkHarness(harness, this.checkDir(), { signal: abort.signal, prompt }));
+      status = statusOf(await checkHarness(harness, this.checkDir(), { signal: abort.signal, prompt, private: this.privateFor(name), privateKey: this.privateKeys.get() }));
     } catch (error) {
       status = { kind: "failed", detail: errorMessage(error) }; // a check that throws still ends
     } finally {

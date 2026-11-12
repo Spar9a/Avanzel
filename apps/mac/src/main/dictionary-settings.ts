@@ -6,6 +6,8 @@ import {
   MAX_DICTIONARY_LINE_LENGTH,
   parseDictionary,
   plainLine,
+  PRIVATE_APIS,
+  type PrivateModel,
   type Settings,
   type Transcriber,
   type VoiceSettings,
@@ -43,6 +45,23 @@ export function cleanDictionary(typed: readonly string[]): string[] {
 }
 
 /**
+ * A private model as it is kept: the strings trimmed. The kind of server and the context size are what the settings file reads back,
+ * so a value it would refuse throws, and nothing of the patch is kept.
+ */
+export function cleanPrivate(model: PrivateModel): PrivateModel {
+  if (!PRIVATE_APIS.includes(model.api)) throw new AvanzelError("A private model's server speaks chat, messages or responses.");
+  if (!Number.isInteger(model.contextWindow) || model.contextWindow <= 0) throw new AvanzelError("The context size must be a whole number.");
+  return {
+    enabled: model.enabled === true,
+    baseUrl: model.baseUrl.trim(),
+    model: model.model.trim(),
+    api: model.api,
+    contextWindow: model.contextWindow,
+    keyEnv: model.keyEnv.trim(),
+  };
+}
+
+/**
  * `settings` with what Settings changed (`setLibrary`); a dictionary is cleaned first (`cleanDictionary`), and so are the skip lists
  * (`cleanSkipList`). A line either refuses throws, and nothing of the patch is kept.
  */
@@ -57,6 +76,7 @@ export function patchedSettings(settings: Settings, patch: LibraryPatch): Settin
     ...settings,
     ...(patch.harness !== undefined ? { harness: patch.harness } : {}),
     ...(patch.models !== undefined ? { models: patch.models } : {}),
+    ...(patch.private !== undefined ? { private: cleanPrivate({ ...settings.private, ...patch.private }) } : {}),
     ...(patch.timeoutSeconds !== undefined ? { timeoutSeconds: patch.timeoutSeconds } : {}),
     ...(patch.dictionary !== undefined ? { voice: { ...settings.voice, dictionary: cleanDictionary(patch.dictionary) } } : {}),
     dictation,

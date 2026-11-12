@@ -11,6 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { parse, TomlError } from "smol-toml";
 import { AvanzelError, type VoiceOptions } from "../types.ts";
 import { MAX_DICTIONARY_ENTRIES, plainLine } from "./dictionary.ts";
+import { defaultPrivateModel, PRIVATE_APIS, type PrivateApi, type PrivateModel } from "./private-model.ts";
 import { render } from "./templates.ts";
 
 export const VAULT_MARKER = ".avanzel";
@@ -68,6 +69,7 @@ export interface DictationSettings {
 }
 
 export interface Settings {
+  private: PrivateModel;
   harness: string;
   timeoutSeconds: number;
   autoCommit: boolean;
@@ -79,6 +81,7 @@ export interface Settings {
 
 export function defaultSettings(): Settings {
   return {
+    private: defaultPrivateModel(),
     harness: "auto",
     timeoutSeconds: 900,
     autoCommit: true,
@@ -150,6 +153,12 @@ function configPath(vaultRoot: string): string {
 function renderConfig(settings: Settings): string {
   const { voice } = settings;
   return render("config.toml", {
+    private_enabled: String(settings.private.enabled),
+    private_base_url: tomlString(settings.private.baseUrl),
+    private_model: tomlString(settings.private.model),
+    private_api: tomlString(settings.private.api),
+    private_context_window: String(settings.private.contextWindow),
+    private_key_env: tomlString(settings.private.keyEnv),
     harness: tomlString(settings.harness),
     timeout_seconds: String(settings.timeoutSeconds),
     auto_commit: String(settings.autoCommit),
@@ -258,7 +267,21 @@ function parseSettings(data: Table, path: string): Settings {
       return [name, { name, headless, interactive: stringList(spec, "interactive", path, `harnesses.${name}.`) }];
     }),
   );
+  const privateData = table(data, "private", path);
+  const api = stringValue(privateData, "api", defaults.private.api, path, "private.");
+  if (!PRIVATE_APIS.includes(api as PrivateApi)) {
+    throw new AvanzelError(`${path}: \`private.api\` must be "chat", "messages" or "responses"`);
+  }
+  const privateModel: PrivateModel = {
+    enabled: booleanValue(privateData, "enabled", defaults.private.enabled, path, "private."),
+    baseUrl: stringValue(privateData, "base_url", defaults.private.baseUrl, path, "private."),
+    model: stringValue(privateData, "model", defaults.private.model, path, "private."),
+    api: api as PrivateApi,
+    contextWindow: positiveInt(privateData, "context_window", defaults.private.contextWindow, path, "private."),
+    keyEnv: stringValue(privateData, "key_env", defaults.private.keyEnv, path, "private."),
+  };
   return {
+    private: privateModel,
     harness: stringValue(data, "harness", defaults.harness, path),
     timeoutSeconds: positiveInt(data, "timeout_seconds", defaults.timeoutSeconds, path),
     autoCommit: booleanValue(data, "auto_commit", defaults.autoCommit, path),

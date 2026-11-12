@@ -90,6 +90,10 @@ export function registerIpc(controller: Controller): void {
   handle("settings:delete-dictation", (e, id: unknown) =>
     controller.isSettingsPage(e.sender) && typeof id === "string" ? controller.deleteDictation(id) : { ok: false, message: "Only Settings can delete a dictation." });
   handle("settings:set-library", (_e, patch: LibraryPatch) => controller.setLibrarySettings(patch));
+  handle("settings:generate-private-key", () => controller.generatePrivateKey());
+  handle("settings:paste-private-key", () => controller.pastePrivateKey());
+  handle("settings:copy-private-key", () => controller.copyPrivateKey());
+  handle("settings:remove-private-key", () => controller.removePrivateKey());
   handle("settings:choose-library", () => controller.chooseLibrary());
   handle("settings:download-model", () => controller.downloadModel());
   handle("settings:save-task", (_e, task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">) =>

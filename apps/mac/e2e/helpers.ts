@@ -274,6 +274,8 @@ export async function launch(env: Record<string, string>, switches: string[] = [
       // No window takes the keyboard or floats over the owner's Spaces; a test may pass its own value.
       AVANZEL_QUIET_STAGE: "1",
       PATH: agentPath(),
+      // Codex's list of models is read from its home, so no test sees the models this Mac's Codex lists unless it passes its own.
+      CODEX_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-codex-")),
       ...env,
     },
   });

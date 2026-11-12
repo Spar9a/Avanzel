@@ -449,6 +449,8 @@ export interface HarnessInfo {
   freeCheck: boolean;
   /** Its last check in this app run, or null while it hasn't been checked. */
   status: AgentStatus | null;
+  /** The models it says it can run, in its own order: Codex's list, OpenCode's. Empty for an agent that lists none, whose model is typed. */
+  models: { value: string; label: string }[];
 }
 
 export type ModelStatus =
@@ -508,6 +510,15 @@ export interface LibraryInfo {
   shelves: Record<string, number>;
   harness: string;
   models: Record<string, string>;
+  /** config.toml's `[private]`: a model of the person's own, which the agent above is run against when it is on. */
+  private: PrivateInfo;
+  /** The app keeps a key for the private model's server, in the Keychain. Settings never gets the key itself. */
+  privateKeySaved: boolean;
+  /**
+   * Why the private model can't run with the agent in use, in a sentence (its address isn't right, or the agent doesn't speak that kind
+   * of server), or null: when it is off, or fine.
+   */
+  privateProblem: string | null;
   timeoutSeconds: number;
   /** config.toml's `[voice] dictionary`: the owner's lines, "Term" or "Term = heard as, other", as saved (cleaned). */
   dictionary: string[];
@@ -519,10 +530,40 @@ export interface LibraryInfo {
   dictationSkipSites: string[];
 }
 
+/** The library's `[private]` settings: the same as the engine's PrivateModel. */
+export interface PrivateInfo {
+  enabled: boolean;
+  /** The server's address, as typed. */
+  baseUrl: string;
+  /** The model's name on the server. */
+  model: string;
+  /** What the server speaks: OpenAI chat completions, Anthropic Messages or OpenAI Responses. */
+  api: "chat" | "messages" | "responses";
+  contextWindow: number;
+  /** The name of the environment variable that holds the server's key; empty for a server that needs none. */
+  keyEnv: string;
+}
+
+/** The agents that speak each kind of server a private model can be, best first: the engine's `privateHarnesses`, which a test keeps in step. */
+export const PRIVATE_AGENTS: Readonly<Record<PrivateInfo["api"], readonly string[]>> = {
+  chat: ["pi", "opencode"],
+  messages: ["claude"],
+  responses: ["codex"],
+};
+
+/** What each kind of server is called in Settings. */
+export const PRIVATE_API_LABELS: Readonly<Record<PrivateInfo["api"], string>> = {
+  chat: "OpenAI chat completions",
+  messages: "Anthropic Messages",
+  responses: "OpenAI Responses",
+};
+
 /** What Settings changes in the library's config.toml (`setLibrary`); a key left out keeps its value. */
 export interface LibraryPatch {
   harness?: string;
   models?: Record<string, string>;
+  /** Fields of `[private]` to change; the others keep their values. */
+  private?: Partial<PrivateInfo>;
   timeoutSeconds?: number;
   /** The Dictionary field's lines as typed: main stores them cleaned (`cleanDictionary`). */
   dictionary?: string[];
@@ -1031,6 +1072,14 @@ export interface AvanzelBridge {
     /** The history changed (a dictation finished, or one was forgotten, here or from the menu): the pane lists it again. */
     onDictationsChanged(callback: () => void): () => void;
     setLibrary(patch: LibraryPatch): Promise<SettingsSnapshot>;
+    /** The private model's key, which the app keeps in the Keychain and never hands to a window: a new one. */
+    generatePrivateKey(): Promise<SettingsSnapshot>;
+    /** The clipboard's text as the key; refused in plain words when it isn't one. */
+    pastePrivateKey(): Promise<SettingsSnapshot>;
+    /** The key on the clipboard, to give the server. */
+    copyPrivateKey(): Promise<SettingsSnapshot>;
+    /** Forgets the key. */
+    removePrivateKey(): Promise<SettingsSnapshot>;
     chooseLibrary(): Promise<SettingsSnapshot>;
     downloadModel(): Promise<SettingsSnapshot>;
     saveTask(task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">): Promise<SettingsSnapshot>;

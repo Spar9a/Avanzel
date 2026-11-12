@@ -172,7 +172,7 @@ describe("selectHarness", () => {
       agent: null,
       message:
         "No agent CLI found. Install one of: Claude Code (claude), Codex (codex), OpenCode (opencode), " +
-        "Cursor Agent (cursor-agent), Gemini CLI (gemini) — or add [harnesses.<name>] to .avanzel/config.toml.",
+        "Cursor Agent (cursor-agent), Gemini CLI (gemini), pi (pi) — or add [harnesses.<name>] to .avanzel/config.toml.",
     });
   });
 
@@ -201,7 +201,7 @@ describe("selectHarness", () => {
       expect(error).toBeInstanceOf(NoAgentError);
       expect(error).toMatchObject({
         agent: name,
-        message: `Unknown harness '${name}'. Known harnesses: claude, codex, opencode, cursor-agent, gemini.`,
+        message: `Unknown harness '${name}'. Known harnesses: claude, codex, opencode, cursor-agent, gemini, pi.`,
       });
     }
   });
