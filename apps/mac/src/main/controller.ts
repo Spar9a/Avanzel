@@ -5910,10 +5910,11 @@ export class Controller {
    * command and never asks the model (`prompt: false`). A sign-in it can't read leaves the agent unchecked, for Check.
    * Without a library, the built-in agents are checked in a scratch folder (`harnessTable`, `checkDir`). It returns at
    * once; Settings and setup get each result through settings:changed and setup:changed. An agent setup's person
-   * picked meanwhile is asked its question when its sign-in said nothing (`setup.agentChecked`).
+   * picked meanwhile is asked its question when its sign-in said nothing (`setup.agentChecked`). With `listModels`, as
+   * Settings → Agents asks, OpenCode is also asked for its models.
    */
-  checkAgents(): SettingsSnapshot {
-    this.listOpencodeModels();
+  checkAgents(listModels = false): SettingsSnapshot {
+    if (listModels) this.listOpencodeModels(); // only Settings shows the list: setup asks OpenCode nothing until it is picked
     for (const [name, harness] of Object.entries(this.harnessTable())) {
       if (harness.signIn && !this.agentChecks.has(name) && harness.available()) {
         void this.runAgentCheck(name, harness, false).then(() => this.setup.agentChecked(name));

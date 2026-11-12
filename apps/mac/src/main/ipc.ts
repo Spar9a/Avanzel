@@ -100,7 +100,7 @@ export function registerIpc(controller: Controller): void {
   handle("settings:save-task", (_e, task: Pick<TaskInfo, "id" | "name" | "schedule" | "agent" | "enabled" | "instructions">) =>
     controller.saveTaskFromSettings(task));
   handle("settings:run-task", (_e, id: string) => controller.runTaskFromSettings(id));
-  handle("settings:check-agents", () => controller.checkAgents());
+  handle("settings:check-agents", () => controller.checkAgents(true));
   handle("settings:check-agent", (_e, name: string) => controller.checkAgent(name));
   handle("settings:request-permission", (_e, kind: "microphone" | "screen") => controller.requestPermission(kind));
   // Avanzel's own update: Check now (or Try again), and Restart to update, which waits while something is in progress.
