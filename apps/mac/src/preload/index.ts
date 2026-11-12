@@ -81,9 +81,6 @@ const bridge: AvanzelBridge = {
     checkForUpdates: () => ipcRenderer.invoke("settings:check-for-updates"),
     restartToUpdate: () => ipcRenderer.invoke("settings:restart-to-update"),
     cancelRestartToUpdate: () => ipcRenderer.invoke("settings:cancel-restart-to-update"),
-    pick: (options, at) => ipcRenderer.invoke("settings:pick", options, at),
-    fit: (height) => ipcRenderer.send("settings:fit", height),
-    surface: (color) => ipcRenderer.send("settings:surface", color),
   },
   quick: {
     submit: (text) => ipcRenderer.invoke("quick:submit", text),
@@ -144,6 +141,7 @@ const bridge: AvanzelBridge = {
     pages: () => ipcRenderer.invoke("panel:pages"),
     act: (action) => ipcRenderer.send("panel:act", action),
     onShown: (callback) => listen<PanelTab | null>("panel:shown", callback),
+    opening: () => ipcRenderer.invoke("panel:opening"),
     hide: () => ipcRenderer.send("panel:hide"),
     onLevel: (callback) => listen<number>("panel:level", callback),
     type: (text) => ipcRenderer.invoke("panel:type", text),

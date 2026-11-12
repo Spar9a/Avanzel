@@ -12,9 +12,9 @@ import { agentCalls, call, filesUnder, launch, throughFound, typeFirstThought } 
 export const windowsTitled = (app: ElectronApplication, title: string) =>
   app.evaluate(({ BrowserWindow }, wanted) => BrowserWindow.getAllWindows().filter((w) => w.getTitle() === wanted).length, title);
 
-/** How many Settings windows there are, shown or not: by the title it is made with, or by its page, which titles it for its pane once that has loaded. */
+/** How many windows Settings has, shown or not: the menu bar panel, whose third tab it is, once its page is on its way. */
 export const settingsWindows = (app: ElectronApplication) =>
-  app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.getTitle() === "Avanzel Settings" || w.webContents.getURL().includes("/renderer/settings/")).length);
+  app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.webContents.getURL().includes("/renderer/panel/")).length);
 
 /** Whether Avanzel shows its Dock icon now. */
 export const dockShown = (app: ElectronApplication) => app.evaluate(({ app: electronApp }) => electronApp.dock?.isVisible() ?? false);

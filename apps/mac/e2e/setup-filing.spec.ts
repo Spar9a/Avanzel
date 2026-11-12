@@ -500,8 +500,8 @@ test("a filing whose agent has gone offers Open Settings, the moment's primary, 
   expect(inbox(library)).toHaveLength(1);
   await snap(setup, "setup-filing-gone");
   await notice.getByRole("button", { name: "Open Settings", exact: true }).click();
-  const settings = await windowFor(app, "settings");
-  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
+  const settings = await windowFor(app, "panel");
+  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-selected", "true");
   await expect(setup.getByRole("alert")).toBeVisible(); // setup stays where it was
   // Claude Code is installed again, from Settings → Agents' command say, and Try again files the first thought.
   answerAs(bin, "claude", filingClaude());

@@ -6,7 +6,7 @@ import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
 import type { CapsuleState } from "../src/shared/ipc.ts";
 import { filedFromTheCapsule, launchOn } from "./capsule-helpers.ts";
-import { call, filesUnder, filingClaude, firstRun, launch, makeLibrary, screenshotFixture, settingsRow, toolbarItem, windowFor } from "./helpers.ts";
+import { call, filesUnder, filingClaude, firstRun, launch, makeLibrary, screenshotFixture, paneShown, settingsRow, toolbarItem, windowFor } from "./helpers.ts";
 
 type Appearance = "light" | "dark";
 type RGB = [number, number, number];
@@ -95,6 +95,8 @@ async function texts(page: Page): Promise<Sample[]> {
       // A disabled control, its words included: a Switch marks its whole row (its label and description too) with data-disabled, as
       // the gallery's check reads it. Settings → Dictation's "Dictate into any app" is one on a Mac without the cursor helper built.
       if (el.matches("option, optgroup, script, style") || el.closest(":disabled, [data-disabled]")) continue;
+      // A tab's page that isn't the one shown (the panel keeps each once it has shown) is out of sight, beside the one that is.
+      if (el.closest("[inert]")) continue;
       if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
       let text: string;
       let pseudo: string | null = null;
@@ -430,13 +432,12 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
   const app = await launch({ AVANZEL_LIBRARY: library });
   const found: string[] = [];
 
-  // The window is opaque: its page draws the window's own surface, so what lies under it doesn't show through.
+  // Settings is the panel's third tab. The panel is clear, over the popover material, as Quick is: it is read over the window surface.
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   for (const pane of ["General", "Voice", "Shortcuts", "Dictation", "Agents", "Reviews", "Privacy"]) {
     await toolbarItem(settings, pane).click();
-    // The pane's name is the window's title, its one heading of level 2: a group of the pane may share it (Shortcuts holds "Shortcuts").
-    await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
+    await paneShown(settings, pane);
     if (pane === "Reviews") await expect(settings.getByText(/Unknown schedule "sometimes"/)).toBeVisible();
     // launch()'s stand-ins for Claude Code and Codex read their sign-in as the pane opens: read the pane once both
     // are done, not while a Check button spins.
@@ -445,12 +446,12 @@ test("every Settings pane, Quick, Ask and capsule state is readable in light and
         await expect(settingsRow(settings, name).getByText("Signed in", { exact: true })).toBeVisible({ timeout: 40_000 });
       }
     }
-    found.push(...(await readable(app, settings, `Settings › ${pane}`, desktops)));
+    found.push(...(await readable(app, settings, `Settings › ${pane}`, surface)));
     // A review's editor, open in its group: its rows, its instructions and its Save.
     if (pane === "Reviews") {
       await settings.getByRole("group", { name: "Weekly review", exact: true }).getByRole("button", { name: "Edit", exact: true }).click();
       await expect(settings.getByRole("textbox", { name: "Instructions" })).toBeVisible();
-      found.push(...(await readable(app, settings, "Settings › Reviews, editing", desktops)));
+      found.push(...(await readable(app, settings, "Settings › Reviews, editing", surface)));
     }
   }
 
@@ -549,9 +550,9 @@ test("Ask's saved, undone and refused turns are readable in light and dark", asy
 test("Settings without a library is readable in light and dark", async () => {
   const app = await launch(firstRun().env); // without a library, setup opens by itself
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
-  const found = await readable(app, settings, "Settings › General, no library", desktops);
+  const found = await readable(app, settings, "Settings › General, no library", surface);
   await app.close();
   expect(found).toEqual([]);
 });

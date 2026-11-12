@@ -23,12 +23,12 @@ import {
   notified,
   onDay,
   reachedUndo,
-  receiptItem,
+  receiptOffer,
   stopTranscribing,
   transcriptions,
-  trayOffersUndo,
+  panelShowsUndo,
   undoCalls,
-  undoItem,
+  undoOffer,
   undone,
   watchUndos,
   type Left,
@@ -48,7 +48,6 @@ import {
   onlyAgentsIn,
   openedWith,
   read,
-  recentlyFiled,
   snap,
   speechWav,
   stubOpening,
@@ -151,9 +150,9 @@ test("a filing outside the six shelves suggests nothing while they are empty", a
   const library = await makeLibrary();
   filedInto(library, "projects", "launch-plan", "Launch plan", onDay(0));
   const app = await launch({ AVANZEL_LIBRARY: library });
-  // The menu lists the page, so the app does hold it as filed last; the six shelves hold no page, so Ask invites a first thought,
+  // The app counts the filing, so it does hold it as filed today; the six shelves hold no page, so Ask invites a first thought,
   // and a question under that line would contradict it.
-  expect(await recentlyFiled(app)).toEqual(["Launch plan"]);
+  expect((await call(app, "panelSnapshot")) as { filedToday: number }).toMatchObject({ filedToday: 1 });
   expect(await call(app, "askSuggestions")).toEqual([]);
   await call(app, "openAsk");
   const ask = await windowFor(app, "ask");
@@ -427,23 +426,23 @@ test("Save as a note is offered on the newest answered turn only", async () => {
   await app.close();
 });
 
-test("a save hides the menu's Undo the last filing while it waits and runs, and drops it once it commits after the filing", async () => {
+test("a save hides the panel's Undo the last filing while it waits and runs, and drops it once it commits after the filing", async () => {
   // While the save runs: the filing's Undo is on the menu until the save is pressed, and away while it runs (`savesGoing`), and after it,
   // once the page is saved: the save committed after the filing, so the record is dropped. Only the Undo goes: the filing's receipt stays
-  // on the menu. Both the model and the menu the tray holds say it (`trayOffersUndo`).
+  // on the menu. Both the model and the menu the tray holds say it (`panelShowsUndo`).
   const first = await launchOn(await makeLibrary({ git: true }));
   await filedFromTheCapsule(first.app);
-  await expect.poll(() => undoItem(first.app), { timeout: 20_000 }).toBeDefined();
-  await expect.poll(() => trayOffersUndo(first.app)).toBe(true);
+  await expect.poll(() => undoOffer(first.app), { timeout: 20_000 }).toBeDefined();
+  await expect.poll(() => panelShowsUndo(first.app)).toBe(true);
   const ask = await answeredIn(first.app, "Summarize my ideas");
-  expect(await undoItem(first.app)).toBeDefined();
+  expect(await undoOffer(first.app)).toBeDefined();
   await saveOffer(ask).click();
-  await expect.poll(() => undoItem(first.app)).toBeUndefined();
-  await expect.poll(() => trayOffersUndo(first.app)).toBe(false);
+  await expect.poll(() => undoOffer(first.app)).toBeUndefined();
+  await expect.poll(() => panelShowsUndo(first.app)).toBe(false);
   await expect(saveRegion(ask)).toHaveText(SAVED, { timeout: 60_000 });
-  expect(await undoItem(first.app)).toBeUndefined();
-  expect(await trayOffersUndo(first.app)).toBe(false);
-  await expect.poll(() => receiptItem(first.app)).toBeDefined();
+  expect(await undoOffer(first.app)).toBeUndefined();
+  expect(await panelShowsUndo(first.app)).toBe(false);
+  await expect.poll(() => receiptOffer(first.app)).toBeDefined();
   await first.app.close();
   // After a filing that ended while it waited: the save, pressed while a filing runs, waits for the library. The filing's own line in the
   // fake's record shows it has the library (the capsule's "filing" comes before it takes the lock). The filing ends, and the save commits
@@ -457,8 +456,8 @@ test("a save hides the menu's Undo the last filing while it waits and runs, and 
   await expect(saveRegion(waiting)).toHaveText("Waiting for Avanzel to finish with your library…");
   await expect.poll(() => capsuleKind(second.app), { timeout: 60_000 }).toBe("filed");
   await expect(saveRegion(waiting)).toHaveText(SAVED, { timeout: 60_000 });
-  expect(await undoItem(second.app)).toBeUndefined();
-  expect(await trayOffersUndo(second.app)).toBe(false);
+  expect(await undoOffer(second.app)).toBeUndefined();
+  expect(await panelShowsUndo(second.app)).toBe(false);
   await second.app.close();
 });
 
@@ -468,10 +467,10 @@ test("a save that is held hides the Undo the tray holds from the press of Save, 
   // the save 30 s, so the menu is read while the save runs, and not once it has ended and built the menu itself.
   const { app } = await launchOn(await makeLibrary({ git: true }));
   await filedFromTheCapsule(app);
-  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
-  await expect.poll(() => trayOffersUndo(app)).toBe(true);
+  await expect.poll(() => undoOffer(app), { timeout: 20_000 }).toBeDefined();
+  await expect.poll(() => panelShowsUndo(app)).toBe(true);
   const ask = await answeredIn(app, "Summarize my ideas");
-  expect(await trayOffersUndo(app)).toBe(true);
+  expect(await panelShowsUndo(app)).toBe(true);
   await app.evaluate(() => {
     process.env.FAKE_AGENT_DELAY_MS = "30000";
   });
@@ -479,16 +478,16 @@ test("a save that is held hides the Undo the tray holds from the press of Save, 
   const stop = turnAt(ask).getByRole("button", { name: "Stop", exact: true });
   await expect(stop).toBeVisible();
   // The model hides the item at once; the menu the tray holds has to follow within seconds, long before the save ends.
-  await expect.poll(() => undoItem(app)).toBeUndefined();
-  await expect.poll(() => trayOffersUndo(app), { timeout: 5_000 }).toBe(false);
+  await expect.poll(() => undoOffer(app)).toBeUndefined();
+  await expect.poll(() => panelShowsUndo(app), { timeout: 5_000 }).toBe(false);
   // Stop gives the save up with nothing committed: the filing's Undo is on the held menu again.
   await stop.click();
   await expect(saveRegion(ask)).toHaveText("Stopped. Your library hasn't changed.", { timeout: 30_000 });
   await app.evaluate(() => {
     delete process.env.FAKE_AGENT_DELAY_MS;
   });
-  expect(await undoItem(app)).toBeDefined();
-  await expect.poll(() => trayOffersUndo(app)).toBe(true);
+  expect(await undoOffer(app)).toBeDefined();
+  await expect.poll(() => panelShowsUndo(app)).toBe(true);
   await app.close();
 });
 
@@ -497,14 +496,14 @@ test("a save that commits nothing leaves the last filing's Undo", async () => {
   // committed nothing after the filing, so the filing's Undo is on the menu again when it ends, and takes the filing back.
   const { app, library } = await launchOn(await makeLibrary({ git: true }));
   await filedFromTheCapsule(app);
-  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
-  await expect.poll(() => trayOffersUndo(app)).toBe(true);
+  await expect.poll(() => undoOffer(app), { timeout: 20_000 }).toBeDefined();
+  await expect.poll(() => panelShowsUndo(app)).toBe(true);
   const ask = await answeredIn(app, "Summarize my ideas");
   await agentMode(app, "noop");
   await saveOffer(ask).click();
   await expect(ask.getByRole("alert").getByText("fake didn't save a note.", { exact: true })).toBeVisible({ timeout: 60_000 });
-  await expect.poll(() => undoItem(app)).toBeDefined();
-  await expect.poll(() => trayOffersUndo(app)).toBe(true);
+  await expect.poll(() => undoOffer(app)).toBeDefined();
+  await expect.poll(() => panelShowsUndo(app)).toBe(true);
   // It is the filing's Undo, still good: ⌥⇧Z takes the filing back.
   expect(await call(app, "pressShortcutForTests", "undo")).toBe(true);
   await expect.poll(() => undone(library), { timeout: 30_000 }).toHaveLength(1);
@@ -524,21 +523,21 @@ test("while a save waits for the library and runs, no filing is offered for Undo
   // The filing ends well, and the save is next in line for the library. The filing is not offered for Undo while the save is about to
   // commit after it: not by the menu, not by ⌥⇧Z, whose press does nothing (no bar that says there is no filing, nothing taken back).
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   expect(await call(app, "pressShortcutForTests", "undo")).toBe(true);
   expect(await capsuleKind(app)).not.toBe("nothing-to-undo");
   expect(undone(library)).toEqual([]);
   // The save has the library now and hangs.
   await expect.poll(() => exists(library, "goals/half.md"), { timeout: 30_000 }).toBe(true);
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   // Stop: the save's leftovers are a commit after the filing, so the filing stays out of the menu once the save has ended.
   await ask.locator("article").first().getByRole("button", { name: "Stop", exact: true }).click();
   await expect(saveRegion(ask)).toHaveText(STOPPED, { timeout: 30_000 });
   expect(lastCommit(library)).toBe(LEFTOVERS);
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   await call(app, "idleForTests");
   expect(undone(library)).toEqual([]);
   await app.close();
@@ -561,8 +560,8 @@ test("Stop on a save that waits for the library is answered once the filing lets
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   await expect(saveRegion(ask)).toHaveText("Stopped. Your library hasn't changed.", { timeout: 60_000 });
   // The save committed nothing, so the filing is still the library's last commit: the menu offers its Undo again, as the tray holds it.
-  expect(await undoItem(app)).toBeDefined();
-  await expect.poll(() => trayOffersUndo(app)).toBe(true);
+  expect(await undoOffer(app)).toBeDefined();
+  await expect.poll(() => panelShowsUndo(app)).toBe(true);
   await app.close();
 });
 
@@ -615,7 +614,7 @@ test("only the Ask window's page can save", async () => {
   const app = await launch({ AVANZEL_LIBRARY: library, FAKE_AGENT_RECORD: record });
   // Every window has the same bridge, so Settings' page can send ask:save: main refuses it, and runs nothing.
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   const refusal = await settings.evaluate(() =>
     window.avanzel.ask.save("Summarize my ideas", "An answer.", null).then(
       () => null,
@@ -745,7 +744,7 @@ test("only the Ask window's page can undo a save", async () => {
   const commit = gitOut(library, "rev-parse", "HEAD").trim();
   // Every window has the same bridge, so Settings' page can send ask:undo-save: main knows the commit, and refuses it all the same.
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   expect(await settings.evaluate((saved) => window.avanzel.ask.undoSave(saved), commit)).toBe(false);
   expect(undone(library)).toEqual([]);
   expect(await undoCalls(app)).toBe(0);
@@ -1110,7 +1109,7 @@ test("⌥Space in the Ask window puts the spoken question in its field, after wh
   await app.close();
 });
 
-test("⌥Space records a thought while another app is in front of Ask, and the menu's Record a thought always does", async () => {
+test("⌥Space records a thought while another app is in front of Ask, and the panel's Record a thought always does", async () => {
   const library = await libraryWithAPage(); // with a page, it is Ask being in front that makes the difference
   const { app } = await launchOn(library);
   await call(app, "openAsk");
@@ -1339,7 +1338,7 @@ test("Ask reads the shelves again when a filing ends or is taken back, though no
   await expect(ask.getByText(USUAL, { exact: true })).toBeVisible();
   await expect(ask.getByRole("group", { name: "What did I say about “Plant tulips in October”?", exact: true })).toBeVisible();
   // Taken back with ⌥⇧Z, the only filing leaves the shelves empty: the hint goes, and the line that invites a thought is back.
-  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
+  await expect.poll(() => undoOffer(app), { timeout: 20_000 }).toBeDefined();
   expect(await call(app, "pressShortcutForTests", "undo")).toBe(true);
   await expect(ask.getByText(EMPTY, { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(hint).toHaveCount(0);

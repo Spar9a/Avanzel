@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { NarrationRow } from "../src/shared/ipc.ts";
 import { askIsKey, filedInto, onDay } from "./capsule-helpers.ts";
-import { call, capsuleKind, capturesKept, filesUnder, filingClaude, firstRun, launch, speechWav, throughFound, typeFirstThought, windowFor } from "./helpers.ts";
+import { call, capsuleKind, capturesKept, filesUnder, filingClaude, firstRun, launch, speechWav, throughFound, typeFirstThought, windowFor, paneShown } from "./helpers.ts";
 import {
   inbox,
   INSTRUCTION,
@@ -151,8 +151,8 @@ test("with no free shortcut, setup offers Settings, and the shortcut set there i
   await expect(open).toHaveAttribute("data-variant", "primary");
   await open.click();
   // Settings opens on Shortcuts, as the line says.
-  const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("heading", { name: "Shortcuts", exact: true, level: 2 })).toBeVisible();
+  const settings = await windowFor(app, "panel");
+  await paneShown(settings, "Shortcuts");
   // A shortcut set in Settings is the one the step listens for now, from the start of a new wait.
   await call(app, "setApp", { shortcuts: { ...(await settingsSnap(app)).app.shortcuts, dictate: "Control+Alt+K" } });
   await expect(taken).toHaveCount(0);

@@ -63,7 +63,7 @@ export type DeleteDictationResult = { ok: true } | { ok: false; message: string;
 /**
  * A forgotten dictation left the history, but the library's day file of dictations (`raw/dictations/`) couldn't be updated: what
  * happened, what remains, and the one fix. `library` names the folder of the library the dictation was kept in, when that is not the
- * one open (null: the open one). Told by the Dictation pane after a Delete and by the capsule after the menu's "Forget the last
+ * one open (null: the open one). Told by the Dictation pane after a Delete and by the capsule after the panel's "Forget the last
  * dictation".
  */
 export function dayFileNotUpdated(library: string | null): { title: string; body: string } {
@@ -340,7 +340,7 @@ export interface Shortcuts {
   capture: string;
   type: string;
   ask: string;
-  /** Takes the last filing back from any app (the menu's Undo the last filing). */
+  /** Takes the last filing back from any app (the panel's Undo the last filing). */
   undo: string;
   /** Takes notes on a call: the panel's list of calls opens, or, while one runs, the notes stop. */
   call: string;
@@ -1069,7 +1069,7 @@ export interface AvanzelBridge {
     copyDictation(id: string): Promise<boolean>;
     /** Forgets dictation `id`. A history that can't be rewritten keeps it, and says so in plain words. */
     deleteDictation(id: string): Promise<DeleteDictationResult>;
-    /** The history changed (a dictation finished, or one was forgotten, here or from the menu): the pane lists it again. */
+    /** The history changed (a dictation finished, or one was forgotten, here or from the panel's Capture): the pane lists it again. */
     onDictationsChanged(callback: () => void): () => void;
     setLibrary(patch: LibraryPatch): Promise<SettingsSnapshot>;
     /** The private model's key, which the app keeps in the Keychain and never hands to a window: a new one. */
@@ -1112,14 +1112,6 @@ export interface AvanzelBridge {
     restartToUpdate(): Promise<SettingsSnapshot>;
     /** Not now, on a restart to update that waits for work in progress: it is called off, and the update stays ready. */
     cancelRestartToUpdate(): Promise<SettingsSnapshot>;
-    /** A pop-up button: a native menu of `options` pops up at `at` (window points; null: at the pointer). Resolves with the
-        value picked, or null when the menu closes without one. Only the Settings window's own page is answered: sent from any
-        other window, it resolves null and shows no menu. */
-    pick(options: readonly PickOption[], at: { x: number; y: number } | null): Promise<string | null>;
-    /** What the pane in view needs, in px: the window takes that height, within the screen, at once. Only the Settings window's own page is heard. */
-    fit(height: number): void;
-    /** The colour the page is drawn on, as the page computes it ("rgb(35, 34, 40)"): the window fills with it where the page hasn't drawn yet. Only the Settings window's own page is heard. */
-    surface(color: string): void;
   };
   quick: {
     submit(text: string): Promise<void>;
@@ -1285,6 +1277,11 @@ export interface AvanzelBridge {
     act(action: string): void;
     /** The panel came up: on `tab` when something asked for one (Settings from an error card), else where it was. */
     onShown(callback: (tab: PanelTab | null) => void): () => void;
+    /**
+     * As the page starts: the tab, and Settings' pane, the panel was last asked to come up on, once (null after, and for any other page).
+     * A panel made just now can be told `onShown` before its page listens.
+     */
+    opening(): Promise<{ tab: PanelTab | null; pane: SettingsPane | null } | null>;
     /** Esc: the panel hides. */
     hide(): void;
     /** The microphone's level, 0 to 1, as the capsule hears it, while a recording listens and the panel is up. */
@@ -1373,7 +1370,7 @@ export interface PanelReview {
 /** Everything the panel shows but the pages and Settings, in one snapshot (panel:changed). */
 export interface PanelSnapshot {
   libraryReady: boolean;
-  /** Why there is no library, when there is none: what the menu's head says. */
+  /** Why there is no library, when there is none: what Capture says over its Set up Avanzel…. */
   libraryProblem: string | null;
   inbox: number;
   filedToday: number;

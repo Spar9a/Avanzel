@@ -73,7 +73,7 @@ import {
   type VoiceOptions,
   type VoiceSettings,
 } from "@avanzel/engine";
-import { CAPSULE_IN_PANEL, DAY_FILE_NOT_UPDATED, DICTATION_NOT_COPIED, DICTATION_NOT_COPIED_BODY, isSettingsPane, noSuchReview, type AreaSetup, type DeleteDictationResult, type DictationList } from "../shared/ipc.ts";
+import { CAPSULE_IN_PANEL, DAY_FILE_NOT_UPDATED, isSettingsPane, noSuchReview, type AreaSetup, type DeleteDictationResult, type DictationList } from "../shared/ipc.ts";
 import {
   ANOTHER_LIBRARY,
   avanzelFailure,
@@ -105,7 +105,6 @@ import {
   type PartialEdits,
   type Problem,
 } from "../shared/problems.ts";
-import { cursorKeyName } from "../shared/transcribing.ts";
 import type {
   AgentStatus,
   AppSettings,
@@ -163,10 +162,9 @@ import { cleanPastedKey, generatePrivateKey, PLAIN_CIPHER, PrivateKeyStore } fro
 import { keychainCipher } from "./private-key-keychain.ts";
 import { forgetKept, logDictation } from "./library-log.ts";
 import { LiveWords } from "./live-words.ts";
-import { buildMenuModel, filedLine, MENU_DICTATIONS, menuRows, reviewProgress, speechProblemOf, waitingLine, type MenuDictation, type MenuInput, type MenuItemModel } from "./menu-model.ts";
+import { filedLine, reviewProgress, speechProblemOf, waitingLine, type MenuInput } from "./menu-model.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
-import { pickRequest, popupChoice, trayChoice } from "./popup.ts";
 import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import {
@@ -205,8 +203,6 @@ import {
   createPanelWindow,
   createAreaWindow,
   createQuickWindow,
-  createSettingsWindow,
-  fitSettings,
   isPageOf,
   placeCapsule,
   placePanel,
@@ -215,13 +211,6 @@ import {
 import { libraryPages, pagePrompt, sourcesOnlyOf, withoutItem } from "./library-pages.ts";
 import { heardTrigger, withoutStopWord } from "../shared/trigger.ts";
 import type { AddingKind, FileMode, PanelPage, PanelSnapshot, PanelTab, UpdateWait } from "../shared/ipc.ts";
-
-/**
- * The panel under the menu bar icon stands in for the menu and for the Settings window: a click on the icon brings it up, and
- * Settings is its third tab. The e2e tests drive the menu and the Settings window as they were, so with AVANZEL_TEST=1 the
- * icon keeps its menu and Settings its own window.
- */
-const USE_PANEL = process.env.AVANZEL_TEST !== "1";
 
 /** What the panel may ask for (`panel:act`): the menu's own actions, and a page to open by its path. */
 const PANEL_ACTIONS = new Set([
@@ -435,10 +424,10 @@ export class Controller {
   private readonly modelsDir: string;
   private vault: Vault | null = null;
   private capsule!: BrowserWindow;
-  /** The Settings window's page; with the panel (`USE_PANEL`), the panel itself, whose Settings tab is that page. */
-  private settingsWindow: BrowserWindow | null = null;
   /** The panel under the menu bar icon, made at its first click and hidden, never closed, after. */
   private panelWindow: BrowserWindow | null = null;
+  /** What the panel was last asked to come up on (`showPanel`), until its page asks for it (`takePanelOpening`). */
+  private panelOpening: { tab: PanelTab | null; pane: SettingsPane | null } | null = null;
   /** While a dialog the panel opened is up (Run Now?, Choose a folder), losing the keyboard to it doesn't hide the panel. */
   private panelHeld = 0;
   /** Counts each read of the log, so the panel knows to list the pages again (`PanelSnapshot.pagesVersion`). */
@@ -490,10 +479,10 @@ export class Controller {
   /** The history of dictations, in the app's own data (`<userData>/dictations.jsonl`), never in the library. */
   private readonly dictations: DictationHistory;
   /**
-   * The newest dictations of the history, for the menu, which is built often: null until it is asked, and again after every change to
-   * the history (`dictationsChanged`), so that the file is not read at each build.
+   * Whether the history has a dictation, for the panel's Forget the last dictation, which is worked out often: null until it is asked,
+   * and again after every change to the history (`dictationsChanged`), so that the file is not read each time.
    */
-  private menuDictations: MenuDictation[] | null = null;
+  private hasDictation: boolean | null = null;
   /**
    * Called with the entry that "Forget the last dictation" or a pane's Delete has just taken out of the history (`forgetDictation`).
    * It exists so that whatever else keeps a copy of a dictation can drop it too: the open library's day file (`forgetFromLibrary`).
@@ -722,7 +711,7 @@ export class Controller {
     this.capsule.on("closed", () => {
       if (!this.updates.restarting) app.quit();
     });
-    this.menuBar = new MenuBar((action) => void this.menuAction(action), USE_PANEL ? () => this.togglePanel() : undefined);
+    this.menuBar = new MenuBar(() => this.togglePanel());
     const envLibrary = process.env.AVANZEL_LIBRARY;
     if (envLibrary) this.store.update({ libraryPath: envLibrary });
     this.openLibrary(this.store.get().libraryPath);
@@ -918,7 +907,7 @@ export class Controller {
    * are registered again when the recording ends, saved or not.
    */
   shortcutRecording(sender: WebContents, recording: unknown): void {
-    if (!this.isPanelPage(sender) && !isPageOf(sender, this.settingsWindow)) return;
+    if (!this.isPanelPage(sender)) return;
     this.shortcutsLetGo = recording === true;
     if (this.shortcutsLetGo) shortcutApi().unregisterAll();
     else void this.applyShortcuts();
@@ -1018,7 +1007,6 @@ export class Controller {
     if (action === "finish-cut-short") return this.calls.finishOldestCutShort();
     if (action === "type") return this.openQuick();
     if (action === "ask") return this.openAsk();
-    if (action === "settings") return this.showSettings();
     if (action === "setup") return this.setup.show();
     if (action === "open-library") return this.openLibraryFolder();
     if (action === "open-inbox" && this.vault) return void shell.openPath(this.vault.inbox);
@@ -1029,10 +1017,7 @@ export class Controller {
       this.rereadVoiceSettings();
       return this.showSettings("voice");
     }
-    if (action === "open-settings:dictations") return this.showSettings("dictations");
     if (action === "forget-dictation") return this.forgetLastDictation();
-    if (action === "toggle-dictation") return this.toggleDictationFromMenu();
-    if (action.startsWith("copy-dictation:")) return this.copyDictationFromMenu(action.slice("copy-dictation:".length));
     if (action === "show-receipt") return this.showLastReceipt();
     if (action === "undo-filing") return this.undoLastFiling();
     if (action === "undo-review") return void this.undoEveningReview();
@@ -1055,7 +1040,6 @@ export class Controller {
       problem: this.libraryProblem,
       missingLibrary: this.libraryMissing === null ? null : tildePath(this.libraryMissing, homedir()),
       inbox: vault ? vault.pending().length : 0,
-      recent: this.recent,
       filedToday: this.filed.count,
       tasks: tasks.map((t) => ({
         id: t.id,
@@ -1076,9 +1060,7 @@ export class Controller {
       undoableReview: this.lastEveningCommits.length > 0 && this.undoChecked(),
       undoableFiling: this.undoableFiling(),
       showableReceipt: this.receiptShowable(),
-      hasReceipt: this.lastReceipt !== null && this.undoChecked(),
-      recentDictations: (this.menuDictations ??= this.dictations.list().slice(0, MENU_DICTATIONS)),
-      cursorDictation: CursorHelper.available() ? { enabled: this.store.get().cursorDictation.enabled, key: cursorKeyName(this.store.get().cursorDictation.key) } : null,
+      forgettableDictation: (this.hasDictation ??= this.dictations.list().length > 0),
     };
   }
 
@@ -1274,11 +1256,6 @@ export class Controller {
   }
 
   refreshMenu(): void {
-    try {
-      this.menuBar.update(this.menuInput());
-    } catch (error) {
-      console.error("menu", error);
-    }
     this.refreshTray();
     this.refreshPanel();
   }
@@ -2427,33 +2404,8 @@ export class Controller {
     return deleteDictationResult(() => this.forgetDictation(id));
   }
 
-  /** A dictation's row in the menu: its whole words go on the clipboard, and macOS's closing menu is all that says so. A clipboard that refuses says so in a notification. */
-  private async copyDictationFromMenu(id: string): Promise<void> {
-    if (!(await this.copyDictation(id))) this.notify(DICTATION_NOT_COPIED, DICTATION_NOT_COPIED_BODY);
-  }
-
   /**
-   * "Dictate into any app", in the menu: on or off. A setting the disk won't take is said in a notification, and the menu goes back to what is,
-   * since macOS has ticked its row already. Turned on while macOS lacks a permission it would do nothing, with nothing in the menu to say why, so
-   * Settings opens on Dictation, which says which and has the button that asks.
-   */
-  private async toggleDictationFromMenu(): Promise<void> {
-    const on = !this.store.get().cursorDictation.enabled;
-    try {
-      await this.setCursorDictation({ enabled: on });
-    } catch (error) {
-      console.error("dictate into any app", error);
-      this.refreshMenu();
-      this.notify("That change wasn't saved.", "Dictating into any app stays as it was.");
-      return;
-    }
-    if (!on) return;
-    const state = await this.cursorPermissions();
-    if (state.available && (!state.accessibility || !state.inputMonitoring)) this.showSettings("dictations");
-  }
-
-  /**
-   * "Forget the last dictation", in the menu: the newest dictation goes. A history that can't be rewritten says so in a notification;
+   * "Forget the last dictation", in the panel: the newest dictation goes. A history that can't be rewritten says so in a notification;
    * a day file that couldn't be updated is told on the capsule's card, as the person must act on it.
    */
   private async forgetLastDictation(): Promise<void> {
@@ -2479,15 +2431,15 @@ export class Controller {
    * dictations, and an open Settings is told, so that its Dictation pane lists the history again.
    */
   private dictationsChanged(): void {
-    this.menuDictations = null;
+    this.hasDictation = null;
     this.refreshMenu();
-    const win = this.settingsWindow;
+    const win = this.panelWindow;
     if (win && !win.isDestroyed()) win.webContents.send("settings:dictations-changed");
   }
 
   /** Whether `sender` is the Settings window's own page: the only one the history's words are handed to. */
   isSettingsPage(sender: WebContents): boolean {
-    const win = this.settingsWindow;
+    const win = this.panelWindow;
     return !!win && isPageOf(sender, win);
   }
 
@@ -2787,15 +2739,7 @@ export class Controller {
    * Mac plays, the only row when none runs; the one chosen starts the call (`startCallNotes`).
    */
   private async pickCall(): Promise<void> {
-    // With the panel, the choice is made in it, on Capture, never in a menu macOS draws.
-    if (USE_PANEL) return this.showPanel("capture", undefined, "panel:pick-call");
-    const apps = await runningCallApps().catch((error: unknown) => {
-      console.warn("call apps", error);
-      return [];
-    });
-    trayChoice(this.menuBar.tray, [...apps.map((app) => callAppLabel(app.name)), "Everything this Mac plays"], (index) => {
-      void this.startCallNotes(apps[index] ?? "everything");
-    });
+    this.showPanel("capture", undefined, "panel:pick-call");
   }
 
   /**
@@ -3184,7 +3128,7 @@ export class Controller {
     this.refreshMenu();
     this.askChanged(); // the shelves hold its pages: an Ask window in front reads again, as the capsule never takes its key
     // Continued by voice from a page: back to that page, open in Library, with what the note added to it.
-    if (job.continues && USE_PANEL) this.showPanel("library", undefined, { channel: "panel:open-page", value: job.continues });
+    if (job.continues) this.showPanel("library", undefined, { channel: "panel:open-page", value: job.continues });
   }
 
   /**
@@ -4729,7 +4673,6 @@ export class Controller {
     if (this.panelWindow && !this.panelWindow.isDestroyed()) return this.panelWindow;
     const win = createPanelWindow();
     this.panelWindow = win;
-    this.settingsWindow = win;
     // Another window took the keyboard: the panel goes, as a popover does. Not while a dialog it asked for is up.
     win.on("blur", () => {
       if (this.panelHeld === 0 && !win.isDestroyed() && process.env.AVANZEL_QUIET_STAGE !== "1") win.hide();
@@ -4764,6 +4707,9 @@ export class Controller {
   showPanel(tab: PanelTab | null, pane?: SettingsPane, then?: string | { channel: string; value: string }): void {
     const win = this.panel();
     placePanel(win, this.menuBar.bounds());
+    // Kept for a page that isn't listening yet: a panel made just now may finish loading before its page has its listeners, and
+    // `panel:shown` would go unheard. The page asks for it as it starts (`takePanelOpening`).
+    this.panelOpening = { tab, pane: pane ?? null };
     const show = () => {
       if (win.isDestroyed()) return;
       win.webContents.send("panel:shown", tab);
@@ -4776,6 +4722,17 @@ export class Controller {
     };
     if (win.webContents.isLoading()) win.webContents.once("did-finish-load", show);
     else show();
+  }
+
+  /**
+   * The tab (and Settings' pane) the panel was last asked to come up on, for its page as it starts: once, then nothing. Only the panel's
+   * own page is told.
+   */
+  takePanelOpening(sender: WebContents): { tab: PanelTab | null; pane: SettingsPane | null } | null {
+    if (!this.isPanelPage(sender)) return null;
+    const opening = this.panelOpening;
+    this.panelOpening = null;
+    return opening;
   }
 
   /** The panel's Esc. */
@@ -5485,7 +5442,7 @@ export class Controller {
       speechProblem: input.speechProblem ? { title: input.speechProblem, line: input.speechSublabel ?? "" } : null,
       callNotesOffer: input.callNotes,
       cutShortCalls: input.cutShortCalls,
-      forgettableDictation: input.recentDictations.length > 0,
+      forgettableDictation: input.forgettableDictation,
       pagesVersion: this.pagesVersion,
       shortcuts: input.shortcuts,
       unregisteredShortcuts: [...input.unregisteredShortcuts],
@@ -5550,56 +5507,9 @@ export class Controller {
     }
   }
 
-  /** With a `pane`, a new window opens on it and an open one moves to it; without, a new one opens on the pane it showed last and an open one stays put. */
+  /** Settings, the panel's third tab: the panel comes up on it, on `pane` when given, else on the pane it showed last. */
   showSettings(pane?: SettingsPane): void {
-    if (USE_PANEL) return this.showPanel("settings", pane);
-    if (!this.settingsWindow || this.settingsWindow.isDestroyed()) {
-      this.settingsWindow = createSettingsWindow(pane);
-      this.settingsWindow.once("ready-to-show", () => showWhenReady(this.settingsWindow));
-      // Back from System Settings, say, where the person may have allowed the microphone or Screen Recording: Privacy follows
-      // it, as setup reads the sign-ins again when it has the focus (`rereadSignIns`). That is a read of what is on this
-      // Mac, and starts no agent check, which could cost quota. Or back from Terminal, where they may have installed Apple's
-      // Command Line Tools: while this Mac had no usable git, it is looked for afresh (the engine keeps its answer for the
-      // process), as setup's window does (`rereadGit`), so General's line and the next filing's commit follow.
-      this.settingsWindow.on("focus", () => {
-        try {
-          if (!git.gitUsable()) git.resetGitUsable();
-          this.refreshSettings();
-        } catch (error) {
-          console.error("settings", error); // an event handler that throws would bring up Electron's error box
-        }
-      });
-    } else if (pane) {
-      this.settingsWindow.webContents.send("settings:show-pane", pane);
-    }
-    bringForward(this.settingsWindow);
-  }
-
-  /**
-   * A pop-up button, in Settings: a native menu of the page's `options` pops up over the Settings window, at `at`. Resolves with
-   * the value picked; null when the menu closes without one, and without an open Settings window or a request that can
-   * be read. Only the Settings window's own page is answered: `sender` is the page the message came from (`event.sender`),
-   * and a menu is not popped up over Settings for any other window's.
-   */
-  pickFromSettings(sender: WebContents, options: unknown, at: unknown): Promise<string | null> {
-    const win = this.settingsWindow;
-    const request = pickRequest(options, at);
-    if (!win || !isPageOf(sender, win) || !request) return Promise.resolve(null);
-    return popupChoice(win, request.options, request.at);
-  }
-
-  /** The Settings page says what its pane needs, and its window takes that height (`fitSettings` in windows.ts). Only its own page is heard, and only a height that reads. */
-  fitSettings(sender: WebContents, height: unknown): void {
-    const win = this.settingsWindow;
-    if (!win || !isPageOf(sender, win) || typeof height !== "number" || !Number.isFinite(height)) return;
-    fitSettings(win, height);
-  }
-
-  /** The Settings page says what colour it is drawn on, and its window fills with that where the page hasn't drawn yet. Only its own page is heard, and only a colour as a page computes it. */
-  settingsSurface(sender: WebContents, color: unknown): void {
-    const win = this.settingsWindow;
-    if (!win || !isPageOf(sender, win) || typeof color !== "string" || !/^rgb\(\d{1,3}, \d{1,3}, \d{1,3}\)$/.test(color)) return;
-    win.setBackgroundColor(color);
+    this.showPanel("settings", pane);
   }
 
   /** Settings' Show in Finder: the library's folder opens in Finder. Nothing without a library. */
@@ -5618,13 +5528,12 @@ export class Controller {
     if (this.vault?.exists()) return;
     const gone = this.libraryMissing !== null || this.vault !== null; // missing at launch, or gone while Avanzel ran
     this.setup.show(gone ? defaultLibraryPath(homedir()) : undefined);
-    const win = this.settingsWindow;
-    if (win && !win.isDestroyed()) win.close();
+    this.hidePanel();
   }
 
   /** Settings, if it is open, is sent a fresh snapshot (`settings:changed`), which its shell draws in the pane it shows. */
   private refreshSettings(): void {
-    const win = this.settingsWindow;
+    const win = this.panelWindow;
     if (win && !win.isDestroyed()) win.webContents.send("settings:changed", this.snapshot());
   }
 
@@ -5832,14 +5741,8 @@ export class Controller {
    * The window Settings' dialogs come up as sheets on: its own window. The panel is a popover, which a sheet doesn't suit, so its
    * dialogs come up on their own (and hold it up, `holdingPanel`).
    */
-  private settingsDialogParent(): BrowserWindow | undefined {
-    const win = this.settingsWindow;
-    return win && !win.isDestroyed() && win !== this.panelWindow ? win : undefined;
-  }
-
   private async pickLibrary(): Promise<SettingsSnapshot> {
-    const parent = this.settingsDialogParent();
-    const result = parent ? await dialog.showOpenDialog(parent, LIBRARY_PICKER) : await dialog.showOpenDialog(LIBRARY_PICKER);
+    const result = await dialog.showOpenDialog(LIBRARY_PICKER);
     const chosen = result.filePaths[0];
     if (result.canceled || !chosen) return this.snapshot();
     // The home folder, a system folder or a disk's root is no place for a library, whatever is there already: refused before
@@ -6359,7 +6262,7 @@ export class Controller {
    * (its item stays in the menu while it does). True, with nothing asked, for a review that runs no agent: `executeTask` only says a
    * custom review was skipped. `runTask` itself never asks: a review that comes due (`tick`) is on the schedule the person set.
    */
-  async confirmRun(taskId: string, parent?: BrowserWindow): Promise<boolean> {
+  async confirmRun(taskId: string): Promise<boolean> {
     const vault = this.vault;
     if (!vault || this.running.has(taskId)) return false;
     const task = this.safeTasks(vault).find((t) => t.id === taskId);
@@ -6378,13 +6281,13 @@ export class Controller {
     };
     // A menu bar app isn't the frontmost app when its menu is used: without this the question would come up behind the others.
     stealFocus();
-    const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+    const { response } = await dialog.showMessageBox(options);
     return response === 0 && this.vault?.root === vault.root;
   }
 
   /** Settings' Run now: the question comes up as a sheet on Settings (`confirmRun`), and the review runs on Run Now. Cancel changes nothing. */
   async runTaskFromSettings(id: string): Promise<SettingsSnapshot> {
-    const asked = await this.holdingPanel(() => this.confirmRun(id, this.settingsDialogParent()));
+    const asked = await this.holdingPanel(() => this.confirmRun(id));
     return asked ? this.runTask(id) : this.snapshot();
   }
 
@@ -6589,15 +6492,6 @@ export class Controller {
 
   draftForTests(): string | null {
     return this.inEditor?.draft ?? null;
-  }
-
-  menuForTests(): MenuItemModel[] {
-    return buildMenuModel(this.menuInput(), new Date());
-  }
-
-  /** Every row of the menu, wherever it lives: what tests look for a row in. */
-  menuRowsForTests(): ReturnType<typeof menuRows> {
-    return menuRows(this.menuForTests());
   }
 
   /**

@@ -129,8 +129,8 @@ test("a recording whose audio never arrives is given up, and the capsule is told
   expect(filesUnder(library, "raw")).toEqual([]);
   // Its button takes the person to the microphone, in Settings → Voice, and the card goes.
   await capsule.getByRole("button", { name: "Choose microphone", exact: true }).click();
-  const settings = await windowFor(app, "settings");
-  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
+  const settings = await windowFor(app, "panel");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await app.close();
 });
@@ -339,9 +339,10 @@ test("Stop is heard from the capsule's page alone", async () => {
   const { library, userData, app, capsule } = await launchSlowly(60_000);
   await dictate(app);
   await untilSlow(app);
-  // Every window has the same bridge, so Settings' page can send capsule:stop-transcribing; it isn't heard.
-  await call(app, "showSettings");
-  await stopTranscribing(await windowFor(app, "settings"));
+  // Every window has the same bridge, so Quick's page can send capsule:stop-transcribing; it isn't heard. (The panel's is: its
+  // Processing tab offers the same Stop.)
+  await call(app, "openQuick");
+  await stopTranscribing(await windowFor(app, "quick"));
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "transcribing", slow: true });
   expect(filesUnder(library, "inbox")).toEqual([]);
   expect(filesUnder(library, "raw/audio")).toHaveLength(1);

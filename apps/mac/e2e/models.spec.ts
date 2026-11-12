@@ -41,7 +41,7 @@ test("without a library nothing downloads, and Settings offers the download with
   const app = await launch({ AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
   expect(await modelStatus(app)).toEqual({ kind: "missing", bytes: total });
   await call(app, "showSettings"); // without a library, setup opens by itself, not Settings
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await toolbarItem(settings, "Voice").click();
   const download = settings.getByRole("button", { name: "Download (673 MB)" });
   await expect(download).toBeVisible();
@@ -184,7 +184,7 @@ test("the download's card hides itself, though not while the pointer is on it, a
   await expect.poll(() => capsuleKind(app), { timeout: 15_000 }).toBe("hidden");
   // The download goes on, and Settings → Voice keeps showing it.
   await call(app, "showSettings", "voice");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await expect(settings.getByText(/^\d+ of 673 MB$/)).toBeVisible();
   // The next press shows the card again. With the pointer on it (what the card's pointer-enter sends), it stays.
   await call(app, "setKeepOpen", true);
@@ -241,7 +241,7 @@ test("a failed download says why, in the capsule and in Voice", async () => {
   await expect(capsule.getByText("The speech model didn't finish downloading.")).toBeVisible();
   await expect(capsule.getByText(body, { exact: true })).toBeVisible();
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await toolbarItem(settings, "Voice").click();
   // Voice says the same: what happened, why (the same reason, with no URL in it), what works meanwhile, and what Try again does.
   const alert = settings.getByRole("alert");
@@ -278,7 +278,7 @@ test("a download cut half way keeps its part, and Try again continues from it an
   await expect(capsule.getByText(/Typing works meanwhile, and Try again continues where it stopped\.$/)).toBeVisible();
   await expect(capsule.getByText(/downloads it again/)).toHaveCount(0);
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await toolbarItem(settings, "Voice").click();
   await expect(settings.getByRole("alert").getByText(/Try again continues where it stopped\.$/)).toBeVisible();
 
@@ -321,8 +321,8 @@ test("voice settings Avanzel can't use are named at the shortcut, and nothing do
   // Its button opens Settings on the Voice pane, which tells it in the very words of the card (one builder, `voiceSettingsProblem`),
   // and the card goes.
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
-  const settings = await windowFor(app, "settings");
-  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
+  const settings = await windowFor(app, "panel");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-selected", "true");
   const alert = settings.getByRole("alert");
   await expect(alert).toHaveText(`${title}${state.detail}`); // the title, then the body: one Notice, no button
   await expect(settings.getByRole("button", { name: "Try again" })).toHaveCount(0); // trying again can't help

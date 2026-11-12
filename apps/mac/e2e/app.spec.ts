@@ -17,12 +17,11 @@ import {
   launch,
   limitedClaude,
   makeLibrary,
-  menuRowsOf,
   onceMarker,
   onlyAgentsIn,
   openedWith,
   read,
-  recentlyFiled,
+  libraryListed,
   screenshotFixture,
   shown,
   SIGNED_IN,
@@ -32,7 +31,7 @@ import {
   windowFor,
   toolbarItem,
 } from "./helpers.ts";
-import { barOf, capsuleAtRest, cardButtons, expectProblem, launchOn } from "./capsule-helpers.ts";
+import { barOf, capsuleAtRest, cardButtons, expectProblem, launchOn, panelOn } from "./capsule-helpers.ts";
 
 const inbox = (root: string) => readdirSync(path.join(root, "inbox")).filter((n) => !n.startsWith("."));
 const archived = (root: string) => {
@@ -344,7 +343,7 @@ async function typedAndFiled(): Promise<{ library: string; app: ElectronApplicat
 test("Undo on the filed card takes the filing back, and the note waits in the inbox again", async () => {
   const { library, app, capsule } = await typedAndFiled();
   expect(filesUnder(library, "ideas")).toHaveLength(1);
-  expect(await recentlyFiled(app)).toEqual(["Plant tulips in October"]);
+  expect(await libraryListed(app)).toEqual(["Plant tulips in October"]);
   // The filed card first, with no bar: its foot says who filed it and how long it took, and it offers Undo and Open, and Hide in its
   // corner; it is stamped Filed and lists the page the filing made, new.
   const bar = barOf(capsule);
@@ -373,7 +372,7 @@ test("Undo on the filed card takes the filing back, and the note waits in the in
   await expect(card).not.toHaveAttribute("data-stamped");
   expect(inbox(library)).toHaveLength(1);
   expect(filesUnder(library, "ideas")).toEqual([]);
-  expect(await recentlyFiled(app)).toEqual([]);
+  expect(await libraryListed(app)).toEqual([]);
   await app.close();
 });
 
@@ -393,37 +392,37 @@ test("an Undo git refuses says so on the card, and the edit made since stays", a
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: title, detail: why });
   expect(readFileSync(file, "utf8")).toBe("# Tulips, by hand\n");
   expect(inbox(library)).toEqual([]);
-  // The menu's Recently filed is read again all the same: the page is there, under the title the edit gave it.
-  expect(await recentlyFiled(app)).toEqual(["Tulips, by hand"]);
+  // The panel's Library lists the page all the same, under the title the edit gave it.
+  expect(await libraryListed(app)).toEqual(["Tulips, by hand"]);
   await app.close();
 });
 
-test("the menu's Recently filed invites a first thought while nothing is filed, and clicking it starts one", async () => {
+test("the panel's Library invites a first thought while nothing is filed, and lists the note once one is", async () => {
   const app = await launch({
     AVANZEL_LIBRARY: await makeLibrary(),
     AVANZEL_FAKE_AUDIO: speechWav("hello"),
     AVANZEL_FAKE_TRANSCRIPT: "Say hello to the garden",
   });
-  const menu = () => menuRowsOf(app);
-  const invite = (await menu()).find((item) => item.label.startsWith("Nothing filed yet"));
-  // An enabled item, since macOS draws a disabled one too dim to read, that does what Record a thought does. It is no page:
-  // the pages the menu lists open one, and this opens none.
-  expect(invite).toEqual({ type: "item", label: "Nothing filed yet. Press ⌥Space and say hello.", action: "dictate" });
-  expect(await recentlyFiled(app)).toEqual([]);
-  // Clicking it records, as the menu's own Record a thought does; clicking again stops, and the note is filed.
-  await call(app, "menuAction", "dictate");
+  expect(await libraryListed(app)).toEqual([]);
+  const panel = await panelOn(app, "library");
+  const invite = panel.getByText("Nothing filed yet. Press ⌥Space and say hello.", { exact: true });
+  await expect(invite).toBeVisible();
+  await call(app, "hidePanel");
+  // A thought, recorded and filed: the note takes the invitation's place.
+  await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
-  await call(app, "menuAction", "dictate");
+  await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-  // Something is filed now, so the pages take the invitation's place.
-  await expect.poll(() => recentlyFiled(app)).toHaveLength(1);
-  expect((await menu()).some((item) => item.label.startsWith("Nothing filed yet"))).toBe(false);
+  await expect.poll(() => libraryListed(app)).toHaveLength(1);
+  await panelOn(app, "library");
+  await expect(invite).toHaveCount(0);
   await app.close();
 });
 
-test("the menu's invitation says to record a thought when the dictate shortcut is another app's", async () => {
+test("the Library's invitation says to record a thought when the dictate shortcut is another app's", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
-  expect((await menuRowsOf(app)).find((item) => item.label.startsWith("Nothing filed yet"))).toEqual({ type: "item", label: "Nothing filed yet. Record a thought and say hello.", action: "dictate" });
+  const panel = await panelOn(app, "library");
+  await expect(panel.getByText("Nothing filed yet. Record a thought and say hello.", { exact: true })).toBeVisible();
   await app.close();
 });
 
@@ -734,8 +733,8 @@ test("when the library's agent is gone, the fix is Open Settings, on Agents", as
   await expect(settingsFix).toHaveAttribute("data-variant", "primary");
   await snap(ask, "9-ask-failed-gone");
   await settingsFix.click();
-  const settings = await windowFor(app, "settings");
-  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
+  const settings = await windowFor(app, "panel");
+  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-selected", "true");
   await app.close();
 });
 
@@ -819,16 +818,16 @@ test("Stop is heard from the Ask window alone: another window's page gives up no
   const { pid } = JSON.parse(readFileSync(record, "utf8").trim().split("\n")[0]!) as { pid: number };
   const stop = ask.getByRole("button", { name: "Stop", exact: true });
   await expect(stop).toBeVisible();
-  // Every window has the same bridge, so Settings' page can send ask:cancel. A page's messages reach main in the order they were
-  // sent: the answer to the call after it comes once main has handled the cancel.
-  await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
-  await settings.evaluate(async () => {
+  // Every window has the same bridge, so Quick's page can send ask:cancel (the panel's is heard: Ask is in its Library too). A page's
+  // messages reach main in the order they were sent: the answer to the call after it comes once main has handled the cancel.
+  await call(app, "openQuick");
+  const other = await windowFor(app, "quick");
+  await other.evaluate(async () => {
     window.avanzel.ask.cancel();
-    await window.avanzel.settings.get();
+    await window.avanzel.settings.get().catch(() => null);
   });
   // Had it been heard, the question's agent would be gone by now (the Stop below ends it in well under this time).
-  await settings.waitForTimeout(1_500);
+  await other.waitForTimeout(1_500);
   expect(alive(pid)).toBe(true);
   await expect(stop).toBeVisible();
   await expect(ask.getByRole("status")).not.toHaveText("Stopped.");
@@ -857,8 +856,8 @@ test("Open Settings in the Ask window leaves a recording and a note being edited
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
   await openAgents();
-  const settings = await windowFor(app, "settings");
-  await expect(agents(settings)).toHaveAttribute("aria-current", "page");
+  const settings = await windowFor(app, "panel");
+  await expect(agents(settings)).toHaveAttribute("aria-selected", "true");
   expect(await capsuleKind(app)).toBe("listening"); // the recording goes on
   await expect(capsule.getByRole("status").getByRole("radio", { name: "Now", exact: true })).toHaveAttribute("aria-checked", "true");
 
@@ -870,9 +869,9 @@ test("Open Settings in the Ask window leaves a recording and a note being edited
   await capsule.getByRole("textbox").fill("Remember to email Mark the agentic plan");
   await expect.poll(() => call(app, "draftForTests")).toBe("Remember to email Mark the agentic plan");
   await toolbarItem(settings, "General").click(); // so that the second Open Settings has somewhere to go
-  await expect(agents(settings)).not.toHaveAttribute("aria-current", "page");
+  await expect(agents(settings)).toHaveAttribute("aria-selected", "false");
   await openAgents();
-  await expect(agents(settings)).toHaveAttribute("aria-current", "page");
+  await expect(agents(settings)).toHaveAttribute("aria-selected", "true");
   expect(await capsuleKind(app)).toBe("editing");
   await expect(capsule.getByRole("textbox")).toHaveValue("Remember to email Mark the agentic plan");
   await app.close();
@@ -1400,6 +1399,7 @@ test("a dictation listens on a bar with its file mode, Cancel, Pause and Stop, a
   const library = await makeLibrary();
   const { app, capsule } = await launchHearing(library, newUserData());
   await startListening(app);
+  await capsuleAtRest(capsule); // measured at rest: the capsule rises in, and grows from 96 %
   await snap(capsule, "1-listening-bar");
   // The bar is the card's one live region, with Zel listening. It has no line: its time and its controls are all it holds. When the
   // recording is filed is a choice of two, ✦ now or ☾ at the review; then Cancel, Pause and Stop, which wears the chosen sign.
@@ -1468,6 +1468,7 @@ test("the capsule's corners around its panel catch no pointer: only what is draw
   const library = await makeLibrary();
   const { app, capsule } = await launchHearing(library, newUserData());
   await startListening(app);
+  await capsuleAtRest(capsule); // measured at rest: the capsule rises in, and grows from 96 %
   const panel = (await capsule.locator(".stack .av-hud").boundingBox())!;
   const bar = (await capsule.getByRole("status").boundingBox())!;
   // The first recordings' hint stands inside the panel, above its row, on the same glass.
@@ -1705,7 +1706,7 @@ test("the file mode's switch is heard from the capsule's page alone, and only wh
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ fileMode: "evening" });
   // Every window has the same bridge, so Settings' page can send capsule:toggle-file-mode; it isn't heard.
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await toggleFileMode(settings);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ fileMode: "evening" });
   // A typed thought takes the card meanwhile, and the recording goes on out of sight: a press now finds no listening card to switch.

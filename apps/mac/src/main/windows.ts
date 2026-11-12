@@ -3,7 +3,6 @@ import { BrowserWindow, screen, type WebContents } from "electron";
 import path from "node:path";
 import { floatAbove, floatOverSpaces, panelOptions } from "./stage.ts";
 import { fileURLToPath } from "node:url";
-import type { SettingsPane } from "../shared/ipc.ts";
 
 const DIST = path.dirname(fileURLToPath(import.meta.url));
 const PRELOAD = path.join(DIST, "preload.js");
@@ -65,61 +64,6 @@ export function placeCapsule(win: BrowserWindow): void {
   const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const [width, height] = win.getSize() as [number, number];
   win.setPosition(Math.round(workArea.x + (workArea.width - width) / 2), Math.round(workArea.y + workArea.height - height));
-}
-
-/**
- * Settings: an opaque window of one width, as a macOS settings window is, with the traffic lights inset over the page's strip, which holds
- * the pane's name, and the panes' toolbar under it. The person doesn't size it: the page says what its pane needs (`settingsFrame`). `pane`:
- * the pane the page opens on, passed in its address (?pane=voice); without one it opens on the pane it showed last. The height here is
- * only what it starts from, and the page has fitted it before it first shows.
- */
-export function createSettingsWindow(pane?: SettingsPane): BrowserWindow {
-  const win = new BrowserWindow({
-    width: 680,
-    height: 660,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    show: false,
-    title: "Avanzel Settings",
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 18, y: 14 },
-    webPreferences,
-  });
-  void win.loadFile(pagePath("settings"), pane ? { query: { pane } } : undefined);
-  return win;
-}
-
-/** Settings' height, whatever its pane asks: enough for a small pane to read as a window, and a long one (a long history) scrolls inside the most. */
-const SETTINGS_HEIGHT = { least: 320, most: 800 };
-
-/** A window's place and size on screen, or a display's work area. */
-interface Frame {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-/**
- * Where Settings goes for a pane that needs `height` px: that high, within SETTINGS_HEIGHT and the screen. Its top stays where it is, as a macOS
- * settings window's does, unless its bottom would then go below the work area: then it moves up by what it needs, and no further.
- */
-export function settingsFrame(now: Frame, workArea: Frame, height: number): Frame {
-  const fitted = Math.round(Math.min(Math.max(height, SETTINGS_HEIGHT.least), SETTINGS_HEIGHT.most, workArea.height));
-  const lowest = workArea.y + workArea.height - fitted;
-  return { ...now, y: Math.max(workArea.y, Math.min(now.y, lowest)), height: fitted };
-}
-
-/**
- * Settings takes the height its page asks for, at once: macOS's animated resize would hold this process, and everything it does, for as long as it runs,
- * 230 to 350 ms for a pane. A height it already has moves nothing.
- */
-export function fitSettings(win: BrowserWindow, height: number): void {
-  const now = win.getBounds();
-  const next = settingsFrame(now, screen.getDisplayMatching(now).workArea, height);
-  if (next.y !== now.y || next.height !== now.height) win.setBounds(next);
 }
 
 /** The first run's window: one fixed size, the traffic lights inset over the page's drag strip. */

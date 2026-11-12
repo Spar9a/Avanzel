@@ -40,7 +40,7 @@ function DictionaryGroup({ dictionary }: { dictionary: TextEdit }): ReactNode {
   return (
     <Group label="Dictionary" note={DICTIONARY_DESCRIPTION}>
       <div className="settings-words">
-        <LinesField label="Dictionary" edit={dictionary} rows={5} />
+        <LinesField label="Dictionary" edit={dictionary} />
       </div>
     </Group>
   );

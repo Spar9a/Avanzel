@@ -1,37 +1,45 @@
 // The menu bar icon: Zel's face and the title beside it show what Avanzel is doing (tray-state.ts), and the icon's tooltip says it in
 // words. Every test reads what the controller last gave the menu bar (`trayForTests`), what macOS was given (`nativeTitle`) and the
 // words of the face (`tooltip`), and the tests of a count read the times of the changes too (`watchTray`), so no poll has to catch a
-// face in the moment it shows.
+// face in the moment it shows. What the panel under the icon offers (how today went, Undo, the last receipt, the reviews) is read from
+// what main would give it (`panelSnapshot`) and from its page once it is up (`panelShows`, `panelSays`).
 import { expect, test, type ElectronApplication } from "@playwright/test";
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, localDate, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
-import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { FilingReceipt } from "../src/main/undo-records.ts";
 import {
   agentMode,
   dictate,
   filedFromTheCapsule,
   filedInto,
-  heldMenu,
   holdTheQueue,
   inbox,
   launchOn,
   letTheQueueGo,
-  menuOf,
   notified,
   onDay,
   reachedUndo,
-  receiptItem,
+  receiptOffer,
   sleep,
   stampDay,
-  trayOffersUndo,
+  panelShowsUndo,
   undoCalls,
-  undoItem,
+  undoOffer,
   undone,
   watchUndos,
   type Left,
+  panelShowsReceipt,
+  panelShowsReviewUndo,
+  reviewOffer,
+  REVIEW_OFFER,
+  RECEIPT_OFFER,
+  UNDO_OFFER,
+  panelSnapshot,
+  panelSays,
+  panelShows,
+  panelOn,
 } from "./capsule-helpers.ts";
 import {
   agentCalls,
@@ -69,6 +77,7 @@ import {
   typeFirstThought,
   windowFor,
   toolbarItem,
+  paneOf,
 } from "./helpers.ts";
 import { reduceMotion, settingsSnap, setupSnap } from "./setup-helpers.ts";
 
@@ -415,7 +424,7 @@ test("a problem shows needs-you until its card is hidden", async () => {
 test("a library that has gone shows needs-you, and a library that opens takes it away", async () => {
   const { env, home } = firstRun(); // its own HOME and config folder: the library that opens is remembered there, never in ~/.config
   const app = await launch({ ...env, HF_HUB_CACHE: readyModels(), AVANZEL_LIBRARY: path.join(home, "Brain") }); // remembered, and not there any more
-  await windowFor(app, "settings"); // Settings opens on it, not setup
+  await windowFor(app, "panel"); // Settings opens on it, not setup
   expect(await barOf(app)).toMatchObject({ face: "needs-you", title: "" });
   await call(app, "createLibrary", path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-lib-")), "Avanzel"));
   await expect.poll(() => barOf(app), { timeout: 20_000, intervals: [100] }).toMatchObject({ face: "idle", title: "" });
@@ -818,19 +827,27 @@ test("quitting on either path stops the count where it was", async () => {
   }
 });
 
-// ---------------------------------------------------------------- the menu says how today went
+// ---------------------------------------------------------------- the panel says how today went
 
 /** The default evening review's next run as the status line says it: tomorrow once 21:00 has passed today. */
 const eveningWhen = () => (new Date().getHours() >= 21 ? "tomorrow at 21:00" : "at 21:00");
 
-/** The words of the menu's head now: how today went, and what waits under it. */
+/**
+ * How today went, as the panel's Capture says it, in what main would give it now: its headline ("2 thoughts filed today. Evening review at
+ * 21:00.") with the notes in the inbox, which it says on a line of their own, put after the count: "2 thoughts filed today · 1 in the inbox ·
+ * Evening review at 21:00".
+ */
 const headOf = async (app: ElectronApplication) => {
-  const [head] = await menuOf(app);
-  return head?.type === "item" ? [head.label, head.sublabel].filter(Boolean).join(" · ") : "";
+  const snap = await panelSnapshot(app);
+  const [filed = "", ...rest] = snap.headline.split(/\. ?/).filter(Boolean);
+  return [filed, ...(snap.inbox > 0 ? [`${snap.inbox} in the inbox`] : []), ...rest].join(" · ");
 };
 
-/** What is in the Recently filed submenu. */
-const recentOf = async (app: ElectronApplication) => ((await call(app, "menuForTests")) as MenuItemModel[]).flatMap((item) => (item.type === "submenu" && item.label === "Recently filed" ? item.items : []));
+/** The panel's headline as `headOf` reads it ("2 thoughts filed today · Evening review at 21:00"), written as the panel draws it. */
+const drawn = (head: string) => `${head.split(" · ").filter((part) => !part.endsWith(" in the inbox")).join(". ")}.`;
+
+/** What the panel's Capture says of the inbox: "1 note waits in the inbox.", or that it is empty. */
+const inboxSays = (count: number) => (count === 0 ? "The inbox is empty." : `${count} ${count === 1 ? "note waits" : "notes wait"} in the inbox.`);
 
 /** A library whose log says three thoughts were filed today, each into a page on its own shelf, the last off the shelves, and one yesterday. */
 async function shelved(): Promise<string> {
@@ -851,31 +868,31 @@ test("the status line counts today's filings", async () => {
   vault.appendLog("review", "[[2026-01-01]]");
   vault.appendLog("ask", "what did I file → [[old-page]]");
   const { app } = await hearing({}, library);
-  // Nothing waits in the inbox, so the head's words don't mention it, and the click opens the library instead.
-  expect(await menuOf(app)).toContainEqual({ type: "item", label: "Nothing filed today", action: "open-library", sublabel: `Evening review ${eveningWhen()}` });
+  // Nothing waits in the inbox, so the head's words don't mention it.
+  expect(await headOf(app)).toBe(`Nothing filed today · Evening review ${eveningWhen()}`);
   // A fake filing: the count goes up, and the evening review's time is said as the clock says it.
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
   expect(await headOf(app)).toBe(`1 thought filed today · Evening review ${eveningWhen()}`);
   await dictate(app);
   await expect.poll(() => headOf(app), { timeout: 30_000 }).toBe(`2 thoughts filed today · Evening review ${eveningWhen()}`);
-  // The menu the tray holds says the same, with the notes in the inbox under it (none: both are filed).
-  const [held] = await heldMenu(app);
-  expect(held).toEqual({ label: "2 thoughts filed today", sublabel: `Evening review ${eveningWhen()}`, icon: null });
+  // The panel says the same, and that the inbox is empty: both are filed.
+  expect(await panelSays(app, `2 thoughts filed today. Evening review ${eveningWhen()}.`)).toBe(true);
+  expect(await panelSays(app, inboxSays(0))).toBe(true);
   await app.close();
 });
 
-test("the head opens the inbox while a note waits in it and its words say so, and the library when none does", async () => {
+test("Capture offers the inbox while a note waits in it and its words say so, and doesn't once none does", async () => {
   const { app } = await withNote("12");
-  // A note waits: the second line names the inbox, and the click opens the inbox.
-  expect((await menuOf(app))[0]).toMatchObject({ type: "item", action: "open-inbox", sublabel: `1 in the inbox · Evening review ${eveningWhen()}` });
-  expect((await heldMenu(app))[0]).toMatchObject({ sublabel: `1 in the inbox · Evening review ${eveningWhen()}` });
-  // The review files it: the second line goes with the note, and the click goes to the library, where the page is.
+  // A note waits: the panel says so, and offers to open the inbox.
+  expect(await headOf(app)).toBe(`Nothing filed today · 1 in the inbox · Evening review ${eveningWhen()}`);
+  expect(await panelSays(app, inboxSays(1))).toBe(true);
+  expect(await panelShows(app, "Open the inbox")).toBe(true);
+  // The review files it: the words go with the note, and so does the offer.
   await reviewed(app);
-  await expect.poll(async () => (await menuOf(app))[0], { timeout: 10_000 }).toMatchObject({ type: "item", action: "open-library" });
-  // What is under it no longer names the inbox.
-  expect((await menuOf(app))[0]).toMatchObject({ sublabel: `Evening review ${eveningWhen()}` });
-  expect((await heldMenu(app))[0]).toMatchObject({ sublabel: `Evening review ${eveningWhen()}` });
+  await expect.poll(() => headOf(app), { timeout: 10_000 }).toBe(`1 thought filed today · Evening review ${eveningWhen()}`);
+  expect(await panelSays(app, inboxSays(0))).toBe(true);
+  expect(await panelShows(app, "Open the inbox")).toBe(false);
   await app.close();
 });
 
@@ -900,116 +917,42 @@ test("the status line names the evening review by its own name, and leaves it ou
   await expect.poll(() => headOf(app)).toBe(`Nothing filed today · Nightly sweep ${eveningWhen()}`);
   await saved("Nightly sweep", false);
   await expect.poll(() => headOf(app)).toBe("Nothing filed today");
-  expect(JSON.stringify(await menuOf(app))).not.toMatch(/letter/i); // there is no letter yet
+  expect(JSON.stringify(await panelSnapshot(app))).not.toMatch(/letter/i); // there is no letter yet
   await app.close();
 });
 
-test("Recently filed shows each page's shelf", async () => {
-  const { app } = await hearing({}, await shelved());
-  // Read from the log as the library opened: three thoughts today (yesterday's is not counted).
-  expect(await headOf(app)).toBe(`3 thoughts filed today · Evening review ${eveningWhen()}`);
-  // The shelf's name as the design system names it, or the folder's name for a page the person put elsewhere.
-  expect(await recentOf(app)).toEqual([
-    { type: "item", label: "Trip to Lisbon", action: "open:projects/trip.md", shelf: "projects", sublabel: "projects" },
-    { type: "item", label: "Maya", action: "open:people/maya.md", shelf: "people", sublabel: "People" },
-    { type: "item", label: "Finish the prototype", action: "open:goals/finish-the-prototype.md", shelf: "goals", sublabel: "Goals" },
-  ]);
-  // A fake filing: its page comes first, on the ideas shelf, and the count goes on from the log.
-  await dictate(app);
-  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
-  // The submenu ends with the receipt of that filing, which can be shown again: a library without git has one all the same.
-  expect(await recentOf(app)).toMatchObject([
-    { label: "Plant tulips in October", shelf: "ideas", sublabel: "Ideas" },
-    { label: "Trip to Lisbon", sublabel: "projects" },
-    { label: "Maya", sublabel: "People" },
-    { type: "separator" },
-    { label: "Show the last receipt", action: "show-receipt" },
-  ]);
-  expect(await headOf(app)).toBe(`4 thoughts filed today · Evening review ${eveningWhen()}`);
-  await app.close();
-});
-
-test("a library that opens brings the count of its own log, and its own pages", async () => {
+test("a library that opens brings the count of its own log", async () => {
   const { app } = await hearing(); // an empty library to begin with
   expect(await headOf(app)).toBe(`Nothing filed today · Evening review ${eveningWhen()}`);
   await call(app, "createLibrary", await shelved()); // opens at once: no minute has come round to count it
   expect(await headOf(app)).toBe(`3 thoughts filed today · Evening review ${eveningWhen()}`);
-  expect((await recentOf(app)).map((item) => item.type === "item" && [item.label, item.sublabel])).toEqual([
-    ["Trip to Lisbon", "projects"],
-    ["Maya", "People"],
-    ["Finish the prototype", "Goals"],
-  ]);
-  expect((await heldMenu(app))[0]).toMatchObject({ label: "3 thoughts filed today", sublabel: `Evening review ${eveningWhen()}` });
+  expect(await panelSays(app, `3 thoughts filed today. Evening review ${eveningWhen()}.`)).toBe(true);
   await app.close();
 });
 
-test("the shelf glyphs in the menu are black template images, which macOS tints, and the appearance turning builds no new menu", async () => {
-  const { app } = await hearing({}, await shelved());
-  let held = await heldMenu(app);
-  const glyph = (label: string) => held.find((item) => item.label === label);
-  // A template image is black on transparent: macOS gives it the menu's ink in light and in dark, and white on the highlight, where a
-  // coloured image kept its colour (People's blue vanished on the default blue, and Ideas' yellow was 1.35:1 on a light menu).
-  expect(glyph("Maya")).toMatchObject({ sublabel: "People", icon: { template: true, ink: "#000000" } });
-  expect(glyph("Finish the prototype")).toMatchObject({ sublabel: "Goals", icon: { template: true, ink: "#000000" } });
-  // A page off the shelves shows its folder's name and no glyph.
-  expect(glyph("Trip to Lisbon")).toMatchObject({ sublabel: "projects", icon: null });
-  // Nothing else in the menu has an icon.
-  expect(held.filter((item) => item.icon).map((item) => item.label).sort()).toEqual(["Finish the prototype", "Maya"]);
-  // The appearance turns dark, and light again. The menu was drawn for neither: no new menu is built, and the glyphs are as they were.
-  const dark = () => app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
-  await app.evaluate(({ nativeTheme }) => void (nativeTheme.themeSource = "light")); // a known place to turn from, whatever this Mac is set to
-  await expect.poll(dark).toBe(false);
-  await sleep(300); // an update for that, if this Mac was dark, has been told by now
-  await countCalls(app, "refreshMenu");
-  await app.evaluate(({ nativeTheme }) => {
-    (globalThis as { themeUpdates?: number }).themeUpdates = 0;
-    nativeTheme.on("updated", () => {
-      (globalThis as { themeUpdates?: number }).themeUpdates = ((globalThis as { themeUpdates?: number }).themeUpdates ?? 0) + 1;
-    });
-  });
-  const updates = () => app.evaluate(() => (globalThis as { themeUpdates?: number }).themeUpdates ?? 0);
-  for (const to of ["dark", "light"] as const) {
-    const seen = await updates();
-    await app.evaluate(({ nativeTheme }, source) => void (nativeTheme.themeSource = source), to);
-    await expect.poll(dark).toBe(to === "dark");
-    // The appearance's own update has come: the controller's listener, had it one, was added before this one and has run.
-    await expect.poll(updates, { timeout: 10_000, intervals: [50] }).toBeGreaterThan(seen);
-  }
-  expect(await calls(app, "refreshMenu"), "no menu was built for the appearance").toBe(0);
-  held = await heldMenu(app);
-  expect(glyph("Maya")).toMatchObject({ icon: { template: true, ink: "#000000" } });
-  expect(glyph("Finish the prototype")).toMatchObject({ icon: { template: true, ink: "#000000" } });
-  await app.close();
-});
-
-test("a failed speech-model download is named in the menu", async () => {
+test("a failed speech-model download is named in the panel", async () => {
   const hub = await fakeModelHub("missing");
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
   await expect.poll(() => barOf(app), { timeout: 20_000 }).toMatchObject({ face: "needs-you", title: "" });
   const model = (await settingsSnap(app)).model;
   expect(model).toMatchObject({ kind: "error", cause: "download" });
-  const [head, problem, after] = await menuOf(app);
-  expect(head).toMatchObject({ action: "open-library" }); // nothing waits in the inbox
   // The capsule's own title, what is safe meanwhile (the capsule's and Settings → Voice's own words), and the fix: Settings → Voice,
   // where Try again is. What Try again does, whether it continues or starts over, is told there.
-  expect(problem).toEqual({
-    type: "item",
-    label: "The speech model didn't finish downloading.",
-    action: "open-settings:voice",
-    sublabel: "Typing works meanwhile. Try again in Settings → Voice.",
+  expect((await panelSnapshot(app)).speechProblem).toEqual({
+    title: "The speech model didn't finish downloading.",
+    line: "Typing works meanwhile. Try again in Settings → Voice.",
   });
-  expect(after).toEqual({ type: "separator" });
-  // The menu the tray holds has it right after the head.
-  expect((await heldMenu(app)).slice(0, 2).map((item) => item.label)).toEqual(["Nothing filed today", "The speech model didn't finish downloading."]);
-  // Its action is the capsule card's own path: Settings opens on Voice, which tells it in the same words.
-  await call(app, "menuAction", "open-settings:voice");
-  const settings = await windowFor(app, "settings");
-  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
-  await expect(settings.getByRole("alert").getByText("The speech model didn't finish downloading.")).toBeVisible();
+  // Capture tells it under how today went, with its fix: Settings opens on Voice, which tells it in the same words.
+  const panel = await panelOn(app);
+  const notice = panel.getByRole("alert").filter({ hasText: "The speech model didn't finish downloading." });
+  await expect(notice.getByText("Typing works meanwhile. Try again in Settings → Voice.", { exact: true })).toBeVisible();
+  await notice.getByRole("button", { name: "Open voice settings", exact: true }).click();
+  await expect(toolbarItem(panel, "Voice")).toHaveAttribute("aria-selected", "true");
+  await expect(paneOf(panel, "Voice").getByRole("alert").getByText("The speech model didn't finish downloading.")).toBeVisible();
   await app.close();
 });
 
-test("voice settings Avanzel can't use are named in the menu until a fix is read again", async () => {
+test("voice settings Avanzel can't use are named in the panel until a fix is read again", async () => {
   const library = await makeLibrary();
   const config = loadSettings(library);
   saveSettings(library, { ...config, voice: { ...config.voice, model: "parakeet-v9" } });
@@ -1017,24 +960,19 @@ test("voice settings Avanzel can't use are named in the menu until a fix is read
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
   const title = "Avanzel can't use the voice settings in this library's config file.";
   await expect.poll(() => barOf(app), { timeout: 20_000 }).toMatchObject({ face: "needs-you" });
-  expect((await menuOf(app))[1]).toEqual({
-    type: "item",
-    label: title,
-    action: "open-settings:voice",
-    sublabel: "Typed thoughts are still saved to the inbox. Fix the config file.",
-  });
+  expect((await panelSnapshot(app)).speechProblem).toEqual({ title, line: "Typed thoughts are still saved to the inbox. Fix the config file." });
   // Fixed by hand, with Avanzel running. Nothing watches the file; the minute that comes round reads it, and the test brings it round.
   // (Whether the item is still named before then is not asked: the real minute may come round first.)
   saveSettings(library, config);
   await call(app, "tick");
-  await expect.poll(async () => (await menuOf(app))[1], { timeout: 10_000 }).toEqual({ type: "separator" });
+  await expect.poll(async () => (await panelSnapshot(app)).speechProblem, { timeout: 10_000 }).toBeNull();
   await expect.poll(() => faceOf(app), { timeout: 10_000, intervals: [50] }).toBe("idle");
-  expect((await heldMenu(app)).map((item) => item.label)).not.toContain(title);
+  expect(await panelSays(app, title)).toBe(false);
   expect(hub.requests).toEqual([]); // finding the fix downloads nothing: the shortcut does that
   await app.close();
 });
 
-test("choosing the voice settings problem in the menu reads them again, so Settings shows what is wrong now", async () => {
+test("Open voice settings on the panel's voice settings problem reads them again, so Settings shows what is wrong now", async () => {
   const library = await makeLibrary();
   const config = loadSettings(library);
   saveSettings(library, { ...config, voice: { ...config.voice, model: "parakeet-v9" } });
@@ -1042,15 +980,16 @@ test("choosing the voice settings problem in the menu reads them again, so Setti
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
   const title = "Avanzel can't use the voice settings in this library's config file.";
   await expect.poll(() => barOf(app), { timeout: 20_000 }).toMatchObject({ face: "needs-you" });
-  expect((await menuOf(app))[1]).toMatchObject({ label: title });
-  // Mended by hand a moment ago, before the minute came round: the person chooses the item to see what is wrong.
+  const settings = await panelOn(app);
+  const notice = settings.getByRole("alert").filter({ hasText: title });
+  await expect(notice).toBeVisible();
+  // Mended by hand a moment ago, before the minute came round: the person presses the fix to see what is wrong.
   saveSettings(library, config);
-  await call(app, "menuAction", "open-settings:voice");
-  const settings = await windowFor(app, "settings");
-  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
+  await notice.getByRole("button", { name: "Open voice settings", exact: true }).click();
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-selected", "true");
   await expect(settings.getByText("Speech model", { exact: true })).toBeVisible(); // the pane has read what is now
-  await expect(settings.getByText(title)).toHaveCount(0);
-  expect((await menuOf(app))[1]).toEqual({ type: "separator" });
+  await expect(paneOf(settings, "Voice").getByText(title)).toHaveCount(0);
+  expect((await panelSnapshot(app)).speechProblem).toBeNull();
   await expect.poll(() => faceOf(app), { timeout: 10_000, intervals: [50] }).toBe("idle");
   await app.close();
 });
@@ -1066,7 +1005,7 @@ test("the count is read from the log once, and again when the day turns", async 
   await call(app, "refreshMenu");
   await call(app, "tick");
   expect(await headOf(app)).toBe(`7 thoughts filed today · Evening review ${when}`);
-  expect((await heldMenu(app))[0]).toMatchObject({ label: "7 thoughts filed today", sublabel: `Evening review ${when}` });
+  expect(await panelSays(app, `7 thoughts filed today. Evening review ${when}.`)).toBe(true);
   // A count for a day that has passed is read again, from the log, by the next tick: nothing was filed today.
   await kept("2000-01-01", 7);
   await call(app, "tick");
@@ -1081,15 +1020,6 @@ test("the count is read from the log once, and again when the day turns", async 
 // take-back of its commit. Setup's first thought and the evening review never set it: each has its own Undo. A library keeps its own
 // (`undo-records.json`, below): it comes back with the library, and after a relaunch.
 // A filing has a commit to take back only in a library with git, so these tests make one (`makeLibrary({ git: true })`).
-
-/** The menu's Undo the last evening review in the model now, or undefined while the menu doesn't offer it. */
-const reviewItem = async (app: ElectronApplication) => (await menuOf(app)).find((item) => item.type === "item" && item.action === "undo-review");
-
-/** The item as the menu models it: a plain item, with no shortcut, shelf or sublabel. */
-const RECEIPT_ITEM = { type: "item", label: "Show the last receipt", action: "show-receipt" };
-
-/** Undo the last filing as the menu models it: a plain item with its shortcut, ⌥⇧Z, and no shelf or sublabel. */
-const UNDO_ITEM = { type: "item", label: "Undo the last filing", action: "undo-filing", accelerator: "Alt+Shift+Z" };
 
 /**
  * What the app has kept of `library`'s two Undo items in its profile (`undo-records.json` in `userData`, under the library's resolved
@@ -1116,16 +1046,13 @@ type SavedUndo = {
 /** A commit as git prints it. */
 const COMMIT = /^[0-9a-f]{40}$/;
 
-/** Whether the menu the tray holds offers Show the last receipt. */
-const trayOffersReceipt = async (app: ElectronApplication) => (await heldMenu(app)).some((item) => item.label === "Show the last receipt");
-
-/** Whether the menu the tray holds offers Undo the last evening review. */
-const trayOffersReview = async (app: ElectronApplication) => (await heldMenu(app)).some((item) => item.label === "Undo the last evening review");
-
-/** The press of the menu's item; it returns once the filing is taken back and the person is told, or at once when there is nothing to take back. */
+/**
+ * The press of the panel's Undo the last filing: its action (`panelAction` hands "undo-filing" to `menuAction`), which returns once the
+ * filing is taken back and the person is told, or at once when there is nothing to take back.
+ */
 const pressUndo = (app: ElectronApplication) => call(app, "menuAction", "undo-filing").then(() => undefined);
 
-/** The press of the menu's Show the last receipt; it returns at once, with the card up or, where the item does nothing, as it was. */
+/** The press of the panel's Show the last receipt (its action, as `pressUndo`'s); it returns at once, with the card up or, where it does nothing, as it was. */
 const showReceipt = (app: ElectronApplication) => call(app, "menuAction", "show-receipt").then(() => undefined);
 
 /** The notifications the app has posted, oldest first. */
@@ -1145,7 +1072,7 @@ async function withClaude(bin: string, env: Record<string, string> = {}) {
   return hearing({ ...onlyAgentsIn(bin), ...env }, library);
 }
 
-test("Undo from the menu takes the last filing back and says so once", async () => {
+test("Undo from the panel takes the last filing back and says so once", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   await watchUndos(app);
@@ -1153,8 +1080,8 @@ test("Undo from the menu takes the last filing back and says so once", async () 
   expect(filesUnder(library, "ideas")).toHaveLength(1);
   expect(inbox(library)).toEqual([]);
   // The menu offers it, in the model and in the menu the tray holds, with the filing counted.
-  expect(await undoItem(app)).toEqual(UNDO_ITEM);
-  expect(await trayOffersUndo(app)).toBe(true);
+  expect(await undoOffer(app)).toEqual(UNDO_OFFER);
+  expect(await panelShowsUndo(app)).toBe(true);
   expect(await headOf(app)).toBe(`1 thought filed today · Evening review ${eveningWhen()}`);
   await call(app, "dismiss"); // the card is hidden: the menu is all that offers Undo now
   expect(await capsuleKind(app)).toBe("hidden");
@@ -1167,9 +1094,10 @@ test("Undo from the menu takes the last filing back and says so once", async () 
   expect(await said(app)).toEqual([{ title: "Undone", body: UNDONE_NOTE }]);
   // The status line has nothing filed, and the item is gone, in the model and in the menu the tray holds.
   expect(await headOf(app)).toBe(`Nothing filed today · 1 in the inbox · Evening review ${eveningWhen()}`);
-  expect((await heldMenu(app))[0]).toMatchObject({ label: "Nothing filed today", sublabel: `1 in the inbox · Evening review ${eveningWhen()}` });
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await panelSays(app, `Nothing filed today. Evening review ${eveningWhen()}.`)).toBe(true);
+  expect(await panelSays(app, inboxSays(1))).toBe(true);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   // A second press takes nothing back: the filing was taken back once, and nobody is told again.
   await pressUndo(app);
   expect(await undoCalls(app)).toBe(1);
@@ -1178,7 +1106,7 @@ test("Undo from the menu takes the last filing back and says so once", async () 
   await app.close();
 });
 
-test("Undo from the menu turns the showing filed card to Undone", async () => {
+test("Undo from the panel turns the showing filed card to Undone", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   await watchUndos(app);
@@ -1189,12 +1117,12 @@ test("Undo from the menu turns the showing filed card to Undone", async () => {
   expect(await said(app), "the card told it: no notification does").toEqual([]);
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(inbox(library)).toHaveLength(1);
-  expect(await undoItem(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
   expect(await headOf(app)).toBe(`Nothing filed today · 1 in the inbox · Evening review ${eveningWhen()}`);
   await app.close();
 });
 
-test("Undo from the menu answers once: while it waits for the library, the card's Undo and a second press do nothing", async () => {
+test("Undo from the panel answers once: while it waits for the library, the card's Undo and a second press do nothing", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   await watchUndos(app, { hold: true });
@@ -1202,8 +1130,8 @@ test("Undo from the menu answers once: while it waits for the library, the card'
   const pressed = pressUndo(app);
   await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
   // The filing was taken before the take-back landed: the menu stops offering it at once.
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   // The card's Undo and a second press find the filing being taken back, and ask for nothing more.
   await call(app, "undo");
   await pressUndo(app);
@@ -1219,7 +1147,7 @@ test("Undo from the menu answers once: while it waits for the library, the card'
 });
 
 for (const showing of [true, false]) {
-  test(`a refused Undo from the menu says so once, ${showing ? "on the card that shows the filing" : "in a notification"}`, async () => {
+  test(`a refused Undo from the panel says so once, ${showing ? "on the card that shows the filing" : "in a notification"}`, async () => {
     const library = await makeLibrary({ git: true });
     const { app } = await hearing({}, library);
     await watchUndos(app, { fail: true }); // git can't run
@@ -1238,8 +1166,8 @@ for (const showing of [true, false]) {
     expect(await headOf(app)).toBe(`1 thought filed today · Evening review ${eveningWhen()}`);
     // It was asked of the library once, and the menu doesn't offer it again.
     expect(await undoCalls(app)).toBe(1);
-    expect(await undoItem(app)).toBeUndefined();
-    expect(await trayOffersUndo(app)).toBe(false);
+    expect(await undoOffer(app)).toBeUndefined();
+    expect(await panelShowsUndo(app)).toBe(false);
     await pressUndo(app);
     expect(await undoCalls(app)).toBe(1);
     expect(await said(app)).toHaveLength(showing ? 0 : 1);
@@ -1247,23 +1175,23 @@ for (const showing of [true, false]) {
   });
 }
 
-test("Undo from the card takes the menu's Undo away, and leaves nothing for it to take back", async () => {
+test("Undo from the card takes the panel's Undo away, and leaves nothing for it to take back", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   await watchUndos(app);
   await filedFromTheCapsule(app);
-  expect(await undoItem(app)).toBeDefined();
+  expect(await undoOffer(app)).toBeDefined();
   await call(app, "undo"); // the card's own Undo
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", undone: true });
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   await pressUndo(app);
   expect(await undoCalls(app)).toBe(1);
   expect(undone(library)).toHaveLength(1);
   await app.close();
 });
 
-test("an Undo from the card that lands under a newer card is told by notification, and the menu follows it", async () => {
+test("an Undo from the card that lands under a newer card is told by notification, and the panel follows it", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   await watchUndos(app, { hold: true });
@@ -1277,13 +1205,14 @@ test("an Undo from the card that lands under a newer card is told by notificatio
   // Silent: the recording is on, and macOS's sound for the notification would be heard in the words.
   expect(await said(app)).toEqual([{ title: "Undone", body: UNDONE_NOTE, silent: true }]);
   expect(await capsuleKind(app)).toBe("listening");
-  // A notification was all that answered, and the menu the tray holds counts what is left all the same.
-  expect((await heldMenu(app))[0]).toMatchObject({ label: "Nothing filed today", sublabel: `1 in the inbox · Evening review ${eveningWhen()}` });
+  // A notification was all that answered, and what the panel would be told counts what is left all the same. (The panel itself shows
+  // the recording now, over how today went.)
+  expect(await headOf(app)).toBe(`Nothing filed today · 1 in the inbox · Evening review ${eveningWhen()}`);
   await call(app, "cancelRecording");
   await app.close();
 });
 
-test("Undo from the menu follows the last filing: a note filed in the background after a limit's reset offers its own commit", async () => {
+test("Undo from the panel follows the last filing: a note filed in the background after a limit's reset offers its own commit", async () => {
   const bin = agentStubs({ claude: filingClaude() });
   const { app, library } = await withClaude(bin, { AVANZEL_RESET_MARGIN_MS: "0" }); // a wait files its note at the reset itself
   await watchUndos(app);
@@ -1291,24 +1220,24 @@ test("Undo from the menu follows the last filing: a note filed in the background
   await filedFromTheCapsule(app);
   const [first] = filesUnder(library, "ideas");
   expect(first).toBeDefined();
-  expect(await undoItem(app)).toBeDefined();
+  expect(await undoOffer(app)).toBeDefined();
   // The next one meets Claude Code's usage limit, which lifts 5 seconds on. Its run began, so the first filing is no longer the last.
   answerAs(bin, "claude", limitedClaudeFor(bin, 5));
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
-  expect(await undoItem(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
   // At the reset the note is filed in the background, and the filing that ended well there is the last one.
   await expect.poll(() => notified(app, "Filed by Claude Code"), { timeout: 30_000 }).toHaveLength(1);
   await call(app, "idleForTests");
   expect(filesUnder(library, "ideas")).toHaveLength(2);
   expect(inbox(library)).toEqual([]);
-  expect(await undoItem(app)).toEqual(UNDO_ITEM);
-  expect(await trayOffersUndo(app)).toBe(true);
+  expect(await undoOffer(app)).toEqual(UNDO_OFFER);
+  expect(await panelShowsUndo(app)).toBe(true);
   // It ended with a notification and no card, and its receipt is the last one: the words are read from the capture the engine archived
   // (a background job has none of its own), without the embed of the recording that a dictated thought ends with (B2).
   const second = filesUnder(library, "ideas").find((name) => name !== first);
   expect(second).toBeDefined();
-  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+  expect(await receiptOffer(app)).toEqual(RECEIPT_OFFER);
   await showReceipt(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", text: "Plant tulips in October", canUndo: true, pages: [{ path: `ideas/${second}` }] });
   await call(app, "dismiss");
@@ -1320,26 +1249,26 @@ test("Undo from the menu follows the last filing: a note filed in the background
   expect(undone(library)).toHaveLength(1);
   // A filing made in the background has no card to turn to Undone: a notification says it, once.
   expect(await notified(app, "Undone")).toEqual([{ title: "Undone", body: UNDONE_NOTE }]);
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await receiptItem(app), "its receipt went with the take-back of its filing").toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await receiptOffer(app), "its receipt went with the take-back of its filing").toBeUndefined();
   expect(await headOf(app)).toBe(`1 thought filed today · 1 in the inbox · Evening review ${eveningWhen()}`);
   await app.close();
 });
 
-test("Undo from the menu is not offered after a filing that failed, and is back after one that ends well", async () => {
+test("Undo from the panel is not offered after a filing that failed, and is back after one that ends well", async () => {
   const library = await makeLibrary({ git: true });
   const { app, userData } = await hearing({}, library);
   await watchUndos(app);
   await filedFromTheCapsule(app);
-  expect(await undoItem(app)).toBeDefined();
+  expect(await undoOffer(app)).toBeDefined();
   const first = savedUndo(userData, library)?.filing;
   expect(first, "kept for the next launch").toMatch(COMMIT);
   await agentMode(app, "fail");
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
   // The second filing's run began, so the first filing is no longer the last one; and this one failed, which is no filing to undo.
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   expect(savedUndo(userData, library)?.filing ?? null, "nor is it saved for a launch to offer").toBeNull();
   expect(savedUndo(userData, library)?.receipt?.commit, "the receipt is as it was: a failed filing leaves it").toBe(first);
   await pressUndo(app);
@@ -1349,7 +1278,7 @@ test("Undo from the menu is not offered after a filing that failed, and is back 
   await agentMode(app, "ok");
   await filedFromTheCapsule(app);
   expect(filesUnder(library, "ideas")).toHaveLength(2);
-  expect(await undoItem(app)).toBeDefined();
+  expect(await undoOffer(app)).toBeDefined();
   expect(savedUndo(userData, library)?.filing).toMatch(COMMIT);
   expect(savedUndo(userData, library)?.filing).not.toBe(first);
   await pressUndo(app);
@@ -1359,19 +1288,19 @@ test("Undo from the menu is not offered after a filing that failed, and is back 
   await app.close();
 });
 
-test("Undo from the menu is not offered after a filing that Stop took back", async () => {
+test("Undo from the panel is not offered after a filing that Stop took back", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   await filedFromTheCapsule(app);
-  expect(await undoItem(app)).toBeDefined();
+  expect(await undoOffer(app)).toBeDefined();
   await watchUndos(app);
   await stopAtTheEnd(app); // the next filing is stopped the moment its agent ends
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("cancelled");
   await call(app, "idleForTests");
   // Its run began, so the first filing is no longer the last one; and a filing that was taken back is none.
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   expect(await undoCalls(app)).toBe(1); // Stop's take-back, and no more
   await pressUndo(app);
   expect(await undoCalls(app)).toBe(1);
@@ -1380,7 +1309,7 @@ test("Undo from the menu is not offered after a filing that Stop took back", asy
   await app.close();
 });
 
-test("Undo from the menu is not offered after setup's first thought, which has its own Undo", async () => {
+test("Undo from the panel is not offered after setup's first thought, which has its own Undo", async () => {
   test.setTimeout(150_000); // a first run, taken to its first filing
   const { env, home } = firstRun({ claude: filingClaude() });
   const app = await launch(env);
@@ -1389,30 +1318,28 @@ test("Undo from the menu is not offered after setup's first thought, which has i
   await expect(setup.getByRole("heading", { name: /^All filed\./ })).toBeVisible({ timeout: 60_000 });
   // It was filed with a commit, which setup's window can take back: that is the Undo this thought has.
   expect((await setupSnap(app)).filing).toMatchObject({ kind: "filed", canUndo: true });
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   await pressUndo(app);
   expect(undone(path.join(home, "Avanzel"))).toEqual([]);
   expect((await setupSnap(app)).filing).toMatchObject({ kind: "filed", canUndo: true }); // still filed
   await app.close();
 });
 
-test("Undo from the menu is not offered after an evening review that filed", async () => {
+test("Undo from the panel is not offered after an evening review that filed", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   await watchUndos(app);
   await filedFromTheCapsule(app);
-  expect(await undoItem(app)).toBeDefined();
+  expect(await undoOffer(app)).toBeDefined();
   new Vault(library).newCapture("An earlier thought", { source: "text" });
   await reviewed(app);
   // The review began, so the capsule's filing is no longer the last one; and the review's own commits are taken back by its own item.
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
-  // The review's item reads like the filing's own ("Undo the last filing"), in the menu the model gave and the one the tray holds.
-  expect((await menuOf(app)).filter((item) => item.type === "item" && item.action === "undo-review")).toEqual([
-    { type: "item", label: "Undo the last evening review", action: "undo-review" },
-  ]);
-  expect((await heldMenu(app)).map((item) => item.label)).toContain("Undo the last evening review");
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
+  // The review's own reads like the filing's ("Undo the last filing"), in what main would give the panel and on its Library.
+  expect(await reviewOffer(app)).toEqual(REVIEW_OFFER);
+  expect(await panelShowsReviewUndo(app)).toBe(true);
   await pressUndo(app);
   expect(await undoCalls(app)).toBe(0);
   expect(filesUnder(library, "ideas")).toHaveLength(2); // the capsule's filing, and the review's
@@ -1431,23 +1358,23 @@ for (const { review, name, ends } of [
   { review: "evening-review", name: "Evening review", ends: true },
   { review: "standup", name: "Standup", ends: false },
 ]) {
-  test(`Undo from the menu hides while the ${name.toLowerCase()} waits and runs, and is ${ends ? "gone" : "back"} after it`, async () => {
+  test(`Undo from the panel hides while the ${name.toLowerCase()} waits and runs, and is ${ends ? "gone" : "back"} after it`, async () => {
     const library = await makeLibrary({ git: true });
     // Only its own case has the custom review: in the others, a run that crossed 09:00 would run it on its schedule.
     if (review === "standup") writeFileSync(path.join(library, "tasks", "standup.md"), STANDUP);
     const { app } = await hearing({}, library);
     await watchUndos(app);
     await filedFromTheCapsule(app);
-    expect(await undoItem(app)).toBeDefined();
-    expect(await receiptItem(app)).toBeDefined();
+    expect(await undoOffer(app)).toBeDefined();
+    expect(await receiptOffer(app)).toBeDefined();
     // The evening review has a note to file, so it does write to the library.
     if (review === "evening-review") new Vault(library).newCapture("An earlier thought", { source: "text" });
     await holdTheQueue(app); // the review waits for its turn
     await call(app, "runTask", review);
-    expect(await undoItem(app)).toBeUndefined();
-    expect(await trayOffersUndo(app)).toBe(false);
-    expect(await receiptItem(app)).toBeUndefined();
-    expect(await trayOffersReceipt(app)).toBe(false);
+    expect(await undoOffer(app)).toBeUndefined();
+    expect(await panelShowsUndo(app)).toBe(false);
+    expect(await receiptOffer(app)).toBeUndefined();
+    expect(await panelShowsReceipt(app)).toBe(false);
     await showReceipt(app); // a press does nothing while the review is on: no reprint comes up
     expect(await call(app, "capsuleStateForTests")).not.toHaveProperty("reprint");
     await letTheQueueGo(app);
@@ -1455,17 +1382,17 @@ for (const { review, name, ends } of [
     if (review === "evening-review") expect((await said(app)).find((note) => note.title.startsWith(name))?.title).toBe("Evening review: 1 thought filed");
     await call(app, "idleForTests");
     if (ends) {
-      expect(await undoItem(app)).toBeUndefined();
-      expect(await trayOffersUndo(app)).toBe(false);
+      expect(await undoOffer(app)).toBeUndefined();
+      expect(await panelShowsUndo(app)).toBe(false);
       await pressUndo(app);
       expect(await undoCalls(app)).toBe(0);
     } else {
-      await expect.poll(() => trayOffersUndo(app), { timeout: 10_000 }).toBe(true);
-      expect(await undoItem(app)).toBeDefined();
+      await expect.poll(() => panelShowsUndo(app), { timeout: 10_000 }).toBe(true);
+      expect(await undoOffer(app)).toBeDefined();
     }
     // A review doesn't clear the receipt: it is back after the review, and its Undo is the menu's, so a review that wrote has taken it.
-    await expect.poll(() => trayOffersReceipt(app), { timeout: 10_000 }).toBe(true);
-    expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+    await expect.poll(() => panelShowsReceipt(app), { timeout: 10_000 }).toBe(true);
+    expect(await receiptOffer(app)).toEqual(RECEIPT_OFFER);
     await call(app, "dismiss");
     await showReceipt(app);
     expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", text: "Plant tulips in October", canUndo: !ends });
@@ -1485,15 +1412,15 @@ test("an evening review with nothing to file leaves Undo the last filing in plac
   await holdTheQueue(app); // the review waits for its turn
   await call(app, "runTask", "evening-review");
   // Hidden while it waits and runs, as for any review.
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   await letTheQueueGo(app);
   expect(await reviewSaid(app), "how the review ended").toMatchObject({ title: "Evening review", body: "Inbox was empty." });
   await call(app, "idleForTests");
   expect(gitOut(library, "rev-list", "--count", "HEAD"), "the review wrote nothing").toBe(commits);
   // Offered again, in the model and in the menu the tray holds.
-  await expect.poll(() => trayOffersUndo(app), { timeout: 10_000 }).toBe(true);
-  expect(await undoItem(app)).toEqual(UNDO_ITEM);
+  await expect.poll(() => panelShowsUndo(app), { timeout: 10_000 }).toBe(true);
+  expect(await undoOffer(app)).toEqual(UNDO_OFFER);
   // And it still works: the page goes, and the note is back in the inbox.
   await call(app, "dismiss"); // the card is hidden: the menu is all that offers Undo now
   await pressUndo(app);
@@ -1501,7 +1428,7 @@ test("an evening review with nothing to file leaves Undo the last filing in plac
   expect(inbox(library)).toHaveLength(1);
   expect(undone(library)).toHaveLength(1);
   expect(await said(app)).toContainEqual({ title: "Undone", body: UNDONE_NOTE });
-  expect(await undoItem(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
   await app.close();
 });
 
@@ -1520,8 +1447,8 @@ async function withBothUndos(env: Record<string, string> = {}) {
   const launched = await hearing(env, library);
   await reviewed(launched.app);
   await filedFromTheCapsule(launched.app);
-  expect(await undoItem(launched.app)).toBeDefined();
-  expect(await reviewItem(launched.app)).toBeDefined();
+  expect(await undoOffer(launched.app)).toBeDefined();
+  expect(await reviewOffer(launched.app)).toBeDefined();
   return launched;
 }
 
@@ -1547,26 +1474,26 @@ test("both Undo items survive a quit and relaunch, and each takes its own back",
   // Avanzel opens again with the same app data and the same library.
   const { app } = await hearing({ AVANZEL_USER_DATA: first.userData }, library);
   await watchUndos(app);
-  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toEqual(UNDO_ITEM);
-  await expect.poll(() => reviewItem(app), { timeout: 20_000 }).toEqual({ type: "item", label: "Undo the last evening review", action: "undo-review" });
-  expect(await trayOffersUndo(app)).toBe(true);
-  expect((await heldMenu(app)).map((item) => item.label)).toContain("Undo the last evening review");
+  await expect.poll(() => undoOffer(app), { timeout: 20_000 }).toEqual(UNDO_OFFER);
+  await expect.poll(() => reviewOffer(app), { timeout: 20_000 }).toEqual(REVIEW_OFFER);
+  expect(await panelShowsUndo(app)).toBe(true);
+  expect(await panelShowsReviewUndo(app)).toBe(true);
   expect(savedUndo(first.userData, library), "both commits are in the library's history: kept as they were").toEqual(saved);
   // The filing is the newer: it goes first. The review's page stays, and the capsule's note is back in the inbox.
   await pressUndo(app);
   expect(filesUnder(library, "ideas")).toHaveLength(1);
   expect(inbox(library)).toHaveLength(1);
   expect(await notified(app, "Undone")).toEqual([{ title: "Undone", body: UNDONE_NOTE }]);
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await reviewItem(app)).toBeDefined();
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await reviewOffer(app)).toBeDefined();
   expect(savedUndo(first.userData, library)).toEqual({ filing: null, evening: saved?.evening, receipt: null });
   await pressUndoReview(app);
   await expect.poll(async () => (await notified(app, "Evening review undone")).length).toBe(1);
   expect(await notified(app, "Evening review undone")).toEqual([{ title: "Evening review undone", body: "Everything it filed is back in the inbox." }]);
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(inbox(library)).toHaveLength(2);
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await reviewItem(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await reviewOffer(app)).toBeUndefined();
   expect(savedUndo(first.userData, library), "nothing left to undo: the library is out of the file").toBeUndefined();
   expect(await undoCalls(app)).toBe(2);
   await app.close();
@@ -1591,12 +1518,12 @@ test("a saved Undo whose commit has left the library's history isn't offered aft
   const { app } = await hearing({ AVANZEL_USER_DATA: first.userData }, library);
   await watchUndos(app);
   await expect.poll(() => savedUndo(first.userData, library), { timeout: 20_000, message: "the check dropped both records, and the receipt of the filing" }).toBeUndefined();
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await reviewItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await reviewOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   // The receipt of a filing that is no longer in the history prints what is no longer so: it is not offered, and not kept.
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app)).toBe(false);
   expect(savedUndo(first.userData, library)?.receipt ?? null).toBeNull();
   await showReceipt(app);
   expect(await capsuleKind(app)).toBe("hidden");
@@ -1621,20 +1548,20 @@ test("a launch while git can't run offers neither Undo and keeps the saved recor
   // library is checked all the same, and what it saved waits in the file for a launch that has git.
   const blind = await hearing({ AVANZEL_USER_DATA: first.userData, AVANZEL_GIT_USABLE: "0" }, library);
   await expect.poll(() => undoChecked(blind.app), { timeout: 20_000 }).toBe(true);
-  expect(await undoItem(blind.app)).toBeUndefined();
-  expect(await reviewItem(blind.app)).toBeUndefined();
-  expect(await trayOffersUndo(blind.app)).toBe(false);
+  expect(await undoOffer(blind.app)).toBeUndefined();
+  expect(await reviewOffer(blind.app)).toBeUndefined();
+  expect(await panelShowsUndo(blind.app)).toBe(false);
   // The receipt names a commit that nothing can say is there without git: not offered either, and kept all the same.
-  expect(await receiptItem(blind.app)).toBeUndefined();
-  expect(await trayOffersReceipt(blind.app)).toBe(false);
+  expect(await receiptOffer(blind.app)).toBeUndefined();
+  expect(await panelShowsReceipt(blind.app)).toBe(false);
   expect(savedUndo(first.userData, library), "kept as it was").toEqual(saved);
   await blind.app.close();
   // The next launch finds git again: the same records are checked, found in the library's history, offered, and work.
   const { app } = await hearing({ AVANZEL_USER_DATA: first.userData }, library);
   await watchUndos(app);
-  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
-  await expect.poll(() => reviewItem(app), { timeout: 20_000 }).toBeDefined();
-  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+  await expect.poll(() => undoOffer(app), { timeout: 20_000 }).toBeDefined();
+  await expect.poll(() => reviewOffer(app), { timeout: 20_000 }).toBeDefined();
+  expect(await receiptOffer(app)).toEqual(RECEIPT_OFFER);
   expect(savedUndo(first.userData, library)).toEqual(saved);
   await pressUndo(app);
   expect(filesUnder(library, "ideas")).toHaveLength(1);
@@ -1657,14 +1584,14 @@ test("each library keeps its own Undo items through a switch: only the open libr
   expect(await capsuleKind(app)).toBe("hidden");
   // The library that opens has no Undo of its own, and not the first library's: neither item shows, in the model and in the menu the tray holds.
   // Nor has it a receipt, though the first library has one.
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await reviewItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await reviewOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app)).toBe(false);
   await showReceipt(app);
   expect(await capsuleKind(app)).toBe("hidden");
-  expect((await heldMenu(app)).map((item) => item.label)).not.toContain("Undo the last evening review");
+  expect(await panelShowsReviewUndo(app)).toBe(false);
   await pressUndo(app);
   await pressUndoReview(app);
   expect(await undoCalls(app)).toBe(0); // the first library's filing and review stand, and are not this library's to take back
@@ -1677,21 +1604,21 @@ test("each library keeps its own Undo items through a switch: only the open libr
   // The first library opens again, and its two items are back: their commits are in its history. Each takes its own back.
   await call(app, "useLibrary", library);
   expect((await settingsSnap(app)).library?.path).toBe(library);
-  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
-  await expect.poll(() => reviewItem(app), { timeout: 20_000 }).toBeDefined();
-  await expect.poll(() => receiptItem(app), { timeout: 20_000 }).toEqual(RECEIPT_ITEM);
-  expect(await trayOffersUndo(app)).toBe(true);
-  expect(await trayOffersReceipt(app)).toBe(true);
+  await expect.poll(() => undoOffer(app), { timeout: 20_000 }).toBeDefined();
+  await expect.poll(() => reviewOffer(app), { timeout: 20_000 }).toBeDefined();
+  await expect.poll(() => receiptOffer(app), { timeout: 20_000 }).toEqual(RECEIPT_OFFER);
+  expect(await panelShowsUndo(app)).toBe(true);
+  expect(await panelShowsReceipt(app)).toBe(true);
   await pressUndo(app);
   expect(filesUnder(library, "ideas")).toHaveLength(1);
   expect(inbox(library)).toHaveLength(1);
-  expect(await receiptItem(app)).toBeUndefined();
+  expect(await receiptOffer(app)).toBeUndefined();
   await pressUndoReview(app);
   await expect.poll(async () => (await notified(app, "Evening review undone")).length).toBe(1);
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(inbox(library)).toHaveLength(2);
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await reviewItem(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await reviewOffer(app)).toBeUndefined();
   expect(await undoCalls(app)).toBe(2);
   expect(undone(other)).toEqual([]);
   await app.close();
@@ -1714,15 +1641,15 @@ test("an evening review that ends after a library switch keeps its Undo with its
   await call(app, "idleForTests");
   // The review filed in its own library, which is not the open one: nothing of it to undo here, its commits kept where they belong, and
   // the filing it came after gone from that library's file, though that library isn't open to show it.
-  expect(await reviewItem(app)).toBeUndefined();
+  expect(await reviewOffer(app)).toBeUndefined();
   const saved = savedUndo(userData, library);
   expect(saved?.filing, "the review's end took the filing out of its own library's file").toBeNull();
   expect(saved?.evening.length).toBeGreaterThan(0);
   expect(saved?.evening.every((sha) => COMMIT.test(sha))).toBe(true);
   expect(savedUndo(userData, other)).toBeUndefined();
   await call(app, "useLibrary", library);
-  await expect.poll(() => reviewItem(app), { timeout: 20_000 }).toBeDefined();
-  expect(await undoItem(app)).toBeUndefined();
+  await expect.poll(() => reviewOffer(app), { timeout: 20_000 }).toBeDefined();
+  expect(await undoOffer(app)).toBeUndefined();
   await pressUndoReview(app);
   await expect.poll(async () => (await notified(app, "Evening review undone")).length).toBe(1);
   expect(await notified(app, "Evening review undone")).toEqual([{ title: "Evening review undone", body: "Everything it filed is back in the inbox." }]);
@@ -1749,15 +1676,15 @@ test("an evening review that ends after its library was opened again offers its 
   expect((await settingsSnap(app)).library?.path).toBe(library);
   expect(await reviewSaid(app), "how the review ended").toMatchObject({ title: "Evening review: 1 thought filed" });
   await call(app, "idleForTests");
-  // Offered at once, with no further open, in the model and in the menu the tray holds.
-  await expect.poll(() => reviewItem(app), { timeout: 10_000 }).toEqual({ type: "item", label: "Undo the last evening review", action: "undo-review" });
-  await expect.poll(async () => (await heldMenu(app)).map((item) => item.label), { timeout: 10_000 }).toContain("Undo the last evening review");
+  // Offered at once, with no further open, in what main would give the panel and on its Library.
+  await expect.poll(() => reviewOffer(app), { timeout: 10_000 }).toEqual(REVIEW_OFFER);
+  expect(await panelShowsReviewUndo(app)).toBe(true);
   await pressUndoReview(app);
   await expect.poll(async () => (await notified(app, "Evening review undone")).length).toBe(1);
   expect(await notified(app, "Evening review undone")).toEqual([{ title: "Evening review undone", body: "Everything it filed is back in the inbox." }]);
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(inbox(library)).toHaveLength(1);
-  expect(await reviewItem(app)).toBeUndefined();
+  expect(await reviewOffer(app)).toBeUndefined();
   expect(savedUndo(userData, library)).toBeUndefined();
   await app.close();
 });
@@ -1774,12 +1701,12 @@ test("a filing that ends after a library switch keeps its Undo with its own libr
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
   await call(app, "idleForTests");
   // The filing is the first library's: the open library has no Undo for it, and the first library's file keeps its commit.
-  expect(await undoItem(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
   expect(savedUndo(userData, library)?.filing).toMatch(COMMIT);
   expect(savedUndo(userData, other)).toBeUndefined();
   await call(app, "dismiss");
   await call(app, "useLibrary", library);
-  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
+  await expect.poll(() => undoOffer(app), { timeout: 20_000 }).toBeDefined();
   await pressUndo(app);
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(inbox(library)).toHaveLength(1);
@@ -1835,7 +1762,7 @@ for (const comeBack of [false, true]) {
 // The filed card's own Undo is an Undo like the menu's: asked in the library of its filing, whichever library is open when it is pressed, and
 // told once, whoever's take-back of that filing lands first. The filing's library is kept with its job (`FilingJob.library`).
 
-test("the card's Undo asks for nothing while the menu's take-back of the same filing waits, though the library was opened again, and the card is told once", async () => {
+test("the card's Undo asks for nothing while the panel's take-back of the same filing waits, though the library was opened again, and the card is told once", async () => {
   const config = mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")); // the libraries that open are remembered here, not in ~/.config
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({ XDG_CONFIG_HOME: config }, library);
@@ -1844,7 +1771,7 @@ test("the card's Undo asks for nothing while the menu's take-back of the same fi
   // Settings picks the same folder again: a new library object, whose saved Undo is loaded from disk without the job that filed it.
   await call(app, "useLibrary", library);
   expect((await settingsSnap(app)).library?.path).toBe(library);
-  await expect.poll(() => undoItem(app), { timeout: 20_000 }).toBeDefined();
+  await expect.poll(() => undoOffer(app), { timeout: 20_000 }).toBeDefined();
   expect(await capsuleKind(app)).toBe("filed");
   await watchUndos(app, { hold: true });
   const pressed = pressUndo(app); // the menu's Undo waits at the library's door
@@ -1905,8 +1832,8 @@ test("the card's Undo takes back in the library its filing was made in, though a
   expect(savedUndo(userData, library)).toBeUndefined();
   await call(app, "useLibrary", library);
   await expect.poll(() => undoChecked(app), { timeout: 20_000 }).toBe(true);
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await receiptItem(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await receiptOffer(app)).toBeUndefined();
   await app.close();
 });
 
@@ -1926,10 +1853,10 @@ test("an evening review whose take-back fails says it can't be undone, once, and
   expect(await undoCalls(app)).toBe(1);
   expect(await app.evaluate(() => (globalThis as { unhandled?: string[] }).unhandled)).toEqual([]);
   // That was its one try: the review's item is gone and its record with it, and the filing's is as it was.
-  expect(await reviewItem(app)).toBeUndefined();
+  expect(await reviewOffer(app)).toBeUndefined();
   expect(savedUndo(userData, library)?.evening).toEqual([]);
   expect(savedUndo(userData, library)?.filing).toMatch(COMMIT);
-  expect(await undoItem(app)).toBeDefined();
+  expect(await undoOffer(app)).toBeDefined();
   expect(filesUnder(library, "ideas")).toHaveLength(2);
   await app.close();
 });
@@ -1940,25 +1867,25 @@ async function withReviewUndo(env: Record<string, string> = {}) {
   new Vault(library).newCapture("An earlier thought", { source: "text" });
   const launched = await hearing(env, library);
   await reviewed(launched.app);
-  expect(await reviewItem(launched.app)).toBeDefined();
+  expect(await reviewOffer(launched.app)).toBeDefined();
   return launched;
 }
 
-test("Undo the last evening review leaves the menu the moment it is asked for, while its take-back waits", async () => {
+test("Undo the last evening review leaves the panel the moment it is asked for, while its take-back waits", async () => {
   const { app, library } = await withReviewUndo();
-  expect(await trayOffersReview(app)).toBe(true);
+  expect(await panelShowsReviewUndo(app)).toBe(true);
   await watchUndos(app, { hold: true });
   await call(app, "menuAction", "undo-review"); // returns at once: the take-back waits at the library's door
   await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
   // Its commits are taken, here and on disk, and the menu the tray holds is built again for it: not when the take-back lands (behind a
   // queued filing or review that can be a while, and a press of an item that stands meanwhile does nothing).
-  expect(await reviewItem(app)).toBeUndefined();
-  expect(await trayOffersReview(app)).toBe(false);
+  expect(await reviewOffer(app)).toBeUndefined();
+  expect(await panelShowsReviewUndo(app)).toBe(false);
   expect(await notified(app, "Evening review undone")).toEqual([]);
   await app.evaluate(() => (globalThis as Left).letUndoIn?.());
   await expect.poll(async () => (await notified(app, "Evening review undone")).length).toBe(1);
   await call(app, "idleForTests");
-  expect(await trayOffersReview(app)).toBe(false);
+  expect(await panelShowsReviewUndo(app)).toBe(false);
   expect(await undoCalls(app)).toBe(1);
   expect(filesUnder(library, "ideas")).toEqual([]); // the review's page is gone, and its note is in the inbox again
   expect(inbox(library)).toHaveLength(1);
@@ -1972,8 +1899,8 @@ test("an evening review that throws after filing a note ends the offer of the re
   new Vault(library).newCapture("An earlier thought", { source: "text" });
   const { app, userData } = await hearing({}, library);
   await reviewed(app); // an evening review files the earlier thought: its Undo is offered
-  expect(await reviewItem(app)).toBeDefined();
-  expect(await trayOffersReview(app)).toBe(true);
+  expect(await reviewOffer(app)).toBeDefined();
+  expect(await panelShowsReviewUndo(app)).toBe(true);
   expect(savedUndo(userData, library)?.evening.length).toBeGreaterThan(0);
   // The next evening there are two notes, and the agent is gone after the first: its stand-in removes itself as it finishes, so that the
   // engine finds it missing (a NoAgentError) when it comes to the second, as it does when an agent CLI updates itself during a review.
@@ -1989,32 +1916,32 @@ test("an evening review that throws after filing a note ends the offer of the re
   expect(filesUnder(library, "ideas"), "the first note was filed before the agent was gone").toHaveLength(2);
   expect(inbox(library)).toHaveLength(1);
   // The earlier review can't be taken back cleanly any more: its item goes, in the model, in the menu the tray holds and on disk.
-  expect(await reviewItem(app)).toBeUndefined();
-  expect(await trayOffersReview(app)).toBe(false);
+  expect(await reviewOffer(app)).toBeUndefined();
+  expect(await panelShowsReviewUndo(app)).toBe(false);
   expect(savedUndo(userData, library)?.evening ?? []).toEqual([]);
   await app.close();
   // Another launch, with the same profile and library, does not bring it back.
   const again = await hearing({ AVANZEL_USER_DATA: userData }, library);
   await expect.poll(() => undoChecked(again.app), { timeout: 20_000 }).toBe(true);
-  expect(await reviewItem(again.app)).toBeUndefined();
-  expect(await trayOffersReview(again.app)).toBe(false);
+  expect(await reviewOffer(again.app)).toBeUndefined();
+  expect(await panelShowsReviewUndo(again.app)).toBe(false);
   await again.app.close();
 });
 
-test("Undo from the menu is not offered once Avanzel is quitting", async () => {
+test("Undo from the panel is not offered once Avanzel is quitting", async () => {
   const library = await makeLibrary({ git: true });
   new Vault(library).newCapture("An earlier thought", { source: "text" });
   const { app, userData } = await hearing({ AVANZEL_QUIT_WAIT_MS: "2000" }, library);
   await watchUndos(app);
   await reviewed(app);
   await filedFromTheCapsule(app);
-  expect(await undoItem(app)).toBeDefined();
-  expect(await reviewItem(app)).toBeDefined();
+  expect(await undoOffer(app)).toBeDefined();
+  expect(await reviewOffer(app)).toBeDefined();
   const saved = savedUndo(userData, library);
   expect(saved?.filing).toMatch(COMMIT);
   expect(saved?.evening.length).toBeGreaterThan(0);
   await call(app, "stopForQuit");
-  expect(await undoItem(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
   await pressUndo(app);
   await pressUndoReview(app);
   expect(await undoCalls(app)).toBe(0);
@@ -2035,14 +1962,14 @@ test("a Stop on a filing that still waits in the queue leaves the last filing to
   await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
   // A filing waits: the menu doesn't offer Undo for the one before it meanwhile, in the model and in the menu the tray holds (which
   // the card's own rebuild made, as the filing joined the queue).
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   await capsule.evaluate(() => window.avanzel.capsule.cancelFiling()); // Stop: nothing has touched the note, so the card says Stopped at once
   await expect.poll(() => capsuleKind(app)).toBe("cancelled");
   await call(app, "dismiss");
   await letTheQueueGo(app); // its turn comes: it finds itself stopped, and does nothing
   // Nothing was taken back and no run began, so the filing before it is still the last: the menu the tray holds offers it again.
-  await expect.poll(() => trayOffersUndo(app), { timeout: 5_000 }).toBe(true);
+  await expect.poll(() => panelShowsUndo(app), { timeout: 5_000 }).toBe(true);
   await pressUndo(app);
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(inbox(library)).toHaveLength(2); // the filing before it was taken back, and the stopped thought's note was never filed
@@ -2058,18 +1985,18 @@ test("a Stop on a filing that still waits in the queue leaves the last receipt t
   const { app, capsule } = await hearing({}, library);
   await filedFromTheCapsule(app);
   await call(app, "dismiss");
-  expect(await trayOffersReceipt(app)).toBe(true);
+  expect(await panelShowsReceipt(app)).toBe(true);
   await holdTheQueue(app); // something else has the queue, so the next filing waits for its turn
   await dictate(app);
   await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
-  expect(await trayOffersReceipt(app), "a filing waits").toBe(false);
+  expect(await panelShowsReceipt(app), "a filing waits").toBe(false);
   await capsule.evaluate(() => window.avanzel.capsule.cancelFiling()); // Stop: nothing has touched the note, so the card says Stopped at once
   await expect.poll(() => capsuleKind(app)).toBe("cancelled");
   await call(app, "dismiss");
-  expect(await trayOffersReceipt(app), "the stopped filing still waits for its turn").toBe(false);
+  expect(await panelShowsReceipt(app), "the stopped filing still waits for its turn").toBe(false);
   await letTheQueueGo(app); // its turn comes: it finds itself stopped, and does nothing
   // Nothing was filed and no run began, so the last receipt is still the last: the menu the tray holds offers it again.
-  await expect.poll(() => trayOffersReceipt(app), { timeout: 5_000 }).toBe(true);
+  await expect.poll(() => panelShowsReceipt(app), { timeout: 5_000 }).toBe(true);
   await showReceipt(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", text: "Plant tulips in October", canUndo: false, reprint: { filedAt: expect.any(Number) } });
   await app.close();
@@ -2078,12 +2005,12 @@ test("a Stop on a filing that still waits in the queue leaves the last receipt t
 // Two endings that show nothing (no card, no notification of a filing) still hand the last receipt back to the menu: the menu was last built
 // while the run went on, which held the item back, and the run's end builds it again (`runFiling`, `settleStop`) rather than a minute later.
 
-test("a filing whose note another Avanzel filed meanwhile hands the last receipt back to the menu as it ends", async () => {
+test("a filing whose note another Avanzel filed meanwhile hands the last receipt back to the panel as it ends", async () => {
   const library = await makeLibrary();
   const { app } = await hearing({}, library);
   await filedFromTheCapsule(app);
   await call(app, "dismiss");
-  expect(await trayOffersReceipt(app)).toBe(true);
+  expect(await panelShowsReceipt(app)).toBe(true);
   // Another Avanzel has the library, so the next filing waits for it, with its card put away...
   let letGo = () => {};
   const held = new Vault(library).withLock(() => new Promise<void>((resolve) => (letGo = resolve)));
@@ -2091,7 +2018,7 @@ test("a filing whose note another Avanzel filed meanwhile hands the last receipt
     await dictate(app);
     await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
     await call(app, "dismiss");
-    expect(await trayOffersReceipt(app), "a filing is under way").toBe(false);
+    expect(await panelShowsReceipt(app), "a filing is under way").toBe(false);
     // ...and files the note itself, then lets the library go.
     const [note] = filesUnder(library, "inbox");
     renameSync(path.join(library, "inbox", note!), path.join(library, "raw", note!));
@@ -2101,7 +2028,7 @@ test("a filing whose note another Avanzel filed meanwhile hands the last receipt
   }
   // The run comes back with no outcome (there was no note to file): nothing is shown, and the receipt of the filing before it is the last one.
   await call(app, "idleForTests");
-  expect(await trayOffersReceipt(app)).toBe(true);
+  expect(await panelShowsReceipt(app)).toBe(true);
   await app.close();
 });
 
@@ -2132,17 +2059,17 @@ async function stopAndHold(app: ElectronApplication): Promise<void> {
   });
 }
 
-test("a Stop that settles after its card was put away hands the last receipt back to the menu as it ends", async () => {
+test("a Stop that settles after its card was put away hands the last receipt back to the panel as it ends", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   await filedFromTheCapsule(app);
   await call(app, "dismiss");
-  expect(await trayOffersReceipt(app)).toBe(true);
+  expect(await panelShowsReceipt(app)).toBe(true);
   await stopAndHold(app);
   await dictate(app);
   await expect.poll(() => reachedTheEnd(app), { timeout: 30_000 }).toBe(true); // the agent has finished and Stop is pressed: the result waits
   await call(app, "dismiss"); // the card goes while the stopped run is not over: nothing shows when the stop settles
-  expect(await trayOffersReceipt(app), "the stopped run is not over").toBe(false);
+  expect(await panelShowsReceipt(app), "the stopped run is not over").toBe(false);
   await app.evaluate(() => (globalThis as Left).letItEnd?.());
   await call(app, "idleForTests");
   // The stop took its filing back and had nothing to tell (no edits stay, and no card is left to say so): the receipt of the filing before it
@@ -2150,7 +2077,7 @@ test("a Stop that settles after its card was put away hands the last receipt bac
   expect(filesUnder(library, "ideas")).toHaveLength(1);
   expect(inbox(library)).toHaveLength(1);
   expect(await said(app)).toEqual([]);
-  expect(await trayOffersReceipt(app)).toBe(true);
+  expect(await panelShowsReceipt(app)).toBe(true);
   await app.close();
 });
 
@@ -2174,30 +2101,30 @@ for (const refused of [false, true]) {
   });
 }
 
-test("a take-back of the last filing's commit, which is what Stop and Edit make, takes the menu's Undo away", async () => {
+test("a take-back of the last filing's commit, which is what Stop and Edit make, takes the panel's Undo away", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   await watchUndos(app);
   await filedFromTheCapsule(app);
-  expect(await undoItem(app)).toBeDefined();
+  expect(await undoOffer(app)).toBeDefined();
   const commit = gitOut(library, "log", "--format=%H %s").split("\n").find((line) => line.includes(" avanzel: file "))?.split(" ")[0];
   expect(commit).toMatch(/^[0-9a-f]{40}$/);
   // The job whose outcome holds that commit is taken back by name, as `settleStop` and `refile` do.
-  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+  expect(await receiptOffer(app)).toEqual(RECEIPT_OFFER);
   expect(await call(app, "takeBack", { outcome: { commit } })).toBeNull();
   expect(undone(library)).toHaveLength(1);
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
   // The filing's receipt goes with it: what it printed is no longer so.
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app)).toBe(false);
   await pressUndo(app);
   expect(await undoCalls(app)).toBe(1);
   await app.close();
 });
 
 for (const showing of [true, false]) {
-  test(`a Stop whose take-back git refuses leaves the filing standing, and the menu counts it, ${showing ? "told on the card" : "told by notification"}`, async () => {
+  test(`a Stop whose take-back git refuses leaves the filing standing, and the panel counts it, ${showing ? "told on the card" : "told by notification"}`, async () => {
     const stopRefused = "Stop couldn't take back a filing that had finished.";
     const library = await makeLibrary({ git: true });
     const { app } = await hearing({}, library);
@@ -2217,18 +2144,17 @@ for (const showing of [true, false]) {
     }
     await call(app, "idleForTests");
     expect(filesUnder(library, "ideas")).toHaveLength(1);
-    // The run stopped before it counted its filing, and the take-back that was refused leaves it in the log: the menu reads it again,
-    // and the menu the tray holds is built again for it, though a notification builds nothing.
+    // The run stopped before it counted its filing, and the take-back that was refused leaves it in the log: main reads it again, and
+    // the panel says so.
     expect(await headOf(app)).toBe(`1 thought filed today · Evening review ${eveningWhen()}`);
-    expect((await heldMenu(app))[0]).toMatchObject({ label: "1 thought filed today", sublabel: `Evening review ${eveningWhen()}` });
-    expect((await recentOf(app)).map((item) => item.type === "item" && item.label)).toEqual(["Plant tulips in October"]);
+    expect(await panelSays(app, `1 thought filed today. Evening review ${eveningWhen()}.`)).toBe(true);
     // A filing Stop stopped is none to undo from the menu.
-    expect(await undoItem(app)).toBeUndefined();
+    expect(await undoOffer(app)).toBeUndefined();
     await app.close();
   });
 }
 
-test("Undo from the menu is offered for a thought that was edited and filed again", async () => {
+test("Undo from the panel is offered for a thought that was edited and filed again", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({ FAKE_AGENT_MODE: "slow-once", FAKE_AGENT_ONCE: onceMarker() }, library);
   await watchUndos(app);
@@ -2238,20 +2164,20 @@ test("Undo from the menu is offered for a thought that was edited and filed agai
   expect(await capsuleKind(app)).toBe("editing");
   await expect.poll(() => gitOut(library, "log", "--format=%s"), { timeout: 30_000 }).toContain("avanzel: leftovers of"); // its edits, committed
   await call(app, "idleForTests"); // and its run is over
-  expect(await undoItem(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
   await call(app, "submitEdit", "corrected words"); // File: the leftovers come out first, then the corrected words are filed
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("filed");
   expect(await undoCalls(app)).toBe(1); // the take-back of the leftovers, which Edit asked for
   // The thought filed again is the last filing, and the menu takes that one back.
-  expect(await undoItem(app)).toBeDefined();
-  expect(await trayOffersUndo(app)).toBe(true);
+  expect(await undoOffer(app)).toBeDefined();
+  expect(await panelShowsUndo(app)).toBe(true);
   await pressUndo(app);
   expect(await undoCalls(app)).toBe(2);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "saved", undone: true, text: "corrected words" });
   expect(undone(library)).toHaveLength(2); // the leftovers, and the filing of the corrected words
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(inbox(library)).toHaveLength(1); // the corrected words wait in the inbox
-  expect(await undoItem(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
   await app.close();
 });
 
@@ -2270,8 +2196,8 @@ test("Show the last receipt reopens the last filing's card as a reprint, with it
   await filedFromTheCapsule(app);
   await call(app, "dismiss");
   expect(await capsuleKind(app)).toBe("hidden");
-  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
-  expect(await trayOffersReceipt(app)).toBe(true);
+  expect(await receiptOffer(app)).toEqual(RECEIPT_OFFER);
+  expect(await panelShowsReceipt(app)).toBe(true);
   const [page] = filesUnder(library, "ideas");
   expect(page).toBeDefined();
   const told = await said(app);
@@ -2325,10 +2251,10 @@ test("Show the last receipt reopens the last filing's card as a reprint, with it
   expect(filesUnder(library, "ideas")).toEqual([]);
   expect(inbox(library)).toHaveLength(1);
   // The filing is taken back: neither item is left, in the model or in the menu the tray holds.
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app)).toBe(false);
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app)).toBe(false);
+  expect(await panelShowsUndo(app)).toBe(false);
   await app.close();
 });
 
@@ -2342,8 +2268,8 @@ test("Show the last receipt survives a relaunch, and its Undo still takes the fi
   // Avanzel opens again with the same app data and the same library: the receipt is found in the library's history and offered.
   const { app } = await hearing({ AVANZEL_USER_DATA: first.userData }, library);
   await watchUndos(app);
-  await expect.poll(() => receiptItem(app), { timeout: 20_000 }).toEqual(RECEIPT_ITEM);
-  expect(await trayOffersReceipt(app)).toBe(true);
+  await expect.poll(() => receiptOffer(app), { timeout: 20_000 }).toEqual(RECEIPT_OFFER);
+  expect(await panelShowsReceipt(app)).toBe(true);
   expect(savedUndo(first.userData, library), "found in the history: kept as it was").toEqual(saved);
   await showReceipt(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({
@@ -2359,8 +2285,8 @@ test("Show the last receipt survives a relaunch, and its Undo still takes the fi
   expect(await notified(app, "Undone")).toEqual([]);
   expect(await undoCalls(app)).toBe(1);
   expect(filesUnder(library, "ideas")).toEqual([]);
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await undoItem(app)).toBeUndefined();
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
   expect(savedUndo(first.userData, library), "taken back: nothing left to offer, and the library is out of the file").toBeUndefined();
   await app.close();
 });
@@ -2422,24 +2348,24 @@ test("Show the last receipt hides while a recording, a filing or the editor is g
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   // A new library has no receipt: no item, and a press does nothing.
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app)).toBe(false);
   await showReceipt(app);
   expect(await capsuleKind(app)).toBe("hidden");
   await filedFromTheCapsule(app);
-  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+  expect(await receiptOffer(app)).toEqual(RECEIPT_OFFER);
   await call(app, "dismiss");
   // A recording hides it, in the model and in the menu the tray holds, and a press does nothing; it is back once the recording is given up.
   await call(app, "toggleDictate");
   await expect.poll(() => capsuleKind(app)).toBe("listening");
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app)).toBe(false);
   await showReceipt(app);
   expect(await capsuleKind(app)).toBe("listening");
   await call(app, "dismiss");
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
-  await expect.poll(() => receiptItem(app)).toEqual(RECEIPT_ITEM);
-  await expect.poll(() => trayOffersReceipt(app)).toBe(true);
+  await expect.poll(() => receiptOffer(app)).toEqual(RECEIPT_OFFER);
+  await expect.poll(() => panelShowsReceipt(app)).toBe(true);
   // A finished card is replaced: over a Saved card the reprint shows, and goes by itself in the time a filed card does.
   await call(app, "setCapsule", { kind: "saved", text: "Call the plumber on Monday", note: "Saved to the inbox for the evening review at 21:00." });
   await showReceipt(app);
@@ -2454,8 +2380,8 @@ test("Show the last receipt hides while a recording, a filing or the editor is g
   await call(app, "dismiss");
   // A transcription is a thought in flight, like a recording: the item is gone, and a press does nothing.
   await call(app, "setCapsule", { kind: "transcribing", mode: "dictate", onThisMac: true });
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app)).toBe(false);
   await showReceipt(app);
   expect(await capsuleKind(app)).toBe("transcribing");
   await call(app, "dismiss");
@@ -2468,16 +2394,16 @@ test("Show the last receipt hides while a recording, a filing or the editor is g
       return state.kind === "filing" && !state.waiting;
     }, { timeout: 30_000 })
     .toBe(true);
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app)).toBe(false);
   await showReceipt(app);
   expect(await capsuleKind(app)).toBe("filing");
   // The editor hides it too, though the menu is built again with the run stopped and the card gone: the words in it are the person's.
   await call(app, "edit");
   expect(await capsuleKind(app)).toBe("editing");
   await call(app, "refreshMenu");
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app)).toBe(false);
   await showReceipt(app);
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "editing", text: "Plant tulips in October" });
   await app.close();
@@ -2491,7 +2417,7 @@ test("Show the last receipt is not offered over a problem notice, whichever it i
   const { app } = await hearing({}, library);
   await filedFromTheCapsule(app);
   await call(app, "dismiss");
-  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+  expect(await receiptOffer(app)).toEqual(RECEIPT_OFFER);
   for (const [name, notice] of [
     ["an error", { kind: "error", message: "Avanzel couldn't capture the screen.", detail: "Nothing was saved." }],
     ["the speech model's failed download", { kind: "model-failed", reason: "The speech model couldn't be downloaded.", resumable: true }],
@@ -2499,13 +2425,13 @@ test("Show the last receipt is not offered over a problem notice, whichever it i
     ["the speech model's download", { kind: "preparing", receivedBytes: 1_000_000, totalBytes: 600_000_000 }],
   ] as const) {
     await call(app, "setCapsule", notice);
-    expect(await receiptItem(app), name).toBeUndefined();
-    expect(await trayOffersReceipt(app), `${name}, in the menu the tray holds`).toBe(false);
+    expect(await receiptOffer(app), name).toBeUndefined();
+    expect(await panelShowsReceipt(app), `${name}, in the menu the tray holds`).toBe(false);
     await showReceipt(app);
     expect(await call(app, "capsuleStateForTests"), `${name}, after a press`).toEqual(notice);
     await call(app, "dismiss");
-    await expect.poll(() => trayOffersReceipt(app), { message: `${name}, once it is put away` }).toBe(true);
-    expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+    await expect.poll(() => panelShowsReceipt(app), { message: `${name}, once it is put away` }).toBe(true);
+    expect(await receiptOffer(app)).toEqual(RECEIPT_OFFER);
   }
   await app.close();
 });
@@ -2523,16 +2449,16 @@ test("Show the last receipt is not offered over a Stopped card that says edits s
     ["two edits that no commit holds", stopped(false, 2)],
   ] as const) {
     await call(app, "setCapsule", card);
-    expect(await receiptItem(app), name).toBeUndefined();
-    expect(await trayOffersReceipt(app), `${name}, in the menu the tray holds`).toBe(false);
+    expect(await receiptOffer(app), name).toBeUndefined();
+    expect(await panelShowsReceipt(app), `${name}, in the menu the tray holds`).toBe(false);
     await showReceipt(app);
     expect(await call(app, "capsuleStateForTests"), `${name}, after a press`).toEqual(card);
     await call(app, "dismiss");
   }
   // Nothing of the run stays: the card has nothing more to say, and the reprint replaces it.
   await call(app, "setCapsule", stopped(false, 0));
-  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
-  expect(await trayOffersReceipt(app)).toBe(true);
+  expect(await receiptOffer(app)).toEqual(RECEIPT_OFFER);
+  expect(await panelShowsReceipt(app)).toBe(true);
   await showReceipt(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", text: "Plant tulips in October", reprint: { filedAt: expect.any(Number) } });
   await app.close();
@@ -2549,8 +2475,8 @@ test("Show the last receipt and ⌥⇧Z's bar are not offered over a Saved card 
   const saved = (detail?: string) => ({ kind: "saved", text: "Call the plumber on Monday", note: "Saved to the inbox.", ...(detail ? { detail } : {}) });
   const withLine = saved("Only your words were kept: the recording couldn't be saved.");
   await call(app, "setCapsule", withLine);
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app), "in the menu the tray holds").toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app), "in the menu the tray holds").toBe(false);
   await showReceipt(app);
   expect(await call(app, "capsuleStateForTests"), "after a press of the receipt").toEqual(withLine);
   expect(await call(app, "pressShortcutForTests", "undo")).toBe(true);
@@ -2558,11 +2484,11 @@ test("Show the last receipt and ⌥⇧Z's bar are not offered over a Saved card 
   await call(app, "dismiss");
   // Without the line, the card has nothing more to say: the bar replaces it, and the receipt is offered over the bar too.
   await call(app, "setCapsule", saved());
-  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
-  await expect.poll(() => trayOffersReceipt(app), { message: "in the menu the tray holds" }).toBe(true);
+  expect(await receiptOffer(app)).toEqual(RECEIPT_OFFER);
+  await expect.poll(() => panelShowsReceipt(app), { message: "in the menu the tray holds" }).toBe(true);
   expect(await call(app, "pressShortcutForTests", "undo")).toBe(true);
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "nothing-to-undo" });
-  expect(await receiptItem(app), "while the bar shows").toEqual(RECEIPT_ITEM);
+  expect(await receiptOffer(app), "while the bar shows").toEqual(RECEIPT_OFFER);
   await showReceipt(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", reprint: { filedAt: expect.any(Number) } });
   await app.close();
@@ -2576,7 +2502,7 @@ test("a reprint keeps the line that the person's exact words were kept, after a 
   expect(savedUndo(first.userData, library)?.receipt).toMatchObject({ restored: true });
   await first.app.close();
   const { app, capsule } = await hearing({ AVANZEL_USER_DATA: first.userData }, library);
-  await expect.poll(() => receiptItem(app), { timeout: 20_000 }).toEqual(RECEIPT_ITEM);
+  await expect.poll(() => receiptOffer(app), { timeout: 20_000 }).toEqual(RECEIPT_OFFER);
   await showReceipt(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", restored: true, reprint: { filedAt: expect.any(Number) } });
   await expect(capsule.getByRole("article").locator("header").getByText("Your exact words are kept.", { exact: true })).toBeVisible();
@@ -2594,11 +2520,11 @@ test("a filing that fails leaves the last receipt as it was, without its Undo, a
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
   // The problem card is up: the menu doesn't offer the item, and a press that reaches the controller anyway leaves the card. The receipt is
   // the first filing's all the same, and the item is back with the notice gone.
-  expect(await receiptItem(app)).toBeUndefined();
+  expect(await receiptOffer(app)).toBeUndefined();
   await showReceipt(app);
   expect(await capsuleKind(app)).toBe("error");
   await call(app, "dismiss");
-  await expect.poll(() => receiptItem(app)).toEqual(RECEIPT_ITEM);
+  await expect.poll(() => receiptOffer(app)).toEqual(RECEIPT_OFFER);
   await showReceipt(app);
   expect(await call(app, "capsuleStateForTests")).toMatchObject({
     kind: "filed",
@@ -2621,7 +2547,7 @@ test("a filing that fails leaves the last receipt as it was, without its Undo, a
 // The reprint's Undo is the menu's (`undo`): while the menu's Undo of the same filing waits for the library, the reprint's does nothing and
 // the take-back tells the reprint, once. 1d guards the regular card with the job's `undoing`; a reprint after a relaunch has no job.
 for (const relaunched of [false, true]) {
-  test(`the reprint's Undo answers once${relaunched ? ", after a relaunch" : ""}: while the menu's Undo of its filing waits for the library, it does nothing, and the reprint tells the take-back`, async () => {
+  test(`the reprint's Undo answers once${relaunched ? ", after a relaunch" : ""}: while the panel's Undo of its filing waits for the library, it does nothing, and the reprint tells the take-back`, async () => {
     const library = await makeLibrary({ git: true });
     let launched = await hearing({}, library);
     await filedFromTheCapsule(launched.app);
@@ -2629,7 +2555,7 @@ for (const relaunched of [false, true]) {
     if (relaunched) {
       await launched.app.close();
       launched = await hearing({ AVANZEL_USER_DATA: launched.userData }, library);
-      await expect.poll(() => receiptItem(launched.app), { timeout: 20_000 }).toEqual(RECEIPT_ITEM);
+      await expect.poll(() => receiptOffer(launched.app), { timeout: 20_000 }).toEqual(RECEIPT_OFFER);
     }
     const { app } = launched;
     await watchUndos(app, { hold: true });
@@ -2638,8 +2564,8 @@ for (const relaunched of [false, true]) {
     const pressed = pressUndo(app);
     await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
     // The filing was taken before the take-back landed: the menu stops offering it, and its receipt, at once.
-    expect(await undoItem(app)).toBeUndefined();
-    expect(await receiptItem(app)).toBeUndefined();
+    expect(await undoOffer(app)).toBeUndefined();
+    expect(await receiptOffer(app)).toBeUndefined();
     // The reprint's Undo finds its commit being taken back, and asks for nothing more: the card stays as it is.
     await call(app, "undo");
     expect(await undoCalls(app)).toBe(1);
@@ -2655,7 +2581,7 @@ for (const relaunched of [false, true]) {
   });
 }
 
-test("a reprint whose Undo the menu no longer offers says it can't be undone on the card, and its Undo never waits for ever", async () => {
+test("a reprint whose Undo the panel no longer offers says it can't be undone on the card, and its Undo never waits for ever", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   await watchUndos(app);
@@ -2665,7 +2591,7 @@ test("a reprint whose Undo the menu no longer offers says it can't be undone on 
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "filed", canUndo: true });
   // A review that writes ends the menu's Undo while the reprint, drawn before, still has its button: a press is a refusal on the card.
   await call(app, "clearLastFiled");
-  expect(await undoItem(app)).toBeUndefined();
+  expect(await undoOffer(app)).toBeUndefined();
   await call(app, "undo");
   expect(await call(app, "capsuleStateForTests")).toEqual({ kind: "error", message: UNDO_REFUSED.title, detail: UNDO_REFUSED.body });
   expect(await undoCalls(app)).toBe(0);
@@ -2674,20 +2600,20 @@ test("a reprint whose Undo the menu no longer offers says it can't be undone on 
   await app.close();
 });
 
-test("Undo from the menu rebuilds the menu twice, as in 1d, and takes the receipt in the first", async () => {
+test("Undo from the panel rebuilds the menu twice, as in 1d, and takes the receipt in the first", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({}, library);
   await watchUndos(app, { hold: true });
   await filedFromTheCapsule(app);
   await call(app, "dismiss");
-  expect(await receiptItem(app)).toEqual(RECEIPT_ITEM);
+  expect(await receiptOffer(app)).toEqual(RECEIPT_OFFER);
   await countCalls(app, "refreshMenu");
   const pressed = pressUndo(app);
   await expect.poll(() => reachedUndo(app), { timeout: 10_000 }).toBe(true);
   // The first rebuild took the Undo and the receipt together: the menu the tray holds has neither while the take-back waits at the door.
-  expect(await trayOffersUndo(app)).toBe(false);
-  expect(await trayOffersReceipt(app)).toBe(false);
-  expect(await receiptItem(app)).toBeUndefined();
+  expect(await panelShowsUndo(app)).toBe(false);
+  expect(await panelShowsReceipt(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
   expect(await calls(app, "refreshMenu")).toBeGreaterThanOrEqual(1);
   expect(await calls(app, "refreshMenu")).toBeLessThanOrEqual(2); // a tick() or broadcast() may land in it (filing.spec.ts allows one too)
   await app.evaluate(() => (globalThis as Left).letUndoIn?.());
@@ -2696,8 +2622,8 @@ test("Undo from the menu rebuilds the menu twice, as in 1d, and takes the receip
   expect(await calls(app, "refreshMenu")).toBeGreaterThanOrEqual(2);
   expect(await calls(app, "refreshMenu")).toBeLessThanOrEqual(3);
   expect(await notified(app, "Undone")).toEqual([{ title: "Undone", body: UNDONE_NOTE }]);
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app)).toBe(false);
   await app.close();
 });
 
@@ -2724,8 +2650,8 @@ test("a filing that begins while git can't run takes the earlier saved Undo out 
   // A launch that has git finds no Undo to offer, and shows the new filing's receipt, which has no Undo.
   const again = await hearing({ AVANZEL_USER_DATA: first.userData }, library);
   await expect.poll(() => undoChecked(again.app), { timeout: 20_000 }).toBe(true);
-  expect(await undoItem(again.app)).toBeUndefined();
-  expect(await receiptItem(again.app)).toEqual(RECEIPT_ITEM);
+  expect(await undoOffer(again.app)).toBeUndefined();
+  expect(await receiptOffer(again.app)).toEqual(RECEIPT_OFFER);
   await showReceipt(again.app);
   expect(await call(again.app, "capsuleStateForTests")).toMatchObject({ kind: "filed", canUndo: false, pages: [{ path: record?.receipt?.pages[0]?.path }] });
   await again.app.close();
@@ -2733,13 +2659,13 @@ test("a filing that begins while git can't run takes the earlier saved Undo out 
 
 // The menu a filing's start builds is the last one until its run ends (the steps build none), so it has to hide the receipt already: with a
 // filing held, `clearLastFiled` builds it with the queue empty, and a card that was put away before the turn came shows no filing (B1).
-test("Show the last receipt stays out of the menu for the whole run of a filing whose card was put away before its turn", async () => {
+test("Show the last receipt stays out of the panel for the whole run of a filing whose card was put away before its turn", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await hearing({ FAKE_AGENT_DELAY_MS: "3000" }, library); // a run takes long enough to look at
   await filedFromTheCapsule(app);
   await call(app, "dismiss");
   const [first] = filesUnder(library, "ideas");
-  expect(await trayOffersReceipt(app)).toBe(true);
+  expect(await panelShowsReceipt(app)).toBe(true);
   await holdTheQueue(app); // the next thought waits for its turn
   await dictate(app);
   await expect.poll(() => call(app, "capsuleStateForTests"), { timeout: 30_000 }).toMatchObject({ kind: "filing", waiting: true });
@@ -2748,12 +2674,12 @@ test("Show the last receipt stays out of the menu for the whole run of a filing 
   await letTheQueueGo(app);
   const runs = () => app.evaluate(() => (globalThis as unknown as { __avanzel: { runs: Map<unknown, unknown> } }).__avanzel.runs.size);
   await expect.poll(runs, { timeout: 30_000, intervals: [50] }).toBe(1); // its agent is running
-  expect(await receiptItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app), "in the menu the tray holds").toBe(false);
-  expect(await trayOffersUndo(app)).toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app), "in the menu the tray holds").toBe(false);
+  expect(await panelShowsUndo(app)).toBe(false);
   await call(app, "idleForTests");
   // It ended with a notification, and the receipt is its own.
-  await expect.poll(() => trayOffersReceipt(app), { timeout: 10_000 }).toBe(true);
+  await expect.poll(() => panelShowsReceipt(app), { timeout: 10_000 }).toBe(true);
   await showReceipt(app);
   const second = filesUnder(library, "ideas").find((name) => name !== first);
   expect(second).toBeDefined();
@@ -2764,7 +2690,7 @@ test("Show the last receipt stays out of the menu for the whole run of a filing 
 // A note filed in the background joins the queue with no card of its own, so nothing else builds the menu as it does; and with no filing held
 // (`lastFiled`: the thought before it failed) its run's start builds none either (`clearLastFiled`). The menu the tray holds then offers the
 // item for the whole run (`fileInBackground`).
-test("Show the last receipt leaves the menu as a note filed in the background after a limit's reset joins the queue, and is back after it", async () => {
+test("Show the last receipt leaves the panel as a note filed in the background after a limit's reset joins the queue, and is back after it", async () => {
   const bin = agentStubs({ claude: filingClaude() });
   const { app } = await withClaude(bin, { AVANZEL_RESET_MARGIN_MS: "0" }); // a wait files its note at the reset itself
   await filedFromTheCapsule(app);
@@ -2774,16 +2700,16 @@ test("Show the last receipt leaves the menu as a note filed in the background af
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
   await call(app, "dismiss"); // the notice takes the item away while it is up
-  expect(await undoItem(app)).toBeUndefined();
-  expect(await trayOffersReceipt(app)).toBe(true);
+  expect(await undoOffer(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app)).toBe(true);
   await app.evaluate(() => void (process.env.FAKE_AGENT_DELAY_MS = "3000")); // the filing at the reset takes long enough to look at
   // At the reset the note joins the queue, and the menu the tray holds stops offering the item with it.
   await expect.poll(() => faceOf(app), { timeout: 30_000, intervals: [50] }).toBe("filing");
-  expect(await trayOffersReceipt(app), "in the menu the tray holds").toBe(false);
-  expect(await receiptItem(app)).toBeUndefined();
+  expect(await panelShowsReceipt(app), "in the menu the tray holds").toBe(false);
+  expect(await receiptOffer(app)).toBeUndefined();
   await expect.poll(() => notified(app, "Filed by Claude Code"), { timeout: 30_000 }).toHaveLength(1);
   await call(app, "idleForTests");
-  await expect.poll(() => trayOffersReceipt(app), { timeout: 10_000 }).toBe(true);
+  await expect.poll(() => panelShowsReceipt(app), { timeout: 10_000 }).toBe(true);
   await app.close();
 });
 
@@ -2791,7 +2717,7 @@ for (const card of [
   { kind: "error", message: "Something else went wrong.", detail: "It has nothing to do with the speech model." },
   { kind: "shortcut-taken", key: "dictate", accelerator: "Alt+Space", holder: null, alternatives: [] },
 ] as const) {
-  test(`choosing the speech model's problem in the menu leaves ${card.kind === "error" ? "an error card" : "a taken shortcut's notice"} that is not about it up`, async () => {
+  test(`choosing the speech model's problem in the panel leaves ${card.kind === "error" ? "an error card" : "a taken shortcut's notice"} that is not about it up`, async () => {
     const hub = await fakeModelHub("missing");
     const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: emptyHfCache() });
     await expect.poll(() => barOf(app), { timeout: 20_000 }).toMatchObject({ face: "needs-you", title: "" });
@@ -2799,8 +2725,8 @@ for (const card of [
     await call(app, "setCapsule", card);
     await call(app, "menuAction", "open-settings:voice");
     // Settings opens on Voice, where the fix is. The card is about something else, and stays.
-    const settings = await windowFor(app, "settings");
-    await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
+    const settings = await windowFor(app, "panel");
+    await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-selected", "true");
     expect(await call(app, "capsuleStateForTests")).toEqual(card);
     await app.close();
   });
@@ -2808,43 +2734,49 @@ for (const card of [
 
 // ---------------------------------------------------------------- a scheduled review asks before it runs, and shows how far it is
 
-/** The words beside the review `id` in the menu now: the time it runs next, "Running…", or how far it is ("Filing 1 of 2"). */
+/**
+ * How the panel's Library would say where the review `id` is now (`reviewState`), in what main would give it: how far it is ("Filing 1 of
+ * 2"), "Running…" before its count is known, or "next" while it waits for its next time (which the page writes out itself).
+ */
 async function detailOf(app: ElectronApplication, id = "evening-review"): Promise<string | undefined> {
-  const item = (await menuOf(app)).find((candidate) => candidate.type === "item" && candidate.action === `task:${id}`);
-  return item?.type === "item" ? item.detail : undefined;
+  const review = (await panelSnapshot(app)).reviews.find((candidate) => candidate.id === id);
+  return review && reviewDetail(review);
 }
+
+/** `reviewState`'s words for a review, but for its next time, which is "next" here: the panel writes it out from `next` as it draws. */
+const reviewDetail = (review: { running: boolean; progress: string | null; enabled: boolean; next: string | null }) =>
+  review.running ? (review.progress ?? "Running…") : !review.enabled ? "Off" : review.next ? "next" : "On";
 
 /** When the review `id` last ran, in the library's run state: null before it has. */
 const lastRun = async (app: ElectronApplication, id: string) => (await settingsSnap(app)).tasks.find((task) => task.id === id)?.lastRun ?? null;
 
-/** What a review's next time reads as in the menu: today's, or tomorrow's once 21:00 has passed. */
-const NEXT_EVENING = /^(Tomorrow )?21:00$/;
+/** A review waiting for its next time, as `detailOf` says it. */
+const NEXT_EVENING = /^next$/;
 
-/** What one rebuild of the menu said of the evening review: the model's detail beside it, and the label of the item the tray holds. */
-type ReviewSaid = { detail: string | undefined; held: string | undefined };
+/** What one working out of the panel's state said of the evening review (`detailOf`'s words). */
+type ReviewSaid = { detail: string | undefined };
 
 /**
- * From now on, notes what each rebuild of the tray's menu (`MenuBar.update`) says of the evening review (`reviewSeen`), beginning with
- * what it says now, so that no poll has to catch a count in the moment it shows.
+ * From now on, notes what the panel would be told of the evening review each time main works its state out for it (`refreshPanel`, which
+ * every change it shows goes through, whether the panel is up or not), beginning with what it says now, so that no poll has to catch a
+ * count in the moment it shows.
  */
 async function watchReview(app: ElectronApplication): Promise<void> {
   await call(app, "capsuleStateForTests");
   await app.evaluate(() => {
-    type Item = { type: string; action?: string; detail?: string };
-    type Held = { label: string; submenu?: { items: Held[] } | null };
-    type Bar = { menu: { items: Held[] } | null; update(input: unknown, now?: Date): void };
-    const controller = (globalThis as unknown as { __avanzel: { menuRowsForTests(): Item[]; menuBar: Bar } }).__avanzel;
-    const seen: ReviewSaid[] = [];
+    type Review = { id: string; running: boolean; progress: string | null; enabled: boolean; next: string | null };
+    type Watched = { panelSnapshot(): { reviews: Review[] }; refreshPanel(showing?: boolean): void };
+    const controller = (globalThis as unknown as { __avanzel: Watched }).__avanzel;
+    const seen: { detail: string | undefined }[] = [];
     const note = () => {
-      const item = controller.menuRowsForTests().find((candidate) => candidate.action === "task:evening-review");
-      const reviews = controller.menuBar.menu?.items.find((held) => held.label === "Scheduled reviews")?.submenu?.items ?? [];
-      seen.push({ detail: item?.detail, held: reviews.find((held) => /^Evening review( \(|$)/.test(held.label))?.label });
+      const review = controller.panelSnapshot().reviews.find((candidate) => candidate.id === "evening-review");
+      seen.push({ detail: review && (review.running ? (review.progress ?? "Running…") : !review.enabled ? "Off" : review.next ? "next" : "On") });
     };
     Object.assign(globalThis, { reviewSeen: seen });
     note();
-    const update = controller.menuBar.update.bind(controller.menuBar);
-    controller.menuBar.update = (input, now) => {
-      update(input, now);
+    const refresh = controller.refreshPanel.bind(controller);
+    controller.refreshPanel = (showing) => {
+      refresh(showing);
       note();
     };
   });
@@ -2862,7 +2794,7 @@ async function seenToTheEnd(app: ElectronApplication): Promise<ReviewSaid[]> {
   return reviewSeen(app);
 }
 
-test("running a review from the menu asks first, and runs it only on Run Now", async () => {
+test("running a review from the panel asks first, and runs it only on Run Now", async () => {
   const { app, library } = await withNote("12");
   await answerDialogs(app, 1); // Cancel
   await call(app, "menuAction", "task:evening-review");
@@ -2921,7 +2853,7 @@ test("a review that is running isn't asked about", async () => {
   await app.close();
 });
 
-test("Settings' Run now asks first, as a sheet on Settings, and runs the review only on Run Now", async () => {
+test("Settings' Run now asks first, in a question of its own, and runs the review only on Run Now", async () => {
   const { app } = await hearing();
   const settings = await openSettings(app, "Reviews");
   const weekly = settings.getByRole("group", { name: "Weekly review", exact: true });
@@ -2930,7 +2862,7 @@ test("Settings' Run now asks first, as a sheet on Settings, and runs the review 
   await expect.poll(() => dialogsAsked(app)).toHaveLength(1);
   expect(await dialogsAsked(app)).toEqual([
     {
-      sheetOn: "Reviews", // Settings, called by its pane
+      sheetOn: null, // not a sheet: Settings is the panel, which a sheet can't hang from
       options: {
         type: "question",
         buttons: ["Run Now", "Cancel"],
@@ -2978,19 +2910,14 @@ test("a running review shows how far it is, and its time again once it ends", as
   await call(app, "runTask", "evening-review");
   // Each capture counts as the review takes it up, and the item says so instead of "Running…".
   await expect.poll(() => detailOf(app), { timeout: 30_000 }).toBe("Filing 1 of 2");
-  expect((await menuOf(app)).find((item) => item.type === "item" && item.action === "task:evening-review")).toMatchObject({ label: "Evening review", detail: "Filing 1 of 2" });
+  // The panel's Library says how far it is under the review's name (it may have gone on to the second by the time it is up).
+  const panel = await panelOn(app, "library");
+  await expect(panel.getByText(/^Filing [12] of 2$/)).toBeVisible();
+  await call(app, "hidePanel");
   const seen = await seenToTheEnd(app);
   const next = seen[0]?.detail ?? "";
   expect(next).toMatch(NEXT_EVENING);
   expect(inARow(seen.map((entry) => entry.detail))).toEqual([next, "Running…", "Filing 1 of 2", "Filing 2 of 2", next]);
-  // The tray's menu was given the same, in parentheses (menuLabel).
-  expect(inARow(seen.map((entry) => entry.held))).toEqual([
-    `Evening review (${next})`,
-    "Evening review (Running…)",
-    "Evening review (Filing 1 of 2)",
-    "Evening review (Filing 2 of 2)",
-    `Evening review (${next})`,
-  ]);
   // Run again, on an empty inbox: it begins with "Running…", not with the count the last run ended on.
   const before = seen.length;
   await call(app, "runTask", "evening-review");

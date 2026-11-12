@@ -24,7 +24,6 @@ import {
   settingsRow,
   SIGNED_OUT_CLAUDE,
   snap,
-  stopFittingSettings,
   toolbarItem,
   UNREADABLE_CLAUDE,
   windowFor,
@@ -133,7 +132,7 @@ test("Use on Codex's row makes Codex the agent that files, Use on the last row h
   // Claude Code's model is chosen from a list, which starts on the agent's own default: a pop-up button that says so, and no field.
   const claudeModel = settings.getByRole("button", { name: "Claude Code model: Agent's default", exact: true });
   await expect(claudeModel).toBeVisible();
-  await expect(claudeModel).toHaveAttribute("aria-haspopup", "menu");
+  await expect(claudeModel).toHaveAttribute("aria-haspopup", "listbox");
   await expect(settings.getByRole("textbox", { name: "Claude Code model" })).toHaveCount(0);
   await app.close();
 });
@@ -293,9 +292,9 @@ test("an agent's name stays on one line beside its controls, with its status und
   // Claude Code is signed out and isn't the agent chosen: its row holds the longest status, "Best results" and Use.
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), PATH: agentPath({ claude: SIGNED_OUT_CLAUDE }) });
   const settings = await openSettings(app, "Agents");
-  await stopFittingSettings(app);
   await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.setSize(680, 400); // short enough that the pane scrolls
+    const panel = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/panel/"))!;
+    panel.setSize(panel.getSize()[0]!, 400); // short enough that the pane scrolls
   });
   await expect.poll(() => settings.evaluate(() => window.innerHeight)).toBe(400);
   // Whether a scrolling pane gives 15 px of every row to a classic scrollbar depends on how this Mac shows scrollbars.
@@ -452,35 +451,34 @@ test("Open Settings on a filing with no agent to run opens Settings → Agents",
   });
   expect(await call(app, "capsuleStateForTests")).toMatchObject({ kind: "error", action: "open-settings:agents", actionLabel: "Open Settings" });
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
-  const settings = await windowFor(app, "settings"); // a new window: it opens on the pane its address names
-  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
+  const settings = await windowFor(app, "panel"); // a new window: it opens on the pane its address names
+  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-selected", "true");
   await app.close();
 });
 
 test("Open Settings moves a Settings window that is open to the pane, and a pane that doesn't exist means General", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   await call(app, "showSettings", "no-such-pane"); // an address that names a pane the page doesn't have
-  const settings = await windowFor(app, "settings");
-  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
+  const settings = await windowFor(app, "panel");
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-selected", "true");
   await call(app, "openSettingsFor", "open-settings:voice");
-  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
-  await expect(toolbarItem(settings, "General")).not.toHaveAttribute("aria-current", "page");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-selected", "true");
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-selected", "false");
   await call(app, "openSettingsFor", "open-settings:no-such-pane");
-  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-selected", "true");
   await call(app, "openSettingsFor", "open-settings:privacy");
-  await expect(toolbarItem(settings, "Privacy")).toHaveAttribute("aria-current", "page");
+  await expect(toolbarItem(settings, "Privacy")).toHaveAttribute("aria-selected", "true");
   await call(app, "openSettingsFor", "open-settings:tools"); // a pane Settings had once: its toolbar has no place for it
-  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-selected", "true");
   await call(app, "openSettingsFor", "open-settings:tasks"); // the scheduled reviews' pane, named Reviews
-  await expect(toolbarItem(settings, "Reviews")).toHaveAttribute("aria-current", "page");
+  await expect(toolbarItem(settings, "Reviews")).toHaveAttribute("aria-selected", "true");
   await call(app, "openSettingsFor", "open-settings"); // an action that names no pane
-  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-selected", "true");
   // The open window gets settings:show-pane with whatever pane it is asked for; one it doesn't have means General.
   await call(app, "openSettingsFor", "open-settings:privacy");
-  await expect(toolbarItem(settings, "Privacy")).toHaveAttribute("aria-current", "page");
+  await expect(toolbarItem(settings, "Privacy")).toHaveAttribute("aria-selected", "true");
   await call(app, "showSettings", "no-such-pane");
-  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-current", "page");
-  await expect(settings.getByRole("heading", { name: "General" })).toBeVisible();
+  await expect(toolbarItem(settings, "General")).toHaveAttribute("aria-selected", "true");
   await app.close();
 });
 
@@ -510,8 +508,8 @@ test("a recording too short to hold speech says nothing was heard or saved, and 
   });
   await expectProblem(capsule, { title: "Nothing was heard.", lines: ["Is the right microphone selected? Nothing was saved."], fix: "Choose microphone" });
   await capsule.getByRole("button", { name: "Choose microphone", exact: true }).click();
-  const settings = await windowFor(app, "settings");
-  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
+  const settings = await windowFor(app, "panel");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-selected", "true");
   await app.close();
 });
 
@@ -570,8 +568,8 @@ test("a microphone that didn't start says why and that nothing was recorded, and
     fix: "Open Settings",
   });
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
-  const settings = await windowFor(app, "settings");
-  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-current", "page");
+  const settings = await windowFor(app, "panel");
+  await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-selected", "true");
   // The old way out, System Settings, is not what the card opens any more.
   expect(await call(app, "openedForTests")).toEqual([]);
   await app.close();

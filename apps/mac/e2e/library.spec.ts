@@ -4,12 +4,10 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, renameSync, rmSync, w
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
-import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import {
   agentPath,
   answerDialogs,
-  answerMenus,
   call,
   capsuleKind,
   dialogsAsked,
@@ -22,11 +20,14 @@ import {
   openSettings,
   read,
   shown,
-  shownMenus,
   snap,
   stubPicker,
   windowFor,
   settingsRow, toolbarItem,
+  paneShown,
+  pickIn,
+  popUpOptions,
+  paneOf,
 } from "./helpers.ts";
 import { callsTo, settingsSnap, settingsWindows, setupSnap, windowsTitled } from "./setup-helpers.ts";
 
@@ -79,11 +80,9 @@ test("a scheduled review's switch, schedule, agent and instructions are edited i
   await expect(weekly.getByText("Use a time like 21:00.", { exact: true })).toBeVisible();
   expect(read(library, "tasks/weekly-review.md")).toContain("schedule: weekly sun 18:00");
 
-  // The day comes from a menu of the seven days, with the one saved checked. Its button says the day, so VoiceOver hears it.
-  await answerMenus(app, "Monday");
-  await weekly.getByRole("button", { name: "Day: Sunday", exact: true }).click();
-  await expect.poll(() => shownMenus(app)).toHaveLength(1);
-  expect((await shownMenus(app))[0]).toEqual([
+  // The day comes from a list of the seven days, with the one saved checked. Its button says the day, so VoiceOver hears it.
+  await expect(weekly.getByRole("button", { name: "Day: Sunday", exact: true })).toBeVisible();
+  expect(await popUpOptions(weekly, "Day")).toEqual([
     { label: "Sunday", checked: true },
     { label: "Monday", checked: false },
     { label: "Tuesday", checked: false },
@@ -92,6 +91,7 @@ test("a scheduled review's switch, schedule, agent and instructions are edited i
     { label: "Friday", checked: false },
     { label: "Saturday", checked: false },
   ]);
+  await pickIn(weekly, "Day", "Monday");
   await expect(weekly.getByText("Monday", { exact: true })).toBeVisible();
   await expect(weekly.getByRole("button", { name: "Day: Monday", exact: true })).toBeVisible();
   // Every day has no day to choose, and Every week brings back the one chosen.
@@ -100,12 +100,11 @@ test("a scheduled review's switch, schedule, agent and instructions are edited i
   await weekly.getByRole("radio", { name: "Every week", exact: true }).click();
   await expect(weekly.getByText("Monday", { exact: true })).toBeVisible();
 
-  // A time without its leading zero is one, and the agent comes from a menu that starts with the library's own.
+  // A time without its leading zero is one, and the agent comes from a list that starts with the library's own.
   await time.fill("7:30");
-  await answerMenus(app, "Codex");
-  await weekly.getByRole("button", { name: "Agent: The library's agent", exact: true }).click();
-  await expect.poll(() => shownMenus(app)).toHaveLength(1);
-  expect((await shownMenus(app))[0]![0]).toEqual({ label: "The library's agent", checked: true });
+  await expect(weekly.getByRole("button", { name: "Agent: The library's agent", exact: true })).toBeVisible();
+  expect((await popUpOptions(weekly, "Agent"))[0]).toEqual({ label: "The library's agent", checked: true });
+  await pickIn(weekly, "Agent", "Codex");
   await expect(weekly.getByText("Codex", { exact: true })).toBeVisible();
   await expect(weekly.getByRole("button", { name: "Agent: Codex", exact: true })).toBeVisible();
 
@@ -144,8 +143,7 @@ test("a review's editor keeps what was typed when Settings gets a new snapshot",
   await weekly.getByRole("button", { name: "Edit", exact: true }).click();
   await weekly.getByRole("radio", { name: "Every day", exact: true }).click();
   await weekly.getByRole("textbox", { name: "Time", exact: true }).fill("7:30");
-  await answerMenus(app, "Codex");
-  await weekly.getByRole("button", { name: /^Agent: / }).click();
+  await pickIn(weekly, "Agent", "Codex");
   await expect(weekly.getByText("Codex", { exact: true })).toBeVisible();
   await weekly.getByRole("textbox", { name: "Instructions" }).fill("Look for stale goals.");
   // Another review runs: main sends Settings a snapshot as it starts, and another as it ends.
@@ -179,15 +177,15 @@ test("a review's editor keeps what was typed while another pane shows, and Cance
 
   // General and back, on the toolbar: the editor is open still, with what was typed.
   await toolbarItem(settings, "General").click();
-  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
-  await expect(instructions).toHaveCount(0);
+  await paneShown(settings, "General");
+  await expect(paneOf(settings, "General").getByRole("textbox", { name: "Instructions" })).toHaveCount(0);
   await toolbarItem(settings, "Reviews").click();
   await expect(instructions).toHaveValue("Look for stale goals.");
   // From the keyboard too, and the draft outlasts that as well.
   await toolbarItem(settings, "Privacy").press("Enter");
-  await expect(settings.getByRole("heading", { name: "Privacy", exact: true })).toBeVisible();
+  await paneShown(settings, "Privacy");
   await toolbarItem(settings, "Reviews").press("Space");
-  await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
+  await paneShown(settings, "Reviews");
   await expect(instructions).toHaveValue("Look for stale goals.");
   expect(read(library, "tasks/weekly-review.md")).not.toContain("Look for stale goals.");
 
@@ -293,7 +291,7 @@ test("a review's save waits behind a run, and nothing else saves that review ove
   // Settings, not the pane, holds the save on its way: leaving the pane and coming back meanwhile, Save is busy still
   // and the switch waits still, so neither can write the old fields over it.
   await toolbarItem(settings, "General").click();
-  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+  await paneShown(settings, "General");
   await toolbarItem(settings, "Reviews").click();
   await expect(save).toHaveAttribute("aria-busy", "true");
   await expect(on).toBeDisabled();
@@ -416,10 +414,10 @@ test("a review's failed save is told under the review only, and is still told af
 
     // The failure is the window's, not the pane's: another pane and back, and the review still says its save failed.
     await toolbarItem(settings, "General").click();
-    await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
-    await expect(settings.getByRole("alert")).toHaveCount(0);
+    await paneShown(settings, "General");
+    await expect(paneOf(settings, "General").getByRole("alert")).toHaveCount(0);
     await toolbarItem(settings, "Reviews").click();
-    await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
+    await paneShown(settings, "Reviews");
     await expect(problem.getByText("This review couldn't be saved.", { exact: true })).toBeVisible();
     await expect(problem).toContainText(/\. It stays off, as last saved\.$/);
     await expect(on).toHaveAttribute("aria-checked", "false");
@@ -451,7 +449,7 @@ test("when shadow tasks last ran is kept with the app, not in the library (an ol
   await app.close();
 });
 
-test("a library that can't be opened is explained in Settings and the menu, and Choose a folder… fixes it", async () => {
+test("a library that can't be opened is explained in Settings and the panel, and Choose a folder… fixes it", async () => {
   const library = await makeLibrary();
   const good = await makeLibrary();
   rmSync(path.join(library, "tasks"), { recursive: true });
@@ -459,14 +457,14 @@ test("a library that can't be opened is explained in Settings and the menu, and 
   try {
     // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
     const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
-    const settings = await windowFor(app, "settings");
-    await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+    const settings = await windowFor(app, "panel");
+    await paneShown(settings, "General");
     const problem = settings.getByRole("alert");
     await expect(problem).toContainText(/Avanzel couldn't open the library/);
     await expect(problem).toContainText(/permission denied/);
     await snap(settings, "settings-library-problem");
-    const [setUp] = (await call(app, "menuForTests")) as { label: string; sublabel?: string }[];
-    expect(setUp?.sublabel).toMatch(/^Avanzel couldn't open the library/);
+    // The panel's Capture says the same, over its Set up Avanzel….
+    expect((await call(app, "panelSnapshot")) as { libraryProblem: string | null }).toMatchObject({ libraryProblem: expect.stringMatching(/^Avanzel couldn't open the library/) });
     await stubPicker(app, good);
     await problem.getByRole("button", { name: "Choose a folder…" }).click();
     await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.path).toBe(good);
@@ -485,9 +483,9 @@ test("a library folder renamed while Avanzel runs is named in Settings, and choo
   const moved = `${library}-moved`;
   renameSync(library, moved);
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   // Not a blank window: General says where it can't find the library, and offers to choose it again.
-  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+  await paneShown(settings, "General");
   const missing = settings.getByRole("alert");
   await expect(missing.getByText(`Avanzel can't find your library at ${library}.`, { exact: true })).toBeVisible();
   await expect(missing.getByText("Choose it again once it's back, or choose another folder.", { exact: true })).toBeVisible();
@@ -511,7 +509,7 @@ test("a library whose .avanzel folder goes while Avanzel runs is named as missin
   await expect.poll(async () => ((await call(app, "snapshot")) as SettingsSnapshot).library?.exists).toBe(true); // it is open
   rmSync(path.join(library, ".avanzel"), { recursive: true, force: true });
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   const missing = settings.getByRole("alert");
   await expect(missing.getByText(`Avanzel can't find your library at ${library}.`, { exact: true })).toBeVisible();
   await expect(missing.getByRole("button", { name: "Choose a folder…", exact: true })).toBeVisible();
@@ -525,8 +523,8 @@ test("a remembered library that is missing at launch is named in Settings, and s
   const { env, home } = firstRun();
   const gone = path.join(home, "Brain"); // remembered, and not there any more: moved, renamed or unmounted since
   const app = await launch({ ...env, AVANZEL_LIBRARY: gone });
-  const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+  const settings = await windowFor(app, "panel");
+  await paneShown(settings, "General");
   // Settings, not setup: this is no first run, and a window that starts over says nothing of the library that went.
   expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
   expect(await shown(app, "setup")).toBe(false);
@@ -537,20 +535,18 @@ test("a remembered library that is missing at launch is named in Settings, and s
   const setUpNew = missing.getByRole("button", { name: "Set up a new library", exact: true });
   await expect(setUpNew).toHaveAttribute("data-variant", "secondary");
   await snap(settings, "settings-library-missing-at-launch");
-  // The menu's top item says the same, and opens Settings.
-  const [top] = (await call(app, "menuForTests")) as MenuItemModel[];
-  expect(top).toEqual({ type: "item", label: "Set up Avanzel…", action: "settings", sublabel: "Can't find your library at ~/Brain." });
-  // So do opening Avanzel again, and the shortcuts and the menu items that need a library: none starts setup over.
+  // The panel's Capture says the same, over its Set up Avanzel….
+  expect(((await call(app, "panelSnapshot")) as { libraryProblem: string | null }).libraryProblem).toMatch(/^The library at .*Brain is missing\.$/);
+  // So do opening Avanzel again, and the shortcuts and the panel's ways in that need a library: none starts setup over.
   await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
   await call(app, "openQuick");
-  await call(app, "menuAction", "settings");
+  await call(app, "showSettings");
   expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
   expect(await settingsWindows(app)).toBe(1);
-  // Set up a new library opens setup, and Settings closes. Setup suggests ~/Avanzel, not the place that went missing.
-  const closed = settings.waitForEvent("close");
-  await setUpNew.click().catch(() => undefined); // closes Settings, before the click returns
-  await closed;
+  // Set up a new library opens setup, and the panel goes. Setup suggests ~/Avanzel, not the place that went missing.
+  await setUpNew.click();
   await expect.poll(() => shown(app, "setup")).toBe(true);
+  await expect.poll(() => shown(app, "panel")).toBe(false);
   expect(await call(app, "setupStepForTests")).toBe("hello");
   expect(await setupSnap(app)).toMatchObject({ libraryPath: path.join(home, "Avanzel"), libraryLabel: "~/Avanzel", folder: "missing", libraryReady: false });
   const setup = await windowFor(app, "setup");
@@ -566,15 +562,14 @@ test("a remembered library that is missing at launch can be chosen again where i
   const { env, home } = firstRun();
   const moved = await makeLibrary();
   const app = await launch({ ...env, AVANZEL_LIBRARY: path.join(home, "Brain") });
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await stubPicker(app, moved);
   await settings.getByRole("alert").getByRole("button", { name: "Choose a folder…", exact: true }).click();
   await expect.poll(async () => (await settingsSnap(app)).library?.path).toBe(moved);
   await expect(settings.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
   await expect(settings.getByRole("alert")).toHaveCount(0);
-  // Back in use, the menu is the library's own.
-  const [top] = (await call(app, "menuForTests")) as MenuItemModel[];
-  expect(top).toMatchObject({ action: "open-library" }); // the new library's inbox is empty, so the head's words don't name it
+  // Back in use, the panel is the library's own: no problem to tell, and nothing in the new library's inbox.
+  expect((await call(app, "panelSnapshot")) as { libraryReady: boolean; libraryProblem: string | null; inbox: number }).toMatchObject({ libraryReady: true, libraryProblem: null, inbox: 0 });
   expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
   await app.close();
 });
@@ -657,7 +652,7 @@ test("Change… on a folder Avanzel can't read says it can't use that folder, no
 test("Choose a folder… for a library that has gone says why a folder is refused, beside the Notice that offered it", async () => {
   const { env, home } = firstRun();
   const app = await launch({ ...env, AVANZEL_LIBRARY: path.join(home, "Brain") }); // remembered, and not there any more
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await stubPicker(app, "/Applications");
   await settings.getByRole("alert").getByRole("button", { name: "Choose a folder…", exact: true }).click();
   const problem = settings.getByRole("alert").filter({ hasText: "That change wasn't saved." });
@@ -767,14 +762,15 @@ test("Agents shows a library's problem as General does, and lists the agents onc
     // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
     const app = await launch({ AVANZEL_LIBRARY: library, XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")) });
     const settings = await openSettings(app, "Agents");
-    const problem = settings.getByRole("alert");
+    const agents = paneOf(settings, "Agents");
+    const problem = agents.getByRole("alert");
     await expect(problem).toContainText(/Avanzel couldn't open the library/);
     await expect(settings.getByRole("heading", { name: "Who files your thoughts", exact: true })).toHaveCount(0);
     // The library opens while the pane is open: the Notice gives way to the list, which starts its own checks.
     await stubPicker(app, good);
     await problem.getByRole("button", { name: "Choose a folder…" }).click();
     await expect(settings.getByRole("heading", { name: "Who files your thoughts", exact: true })).toBeVisible();
-    await expect(settings.getByRole("alert")).toHaveCount(0);
+    await expect(agents.getByRole("alert")).toHaveCount(0);
     await expect(settings.getByRole("group", { name: "fake", exact: true }).getByRole("img", { name: "Chosen" })).toBeVisible();
     await expect(settingsRow(settings, "Claude Code").getByText("Signed in", { exact: true })).toBeVisible({ timeout: 20_000 });
     await app.close();
@@ -783,7 +779,7 @@ test("Agents shows a library's problem as General does, and lists the agents onc
   }
 });
 
-test("Settings without a library offers setup, which comes forward as Settings closes", async () => {
+test("Settings without a library offers setup, which comes forward as the panel goes", async () => {
   const app = await launch(firstRun().env); // without a library, setup opens by itself
   // Closed first: with setup open from the start, a button that did nothing would still leave it shown.
   await windowFor(app, "setup");
@@ -792,26 +788,26 @@ test("Settings without a library offers setup, which comes forward as Settings c
   expect(await shown(app, "setup")).toBe(false);
   expect(await call(app, "setupStepForTests")).toBeNull();
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
-  await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
+  const settings = await windowFor(app, "panel");
+  await paneShown(settings, "General");
+  await expect(paneOf(settings, "General").getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
   // Agents has no library to list agents for either: the same Notice stands where its groups would be.
   await toolbarItem(settings, "Agents").click();
-  await expect(settings.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
-  await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
-  await expect(settings.getByRole("button", { name: "Set up Avanzel…" })).toBeVisible();
+  await paneShown(settings, "Agents");
+  await expect(paneOf(settings, "Agents").getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
+  await expect(paneOf(settings, "Agents").getByRole("button", { name: "Set up Avanzel…" })).toBeVisible();
   await expect(settings.getByRole("heading", { name: "Who files your thoughts", exact: true })).toHaveCount(0);
   // Nor has Reviews any reviews to show.
   await toolbarItem(settings, "Reviews").click();
-  await expect(settings.getByRole("heading", { name: "Reviews", exact: true })).toBeVisible();
-  await expect(settings.getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
+  await paneShown(settings, "Reviews");
+  await expect(paneOf(settings, "Reviews").getByText("Avanzel has no library open.", { exact: true })).toBeVisible();
   await toolbarItem(settings, "General").click();
-  await expect(settings.getByRole("heading", { name: "General", exact: true })).toBeVisible();
-  const closed = settings.waitForEvent("close");
-  await settings.getByRole("button", { name: "Set up Avanzel…" }).click().catch(() => undefined); // closes Settings, before the click returns
-  await closed;
-  // The button opened setup afresh, on Hello.
+  await paneShown(settings, "General");
+  await paneOf(settings, "General").getByRole("button", { name: "Set up Avanzel…" }).click();
+  // The button opened setup afresh, on Hello, and the panel went.
   await expect.poll(() => shown(app, "setup")).toBe(true);
   expect(await call(app, "setupStepForTests")).toBe("hello");
+  await expect.poll(() => shown(app, "panel")).toBe(false);
   await app.close();
 });
 

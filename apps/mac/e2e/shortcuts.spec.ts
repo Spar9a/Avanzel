@@ -6,10 +6,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Vault } from "../../../packages/engine/src/index.ts";
-import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { CapsuleState, SettingsSnapshot } from "../src/shared/ipc.ts";
 import { capsuleAtRest, dictate, filedFromTheCapsule, holdTheQueue, inbox, launchOn, letTheQueueGo, notified, reachedUndo, undoCalls, undone, watchUndos, type Left } from "./capsule-helpers.ts";
-import { call, capsuleKind, emptyHfCache, firstRun, launch, makeLibrary, openSettings, settingsRow, snap, toolbarItem, windowFor } from "./helpers.ts";
+import { call, capsuleKind, emptyHfCache, firstRun, launch, makeLibrary, openSettings, settingsRow, snap, toolbarItem, windowFor, paneShown } from "./helpers.ts";
 import { zel } from "./setup-helpers.ts";
 
 const snapshot = async (app: ElectronApplication) => (await call(app, "snapshot")) as SettingsSnapshot;
@@ -19,10 +18,16 @@ const CHANGE = /: \S+\. Change$/;
 const LISTENING = /: type the new shortcut$/;
 const capsuleState = async (app: ElectronApplication) => (await call(app, "capsuleStateForTests")) as CapsuleState;
 
-/** The menu's item for `action`: Record a thought is "dictate". */
-const menuItem = async (app: ElectronApplication, action: string) =>
-  ((await call(app, "menuForTests")) as MenuItemModel[]).find((item) => item.type === "item" && item.action === action);
-const recordItem = (app: ElectronApplication) => menuItem(app, "dictate");
+/**
+ * The shortcut the panel shows beside the way in to `key` (Record a thought is "dictate"), in what main would give it now: the
+ * shortcut, as `accelerator`, while Avanzel holds it, and none while another app does.
+ */
+const panelKey = async (app: ElectronApplication, key: string) => {
+  const snap = (await call(app, "panelSnapshot")) as { shortcuts: Record<string, string>; unregisteredShortcuts: string[] };
+  const accelerator = snap.shortcuts[key];
+  return accelerator && !snap.unregisteredShortcuts.includes(key) ? { accelerator } : {};
+};
+const recordItem = (app: ElectronApplication) => panelKey(app, "dictate");
 
 /** A folder for the app's own data that more than one launch can share. */
 const userDataDir = () => mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
@@ -138,9 +143,9 @@ test("a shortcut two of Avanzel's actions have is the earlier one's: no notice, 
   expect(shortcutAlternatives).toEqual({});
   expect(await capsuleKind(app)).toBe("hidden");
   expect(await recordItem(app)).toMatchObject({ accelerator: "Alt+Space" });
-  expect(await menuItem(app, "type")).not.toHaveProperty("accelerator");
+  expect(await panelKey(app, "type")).not.toHaveProperty("accelerator");
   await call(app, "showSettings", "shortcuts");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await expect(settings.getByText("⌥Space is already the shortcut for Record a thought. Pick another shortcut.")).toBeVisible();
   await expect(settings.getByRole("button", { name: /^Use / })).toHaveCount(0);
   await app.close();
@@ -160,8 +165,8 @@ test("with no free shortcut the notice offers Open Settings", async () => {
 
   // It opens Settings on Shortcuts, where the problem is, beside the shortcut's row.
   await capsule.getByRole("button", { name: "Open Settings" }).click();
-  const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("heading", { name: "Shortcuts", exact: true, level: 2 })).toBeVisible();
+  const settings = await windowFor(app, "panel");
+  await paneShown(settings, "Shortcuts");
   await expect(settings.getByText(/⌥Space is used by another app/)).toBeVisible();
   await expect.poll(() => capsuleKind(app)).toBe("hidden");
   await app.close();
@@ -171,7 +176,7 @@ test("Settings → Shortcuts offers the free ones under the taken shortcut's pro
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_TAKEN_SHORTCUTS: "Alt+Space" });
   await expect.poll(() => capsuleKind(app)).toBe("shortcut-taken");
   await call(app, "showSettings", "shortcuts");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await expect(settings.getByText(/⌥Space is used by another app.* Pick another shortcut\./)).toBeVisible();
   await expect(settings.getByText("“Record a thought” is still in the menu bar.", { exact: true })).toBeVisible();
   // The best one last, and as this is the pane's first Notice, the primary.
@@ -205,8 +210,8 @@ async function shortcutsWithProblems(taken: string): Promise<{ app: ElectronAppl
   return { app, settings: await openSettings(app, "Shortcuts") };
 }
 
-/** The pane's primary buttons: one moment, one primary. */
-const primaries = (settings: Page) => settings.locator('button[data-variant="primary"]');
+/** The primary buttons of the pane shown: one moment, one primary. */
+const primaries = (settings: Page) => settings.locator('.av-tab-page[data-current] .av-tab-page[data-current] button[data-variant="primary"]');
 
 /** The failed download's Try again. */
 const tryAgain = (settings: Page) =>
@@ -215,7 +220,7 @@ const tryAgain = (settings: Page) =>
 /** Voice, where the failed download's Notice is: its Try again is that pane's primary, whatever the shortcuts' problems. */
 async function voiceHasTryAgainAsPrimary(settings: Page): Promise<void> {
   await toolbarItem(settings, "Voice").click();
-  await expect(settings.getByRole("heading", { name: "Voice", exact: true, level: 2 })).toBeVisible();
+  await paneShown(settings, "Voice");
   await expect(tryAgain(settings)).toHaveAttribute("data-variant", "primary");
   await expect(primaries(settings)).toHaveCount(1);
 }
@@ -319,10 +324,10 @@ test("A key cap records the next shortcut; Esc, leaving the row or the window, a
   // Another pane unmounts Shortcuts, and a key pressed there goes nowhere. Shortcuts, opened again, starts afresh.
   await record();
   await call(app, "openSettingsFor", "open-settings:privacy");
-  await expect(toolbarItem(settings, "Privacy")).toHaveAttribute("aria-current", "page");
+  await expect(toolbarItem(settings, "Privacy")).toHaveAttribute("aria-selected", "true");
   await settings.keyboard.press("Control+Alt+K");
   await call(app, "showSettings", "shortcuts");
-  await expect(settings.getByRole("heading", { name: "Shortcuts", exact: true, level: 2 })).toBeVisible();
+  await paneShown(settings, "Shortcuts");
   await kept();
 
   // A whole shortcut is saved, and the focus is on the row's Change.
@@ -408,8 +413,8 @@ test("without a library a taken shortcut shows no notice, and Settings → Short
   expect(await capsuleKind(app)).toBe("hidden");
   // The Shortcuts pane needs no library.
   await call(app, "showSettings", "shortcuts");
-  const settings = await windowFor(app, "settings");
-  await expect(settings.getByRole("heading", { name: "Shortcuts", exact: true, level: 2 })).toBeVisible();
+  const settings = await windowFor(app, "panel");
+  await paneShown(settings, "Shortcuts");
   await expect(settings.getByRole("button", { name: "Use ⌃⇧Space" })).toBeVisible();
   await expect(settings.getByRole("button", { name: "Use ⌃⌥R" })).toBeVisible();
   // The menu has no Record a thought yet, so the Notice doesn't say it is still there.
@@ -432,7 +437,7 @@ async function filedAndPutAway(app: ElectronApplication): Promise<void> {
   await call(app, "dismiss");
 }
 
-test("⌥⇧Z takes the last filing back, as the menu's Undo does, and says so once", async () => {
+test("⌥⇧Z takes the last filing back, as the panel's Undo does, and says so once", async () => {
   const library = await makeLibrary({ git: true });
   const { app } = await launchOn(library);
   await watchUndos(app);
@@ -461,7 +466,7 @@ for (const relaunched of [false, true]) {
       // The filing was kept in the app's profile: the new run offers it, with nothing up.
       await first.app.close();
       ({ app } = await launchOn(library, { AVANZEL_USER_DATA: first.userData }));
-      await expect.poll(() => menuItem(app, "undo-filing"), { timeout: 20_000 }).toBeDefined();
+      await expect.poll(async () => ((await call(app, "panelSnapshot")) as { undoableFiling: boolean }).undoableFiling, { timeout: 20_000 }).toBe(true);
       expect(await capsuleKind(app)).toBe("hidden");
     }
     await watchUndos(app, { hold: true });
@@ -636,7 +641,7 @@ test("a taken ⌥⇧Z gets the launch notice, with ⌃⌥Z and ⌃⌥U, and says
   await expect(capsule.getByRole("button")).toHaveText(["Hide", "Use ⌃⌥U", "Use ⌃⌥Z"]);
   // Settings → Shortcuts keeps the problem, and says of the item what the capsule does: it is in the menu after a filing, not "still" there.
   await call(app, "showSettings", "shortcuts");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await expect(settings.getByText(/⌥⇧Z is used by another app.* Pick another shortcut\./)).toBeVisible();
   await expect(settings.getByText("“Undo the last filing” is in the menu bar after each filing.", { exact: true })).toBeVisible();
   await capsule.getByRole("button", { name: "Use ⌃⌥Z" }).click();

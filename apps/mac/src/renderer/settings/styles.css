@@ -1,62 +1,35 @@
-/* The Settings window's layout. It only arranges: everything you see comes from @avanzel/ui. */
+/* Settings' layout, in the menu bar panel's third tab. It only arranges: everything you see comes from @avanzel/ui. */
 #root {
   height: 100%;
 }
 
-/* A strip that holds the pane's name, as a title bar does, where the traffic lights sit and the window is dragged by; the toolbar
-   that moves between the panes; the row for the problem a refused call leaves, which has no height while there is none; the pane under
-   them. The window takes the height these need (useWindowFit), so the pane scrolls only when the screen, or the window's most, is too short for it. */
+/* The panes' row of tabs at the left, under the panel's own tabs; the row for the problem a refused call leaves, which has no height
+   while there is none; the pane under them, whose pages each scroll on their own. */
 .settings {
   display: grid;
-  grid-template-rows: 42px auto auto minmax(0, 1fr);
-  height: 100%;
-}
-.settings-drag {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  -webkit-app-region: drag;
-}
-/* In the menu bar panel: no strip to drag by, and the panes' row of tabs at the left, under the panel's own tabs. */
-.settings[data-embedded] {
   grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-columns: minmax(0, 1fr);
+  height: 100%;
 }
-.settings[data-embedded] .settings-toolbar {
+.settings-toolbar {
   display: flex;
   justify-content: flex-start;
   padding: var(--av-space-8) var(--av-space-12) var(--av-space-12);
 }
-.settings[data-embedded] .settings-problem-box {
-  padding: 0 var(--av-space-16) var(--av-space-12);
-}
-.settings[data-embedded] .settings-pane {
-  overflow: hidden;
-  padding: 0;
-}
 .settings-page {
   padding: 0 var(--av-space-16) var(--av-space-16);
 }
-/* The problem's Notice, in line with the pane's rows, under the toolbar's line as the pane is. Its words break rather than push
-   the row sideways, as the pane's do. */
+/* The problem's Notice, in line with the pane's rows. Its words break rather than push the row sideways, as the pane's do. */
 .settings-problem-box {
   overflow-wrap: anywhere;
-  padding: var(--av-space-20) var(--av-space-24) 0;
+  padding: 0 var(--av-space-16) var(--av-space-12);
 }
 /* A word too long for its line, such as a path or an agent's message, breaks rather than pushing the pane sideways. The pane
-   holds what is positioned inside it, such as a field's hidden label: left to the page, one below the pane's fold
-   stretches the page, which grows a scrollbar of its own and narrows every row by that scrollbar's width. */
+   holds what is positioned inside it, such as a field's hidden label, and its pages scroll, not it. */
 .settings-pane {
   position: relative;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   overflow-wrap: anywhere;
-  padding: var(--av-space-20) var(--av-space-24) var(--av-space-24);
-}
-/* What the pane holds keeps one width, with or without a classic scrollbar, which sits in the pane's padding. A scrollbar in the moment before the window
-   has taken its height would wrap the words otherwise, and the window would move twice. */
-.settings-pane-holds {
-  width: calc(100vw - 2 * var(--av-space-24));
 }
 /* The library's shelves, under its row in the same panel, 12 in from every edge as the row's label is. */
 .settings-shelves {

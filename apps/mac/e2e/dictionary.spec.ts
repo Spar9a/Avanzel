@@ -3,9 +3,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { loadSettings } from "../../../packages/engine/src/index.ts";
+import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import { holdTheQueue, letTheQueueGo } from "./capsule-helpers.ts";
-import { call, capsuleKind, filesUnder, launch, makeLibrary, openSettings, read, snap, speechWav, windowFor, toolbarItem } from "./helpers.ts";
+import { addTo, call, capsuleKind, closeList, filesUnder, launch, listButton, listed, makeLibrary, openSettings, read, snap, speechWav, windowFor, toolbarItem } from "./helpers.ts";
 
 const configOf = (library: string) => readFileSync(path.join(library, ".avanzel", "config.toml"), "utf8");
 
@@ -14,7 +14,7 @@ const dictionaryGroup = (settings: Page) =>
   settings.locator("section", { has: settings.getByRole("heading", { name: "Dictionary", exact: true }) });
 
 /**
- * Every reply main has sent the Settings window by now has been drawn: a round trip to main from the page comes back after any reply
+ * Every reply main has sent Settings by now has been drawn: a round trip to main from the page comes back after any reply
  * main sent before it (one channel, in order), and a frame later React has drawn what those replies set.
  */
 async function repliesDrawn(settings: Page): Promise<void> {
@@ -24,7 +24,7 @@ async function repliesDrawn(settings: Page): Promise<void> {
   });
 }
 
-test("the Dictionary saves its lines when the field is left, and a spoken thought is corrected to them, keeping what was heard", async () => {
+test("the Dictionary saves each term as it is added, and a spoken thought is corrected to them, keeping what was heard", async () => {
   const library = await makeLibrary();
   const app = await launch({
     AVANZEL_LIBRARY: library,
@@ -35,25 +35,27 @@ test("the Dictionary saves its lines when the field is left, and a spoken though
   const group = dictionaryGroup(settings);
   await expect(
     group.getByText(
-      "One per line. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya, and names with accents, are corrected only with an equals entry. The names are also given to your filing agent.",
+      "Add one at a time. Write a name the way it should appear. To fix a word the microphone gets wrong, add what it hears after an equals sign: Ollama = Alema, Polymer. Short names such as Priya, and names with accents, are corrected only with an equals entry. The names are also given to your filing agent.",
       { exact: true },
     ),
   ).toBeVisible();
-  const field = group.getByRole("textbox", { name: "Dictionary" });
-  await expect(field).toHaveValue("");
-  await field.fill("Ollama = Alema\n\n  Kowalczyk  ");
-  await field.press("Tab"); // the focus leaves the field, which saves it
+  await expect(group.getByRole("button", { name: "Dictionary: Empty", exact: true })).toBeVisible();
+  // Each term is saved as it is added, its spaces tidied; one already there isn't added twice.
+  await addTo(group, "Dictionary", "Ollama = Alema");
+  await expect.poll(() => loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema"]);
+  await addTo(group, "Dictionary", "  Kowalczyk  ");
   await expect.poll(() => loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema", "Kowalczyk"]);
-  await expect(field).toHaveValue("Ollama = Alema\nKowalczyk"); // the lines main kept: the blank one dropped, the spaces tidied
+  await addTo(group, "Dictionary", "kowalczyk");
+  expect(await listed(group, "Dictionary")).toEqual(["Ollama = Alema", "Kowalczyk"]);
   expect(configOf(library)).toContain('dictionary = [\n  "Ollama = Alema",\n  "Kowalczyk",\n]');
   await snap(settings, "settings-voice-dictionary");
+  await closeList(group, "Dictionary");
+  await expect(group.getByRole("button", { name: "Dictionary: 2 terms", exact: true })).toBeVisible();
 
-  // Another pane and back: the field starts from the library's lines.
+  // Another pane and back: the list is the library's.
   await toolbarItem(settings, "General").click();
   await toolbarItem(settings, "Voice").click();
-  await expect(dictionaryGroup(settings).getByRole("textbox", { name: "Dictionary" })).toHaveValue(
-    "Ollama = Alema\nKowalczyk",
-  );
+  expect(await listed(dictionaryGroup(settings), "Dictionary")).toEqual(["Ollama = Alema", "Kowalczyk"]);
 
   // A thought, kept in the inbox for the evening review, so its capture is there to read.
   await call(app, "setApp", { fileMode: "evening" });
@@ -69,58 +71,51 @@ test("the Dictionary saves its lines when the field is left, and a spoken though
   await app.close();
 });
 
-test("lines typed while an earlier save still waits its turn stay in the field, and leaving it saves them too", async () => {
+test("a term added while an earlier save still waits its turn stays in the list, and is saved too", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Voice");
-  const field = dictionaryGroup(settings).getByRole("textbox", { name: "Dictionary" });
+  const group = dictionaryGroup(settings);
   await holdTheQueue(app); // as a filing run would: the save waits its turn
-  await field.fill("Ollama = Alema");
-  await field.press("Tab"); // the save of the first line is sent, and waits
-  await field.fill("Ollama = Alema\nKowalczyk"); // the field again, with a second line, while it waits
+  await addTo(group, "Dictionary", "Ollama = Alema"); // the save of the first term is sent, and waits
+  await addTo(group, "Dictionary", "Kowalczyk"); // a second term, while it waits
   await letTheQueueGo(app);
-  await call(app, "idleForTests"); // the first save is done in main ...
-  await expect.poll(() => loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema"]);
-  await repliesDrawn(settings); // ... and its reply has reached the window, which must not put the field back to it
-  await expect(field).toHaveValue("Ollama = Alema\nKowalczyk");
-  await field.press("Tab");
+  await call(app, "idleForTests");
+  await repliesDrawn(settings); // the first save's reply has reached Settings, which must not put the list back to it
   await expect.poll(() => loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema", "Kowalczyk"]);
+  expect(await listed(group, "Dictionary")).toEqual(["Ollama = Alema", "Kowalczyk"]);
   await app.close();
 });
 
-test("a save that waits while the person goes to another pane and back lands in the field, and leaving it does not undo it", async () => {
+test("a save that waits while the person goes to another pane and back lands in the list", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Voice");
   await holdTheQueue(app); // as a filing run would: the save waits its turn
-  const field = dictionaryGroup(settings).getByRole("textbox", { name: "Dictionary" });
-  await field.fill("Ollama = Alema\n\n  Kowalczyk ");
-  await field.press("Tab"); // the save is sent, and waits
+  await addTo(dictionaryGroup(settings), "Dictionary", "Ollama = Alema");
+  await addTo(dictionaryGroup(settings), "Dictionary", "  Kowalczyk ");
+  await closeList(dictionaryGroup(settings), "Dictionary");
   await toolbarItem(settings, "General").click();
   await toolbarItem(settings, "Voice").click();
-  const again = dictionaryGroup(settings).getByRole("textbox", { name: "Dictionary" });
   await letTheQueueGo(app);
   await call(app, "idleForTests");
   await expect.poll(() => loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema", "Kowalczyk"]);
   await repliesDrawn(settings);
-  await expect(again).toHaveValue("Ollama = Alema\nKowalczyk"); // the lines main kept
-  await again.focus();
-  await again.press("Tab"); // leaving the field again saves nothing older over them
-  await call(app, "idleForTests");
-  await repliesDrawn(settings);
-  expect(loadSettings(library).voice.dictionary).toEqual(["Ollama = Alema", "Kowalczyk"]);
+  expect(await listed(dictionaryGroup(settings), "Dictionary")).toEqual(["Ollama = Alema", "Kowalczyk"]); // the terms main kept
   expect(configOf(library)).toContain('dictionary = [\n  "Ollama = Alema",\n  "Kowalczyk",\n]');
   await app.close();
 });
 
-test("a dictionary too long to keep is not saved, and the window says why", async () => {
+test("a dictionary too long to keep is not saved, and Settings says why", async () => {
   const library = await makeLibrary();
+  const full = Array.from({ length: 500 }, (_, i) => `Term${i}`);
+  const settingsOf = loadSettings(library);
+  saveSettings(library, { ...settingsOf, voice: { ...settingsOf.voice, dictionary: full } });
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Voice");
-  const field = dictionaryGroup(settings).getByRole("textbox", { name: "Dictionary" });
-  const lines = Array.from({ length: 501 }, (_, i) => `Term${i}`).join("\n");
-  await field.fill(lines);
-  await field.press("Tab");
+  const group = dictionaryGroup(settings);
+  await expect(listButton(group, "Dictionary")).toHaveAccessibleName("Dictionary: 500 terms");
+  await addTo(group, "Dictionary", "Term500");
   await expect(settings.getByText("That change wasn't saved.", { exact: true })).toBeVisible();
   await expect(
     settings.getByText(
@@ -128,7 +123,8 @@ test("a dictionary too long to keep is not saved, and the window says why", asyn
       { exact: true },
     ),
   ).toBeVisible();
-  await expect(field).toHaveValue(lines); // the draft stays as typed, to be shortened
-  expect(loadSettings(library).voice.dictionary).toEqual([]);
+  // The list stays as it was made, to be shortened; the library keeps its 500.
+  await expect(listButton(group, "Dictionary")).toHaveAccessibleName("Dictionary: 501 terms");
+  expect(loadSettings(library).voice.dictionary).toEqual(full);
   await app.close();
 });

@@ -7,8 +7,8 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
-import type { MenuItemModel } from "../src/main/menu-model.ts";
-import { agentStubs, call, capsuleKind, filesUnder, gitOut, launch, makeLibrary, menuRowsOf, onlyAgentsIn, speechWav, windowFor } from "./helpers.ts";
+import type { PanelSnapshot } from "../src/shared/ipc.ts";
+import { agentStubs, call, capsuleKind, filesUnder, gitOut, launch, makeLibrary, onlyAgentsIn, shown, speechWav, windowFor } from "./helpers.ts";
 import { zel } from "./setup-helpers.ts";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -77,6 +77,7 @@ export async function capsuleAtRest(capsule: Page): Promise<void> {
  * no bar (filing, filed) has its card no lower than the panel's bottom.
  */
 export async function expectInPanel(capsule: Page): Promise<void> {
+  await capsuleAtRest(capsule); // measured at rest: the capsule rises in, and grows from 96 %
   const card = (await capsule.getByRole("article").boundingBox())!;
   const panel = await capsule.evaluate(() => ({ width: innerWidth, height: innerHeight }));
   expect(card.y).toBeGreaterThanOrEqual(8);
@@ -326,51 +327,76 @@ export async function launchOn(library: string, env: Record<string, string> = {}
 /** The commits that took a filing or its leftovers back, newest first. */
 export const undone = (library: string) => gitOut(library, "log", "--format=%s").split("\n").filter((subject) => subject.startsWith("avanzel: undo"));
 
-// ---- Shared by menu-bar.spec.ts and ask-extras.spec.ts ----
+// ---- What the panel offers: shared by menu-bar.spec.ts and ask-extras.spec.ts ----
 
-/** The menu's rows and separators now, with what is in a submenu in the submenu's place. */
-export const menuOf = async (app: ElectronApplication) => {
-  const inPlace = (items: MenuItemModel[]): MenuItemModel[] => items.flatMap((item) => (item.type === "submenu" ? inPlace(item.items) : [item]));
-  return inPlace((await call(app, "menuForTests")) as MenuItemModel[]);
+/** What main would give the panel now (`panelSnapshot`), worked out afresh: what it offers, its headline and its counts. */
+export const panelSnapshot = (app: ElectronApplication) => call(app, "panelSnapshot") as Promise<PanelSnapshot>;
+
+/** Undo the last filing as the panel offers it, on Capture: with its shortcut, ⌥⇧Z. */
+export const UNDO_OFFER = { label: "Undo the last filing", shortcut: "Alt+Shift+Z" };
+/** Show the last receipt as the panel offers it, on Capture. */
+export const RECEIPT_OFFER = { label: "Show the last receipt" };
+/** Undo the last evening review as the panel offers it, on Library. */
+export const REVIEW_OFFER = { label: "Undo the last evening review" };
+
+/** The panel's Undo the last filing in what main would give it now, or undefined while it isn't offered. */
+export const undoOffer = async (app: ElectronApplication) => {
+  const snap = await panelSnapshot(app);
+  return snap.undoableFiling ? { ...UNDO_OFFER, shortcut: snap.shortcuts.undo } : undefined;
 };
 
-/** The menu's Undo the last filing in the model now, or undefined while the menu doesn't offer it. */
-export const undoItem = async (app: ElectronApplication) => (await menuOf(app)).find((item) => item.type === "item" && item.action === "undo-filing");
+/** The panel's Show the last receipt in what main would give it now, or undefined while it isn't offered. */
+export const receiptOffer = async (app: ElectronApplication) => ((await panelSnapshot(app)).showableReceipt ? RECEIPT_OFFER : undefined);
 
-/** The menu's Show the last receipt in the model now, or undefined while the menu doesn't offer it. */
-export const receiptItem = async (app: ElectronApplication) => (await menuRowsOf(app)).find((item) => item.action === "show-receipt");
+/** The panel's Undo the last evening review in what main would give it now, or undefined while it isn't offered. */
+export const reviewOffer = async (app: ElectronApplication) => ((await panelSnapshot(app)).undoableReview ? REVIEW_OFFER : undefined);
+
+/** Brings the panel up on `tab` and gives its page once it has drawn what main sent it as it came up. */
+export async function panelOn(app: ElectronApplication, tab: "capture" | "library" = "capture"): Promise<Page> {
+  await call(app, "showPanel", tab);
+  const panel = await windowFor(app, "panel");
+  await expect.poll(() => shown(app, "panel")).toBe(true);
+  // Main sent the page its snapshot as it showed it; a round trip from the page comes back after it, and a frame later it is drawn.
+  await panel.evaluate(async () => {
+    await window.avanzel.panel.get();
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  });
+  return panel;
+}
+
+/** What can be pressed or read in the panel's page: not what it keeps out of reach (inert: a tab not shown, a part leaving). */
+const reachable = (panel: Page) => panel.locator(":not([inert] *)");
+
+/**
+ * Whether the panel, opened on `tab`, shows a button `label` to press: what a person sees, drawn from what main sent it as it came up.
+ * It is put away again after.
+ */
+export async function panelShows(app: ElectronApplication, label: string, tab: "capture" | "library" = "capture"): Promise<boolean> {
+  const panel = await panelOn(app, tab);
+  const found = await panel.getByRole("button", { name: new RegExp(`^${label}`) }).and(reachable(panel)).count();
+  await call(app, "hidePanel");
+  return found > 0;
+}
+
+/** Whether the panel, opened on `tab`, says `text`, exactly, somewhere a person can read it. It is put away again after. */
+export async function panelSays(app: ElectronApplication, text: string, tab: "capture" | "library" = "capture"): Promise<boolean> {
+  const panel = await panelOn(app, tab);
+  const found = await panel.getByText(text, { exact: true }).and(reachable(panel)).count();
+  await call(app, "hidePanel");
+  return found > 0;
+}
+
+/** Whether the panel, opened, shows Undo the last filing. */
+export const panelShowsUndo = (app: ElectronApplication) => panelShows(app, "Undo the last filing");
+
+/** Whether the panel, opened, shows Show the last receipt. */
+export const panelShowsReceipt = (app: ElectronApplication) => panelShows(app, "Show the last receipt");
+
+/** Whether the panel, opened on Library, shows Undo the last evening review. */
+export const panelShowsReviewUndo = (app: ElectronApplication) => panelShows(app, "Undo the last evening review", "library");
 
 /** From now on the engine's fake agent behaves as `mode` says (FAKE_AGENT_MODE) for the runs that follow: each run is handed the app's environment. */
 export const agentMode = (app: ElectronApplication, mode: string) => app.evaluate((_electron, wanted) => void (process.env.FAKE_AGENT_MODE = wanted), mode);
-
-/**
- * What the tray holds for one menu item: its words, and its icon, or null without one. An icon is a template image or not (macOS tints a
- * template image for the menu: its ink, and white on the highlight), and the colour its pixels are drawn in (the most opaque one, "#rrggbb").
- */
-export type Held = { label: string; sublabel: string; icon: { template: boolean; ink: string } | null };
-
-/** The menu the tray holds now, as macOS was given it, with what is in a submenu after it. */
-export const heldMenu = (app: ElectronApplication): Promise<Held[]> =>
-  app.evaluate(() => {
-    type Icon = { isTemplateImage(): boolean; toBitmap(options: { scaleFactor: number }): Buffer };
-    type Item = { label: string; sublabel?: string; icon?: Icon | string; submenu?: { items: Item[] } };
-    const bar = (globalThis as unknown as { __avanzel: { menuBar: { menu: { items: Item[] } | null } } }).__avanzel.menuBar;
-    const rows = (items: Item[]): Item[] => items.flatMap((item) => [item, ...rows(item.submenu?.items ?? [])]);
-    return rows(bar.menu?.items ?? []).map((item) => {
-      let icon: { template: boolean; ink: string } | null = null;
-      if (item.icon && typeof item.icon !== "string") {
-        const pixels = item.icon.toBitmap({ scaleFactor: 2 }); // BGRA
-        let best = 0;
-        for (let at = 0; at < pixels.length; at += 4) if ((pixels[at + 3] ?? 0) > (pixels[best + 3] ?? 0)) best = at;
-        const ink = `#${[pixels[best + 2], pixels[best + 1], pixels[best]].map((channel) => (channel ?? 0).toString(16).padStart(2, "0")).join("")}`;
-        icon = { template: item.icon.isTemplateImage(), ink };
-      }
-      return { label: item.label, sublabel: item.sublabel ?? "", icon };
-    });
-  });
-
-/** Whether the menu the tray holds (as macOS was given it) offers Undo the last filing: it is built again where the model changes. */
-export const trayOffersUndo = async (app: ElectronApplication) => (await heldMenu(app)).some((item) => item.label === "Undo the last filing");
 
 /** A date `days` from now, at noon: a day other than today, whatever the hour is. */
 export const onDay = (days: number) => {

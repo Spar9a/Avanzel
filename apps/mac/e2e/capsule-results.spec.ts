@@ -682,15 +682,16 @@ test("the capsule's page opens only the pages its filing wrote, and no other win
   await stubOpening(app);
   await dictate(app);
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
-  await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  // Quick's page stands for another window's: the panel's may open them, as its Processing tab shows the filing too.
+  await call(app, "openQuick");
+  const other = await windowFor(app, "quick");
   await pressTitle(capsule, "goals/other.md"); // a page of the library, but not of this filing
   await pressTitle(capsule, "../outside.md");
   await pressTitle(capsule, "/etc/hosts");
   await pressTitle(capsule, "index.md");
   await pressTitle(capsule, 42);
   await pressTitle(capsule, null);
-  await pressTitle(settings, "ideas/tulips.md"); // this filing's page, but from another window's page
+  await pressTitle(other, "ideas/tulips.md"); // this filing's page, but from another window's page
   expect(await openedWith(app)).toEqual([]);
   // The same press from the capsule's own page, for a page this filing wrote, opens it: so the silence above is the channel's.
   await pressTitle(capsule, "people/ana.md"); // the fourth page, which the card only counts
