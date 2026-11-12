@@ -12,7 +12,7 @@ import {
   gitOut,
   launch,
   openedWith,
-  recentlyFiled,
+  libraryListed,
   snap,
   stubOpening,
   throughFound,
@@ -58,7 +58,7 @@ test("a filed thought shows its stamp, its page and how to undo it, and Undo put
   // Continue is the one primary, and there is no Back.
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Continue"]);
   await expect(setup.getByRole("button", { name: "Back" })).toHaveCount(0);
-  expect(await recentlyFiled(app)).toEqual(["Plant tulips in October"]);
+  expect(await libraryListed(app)).toEqual(["Plant tulips in October"]);
   // Open the note opens the new note.
   await stubOpening(app);
   await setup.getByRole("button", { name: "Open the note" }).click();
@@ -70,7 +70,7 @@ test("a filed thought shows its stamp, its page and how to undo it, and Undo put
   await expect(setup.getByText("Everything is back as it was, and your words are in the inbox.", { exact: true })).toBeVisible();
   expect(inbox(library)).toHaveLength(1);
   expect(filesUnder(library, "ideas")).toEqual([]);
-  expect(await recentlyFiled(app)).toEqual([]);
+  expect(await libraryListed(app)).toEqual([]);
   await expect(setup.getByRole("img", { name: /^Filed, / })).toHaveCount(0);
   await expect(tabs(setup)).toHaveText(["Goals", "Ideas", "Problems", "Memories", "People", "Topics"]);
   // File it again is the moment's one primary (Ruling P24), and has the focus Undo had; Continue steps back.
@@ -441,8 +441,8 @@ test("when the library's agent has gone, a failed question offers Open Settings,
   await expect(notice.getByRole("button", { name: "Open Settings", exact: true })).toHaveAttribute("data-variant", "primary");
   await expect(setup.locator('button[data-variant="primary"]')).toHaveText(["Open Settings"]);
   await notice.getByRole("button", { name: "Open Settings", exact: true }).click();
-  const settings = await windowFor(app, "settings");
-  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
+  const settings = await windowFor(app, "panel");
+  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-selected", "true");
   await app.close();
 });
 

@@ -210,10 +210,9 @@ import type { AddingKind, FileMode, PanelPage, PanelSnapshot, PanelTab, UpdateWa
 
 /**
  * The panel under the menu bar icon stands in for the menu and for the Settings window: a click on the icon brings it up, and
- * Settings is its third tab. The e2e tests drive the menu and the Settings window as they were, so with AVANZEL_TEST=1 the
- * icon keeps its menu and Settings its own window.
+ * Settings is its third tab. The e2e tests drive it too.
  */
-const USE_PANEL = process.env.AVANZEL_TEST !== "1";
+const USE_PANEL = true;
 
 /** What the panel may ask for (`panel:act`): the menu's own actions, and a page to open by its path. */
 const PANEL_ACTIONS = new Set([

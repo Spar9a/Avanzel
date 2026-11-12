@@ -1,12 +1,12 @@
 // The setup window's first two steps, Hello and Found: a Mac with no library opens it instead of Settings, and Zel walks the
 // person through the first run there. Every test launches as a first run (firstRun): a new HOME, an empty Hugging Face
 // cache, and only stand-in agents on PATH: Claude Code and Codex, and the others a test adds, or none at all (noAgents).
+import { panelOn, panelShows } from "./capsule-helpers.ts";
 import { expect, test, type ElectronApplication, type Locator } from "@playwright/test";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
-import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { SetupSnapshot } from "../src/shared/ipc.ts";
 import {
   agentCalls,
@@ -71,7 +71,7 @@ test("a first launch without a library opens setup on Hello, not Settings", asyn
   const title = await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/setup/"))?.getTitle());
   expect(title).toBe("Set up Avanzel");
-  expect(await shown(app, "settings")).toBe(false);
+  expect(await shown(app, "panel")).toBe(false);
   // While setup is open, Avanzel has a Dock icon, so its window is easy to find again behind other apps.
   await expect.poll(() => dockShown(app)).toBe(true);
   await snap(setup, "setup-hello");
@@ -123,14 +123,13 @@ test("with no library, the shortcut, Quick and Ask bring setup forward and the c
   await app.close();
 });
 
-test("the menu's Set up Avanzel… opens setup, and so does opening Avanzel again", async () => {
+test("the panel's Set up Avanzel… opens setup, and so does opening Avanzel again", async () => {
   const app = await launch(firstRun().env);
   await windowFor(app, "setup");
   await expect.poll(() => shown(app, "setup")).toBe(true);
-  const [setUp] = (await call(app, "menuForTests")) as MenuItemModel[];
-  expect(setUp).toMatchObject({ label: "Set up Avanzel…", action: "setup" });
   await closeSetup(app);
-  await call(app, "menuAction", "setup");
+  const panel = await panelOn(app);
+  await panel.getByRole("button", { name: "Set up Avanzel…", exact: true }).click();
   await expect.poll(() => shown(app, "setup")).toBe(true);
   await closeSetup(app);
   await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
@@ -527,8 +526,7 @@ test("Looks good makes the library at ~/Avanzel with Claude Code, and moves on",
   expect(loadSettings(library).harness).toBe("claude");
   expect(gitOut(library, "log", "--format=%s")).toContain("avanzel: new library");
   expect((await settingsSnap(app)).library?.path).toBe(library);
-  const menu = (await call(app, "menuForTests")) as MenuItemModel[];
-  expect(menu.some((item) => item.type === "item" && item.label === "Record a thought")).toBe(true);
+  expect(await panelShows(app, "Record a thought")).toBe(true);
   await app.close();
 });
 

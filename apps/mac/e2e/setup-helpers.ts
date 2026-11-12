@@ -14,7 +14,7 @@ export const windowsTitled = (app: ElectronApplication, title: string) =>
 
 /** How many Settings windows there are, shown or not: by the title it is made with, or by its page, which titles it for its pane once that has loaded. */
 export const settingsWindows = (app: ElectronApplication) =>
-  app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.getTitle() === "Avanzel Settings" || w.webContents.getURL().includes("/renderer/settings/")).length);
+  app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.getTitle() === "Avanzel Settings" || w.webContents.getURL().includes("/renderer/panel/")).length);
 
 /** Whether Avanzel shows its Dock icon now. */
 export const dockShown = (app: ElectronApplication) => app.evaluate(({ app: electronApp }) => electronApp.dock?.isVisible() ?? false);

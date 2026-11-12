@@ -271,8 +271,8 @@ test("a library whose own agent is gone says so", async () => {
   });
   expect(inbox(library)).toHaveLength(1);
   await capsule.getByRole("button", { name: "Open Settings", exact: true }).click();
-  const settings = await windowFor(app, "settings");
-  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-current", "page");
+  const settings = await windowFor(app, "panel");
+  await expect(toolbarItem(settings, "Agents")).toHaveAttribute("aria-selected", "true");
   await app.close();
 });
 

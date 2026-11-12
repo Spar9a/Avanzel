@@ -1,10 +1,10 @@
 // The setup window's last step, Done, and the end of setup: opening at login, Start using Avanzel and its flight to the menu
 // bar, Zel's bubble, and the milestones in first-run.json. Every test launches as a first run (firstRun).
+import { panelShows } from "./capsule-helpers.ts";
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { MenuItemModel } from "../src/main/menu-model.ts";
 import type { FirstRun } from "../src/main/store.ts";
 import {
   call,
@@ -129,11 +129,10 @@ test("Start using Avanzel closes the window, and the menu bar is where Avanzel l
   await expect.poll(() => windowsTitled(app, "Set up Avanzel"), { timeout: 5_000 }).toBe(0);
   expect(await call(app, "setupStepForTests")).toBeNull();
   await expect.poll(() => dockShown(app)).toBe(false);
-  const menu = (await call(app, "menuForTests")) as MenuItemModel[];
-  expect(menu).toContainEqual(expect.objectContaining({ type: "item", label: "Record a thought", action: "dictate" }));
+  expect(await panelShows(app, "Record a thought")).toBe(true);
   // Opening Avanzel again opens Settings now, as it does once there is a library, rather than setup.
   await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
-  expect(await settingsWindows(app)).toBe(1);
+  await expect.poll(() => settingsWindows(app)).toBe(1); // the panel, once its page is on its way
   expect(await windowsTitled(app, "Set up Avanzel")).toBe(0);
   await app.close();
 });
@@ -335,9 +334,8 @@ test("while the speech model is on its way and ⌥⇧Space is another app's, Don
   await expect(setup.getByText("My ears are still arriving. Type it instead, or talk to me once they land.", { exact: true })).toBeVisible();
   await expect(setup.getByText("Choose Type a thought… in the menu bar to type one. I'll wait there.", { exact: true })).toBeVisible();
   await expect(setup.getByText(/⌥⇧Space/)).toHaveCount(0);
-  // The menu bar's item it names is there.
-  const menu = (await call(app, "menuForTests")) as MenuItemModel[];
-  expect(menu).toContainEqual(expect.objectContaining({ type: "item", label: "Type a thought…", action: "type" }));
+  // The way in it names is there, in the panel under the menu bar icon.
+  expect(await panelShows(app, "Type a thought…")).toBe(true);
   await reduceMotion(app, true);
   await setup.getByRole("button", { name: "Start using Avanzel" }).click();
   const bubble = await windowFor(app, "up-here");
@@ -396,7 +394,7 @@ test("with the menu bar icon hidden, the window just closes, and no bubble point
   expect(await windowsTitled(app, "Avanzel")).toBe(titled);
   // Opening Avanzel again finds it: Settings, now that there is a library.
   await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
-  expect(await settingsWindows(app)).toBe(1);
+  await expect.poll(() => settingsWindows(app)).toBe(1); // the panel, once its page is on its way
   await app.close();
 });
 

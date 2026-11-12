@@ -23,7 +23,7 @@ import {
   onlyAgentsIn,
   read,
   reachedTheEnd,
-  recentlyFiled,
+  libraryListed,
   shown,
   snap,
   speechWav,
@@ -1294,7 +1294,7 @@ test("Stop is heard from the capsule's page alone: another window's page stops n
   // Every window has the same bridge, so Settings' page can send capsule:cancel-filing. A page's messages reach main in the order
   // they were sent: the answer to the call after it comes once main has handled the Stop.
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
   await settings.evaluate(async () => {
     window.avanzel.capsule.cancelFiling();
     await window.avanzel.settings.get();
@@ -1709,7 +1709,7 @@ test("a Stop that leaves the library as it was, with its card hidden, says nothi
 
 // ---- A filing that ends after its library has been replaced or has closed ----
 
-test("a filing's receipt names its pages from the note's own library when another opens meanwhile, and leaves the menu to the open one", async () => {
+test("a filing's receipt names its pages from the note's own library when another opens meanwhile, and leaves the panel to the open one", async () => {
   // A chosen library is remembered for the next launch: in a folder of the test's own, not in this Mac's ~/.config.
   const { app } = await launchOn(await makeLibrary(), {
     XDG_CONFIG_HOME: mkdtempSync(path.join(tmpdir(), "avz-e2e-config-")),
@@ -1726,7 +1726,7 @@ test("a filing's receipt names its pages from the note's own library when anothe
   // would be named by its file name ("idea-2026-…").
   expect(await factsOf(app)).toMatchObject({ kind: "filed", pages: [{ title: "Plant tulips in October", shelf: "ideas", created: true }] });
   // The menu lists the open library's recent pages, and this filing is not one of them.
-  expect(await recentlyFiled(app)).toEqual([]);
+  expect(await libraryListed(app)).toEqual([]);
   await app.close();
 });
 
@@ -1744,7 +1744,7 @@ test("a filing that ends after its library has closed still shows its receipt", 
   expect(await capsuleKind(app)).toBe("filing");
   await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("filed");
   expect(await factsOf(app)).toMatchObject({ kind: "filed", pages: [{ title: "Plant tulips in October", shelf: "ideas", created: true }] });
-  expect(await recentlyFiled(app)).toEqual([]); // no library is open to list it
+  expect(await libraryListed(app)).toEqual([]); // no library is open to list it
   // The filing ended well, so its seconds are kept, in the run state of the library it was filed in.
   expect(durationsKept(userData, library).fake).toHaveLength(1);
   await app.close();

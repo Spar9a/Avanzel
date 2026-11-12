@@ -464,7 +464,7 @@ test("each moment of the first thought is one short sentence for VoiceOver, neve
   await app.close();
 });
 
-test("Record a thought in the menu records on the first-thought step, but isn't a press of the shortcut", async () => {
+test("Record a thought in the panel records on the first-thought step, but isn't a press of the shortcut", async () => {
   const { env } = spokenRun({ AVANZEL_FAKE_TRANSCRIPT: "Plant tulips in October" });
   const app = await launch(env);
   const setup = await throughFound(app);

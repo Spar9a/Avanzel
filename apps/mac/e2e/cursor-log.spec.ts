@@ -12,7 +12,7 @@ import type { Target } from "../src/main/cursor-helper.ts";
 import type { DictationEntry } from "../src/main/dictation-history.ts";
 import { tildePath } from "../src/main/setup-model.ts";
 import { expectProblem, holdTheQueue, letTheQueueGo } from "./capsule-helpers.ts";
-import { call, capsuleKind, launch, makeLibrary, openSettings, speechWav, windowFor, toolbarItem } from "./helpers.ts";
+import { call, capsuleKind, launch, makeLibrary, openSettings, speechWav, windowFor, toolbarItem, addTo, closeList, listButton, listed, removeFrom } from "./helpers.ts";
 
 const WORDS = "hello Kowalczyk";
 
@@ -130,7 +130,7 @@ test("Delete in Settings → Dictation takes the dictation out of the day file t
   await app.close();
 });
 
-test("the menu's Forget the last dictation takes it out of the day file too", async () => {
+test("the panel's Forget the last dictation takes it out of the day file too", async () => {
   const library = await makeLibrary();
   const { app, pasteOut } = await launchWith(library);
   await call(app, "setLibrarySettings", { dictationLog: true });
@@ -146,7 +146,7 @@ test("the menu's Forget the last dictation takes it out of the day file too", as
   await app.close();
 });
 
-test("a day file that can't be rewritten is told, by Delete and by the menu, and the dictation leaves the history all the same", async () => {
+test("a day file that can't be rewritten is told, by Delete and by the panel's Forget, and the dictation leaves the history all the same", async () => {
   const library = await makeLibrary();
   const { app, pasteOut } = await launchWith(library);
   await call(app, "setLibrarySettings", { dictationLog: true });
@@ -227,10 +227,13 @@ test("a dictation forgotten after another library opened leaves the day file of 
 /** The Never kept group of Settings → Privacy. */
 const neverKept = (settings: Page) => settings.locator("section", { has: settings.getByRole("heading", { name: "Never kept", exact: true }) });
 
-/** The field of a skip list, opened with its row's Edit…. */
-async function skipField(settings: Page, list: "Apps to skip" | "Sites to skip"): Promise<Locator> {
-  await neverKept(settings).getByRole("group", { name: list, exact: true }).getByRole("button", { name: "Edit…", exact: true }).click();
-  return neverKept(settings).getByRole("textbox", { name: list, exact: true });
+/** Opens a skip list's editor with its row's Edit…, unless it is open: the list's own button is under the row then. */
+async function editSkip(settings: Page, list: "Apps to skip" | "Sites to skip"): Promise<Locator> {
+  const group = neverKept(settings);
+  const edit = group.getByRole("group", { name: list, exact: true }).getByRole("button", { name: "Edit…", exact: true });
+  if (await edit.isVisible()) await edit.click();
+  await expect(listButton(group, list)).toBeVisible();
+  return group;
 }
 
 /**
@@ -264,7 +267,7 @@ test("Settings → Dictation turns the log on at once, and only then says what a
   await app.close();
 });
 
-test("Settings → Privacy says what its skip lists hold, and saves them cleaned when a field is left; all of it is there after a reload", async () => {
+test("Settings → Privacy says what its skip lists hold, and saves each change to them at once, cleaned; all of it is there after a reload", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Privacy");
@@ -273,88 +276,91 @@ test("Settings → Privacy says what its skip lists hold, and saves them cleaned
   // What each row says of its list: the password managers it comes with by name, and no bundle ids until they are asked for.
   await expect(group.getByText("1Password, 1Password 7, Bitwarden and 6 more", { exact: true })).toBeVisible();
   await expect(group.getByText("None", { exact: true })).toBeVisible();
-  await expect(group.getByRole("textbox")).toHaveCount(0);
+  await expect(listButton(group, "Apps to skip")).toHaveCount(0);
 
-  const apps = await skipField(settings, "Apps to skip");
+  await editSkip(settings, "Apps to skip");
   await expect(group.getByText("One bundle id per line, such as com.apple.Passwords.", { exact: true })).toBeVisible();
-  await expect(apps).toHaveValue(loadSettings(library).dictation.skipApps.join("\n")); // the password managers, to begin with
-  await apps.fill("com.apple.Passwords\n\n  com.tinyspeck.slackmacgap \ncom.apple.passwords");
-  await apps.press("Tab");
+  const managers = loadSettings(library).dictation.skipApps;
+  expect(await listed(group, "Apps to skip")).toEqual(managers); // the password managers, to begin with
+  // Each change is saved as it is made: all but Passwords taken out, then Slack put in, its spaces tidied; Passwords again isn't added twice.
+  for (const id of managers.filter((id) => id !== "com.apple.Passwords")) await removeFrom(group, "Apps to skip", id);
+  await expect.poll(() => loadSettings(library).dictation.skipApps).toEqual(["com.apple.Passwords"]);
+  await addTo(group, "Apps to skip", "  com.tinyspeck.slackmacgap ");
+  await addTo(group, "Apps to skip", "com.apple.passwords");
   await expect.poll(() => loadSettings(library).dictation.skipApps).toEqual(["com.apple.Passwords", "com.tinyspeck.slackmacgap"]);
-  await expect(apps).toHaveValue("com.apple.Passwords\ncom.tinyspeck.slackmacgap");
+  expect(await listed(group, "Apps to skip")).toEqual(["com.apple.Passwords", "com.tinyspeck.slackmacgap"]);
+  await closeList(group, "Apps to skip");
   await expect(group.getByText("Passwords and slackmacgap", { exact: true })).toBeVisible();
 
-  const sites = await skipField(settings, "Sites to skip");
+  await editSkip(settings, "Sites to skip");
   await expect(
     group.getByText("One website per line, such as example.com. Safari and Chrome-based browsers say which site is open. Other browsers can't, so there a dictation is kept.", {
       exact: true,
     }),
   ).toBeVisible();
-  await expect(sites).toHaveValue("");
-  await sites.fill("https://Bank.example.com/login\nwww.mail.test:8080");
-  await sites.press("Tab");
+  await expect(listButton(group, "Sites to skip")).toHaveAccessibleName("Sites to skip: Empty");
+  // A site is kept as its address alone: no scheme, path, www or port, in lower case; the list shows what main kept.
+  await addTo(group, "Sites to skip", "https://Bank.example.com/login");
+  await addTo(group, "Sites to skip", "www.mail.test:8080");
   await expect.poll(() => loadSettings(library).dictation.skipSites).toEqual(["bank.example.com", "mail.test"]);
-  await expect(sites).toHaveValue("bank.example.com\nmail.test");
+  await expect.poll(() => listed(group, "Sites to skip")).toEqual(["bank.example.com", "mail.test"]);
+  await closeList(group, "Sites to skip");
   await expect(group.getByText("bank.example.com and mail.test, in Safari and Chrome-based browsers", { exact: true })).toBeVisible();
 
-  // A line that is no website is not saved, and the window says why; the field keeps what was typed, and the row what is really kept.
-  await sites.fill("bank.example.com\nnot a site");
-  await sites.press("Tab");
+  // A line that is no website is not saved, and Settings says why; the list keeps what was added, and the row what is really kept.
+  await addTo(group, "Sites to skip", "not a site");
   await expect(settings.getByText("That change wasn't saved.", { exact: true })).toBeVisible();
   await expect(
-    settings.getByText('Line 2 of the sites to skip, "not a site", isn\'t a website. Write it as its address, such as example.com. The setting keeps its old value.', {
+    settings.getByText('Line 3 of the sites to skip, "not a site", isn\'t a website. Write it as its address, such as example.com. The setting keeps its old value.', {
       exact: true,
     }),
   ).toBeVisible();
-  await expect(sites).toHaveValue("bank.example.com\nnot a site");
+  expect(await listed(group, "Sites to skip")).toEqual(["bank.example.com", "mail.test", "not a site"]);
+  await closeList(group, "Sites to skip");
   await expect(group.getByText("bank.example.com and mail.test, in Safari and Chrome-based browsers", { exact: true })).toBeVisible();
   expect(loadSettings(library).dictation.skipSites).toEqual(["bank.example.com", "mail.test"]);
 
-  // Done closes the field, and saves what it holds on the way.
-  await sites.fill("bank.example.com");
-  await group.getByRole("group", { name: "Sites to skip", exact: true }).getByRole("button", { name: "Done", exact: true }).click();
-  await expect(sites).toHaveCount(0);
+  // Taking the lines out that main won't keep saves what is left; Done closes the editor.
+  await removeFrom(group, "Sites to skip", "not a site");
+  await removeFrom(group, "Sites to skip", "mail.test");
   await expect.poll(() => loadSettings(library).dictation.skipSites).toEqual(["bank.example.com"]);
+  await closeList(group, "Sites to skip");
+  await group.getByRole("group", { name: "Sites to skip", exact: true }).getByRole("button", { name: "Done", exact: true }).click();
+  await expect(listButton(group, "Sites to skip")).toHaveCount(0);
   await expect(group.getByText("bank.example.com, in Safari and Chrome-based browsers", { exact: true })).toBeVisible();
 
   await settings.reload();
+  await call(app, "showSettings", "privacy");
   await toolbarItem(settings, "Privacy").click();
   await expect(neverKept(settings).getByText("Passwords and slackmacgap", { exact: true })).toBeVisible();
-  await expect(await skipField(settings, "Apps to skip")).toHaveValue("com.apple.Passwords\ncom.tinyspeck.slackmacgap");
-  await expect(await skipField(settings, "Sites to skip")).toHaveValue("bank.example.com");
+  expect(await listed(await editSkip(settings, "Apps to skip"), "Apps to skip")).toEqual(["com.apple.Passwords", "com.tinyspeck.slackmacgap"]);
+  await closeList(neverKept(settings), "Apps to skip");
+  expect(await listed(await editSkip(settings, "Sites to skip"), "Sites to skip")).toEqual(["bank.example.com"]);
   await app.close();
 });
 
-test("a skip list's save that waits while the person goes to another pane and back lands in the field, and leaving it undoes nothing", async () => {
+test("a skip list's save that waits while the person goes to another pane and back lands in the list, and neither list puts the other back", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });
   const settings = await openSettings(app, "Privacy");
+  const managers = loadSettings(library).dictation.skipApps;
   await holdTheQueue(app); // as a filing run would: the save waits its turn
-  const sites = await skipField(settings, "Sites to skip");
-  await sites.fill("https://Bank.example.com/login");
-  await sites.press("Tab"); // the save is sent, and waits
-  // The other list is saved too while the first waits: neither reply may put the other field back.
-  const apps = await skipField(settings, "Apps to skip");
-  await apps.fill("com.example.notes");
-  await apps.press("Tab");
+  const group = await editSkip(settings, "Sites to skip");
+  await addTo(group, "Sites to skip", "https://Bank.example.com/login"); // the save is sent, and waits
+  await closeList(group, "Sites to skip");
+  // The other list is saved too while the first waits: neither reply may put the other list back.
+  await editSkip(settings, "Apps to skip");
+  await addTo(group, "Apps to skip", "com.example.notes");
+  await closeList(group, "Apps to skip");
   await toolbarItem(settings, "General").click();
   await toolbarItem(settings, "Privacy").click();
-  const sitesAgain = await skipField(settings, "Sites to skip");
-  const appsAgain = await skipField(settings, "Apps to skip");
   await letTheQueueGo(app);
   await call(app, "idleForTests");
   await expect.poll(() => loadSettings(library).dictation.skipSites).toEqual(["bank.example.com"]);
-  await expect.poll(() => loadSettings(library).dictation.skipApps).toEqual(["com.example.notes"]);
+  await expect.poll(() => loadSettings(library).dictation.skipApps).toEqual([...managers, "com.example.notes"]);
   await repliesDrawn(settings);
-  await expect(sitesAgain).toHaveValue("bank.example.com"); // what main kept
-  await expect(appsAgain).toHaveValue("com.example.notes");
-  await sitesAgain.focus();
-  await sitesAgain.press("Tab"); // leaving the fields again saves nothing older over them
-  await appsAgain.focus();
-  await appsAgain.press("Tab");
-  await call(app, "idleForTests");
-  await repliesDrawn(settings);
-  expect(loadSettings(library).dictation.skipSites).toEqual(["bank.example.com"]);
-  expect(loadSettings(library).dictation.skipApps).toEqual(["com.example.notes"]);
+  expect(await listed(await editSkip(settings, "Sites to skip"), "Sites to skip")).toEqual(["bank.example.com"]); // what main kept
+  await closeList(neverKept(settings), "Sites to skip");
+  expect(await listed(await editSkip(settings, "Apps to skip"), "Apps to skip")).toEqual([...managers, "com.example.notes"]);
   await app.close();
 });

@@ -1,4 +1,4 @@
-import { _electron as electron, expect, type ElectronApplication, type Page } from "@playwright/test";
+import { _electron as electron, expect, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { MODELS, Vault, loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
@@ -7,7 +7,6 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { MenuItemModel } from "../src/main/menu-model.ts";
 import { encodePng } from "../src/main/png.ts";
 import type { SetupSnapshot } from "../src/shared/ipc.ts";
 
@@ -426,12 +425,9 @@ export async function capsuleKind(app: ElectronApplication): Promise<string> {
   return state.kind;
 }
 
-/** Every row of the menu bar menu now, wherever it lives, with what is in a submenu in its place. */
-export const menuRowsOf = (app: ElectronApplication) => call(app, "menuRowsForTests") as Promise<Extract<MenuItemModel, { type: "item" }>[]>;
-
-/** The titles under "Recently filed" in the menu bar menu. */
-export async function recentlyFiled(app: ElectronApplication): Promise<string[]> {
-  return (await menuRowsOf(app)).flatMap((item) => (item.action.startsWith("open:") ? [item.label] : []));
+/** The titles of the notes the panel's Library lists now (`panelPages`): the library's pages, each by its title. */
+export async function libraryListed(app: ElectronApplication): Promise<string[]> {
+  return ((await call(app, "panelPages")) as { title: string }[]).map((page) => page.title);
 }
 
 export async function windowFor(app: ElectronApplication, name: string): Promise<Page> {
@@ -443,8 +439,8 @@ export async function windowFor(app: ElectronApplication, name: string): Promise
 export const shown = (app: ElectronApplication, name: string) =>
   app.evaluate(({ BrowserWindow }, page) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes(`/renderer/${page}/`) && w.isVisible()), name);
 
-/** The Settings toolbar's item for `pane`, by the name it shows. */
-export const toolbarItem = (settings: Page, pane: string) => settings.getByRole("navigation", { name: "Section" }).getByRole("button", { name: pane, exact: true });
+/** The tab of Settings' `pane` in the panel, by the name it shows. */
+export const toolbarItem = (settings: Page, pane: string) => settings.getByRole("tablist", { name: "Settings" }).getByRole("tab", { name: pane, exact: true });
 
 /** A row of a Settings group, whole, by its name: what is said of it, and its controls. */
 export const settingsRow = (settings: Page, name: string) => settings.locator(".av-group-row", { has: settings.getByText(name, { exact: true }) });
@@ -455,15 +451,90 @@ export const settingsRow = (settings: Page, name: string) => settings.locator(".
  */
 export const stopFittingSettings = (app: ElectronApplication) => app.evaluate(({ ipcMain }) => void ipcMain.removeAllListeners("settings:fit"));
 
-/** Opens Settings (showSettings) and moves to `pane` on its toolbar; returns the window once that pane's heading shows. */
+/** Opens Settings, the panel's Settings tab (showSettings), and moves to `pane` on its tabs; returns the panel once that pane's tab is chosen. */
 export async function openSettings(app: ElectronApplication, pane = "General"): Promise<Page> {
   await call(app, "showSettings");
-  const settings = await windowFor(app, "settings");
+  const settings = await windowFor(app, "panel");
+  await expect(settings.getByRole("tablist", { name: "Sections" }).getByRole("tab", { name: "Settings", exact: true })).toHaveAttribute("aria-selected", "true");
   await toolbarItem(settings, pane).click();
-  // The pane's own heading, the window's title (level 2): a group in the pane may have its name too, as Shortcuts' does.
-  await expect(settings.getByRole("heading", { name: pane, exact: true, level: 2 })).toBeVisible();
+  await expect(toolbarItem(settings, pane)).toHaveAttribute("aria-selected", "true");
   return settings;
 }
+
+/**
+ * Settings' `pane` in the panel, by its tab's name. A pane stays in the page once it has shown, out of sight and out of reach, so what a
+ * test looks for in one pane is looked for in it, not in the whole page, where a pane shown before may have the same.
+ */
+export const paneOf = (settings: Page, pane: string) => settings.getByRole("tabpanel", { name: pane, exact: true });
+
+/** Waits for Settings' `pane` to be the one shown: its tab in the panel is chosen. */
+export const paneShown = (settings: Page, pane: string) => expect(toolbarItem(settings, pane)).toHaveAttribute("aria-selected", "true");
+
+/** A pop-up of the panel's (`Select`) in `root`, a page or a part of one: its button, named "<label>: <what it shows>". */
+export const popUp = (root: Page | Locator, label: string) => root.getByRole("button", { name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: `) });
+
+/** The page `root` is, or is a part of: a pop-up's list is put over the whole page, not inside the part its button is in. */
+const pageOf = (root: Page | Locator): Page => ("page" in root && typeof root.page === "function" ? root.page() : (root as Page));
+
+/** Opens the pop-up `label` in `root` and picks `choice` in its list. */
+export async function pickIn(root: Page | Locator, label: string, choice: string): Promise<void> {
+  const list = pageOf(root).getByRole("listbox", { name: label, exact: true });
+  await popUp(root, label).click();
+  await list.getByRole("option", { name: choice, exact: true }).click();
+  await expect(list).toHaveCount(0);
+}
+
+/** Opens the pop-up `label` in `root`, says what its list offers, each with whether it is the one chosen, and closes it without a pick. */
+export async function popUpOptions(root: Page | Locator, label: string): Promise<{ label: string; checked: boolean }[]> {
+  const list = pageOf(root).getByRole("listbox", { name: label, exact: true });
+  await popUp(root, label).click();
+  await expect(list).toBeVisible();
+  const options = await list.getByRole("option").evaluateAll((els) => els.map((el) => ({ label: (el.textContent ?? "").trim(), checked: el.getAttribute("aria-selected") === "true" })));
+  await popUp(root, label).click(); // a second press closes it, as Esc would, though Esc may also put the panel away
+  await expect(list).toHaveCount(0);
+  return options;
+}
+
+/** A list of the panel's (a collapsed `ListField`) in `root`: its button, named "<label>: <what it holds>" ("Dictionary: 2 terms", "Empty"). */
+export const listButton = (root: Page | Locator, label: string) => popUp(root, label);
+
+/** Opens the list `label` in `root`, unless it is open, and gives its popover: the field to add to, and the items, each with its Remove. */
+export async function openList(root: Page | Locator, label: string): Promise<Locator> {
+  const pop = pageOf(root).getByRole("dialog", { name: label, exact: true });
+  if (!(await pop.isVisible())) await listButton(root, label).click();
+  await expect(pop).toBeVisible();
+  return pop;
+}
+
+/** Adds `item` to the list `label`, as a person types it and presses Return; each change to the list is saved at once. */
+export async function addTo(root: Page | Locator, label: string, item: string): Promise<void> {
+  const field = (await openList(root, label)).getByRole("textbox", { name: `Add to ${label}`, exact: true });
+  await field.fill(item);
+  await field.press("Enter");
+  await expect(field).toHaveValue("");
+}
+
+/** Removes `item` from the list `label` with its own Remove. */
+export async function removeFrom(root: Page | Locator, label: string, item: string): Promise<void> {
+  await (await openList(root, label)).getByRole("button", { name: `Remove ${item}`, exact: true }).click();
+}
+
+/** What the list `label` shows now, in order, read from its open popover. */
+export async function listed(root: Page | Locator, label: string): Promise<string[]> {
+  const pop = await openList(root, label);
+  return pop.getByRole("list", { name: label, exact: true }).getByRole("listitem").allTextContents();
+}
+
+/** Closes the list `label`'s popover, as Esc does: it stays in the list, and leaves the panel up. */
+export async function closeList(root: Page | Locator, label: string): Promise<void> {
+  const pop = pageOf(root).getByRole("dialog", { name: label, exact: true });
+  if (await pop.isVisible()) await pageOf(root).keyboard.press("Escape");
+  await expect(pop).toHaveCount(0);
+}
+
+/** The panel, Settings' window now, has the focus again, as when the person comes back to it from Terminal or System Settings. */
+export const focusPanel = (app: ElectronApplication) =>
+  app.evaluate(({ BrowserWindow }) => void BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/panel/"))?.emit("focus"));
 
 /**
  * Stands in for the folder picker: it answers that `dir` was chosen, and keeps how it was asked (the title of the window

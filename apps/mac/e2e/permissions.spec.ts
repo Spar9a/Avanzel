@@ -5,7 +5,7 @@
 import { expect, test } from "@playwright/test";
 import { loadSettings, saveSettings } from "../../../packages/engine/src/index.ts";
 import { expectProblem } from "./capsule-helpers.ts";
-import { call, capsuleKind, filesUnder, launch, makeLibrary, openSettings, screenshotFixture, snap, speechWav, windowFor } from "./helpers.ts";
+import { call, capsuleKind, filesUnder, launch, makeLibrary, openSettings, screenshotFixture, snap, speechWav, windowFor, paneShown } from "./helpers.ts";
 
 const saved = (root: string) => ({
   inbox: filesUnder(root, "inbox"),
@@ -208,7 +208,7 @@ test("a screen row that isn't allowed offers Quit and reopen, secondary, which r
   // With AVANZEL_TEST=1 nothing relaunches: the ask is only noted, and Avanzel goes on running.
   await expect.poll(() => call(app, "relaunchedForTests")).toBe(1);
   expect(await call(app, "openedForTests")).toEqual([]);
-  await expect(settings.getByRole("heading", { name: "Privacy", exact: true })).toBeVisible();
+  await paneShown(settings, "Privacy");
   await app.close();
 });
 
@@ -231,7 +231,7 @@ test("Settings → Privacy follows System Settings: a permission allowed there s
   // focus again. Main sends a fresh snapshot then, as setup reads the sign-ins again when it has the focus.
   await app.evaluate(({ BrowserWindow }) => {
     process.env.AVANZEL_FAKE_PERMISSIONS = "microphone:granted,screen:granted";
-    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/panel/"))?.emit("focus");
   });
   await expect(microphone.getByText("Allowed", { exact: true })).toBeVisible();
   await expect(screen.getByText("Allowed", { exact: true })).toBeVisible();
@@ -243,7 +243,7 @@ test("Settings → Privacy follows System Settings: a permission allowed there s
   // And back again: a permission taken away there reads as not allowed.
   await app.evaluate(({ BrowserWindow }) => {
     process.env.AVANZEL_FAKE_PERMISSIONS = "microphone:denied,screen:granted";
-    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/settings/"))?.emit("focus");
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("/renderer/panel/"))?.emit("focus");
   });
   await expect(microphone.getByRole("button")).toHaveText(["Open System Settings"]);
   await expect(screen.getByText("Allowed", { exact: true })).toBeVisible();
