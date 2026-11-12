@@ -408,10 +408,13 @@ export function hfSnapshot(hub: string, id: string): void {
   }
 }
 
+/** How long an app that is starting may take to be ready and to open a window: under a full suite's load that has run past 20 s. */
+const START_WAIT = 45_000;
+
 type Controller = Record<string, (...args: unknown[]) => unknown>;
 
 export async function call(app: ElectronApplication, method: string, ...args: unknown[]): Promise<unknown> {
-  await expect.poll(() => app.evaluate(() => !!(globalThis as { __avanzel?: unknown }).__avanzel), { timeout: 20_000 }).toBe(true);
+  await expect.poll(() => app.evaluate(() => !!(globalThis as { __avanzel?: unknown }).__avanzel), { timeout: START_WAIT }).toBe(true);
   return app.evaluate(
     async (_electron, [name, params]) => {
       const controller = (globalThis as unknown as { __avanzel: Controller }).__avanzel;
@@ -433,7 +436,7 @@ export async function libraryListed(app: ElectronApplication): Promise<string[]>
 }
 
 export async function windowFor(app: ElectronApplication, name: string): Promise<Page> {
-  await expect.poll(() => app.windows().some((w) => w.url().includes(`/renderer/${name}/`)), { timeout: 15_000 }).toBe(true);
+  await expect.poll(() => app.windows().some((w) => w.url().includes(`/renderer/${name}/`)), { timeout: START_WAIT }).toBe(true);
   return app.windows().find((w) => w.url().includes(`/renderer/${name}/`))!;
 }
 
