@@ -11,7 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { parse, TomlError } from "smol-toml";
 import { AvanzelError, type VoiceOptions } from "../types.ts";
 import { MAX_DICTIONARY_ENTRIES, plainLine } from "./dictionary.ts";
-import { defaultPrivateModel, PRIVATE_APIS, type PrivateApi, type PrivateModel } from "./private-model.ts";
+import { defaultPrivateModel, PRIVATE_APIS, PRIVATE_SOURCES, type PrivateApi, type PrivateModel, type PrivateSource } from "./private-model.ts";
 import { render } from "./templates.ts";
 
 export const VAULT_MARKER = ".avanzel";
@@ -154,6 +154,8 @@ function renderConfig(settings: Settings): string {
   const { voice } = settings;
   return render("config.toml", {
     private_enabled: String(settings.private.enabled),
+    private_source: tomlString(settings.private.source),
+    private_hosted_model: tomlString(settings.private.hostedModel),
     private_base_url: tomlString(settings.private.baseUrl),
     private_model: tomlString(settings.private.model),
     private_api: tomlString(settings.private.api),
@@ -272,8 +274,14 @@ function parseSettings(data: Table, path: string): Settings {
   if (!PRIVATE_APIS.includes(api as PrivateApi)) {
     throw new AvanzelError(`${path}: \`private.api\` must be "chat", "messages" or "responses"`);
   }
+  const source = stringValue(privateData, "source", defaults.private.source, path, "private.");
+  if (!PRIVATE_SOURCES.includes(source as PrivateSource)) {
+    throw new AvanzelError(`${path}: \`private.source\` must be "own" or "hosted"`);
+  }
   const privateModel: PrivateModel = {
     enabled: booleanValue(privateData, "enabled", defaults.private.enabled, path, "private."),
+    source: source as PrivateSource,
+    hostedModel: stringValue(privateData, "hosted_model", defaults.private.hostedModel, path, "private."),
     baseUrl: stringValue(privateData, "base_url", defaults.private.baseUrl, path, "private."),
     model: stringValue(privateData, "model", defaults.private.model, path, "private."),
     api: api as PrivateApi,

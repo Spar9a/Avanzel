@@ -2,6 +2,7 @@
 import {
   AvanzelError,
   applyDictionary,
+  hostedModel,
   MAX_DICTIONARY_ENTRIES,
   MAX_DICTIONARY_LINE_LENGTH,
   parseDictionary,
@@ -50,9 +51,13 @@ export function cleanDictionary(typed: readonly string[]): string[] {
  */
 export function cleanPrivate(model: PrivateModel): PrivateModel {
   if (!PRIVATE_APIS.includes(model.api)) throw new AvanzelError("A private model's server speaks chat, messages or responses.");
+  if (model.source !== "own" && model.source !== "hosted") throw new AvanzelError("A private model runs on your own server or on a model Avanzel hosts.");
+  if (!hostedModel(model.hostedModel)) throw new AvanzelError("Avanzel doesn't host that model.");
   if (!Number.isInteger(model.contextWindow) || model.contextWindow <= 0) throw new AvanzelError("The context size must be a whole number.");
   return {
     enabled: model.enabled === true,
+    source: model.source,
+    hostedModel: model.hostedModel,
     baseUrl: model.baseUrl.trim(),
     model: model.model.trim(),
     api: model.api,

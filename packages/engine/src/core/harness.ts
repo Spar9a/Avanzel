@@ -15,7 +15,8 @@ import { AvanzelError } from "../types.ts";
 import { ClaudeStream, type RateLimit, type ToolStep } from "./claude-stream.ts";
 import type { CustomHarness, Env, Settings } from "./config.ts";
 import { guardSettings, serveGuard, type Guard } from "./guard-hook.ts";
-import { apiName, privateHarnesses, privateProblem, privateRoute, type PrivateModel, type PrivateRoute } from "./private-model.ts";
+import type { HostedProvider } from "./hosted-model.ts";
+import { apiName, apiOf, HOSTED_HARNESSES, privateHarnesses, privateProblem, privateRoute, type PrivateModel, type PrivateRoute } from "./private-model.ts";
 import { which } from "./proc.ts";
 import { tailKeeper } from "./tail.ts";
 
@@ -177,6 +178,8 @@ export interface RunOptions {
   private?: PrivateModel | null;
   /** The app's own key for that server, when it keeps one; a variable the model's `keyEnv` names comes first. */
   privateKey?: string | null;
+  /** Starts the hosted model's server, for a private model whose source is "hosted" (see hosted-model.ts). */
+  hosted?: HostedProvider | null;
 }
 
 function opt(flag: string, value: string | null): string[] {
@@ -318,14 +321,17 @@ export function selectHarness(settings: Settings, requested?: string | null): Ha
   const choice = requested || settings.harness;
   if (choice === "auto") {
     // With a private model on, Automatic picks among the agents that speak the server's kind, best first.
-    const order = settings.private.enabled ? privateHarnesses(settings.private.api) : BUILTIN_ORDER;
+    const privateOrder = settings.private.source === "hosted" ? HOSTED_HARNESSES : privateHarnesses(settings.private.api);
+    const order = settings.private.enabled ? privateOrder : BUILTIN_ORDER;
     for (const name of order) {
       const harness = table[name];
       if (harness?.available()) return harness;
     }
     if (settings.private.enabled) {
       throw new NoAgentError(
-        `A private model that speaks ${apiName(settings.private.api)} needs one of: ${privateHarnesses(settings.private.api).join(", ")}.`,
+        settings.private.source === "hosted"
+          ? `The hosted model needs one of: ${HOSTED_HARNESSES.join(", ")}.`
+          : `A private model that speaks ${apiName(settings.private.api)} needs one of: ${privateHarnesses(settings.private.api).join(", ")}.`,
       );
     }
     throw new NoAgentError(
@@ -394,6 +400,7 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
   if (signal?.aborted) return result(130, "", cancelled);
   const tmp = mkdtempSync(join(tmpdir(), "avanzel-"));
   let guard: Guard | null = null;
+  let releaseHosted: (() => void) | null = null;
   try {
     const outputFile = join(tmp, "last-message.txt");
     // A guarded write run is refused writes to the owner's words and the library's settings before they happen. Its
@@ -403,9 +410,21 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
     // A private model sends the run to the person's own server: the route says how, in files under this run's folder.
     let route: PrivateRoute | null = null;
     if (options.private?.enabled) {
-      const problem = privateProblem(options.private, harness.name);
+      let target = options.private;
+      let appKey = options.privateKey ?? null;
+      if (target.source === "hosted") {
+        // Avanzel's own server runs the model: it is started (or found running) now, and held until the run ends.
+        const api = apiOf(harness.name);
+        if (!api) throw new AvanzelError(`Private model: ${harness.name} can't run against a private model.`);
+        if (!options.hosted) throw new AvanzelError("Private model: the hosted model isn't available here.");
+        const endpoint = await options.hosted.acquire();
+        releaseHosted = endpoint.release;
+        target = { ...target, source: "own", baseUrl: endpoint.baseUrl, model: endpoint.model, api, contextWindow: endpoint.contextWindow, keyEnv: "" };
+        appKey = endpoint.key;
+      }
+      const problem = privateProblem(target, harness.name);
       if (problem) throw new AvanzelError(`Private model: ${problem}`);
-      route = privateRoute(harness.name, options.private, tmp, process.env, options.privateKey ?? null);
+      route = privateRoute(harness.name, target, tmp, process.env, appKey);
       model = route.model;
     }
     const argv = harness.headlessArgv(prompt, vault, { write, model, outputFile, images, settings, extraArgs: route?.args ?? [] });
@@ -437,6 +456,7 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
     const output = harness.readsOutputFile && existsSync(outputFile) ? readFileSync(outputFile, "utf8") : stdout;
     return result(run.exitCode, output, run.stderr, refused, rateLimit);
   } finally {
+    releaseHosted?.(); // the hosted server may stop once nobody holds it and its idle time is up
     await guard?.close(); // nothing listens once the run has ended
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -475,6 +495,8 @@ export interface CheckOptions {
   private?: PrivateModel | null;
   /** The app's own key for it, as in `RunOptions`. */
   privateKey?: string | null;
+  /** The hosted model's server, as in `RunOptions`. */
+  hosted?: HostedProvider | null;
 }
 
 const CHECK_PROMPT = "Reply with the single word: ready.";
@@ -549,7 +571,7 @@ function resetFrom(rows: readonly string[]): number | null {
 export async function checkAgent(
   harness: Harness,
   vault: string,
-  { timeoutSeconds = 15, signal, prompt = true, private: privateModel = null, privateKey = null }: CheckOptions = {},
+  { timeoutSeconds = 15, signal, prompt = true, private: privateModel = null, privateKey = null, hosted = null }: CheckOptions = {},
 ): Promise<AgentCheck> {
   const started = performance.now();
   const elapsed = () => (performance.now() - started) / 1000;
@@ -560,7 +582,7 @@ export async function checkAgent(
   }
   if (!prompt) return { ok: false, why: "unknown", detail: "", seconds: elapsed() };
   try {
-    const run = await runHeadless(harness, CHECK_PROMPT, vault, { write: false, timeoutSeconds, signal, private: privateModel, privateKey });
+    const run = await runHeadless(harness, CHECK_PROMPT, vault, { write: false, timeoutSeconds, signal, private: privateModel, privateKey, hosted });
     if (run.ok) return { ok: true, how: "replied", seconds: run.seconds };
     const detail = errorLine(`${run.output}\n${run.stderr}`);
     // 124 is what runHeadless reports for a run that ran out of time.

@@ -20,6 +20,10 @@ ${models}
 # key_env names an environment variable that holds the server's key; leave it empty for a server that needs none.
 [private]
 enabled = ${private_enabled}
+# "own" runs against the server below; "hosted" runs a model Avanzel downloads and serves on this Mac (hosted_model names it),
+# and the address, model and kind below are then ignored.
+source = ${private_source}
+hosted_model = ${private_hosted_model}
 base_url = ${private_base_url}
 model = ${private_model}
 api = ${private_api}

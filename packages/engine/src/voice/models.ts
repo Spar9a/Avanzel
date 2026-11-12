@@ -216,7 +216,7 @@ export async function downloadModels(
 }
 
 /** A file of a model, with the size and SHA-256 it has to have. */
-interface PinnedFile extends Digest {
+export interface PinnedFile extends Digest {
   name: string;
 }
 
@@ -406,7 +406,7 @@ function reasonOf(error: unknown, url: string): string {
  * connection, a body that ended short, an HTTP error. It deletes the part when it can't be: more bytes than the file
  * has, or a wrong SHA-256. An abort keeps nothing. The `DownloadError` says which, as `resumable`.
  */
-async function fetchFile(
+export async function fetchFile(
   { name, size, sha256 }: PinnedFile,
   url: string,
   target: string,

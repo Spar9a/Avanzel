@@ -158,6 +158,7 @@ import {
   recentFromLog,
   savedPage,
 } from "./library-info.ts";
+import { HostedModels } from "./hosted.ts";
 import { cleanPastedKey, generatePrivateKey, PLAIN_CIPHER, PrivateKeyStore } from "./private-key.ts";
 import { keychainCipher } from "./private-key-keychain.ts";
 import { forgetKept, logDictation } from "./library-log.ts";
@@ -581,6 +582,8 @@ export class Controller {
   private readonly noticed: NoticedShortcuts;
   /** The key for the library's private model server, in the app's own data (`<userData>/private-key.bin`), encrypted by the Keychain. */
   private readonly privateKeys: PrivateKeyStore;
+  /** The models Avanzel hosts on this Mac, in the app's own data (`<userData>/hosted`): their downloads and servers. */
+  private readonly hosted: HostedModels;
   /** When a first run reached each of setup's milestones (§5.4): kept on this Mac, never sent anywhere. */
   private readonly firstRun: FirstRunLog;
   /** How many recordings the library has kept, in the app's own folder: the first ones get the listening card's hint (`hintFor`). */
@@ -688,6 +691,7 @@ export class Controller {
     this.noticed = new NoticedShortcuts(path.join(userData, "noticed-shortcuts.json"));
     // The e2e tests keep the key as it is: the Keychain would ask the person at the desk for access to its item.
     this.privateKeys = new PrivateKeyStore(path.join(userData, "private-key.bin"), process.env.AVANZEL_TEST === "1" ? PLAIN_CIPHER : keychainCipher);
+    this.hosted = new HostedModels(path.join(userData, "hosted"), () => this.broadcastProgress());
     this.firstRun = new FirstRunLog(path.join(userData, "first-run.json"));
     this.captureCount = new CaptureCount(path.join(userData, "captures.json"));
     this.calls = new CallNotes(this.callHost(path.join(userData, "calls")));
@@ -853,6 +857,7 @@ export class Controller {
       harnessName: harnessName && harnessName !== "auto" ? harnessName : undefined,
       transcriber: await this.transcriberFor(settings.voice),
       privateKey: () => this.privateKeys.get(),
+      hosted: this.hosted.provider(settings.private.hostedModel),
     });
   }
 
@@ -5595,7 +5600,7 @@ export class Controller {
             shelves: exists ? vault.shelfCounts() : {},
             harness: settings?.harness ?? "auto",
             models: settings?.models ?? {},
-            ...privateInfo(settings, selected),
+            ...privateInfo(settings, selected, this.hosted.info()),
             privateKeySaved: this.privateKeys.has(),
             timeoutSeconds: settings?.timeoutSeconds ?? 900,
             dictionary: settings?.voice.dictionary ?? [],
@@ -5620,6 +5625,7 @@ export class Controller {
               ...dictationInfo(null),
             }
           : null,
+      hosted: this.hosted.info(),
       harnesses: Object.values(all).map((h) => ({
         name: h.name,
         available: h.available(),
@@ -5700,6 +5706,24 @@ export class Controller {
       saveSettings(vault.root, patchedSettings(loadSettings(vault.root), patch));
     });
     this.broadcast();
+    return this.snapshot();
+  }
+
+  /** Starts downloading the hosted model `id` (Settings → Agents); it goes on in the background and shows its progress. */
+  downloadHosted(id: string): SettingsSnapshot {
+    this.hosted.download(id);
+    return this.snapshot();
+  }
+
+  /** Stops that download and deletes what arrived. */
+  cancelHostedDownload(id: string): SettingsSnapshot {
+    this.hosted.cancel(id);
+    return this.snapshot();
+  }
+
+  /** Deletes the hosted model `id` and its server from this Mac. */
+  async removeHosted(id: string): Promise<SettingsSnapshot> {
+    await this.hosted.remove(id);
     return this.snapshot();
   }
 
@@ -6023,6 +6047,7 @@ export class Controller {
    */
   stopAgentChecks(): void {
     this.checksStopped = true;
+    void this.hosted.stopAll(); // the model server on this Mac stops with Avanzel; the signal is sent before this returns
     this.updates.stop();
     if (this.trayTimer) clearTimeout(this.trayTimer); // the menu bar's count stops where it is, and `showTray` sets no timer again
     this.trayTimer = null;
@@ -6054,7 +6079,16 @@ export class Controller {
     }
     let status: AgentStatus | null;
     try {
-      status = statusOf(await checkHarness(harness, this.checkDir(), { signal: abort.signal, prompt, private: this.privateFor(name), privateKey: this.privateKeys.get() }));
+      const priv = this.privateFor(name);
+      status = statusOf(
+        await checkHarness(harness, this.checkDir(), {
+          signal: abort.signal,
+          prompt,
+          private: priv,
+          privateKey: this.privateKeys.get(),
+          hosted: priv ? this.hosted.provider(priv.hostedModel) : null,
+        }),
+      );
     } catch (error) {
       status = { kind: "failed", detail: errorMessage(error) }; // a check that throws still ends
     } finally {
