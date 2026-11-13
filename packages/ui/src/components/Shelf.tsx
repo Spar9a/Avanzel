@@ -6,8 +6,9 @@ import "./shelf.css";
 export type { Shelf };
 
 /**
- * One of the six shelves, or a shelf the owner made: its folder (`own`) and its name as the owner gave it. Every shelf the owner
- * makes shares one look, the own-shelf colour and glyph, and is told apart by its name.
+ * One of the six shelves, or a shelf the owner made: its folder (`own`) and its name as the owner gave it, which is never empty (the
+ * app keeps a name to one line of 1 to 40 characters). Every shelf the owner makes shares one look, the own-shelf colour and glyph,
+ * and is told apart by its name.
  */
 export type AnyShelf = Shelf | { own: string; name: string };
 

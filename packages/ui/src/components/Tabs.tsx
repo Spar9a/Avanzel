@@ -1,6 +1,5 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import type { Shelf } from "../generated/tokens.ts";
-import { ShelfGlyph } from "./Shelf.tsx";
+import { ShelfGlyph, shelfKey, type AnyShelf } from "./Shelf.tsx";
 import "../foundations.css";
 import "./shelf.css";
 import "./tabs.css";
@@ -12,8 +11,11 @@ export interface TabOption<T extends string> {
   count?: number;
   /** How VoiceOver reads the count: "12 pages". Without it, the number alone. */
   countLabel?: string;
-  /** A tab that stands for a shelf: its glyph in the shelf's colour goes before the name, as a shelf is never shown without both. */
-  shelf?: Shelf;
+  /**
+   * A tab that stands for a shelf: its glyph in the shelf's colour goes before the name, as a shelf is never shown without both. A
+   * shelf the owner made gets the own-shelf glyph and colour.
+   */
+  shelf?: AnyShelf;
 }
 
 export interface TabsProps<T extends string> {
@@ -95,7 +97,7 @@ export function Tabs<T extends string>({ label, options, value, onChange, level 
           }}
         >
           {option.shelf && (
-            <span className="av-tabs-shelf" data-shelf={option.shelf}>
+            <span className="av-tabs-shelf" data-shelf={shelfKey(option.shelf)}>
               <ShelfGlyph shelf={option.shelf} size={10} />
             </span>
           )}

@@ -22,7 +22,15 @@ describe("catalog", () => {
     const gallery = readFileSync(path.join(UI, "gallery/Gallery.tsx"), "utf8");
     expect(gallery).toMatch(/<ShelfTag shelf=\{\{ own: "projects", name: "Projects" \}\}/);
     expect(gallery).toMatch(/<PageRow[^>]*shelf=\{\{ own: "projects", name: "Projects" \}\}/);
-    expect(gallery).toMatch(/<ShelfDrawer[^>]*own=\{\[/);
+    expect(gallery).toMatch(/<ShelfDrawer[^>]*own=\{\[\{ own: "projects", name: "Projects", count: \d+ \}\]\}/);
+  });
+
+  it("shows every own-shelf variant: its swatch, a chosen Select option, a Tabs tab and a Receipt's mark", () => {
+    const gallery = readFileSync(path.join(UI, "gallery/Gallery.tsx"), "utf8");
+    expect(gallery).toMatch(/\["Shelves", \[[^\]]*"--av-shelf-own"\]\]/);
+    expect(gallery).toMatch(/<Select[\s\S]{0,300}?shelf: \{ own: "projects", name: "Projects" \}[\s\S]{0,200}?value="projects"/);
+    expect(gallery).toMatch(/<Tabs[\s\S]{0,300}?shelf: \{ own: "projects", name: "Projects" \}/);
+    expect(gallery).toMatch(/<Receipt pages=\{\[\{ title: "[^"]+", shelf: \{ own: "projects", name: "Projects" \} \}/);
   });
 
   it("lists every component in DESIGN.md", () => {

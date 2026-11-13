@@ -9,8 +9,11 @@ export interface ShelfDrawerProps {
   total?: boolean;
   /** Where the tabs sit in their line. */
   align?: "start" | "center";
-  /** The shelves the owner made, in their order, each with its folder, its name and its pages: drawn after the six, in the own-shelf look. */
-  own?: readonly { folder: string; name: string; count: number }[];
+  /**
+   * The shelves the owner made, in their order, each an own shelf as `AnyShelf` spells it (its folder `own` and its `name`) with its
+   * pages (`count`): drawn after the six, in the own-shelf look.
+   */
+  own?: readonly { own: string; name: string; count: number }[];
 }
 
 /** The shelves' divider tabs in one line, as in a drawer: the six, then the owner's own. Where a filing goes, or what the library holds. */
@@ -18,7 +21,7 @@ export function ShelfDrawer({ counts = {}, total, align = "center", own = [] }: 
   return (
     <Row gap={6} wrap justify={align}>
       {SHELVES.map((shelf) => <ShelfTag key={shelf} shelf={shelf} variant="tab" total={total} count={total ? (counts[shelf] ?? 0) : counts[shelf]} />)}
-      {own.map(({ folder, name, count }) => <ShelfTag key={`own:${folder}`} shelf={{ own: folder, name }} variant="tab" total={total} count={count} />)}
+      {own.map((shelf) => <ShelfTag key={`own:${shelf.own}`} shelf={{ own: shelf.own, name: shelf.name }} variant="tab" total={total} count={shelf.count} />)}
     </Row>
   );
 }

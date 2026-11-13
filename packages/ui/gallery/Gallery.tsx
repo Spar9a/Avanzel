@@ -36,7 +36,7 @@ const COLOURS: [string, string[]][] = [
   ["Ink", ["--av-ink", "--av-ink-secondary", "--av-ink-accent", "--av-ink-danger", "--av-ink-ok"]],
   ["Surfaces", ["--av-surface-window", "--av-surface-stage", "--av-surface-paper", "--av-surface-fill", "--av-accent-fill", "--av-accent-wash"]],
   ["Paper", ["--av-paper-ink", "--av-paper-ink-secondary", "--av-paper-rule-red", "--av-paper-rule-blue"]],
-  ["Shelves", SHELVES.map((s) => `--av-shelf-${s}`)],
+  ["Shelves", [...SHELVES.map((s) => `--av-shelf-${s}`), "--av-shelf-own"]],
 ];
 
 /** A picture to mark in the gallery: an empty one, the size of the part it stands for, so the window's own ground shows through. */
@@ -368,7 +368,7 @@ export function Gallery() {
         )}
       </Specimen>
 
-      <Specimen id="parts" title="Page buttons, badges and totals" use="A page button opens a page of the library and may wrap. A title that shares its line ends in … where its room ends. A badge says one thing about its row. A shelf tab can carry its total. Every shelf the owner makes shares one colour and glyph, and its name tells it apart." code={'<Button variant="page" wrap>Plant tulips in October</Button>\n<Button variant="link" truncate>Move the trading system…</Button>\n<Badge>Best results</Badge>\n<ShelfTag shelf="ideas" variant="tab" total count={12} />\n<ShelfTag shelf={{ own: "projects", name: "Projects" }} />\n<ShelfDrawer total counts={…} own={[{ folder: "projects", name: "Projects", count: 4 }]} />'}>
+      <Specimen id="parts" title="Page buttons, badges and totals" use="A page button opens a page of the library and may wrap. A title that shares its line ends in … where its room ends. A badge says one thing about its row. A shelf tab can carry its total. Every shelf the owner makes shares one colour and glyph, and its name tells it apart." code={'<Button variant="page" wrap>Plant tulips in October</Button>\n<Button variant="link" truncate>Move the trading system…</Button>\n<Badge>Best results</Badge>\n<ShelfTag shelf="ideas" variant="tab" total count={12} />\n<ShelfTag shelf={{ own: "projects", name: "Projects" }} />\n<ShelfDrawer total counts={…} own={[{ own: "projects", name: "Projects", count: 4 }]} />'}>
         {() => (
           <Stack gap={16}>
             <Stack gap={6}>
@@ -391,7 +391,24 @@ export function Gallery() {
               <Text variant="footnote" tone="secondary">A shelf of your own:</Text>
               <Row gap={6} wrap align="center"><ShelfTag shelf={{ own: "projects", name: "Projects" }} /><Button variant="page">Plan the garden for spring</Button></Row>
               <PageRow title="Plan the garden for spring" shelf={{ own: "projects", name: "Projects" }} status="open" date="12 Nov" expanded={false} onToggle={() => {}} />
-              <ShelfDrawer total align="start" counts={{ goals: 3, ideas: 12, problems: 0, memories: 5, people: 8, topics: 1 }} own={[{ folder: "projects", name: "Projects", count: 4 }]} />
+              <ShelfDrawer total align="start" counts={{ goals: 3, ideas: 12, problems: 0, memories: 5, people: 8, topics: 1 }} own={[{ own: "projects", name: "Projects", count: 4 }]} />
+              <Row gap={6} wrap align="center">
+                <Select
+                  label="Filter"
+                  icon="settings"
+                  options={[{ value: "all", label: "All notes" }, { value: "projects", label: "Projects", shelf: { own: "projects", name: "Projects" }, section: "Shelves" }]}
+                  value="projects"
+                  onChange={() => {}}
+                />
+                <Tabs
+                  level="secondary"
+                  label="Shelves"
+                  options={[{ value: "all", label: "All" }, { value: "projects", label: "Projects", shelf: { own: "projects", name: "Projects" }, count: 4, countLabel: "4 notes" }]}
+                  value="projects"
+                  onChange={() => {}}
+                />
+              </Row>
+              <Receipt pages={[{ title: "Plan the garden for spring", shelf: { own: "projects", name: "Projects" } }, { title: "Dana", shelf: "people" }]} />
             </Stack>
             <Group label="Who should do the filing?">
               <ChoiceRow label="Claude Code" description="Signed in." badge="Best results" chosen chooseLabel="Use Claude Code" onChoose={() => {}} />

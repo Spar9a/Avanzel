@@ -3,7 +3,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PageRow, Select, ShelfDrawer, ShelfGlyph, ShelfMark, ShelfTag, SHELVES, type AnyShelf } from "../src/index.ts";
+import { PageRow, Receipt, Select, ShelfDrawer, ShelfGlyph, ShelfMark, ShelfTag, SHELF_NAMES, SHELVES, Tabs, shelfKey, shelfName, type AnyShelf } from "../src/index.ts";
 
 const projects: AnyShelf = { own: "projects", name: "Projects" };
 const html = (element: Parameters<typeof renderToStaticMarkup>[0]) => renderToStaticMarkup(element);
@@ -41,8 +41,8 @@ describe("own shelves", () => {
       createElement(ShelfDrawer, {
         total: true,
         own: [
-          { folder: "projects", name: "Projects", count: 4 },
-          { folder: "recipes", name: "Recipes", count: 0 },
+          { own: "projects", name: "Projects", count: 4 },
+          { own: "recipes", name: "Recipes", count: 0 },
         ],
       }),
     );
@@ -72,5 +72,35 @@ describe("own shelves", () => {
     );
     expect(markup).toMatch(/class="av-select"[^>]*data-shelf="own"/);
     expect(markup).toContain(html(createElement(ShelfGlyph, { shelf: projects })));
+  });
+
+  it("a tab for an own shelf sets its glyph in the own colour", () => {
+    const markup = html(
+      createElement(Tabs<string>, {
+        label: "Shelves",
+        level: "secondary",
+        options: [{ value: "all", label: "All" }, { value: "ideas", label: "Ideas", shelf: "ideas" }, { value: "projects", label: "Projects", shelf: projects }],
+        value: "projects",
+        onChange: () => {},
+      }),
+    );
+    expect([...markup.matchAll(/class="av-tabs-shelf" data-shelf="([^"]*)"/g)].map(([, shelf]) => shelf)).toEqual(["ideas", "own"]);
+    expect(markup).toContain(html(createElement(ShelfGlyph, { shelf: projects, size: 10 })));
+  });
+
+  it("a receipt names an own shelf and marks it in the own look", () => {
+    const markup = html(createElement(Receipt, { pages: [{ title: "Plan the garden for spring", shelf: projects }, { title: "Dana", shelf: "people" }] }));
+    expect([...markup.matchAll(/class="av-shelf-mark" data-shelf="([^"]*)"/g)].map(([, shelf]) => shelf)).toEqual(["own", "people"]);
+    expect(markup).toContain('<span class="av-receipt-shelf">Projects</span>');
+    expect(markup).toContain('<span class="av-receipt-shelf">People</span>');
+  });
+
+  it("the package names and keys any shelf", () => {
+    expect(shelfName(projects)).toBe("Projects");
+    expect(shelfKey(projects)).toBe("own");
+    for (const shelf of SHELVES) {
+      expect(shelfName(shelf)).toBe(SHELF_NAMES[shelf]);
+      expect(shelfKey(shelf)).toBe(shelf);
+    }
   });
 });
