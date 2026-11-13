@@ -98,6 +98,36 @@ describe("readableKind", () => {
     }
   });
 
+  it("refuses a spelling that only the volume's case and Unicode folding opens as a private folder", () => {
+    const root = tmp();
+    write(root, "raw/dictations/a.md", "private\n");
+    write(root, "tasks/a.md", "task\n");
+    write(root, "goals/a.md", "ok\n");
+    // On macOS these open the real files (ſ folds to s, the Kelvin sign to k); elsewhere they are simply missing.
+    for (const rel of [
+      "raw/dictationſ/x.md",
+      "raw/dictationſ/a.md",
+      "raw/Dictationſ/a.md",
+      "taſks/x.md",
+      "taſks/a.md",
+      "tasKs/x.md",
+      "tasKs/a.md",
+      "Goals/a.md",
+      "goals/A.md",
+    ]) {
+      expect(readableKind(root, rel), rel).toBeNull();
+    }
+    expect(readableKind(root, "goals/a.md")).toBe("page");
+  });
+
+  it("accepts a name written composed or decomposed, as macOS keeps it", () => {
+    const root = tmp();
+    const stored = "цели-й".normalize("NFD");
+    write(root, `${stored}/a.md`, "ok\n");
+    expect(readableKind(root, `${stored}/a.md`)).toBe("page");
+    expect(readableKind(root, `${stored.normalize("NFC")}/a.md`)).toBe("page");
+  });
+
   it("refuses a file that is a symlink to somewhere else", () => {
     const root = tmp();
     const outside = join(root, "..", `outside-${Date.now()}.md`);
@@ -263,7 +293,25 @@ describe("bound", () => {
   it("still makes progress when one line alone is longer than the limit", () => {
     const text = `${"w".repeat(500)}\nshort`;
     const result = bound(text, { maxChars: 100 });
-    expect(result).toEqual({ text: "w".repeat(100), continueFrom: 2, totalLines: 2 });
+    expect(result).toEqual({
+      text: `${"w".repeat(100)}…(line cut at 100 characters)`,
+      continueFrom: 2,
+      totalLines: 2,
+    });
+  });
+
+  it("never claims the end after cutting: a lone long line is marked, a long first line leaves the rest to follow", () => {
+    const lone = bound("w".repeat(20_000), {});
+    if ("error" in lone) throw new Error(lone.error);
+    expect(lone.text).toBe(`${"w".repeat(16_000)}…(line cut at 16000 characters)`);
+    expect(lone.continueFrom).toBeNull(); // the cut line was the last one, and the text says it was cut
+    expect(lone.totalLines).toBe(1);
+  });
+
+  it("does not split a surrogate pair when it cuts a long line", () => {
+    const result = bound("😀".repeat(10), { maxChars: 5 });
+    if ("error" in result) throw new Error(result.error);
+    expect(result.text).toBe("😀😀…(line cut at 5 characters)");
   });
 });
 

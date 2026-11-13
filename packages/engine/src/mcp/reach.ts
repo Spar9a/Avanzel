@@ -3,7 +3,8 @@
 // symlinks or anything outside the library. `bound` hands out a page in parts, and `fenced` marks a
 // capture's text as someone's words rather than instructions to the agent that reads it.
 
-import { join } from "node:path";
+import { realpathSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { fold } from "../core/pages.ts";
 import { lstatOrNull, realFoldersTo } from "../core/inside.ts";
 import { SPECIAL_DIRS } from "../core/shelves.ts";
@@ -23,10 +24,22 @@ export function readableKind(root: string, rel: string): Readable | null {
   try {
     if (!realFoldersTo(root, rel, false)) return null;
     const stat = lstatOrNull(join(root, rel));
-    return stat?.isFile() === true ? kind : null; // a symlink, a folder or nothing at all is not a file
+    if (stat?.isFile() !== true) return null; // a symlink, a folder or nothing at all is not a file
+    return spelledAsOnDisk(root, rel) ? kind : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether `rel` is spelled the way the file is on disk. The checks on a path's spelling (`raw/dictations/`, `tasks/`) mean
+ * nothing if the volume opens other spellings as the same file: macOS folds case and Unicode (`ſ` is `s`, the Kelvin sign is
+ * `k`), so `raw/dictationſ/a.md` would read the dictations. Only the on-disk spelling is let through (equal after
+ * canonical normalisation, since macOS keeps a name as written, composed or not).
+ */
+function spelledAsOnDisk(root: string, rel: string): boolean {
+  const real = relative(realpathSync.native(root), realpathSync.native(join(root, rel)));
+  return real.split(sep).join("/").normalize("NFC") === rel.normalize("NFC");
 }
 
 /** The kind the path's spelling allows, before the disk is looked at. */
@@ -142,8 +155,9 @@ export function bound(
   let hardCut: string | null = null;
   if (fits < kept.length) {
     if (fits === 0) {
-      // One line longer than the limit: give its start, so a reader still moves on.
-      hardCut = (kept[0] ?? "").slice(0, maxChars).replace(/[\ud800-\udbff]$/, "");
+      // One line longer than the limit: give its start and say it was cut, so a reader still moves on and knows.
+      const head = (kept[0] ?? "").slice(0, maxChars).replace(/[\ud800-\udbff]$/, "");
+      hardCut = `${head}…(line cut at ${maxChars} characters)`;
       fits = 1;
     } else {
       for (let i = fits; i >= 1; i--) {
