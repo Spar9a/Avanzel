@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import type { Shelf } from "../generated/tokens.ts";
 import { Icon, type IconName } from "./Icon.tsx";
-import { ShelfGlyph } from "./Shelf.tsx";
+import { ShelfGlyph, shelfKey, type AnyShelf } from "./Shelf.tsx";
 import "../foundations.css";
 import "./button.css";
 import "./select.css";
@@ -14,9 +13,9 @@ export interface SelectOption<T extends string> {
   section?: string;
   /**
    * The shelf the option is: it shows the shelf's glyph and is set in the shelf's colour, and while it is chosen the button wears the
-   * shelf's colour too, as a shelf chip does.
+   * shelf's colour too, as a shelf chip does. A shelf the owner made wears the own-shelf colour and glyph.
    */
-  shelf?: Shelf;
+  shelf?: AnyShelf;
   /** An icon before the choice's words, as a menu of actions has: `folder` for Attach a file. */
   icon?: IconName;
 }
@@ -197,7 +196,7 @@ export function Select<T extends string>({ label, options, value, onChange, plac
           className="av-select"
           data-size={size}
           data-open={open ? "" : undefined}
-          data-shelf={chosen?.shelf}
+          data-shelf={chosen?.shelf && shelfKey(chosen.shelf)}
           aria-label={`${label}: ${chosen?.label ?? placeholder}`}
           aria-haspopup="listbox"
           aria-expanded={open}
@@ -252,7 +251,7 @@ export function Select<T extends string>({ label, options, value, onChange, plac
                   role={trigger ? "menuitem" : "option"}
                   aria-selected={trigger ? undefined : option.value === value}
                   data-active={i === active ? "" : undefined}
-                  data-shelf={option.shelf}
+                  data-shelf={option.shelf && shelfKey(option.shelf)}
                   onPointerMove={() => setActive(i)}
                   onClick={() => pick(option)}
                 >

@@ -368,7 +368,7 @@ export function Gallery() {
         )}
       </Specimen>
 
-      <Specimen id="parts" title="Page buttons, badges and totals" use="A page button opens a page of the library and may wrap. A title that shares its line ends in … where its room ends. A badge says one thing about its row. A shelf tab can carry its total." code={'<Button variant="page" wrap>Plant tulips in October</Button>\n<Button variant="link" truncate>Move the trading system…</Button>\n<Badge>Best results</Badge>\n<ShelfTag shelf="ideas" variant="tab" total count={12} />'}>
+      <Specimen id="parts" title="Page buttons, badges and totals" use="A page button opens a page of the library and may wrap. A title that shares its line ends in … where its room ends. A badge says one thing about its row. A shelf tab can carry its total. Every shelf the owner makes shares one colour and glyph, and its name tells it apart." code={'<Button variant="page" wrap>Plant tulips in October</Button>\n<Button variant="link" truncate>Move the trading system…</Button>\n<Badge>Best results</Badge>\n<ShelfTag shelf="ideas" variant="tab" total count={12} />\n<ShelfTag shelf={{ own: "projects", name: "Projects" }} />\n<ShelfDrawer total counts={…} own={[{ folder: "projects", name: "Projects", count: 4 }]} />'}>
         {() => (
           <Stack gap={16}>
             <Stack gap={6}>
@@ -387,6 +387,12 @@ export function Gallery() {
             </Row>
             <ShelfDrawer total align="start" counts={{ goals: 3, ideas: 12, problems: 0, memories: 5, people: 8, topics: 1 }} />
             <ShelfDrawer counts={{ ideas: 1 }} />
+            <Stack gap={8}>
+              <Text variant="footnote" tone="secondary">A shelf of your own:</Text>
+              <Row gap={6} wrap align="center"><ShelfTag shelf={{ own: "projects", name: "Projects" }} /><Button variant="page">Plan the garden for spring</Button></Row>
+              <PageRow title="Plan the garden for spring" shelf={{ own: "projects", name: "Projects" }} status="open" date="12 Nov" expanded={false} onToggle={() => {}} />
+              <ShelfDrawer total align="start" counts={{ goals: 3, ideas: 12, problems: 0, memories: 5, people: 8, topics: 1 }} own={[{ folder: "projects", name: "Projects", count: 4 }]} />
+            </Stack>
             <Group label="Who should do the filing?">
               <ChoiceRow label="Claude Code" description="Signed in." badge="Best results" chosen chooseLabel="Use Claude Code" onChoose={() => {}} />
               <ChoiceRow label="Codex" description="Signed in." chosen={false} chooseLabel="Use Codex" onChoose={() => {}}>

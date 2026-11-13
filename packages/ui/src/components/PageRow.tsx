@@ -1,8 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { disintegrate } from "./dust.ts";
 import { useFileDrop } from "./file-drop.ts";
-import type { Shelf } from "../generated/tokens.ts";
-import { ShelfTag } from "./Shelf.tsx";
+import { ShelfTag, type AnyShelf } from "./Shelf.tsx";
 import "../foundations.css";
 import "./pagerow.css";
 
@@ -12,8 +11,8 @@ const DUST_PAD = 32;
 export interface PageRowProps {
   /** The page's title, as its front matter or its first heading gives it. */
   title: string;
-  /** The shelf the page is on, shown with its colour, glyph and name. Leave it out for a page on no shelf. */
-  shelf?: Shelf;
+  /** The shelf the page is on, built-in or the owner's own, shown with its colour, glyph and name. Leave it out for a page on no shelf. */
+  shelf?: AnyShelf;
   /** The page's status from its front matter, such as "open" or "done": a word after a dot, beside the shelf, never a pill. */
   status?: string;
   /** The page's tags, in a quiet line under it. */

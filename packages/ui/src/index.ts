@@ -39,7 +39,7 @@ export { Stage } from "./components/Stage.tsx";
 export { Card, type CardProps } from "./components/Card.tsx";
 export { Stamp, type StampProps, type StampWord } from "./components/Stamp.tsx";
 export { Zel, type ZelProps, type ZelMood, type ZelSize, type ZelLook } from "./components/Zel.tsx";
-export { ShelfGlyph, ShelfTag, ShelfMark, SHELF_NAMES, type ShelfTagProps } from "./components/Shelf.tsx";
+export { ShelfGlyph, ShelfTag, ShelfMark, SHELF_NAMES, type ShelfTagProps, type AnyShelf } from "./components/Shelf.tsx";
 export { Bubble, type BubbleProps } from "./components/Bubble.tsx";
 export { Notice, type NoticeProps } from "./components/Notice.tsx";
 export { Group, GroupRow, GroupReveal, type GroupProps, type GroupRowProps, type GroupRevealProps } from "./components/Group.tsx";

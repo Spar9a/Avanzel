@@ -1,7 +1,7 @@
 // The six shelves as the menu shows them: their names and their glyphs. The design system draws the glyphs in React
 // (packages/ui/src/components/Shelf.tsx), and its package root pulls in CSS and fonts that main's build can't load, so main keeps
 // copies here. test/shelf-glyphs.test.ts renders the design system's own ShelfGlyph for each shelf and checks that its elements and
-// attributes (currentColor read as black) are SHELF_GLYPH_SVG's, and that the shelves and names equal the design system's exports.
+// attributes (currentColor read as black) are SHELF_GLYPH_SVG's (and an own shelf's are OWN_SHELF_GLYPH_SVG's), and that the shelves and names equal the design system's exports.
 // The menu draws the glyphs in black, as template images, which macOS tints for the menu: so main holds no shelf colours.
 import type { Bitmap } from "./png.ts";
 import { rasterizeSvg } from "./raster.ts";
@@ -42,6 +42,12 @@ export const SHELF_GLYPH_SVG: Record<Shelf, string> = {
     `<path d="M1.2 6V1.2H6L10.8 6 6 10.8Z" ${OUTLINE} stroke-width="1.3"/>` + '<circle cx="3.8" cy="3.8" r=".9" fill="black"/>',
   ),
 };
+
+/**
+ * A plain folder with its tab, on the same grid: the one glyph every shelf the owner makes shares, as ShelfGlyph renders it for
+ * `{ own, name }`, with black for currentColor. Not a seventh SHELVES entry: the owner's shelves are theirs, not the library's six.
+ */
+export const OWN_SHELF_GLYPH_SVG = glyph(`<path d="M1.2 10V2h3.4l1.4 1.6h4.8V10Z" ${OUTLINE} stroke-width="1.3"/>`);
 
 /** Whether a library folder is one of the six shelves, by its exact name. A folder the person made is none, whatever it is called. */
 export const isShelf = (folder: string): folder is Shelf => (SHELVES as readonly string[]).includes(folder);

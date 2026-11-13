@@ -4,6 +4,8 @@
 [data-shelf="memories"] { --_shelf: var(--av-shelf-memories); }
 [data-shelf="people"] { --_shelf: var(--av-shelf-people); }
 [data-shelf="topics"] { --_shelf: var(--av-shelf-topics); }
+/* Every shelf the owner makes shares one colour; its name tells them apart. */
+[data-shelf="own"] { --_shelf: var(--av-shelf-own); }
 
 .av-shelf-glyph { display: block; flex: none; }
 

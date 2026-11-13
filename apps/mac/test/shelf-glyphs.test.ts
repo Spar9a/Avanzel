@@ -3,7 +3,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Bitmap } from "../src/main/png.ts";
-import { SHELF_GLYPH_SVG, SHELF_NAMES, SHELVES, shelfGlyphIcon } from "../src/main/shelf-glyphs.ts";
+import { rasterizeSvg } from "../src/main/raster.ts";
+import { OWN_SHELF_GLYPH_SVG, SHELF_GLYPH_SVG, SHELF_NAMES, SHELVES, shelfGlyphIcon } from "../src/main/shelf-glyphs.ts";
 
 // Main can't import the design system's shelves, names or glyphs (the package root pulls in CSS and fonts, and the glyphs are private
 // JSX), so shelf-glyphs.ts keeps copies. A test may import the root, so these hold each copy to the real thing: the glyphs to what the
@@ -93,6 +94,27 @@ describe("shelf glyphs", () => {
       drawings.add(Array.from(glyph(shelf, 1).rgba).join(","));
     }
     expect(drawings.size).toBe(SHELVES.length);
+  });
+
+  it("the own-shelf glyph matches what the design system's ShelfGlyph draws for a shelf the owner made", () => {
+    // Every shelf the owner makes shares one glyph, whatever its folder and name, so any own shelf renders the same drawing.
+    for (const shelf of [{ own: "projects", name: "Projects" }, { own: "recipes", name: "Рецепты" }]) {
+      const drawn = outline(renderToStaticMarkup(createElement(ShelfGlyph, { shelf })));
+      expect(drawn.length, `${shelf.own} as the design system draws it`).toBeGreaterThan(1);
+      expect(outline(OWN_SHELF_GLYPH_SVG), shelf.own).toEqual(drawn);
+    }
+  });
+
+  it("the own-shelf glyph is its own, 12 points square, in black at 1x and 2x", () => {
+    const six = new Set(SHELVES.map((shelf) => Array.from(glyph(shelf, 1).rgba).join(",")));
+    for (const scale of [1, 2] as const) {
+      const bitmap = rasterizeSvg(OWN_SHELF_GLYPH_SVG, scale);
+      expect([bitmap.width, bitmap.height], `at ${scale}x`).toEqual([12 * scale, 12 * scale]);
+      const colours = paintedColours(bitmap);
+      expect(colours.length, `at ${scale}x it paints something`).toBeGreaterThan(10 * scale * scale);
+      expect(new Set(colours)).toEqual(new Set(["#000000"]));
+    }
+    expect(six.has(Array.from(rasterizeSvg(OWN_SHELF_GLYPH_SVG, 1).rgba).join(","))).toBe(false);
   });
 
   it("a folder off the shelves has no glyph", () => {

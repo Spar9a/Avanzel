@@ -77,10 +77,10 @@ If nothing fits, add a component or a variant in `packages/ui` (see "When someth
 | `Stage` | The tinted area where Zel and cards perform, one per window | Panels and cards |
 | `Card` | The index card: the user's words on ruled paper, with `label`, `meta`, `stamp` and `footer`. In the capsule a card holds its whole moment: `status` (a live chip in the head: "Filing with Claude Code"), `progress` (a violet line under the head), `actions` at the foot's right, and `onClose` (Hide, in the corner); `headAction`, a button right after the status (a queued thought's bin). `look="panel"` gives the capsule's cards the menu bar panel's look: the window's surface with a hairline edge, the words in the interface face with room around them, no ruling | Settings or chrome: cards hold words |
 | `Stamp` | The receipt that ends a piece of work: `filed`, `noted`, `saved`, `letter`, `remembered`, `hello` | Decoration or emphasis |
-| `ShelfDrawer` | The six shelf tabs in one line, with the pages each holds (`total`) or has just taken in (the filing) | A single shelf: use `ShelfTag` |
+| `ShelfDrawer` | The six shelf tabs in one line, with the pages each holds (`total`) or has just taken in (the filing), then the owner's own shelves (`own`: the folder, name and pages of each), in the own-shelf look | A single shelf: use `ShelfTag` |
 | `ChoiceRow` | A row of a `Group` where exactly one row is chosen, as with agents: a check on the chosen row and a Use button on the others, with a badge and the row's other buttons | Settings with more than one choice at once: use `Switch` |
-| `ShelfTag` | A shelf as a chip or a tab, always with its colour, glyph and name. A tab's `count` is read as "1 note" or "3 notes"; `total` makes it the shelf's total, shown at 0 too | Colour alone |
-| `ShelfGlyph`, `ShelfMark` | A shelf's glyph or mini tab next to its visible name | Without the name |
+| `ShelfTag` | A shelf as a chip or a tab, always with its colour, glyph and name. A tab's `count` is read as "1 note" or "3 notes"; `total` makes it the shelf's total, shown at 0 too. `shelf` is an `AnyShelf`: one of the six, or a shelf the owner made, `{ own: "projects", name: "Projects" }`, which wears the one own-shelf colour and folder glyph and is told apart by its name. `PageRow`'s and `Select`'s `shelf` take one too | Colour alone |
+| `ShelfGlyph`, `ShelfMark` | A shelf's glyph or mini tab next to its visible name. Every shelf the owner makes shares one glyph, a plain folder | Without the name |
 | `Zel` | The librarian: six moods (`idle`, `listening`, `thinking`, `filed`, `needs-you`, `asleep`) at four sizes | Anywhere outside Avanzel's own windows |
 | `Bubble` | Zel speaking, when asked or when something needs the person, such as a permission request | Tooltips and help text |
 | `Hud` | The capsule's dark glass, the only glass there is. Words go on it only while they are heard (`CapsuleBar`'s `words`): once they are kept, they go on paper | Windows or other content |
@@ -109,6 +109,7 @@ The tokens live in `packages/ui/tokens/`, in the W3C design-token JSON draft for
 | `paper` | `ink`, `ink-secondary`, `rule-red`, `rule-blue` | Rule red is the card's header line, never an error colour |
 | `accent`, `danger` | `fill`, `wash`, `focus`; `danger-fill` | Stamp violet `#5B3FD1` is the brand |
 | `shelf` | `goals`, `ideas`, `problems`, `memories`, `people`, `topics` | Never shown without the glyph and name |
+| `shelf-own` | `--av-shelf-own`, the system brown | The one colour every shelf the owner makes shares. Never shown without the glyph and name |
 | `zel`, `hud` | Zel's colours; the capsule's glass and inks | Used only by `Zel` and `Hud` |
 | `space` | 2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48 | There is no 14: round to a step |
 | `radius`, `size`, `layer` | Named for their job: `card`, `control`, `pill`…; `overlay`, `popover`… | |
