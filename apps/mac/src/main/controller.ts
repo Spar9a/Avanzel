@@ -195,6 +195,7 @@ import {
 import { captureDisplay, captureRegion, looksBlank, previewOf } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
 import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
+import { ShelfSuggestions } from "./shelf-suggestions.ts";
 import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
@@ -583,6 +584,8 @@ export class Controller {
    * change here for that library, which may no longer be the open one.
    */
   private readonly undoRecords: UndoRecordStore;
+  /** The shelves the librarian suggested that the owner hasn't answered, for each library on this Mac (`<userData>/shelf-suggestions.json`). */
+  private readonly shelfSuggestions: ShelfSuggestions;
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
   /** The notice of each shortcut another app holds, with its free alternatives, in the order they register. */
   private takenShortcuts: TakenShortcut[] = [];
@@ -696,6 +699,7 @@ export class Controller {
     this.modelsDir = path.join(userData, "models");
     this.runState = new RunStateStore(path.join(userData, "run-state.json"));
     this.undoRecords = new UndoRecordStore(path.join(userData, "undo-records.json"));
+    this.shelfSuggestions = new ShelfSuggestions(path.join(userData, "shelf-suggestions.json"));
     this.noticed = new NoticedShortcuts(path.join(userData, "noticed-shortcuts.json"));
     // The e2e tests keep the key as it is: the Keychain would ask the person at the desk for access to its item.
     this.privateKeys = new PrivateKeyStore(path.join(userData, "private-key.bin"), process.env.AVANZEL_TEST === "1" ? PLAIN_CIPHER : keychainCipher);
