@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
 import "../foundations.css";
 import "./notice.css";
@@ -14,15 +14,19 @@ export interface NoticeProps {
   actions?: ReactNode;
 }
 
-/** A message inside a window. In the capsule, use a Hud card with Zel instead. */
+/**
+ * A message inside a window. In the capsule, use a Hud card with Zel instead. Its actions are a group named by its title, so two notices
+ * with the same buttons are told apart ("Make shelf, Make a shelf called Projects?, group").
+ */
 export function Notice({ tone = "info", title, children, actions }: NoticeProps) {
+  const titleId = useId();
   return (
     <div className="av-notice" data-tone={tone} role={tone === "error" ? "alert" : "status"}>
       <span className="av-notice-icon"><Icon name={tone === "error" ? "warning" : tone === "success" ? "check" : "info"} /></span>
       <div className="av-notice-text">
-        <p className="av-notice-title">{title}</p>
+        <p className="av-notice-title" id={titleId}>{title}</p>
         {children && <div className="av-notice-body">{children}</div>}
-        {actions && <div className="av-notice-actions">{actions}</div>}
+        {actions && <div className="av-notice-actions" role="group" aria-labelledby={titleId}>{actions}</div>}
       </div>
     </div>
   );

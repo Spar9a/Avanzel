@@ -71,7 +71,7 @@ If nothing fits, add a component or a variant in `packages/ui` (see "When someth
 | `Link` | A web address or a file | Actions in the app: use `Button variant="link"` |
 | `Icon` | The icon set on the 16 px grid | A shelf: use the shelf parts |
 | `Spinner`, `Progress` | Work in progress. Past 10 seconds, give it a size and a way out | Decoration |
-| `Notice` | A message inside a window: `info`, `error` or `success` | The capsule: use `CapsuleNotice` |
+| `Notice` | A message inside a window: `info`, `error` or `success`. Its `actions` are a group named by its title, so two notices with the same buttons are told apart (VoiceOver: "Make shelf, Make a shelf called Projects?, group") | The capsule: use `CapsuleNotice` |
 | `Group`, `GroupRow` | Settings, grouped as in System Settings. On/off rows are `Switch` | Lists of content |
 | `GroupReveal` | Rows of a `Group` there only while the `Switch` above them is on: they open out and fade in, and fold away when it is off | Showing content on a press: `Disclosure`, `More` |
 | `Stage` | The tinted area where Zel and cards perform, one per window | Panels and cards |
