@@ -1,11 +1,13 @@
 // The capsule once a filing ends well: one card of paper with the person's words, stamped, and in its foot who filed them and how long
-// it took, with Undo and Open at its right and Hide in its corner. Nothing here ticks.
-import { Button, Card, Stack, Text } from "@avanzel/ui";
+// it took, with Undo and Open at its right and Hide in its corner; and, when the librarian suggests a new shelf, the question under the
+// pages. The panel's Processing tab draws the same card. Nothing here ticks.
+import { Actions, Button, Card, Stack, Text } from "@avanzel/ui";
 import { useState } from "react";
+import type { ShelfAsk } from "../../shared/ipc.ts";
 import { stampDate } from "../common/stamp.ts";
 import { useStampDate } from "../common/use-stamp-date.ts";
 import { api, type StateOf } from "./api.ts";
-import { filedLine, notedLine } from "./copy.ts";
+import { agentShelfLine, EDIT_FIRST, filedLine, MAKE_SHELF, NOT_NOW, notedLine, SAY_NO, shelfAskLine } from "./copy.ts";
 import { Pages } from "./pages.tsx";
 import type { Scene } from "./scene.tsx";
 import { Words } from "./words.tsx";
@@ -62,12 +64,68 @@ function FiledCard({ state }: { state: StateOf<"filed"> }) {
             </Text>
           </span>
           {receipt && <Pages pages={state.pages} />}
+          {state.suggestion && <ShelfQuestion ask={state.suggestion} opens={receipt} />}
         </Stack>
       }
       actions={<FiledActions state={state} />}
     >
       {state.text ? <Words lines={receipt ? 3 : 4}>{state.text}</Words> : null}
     </Card>
+  );
+}
+
+/**
+ * The question under the pages, when the librarian suggests a new shelf for them (`suggestion`): its name, and under it, quieter, the
+ * definition that would go into AGENTS.md, so the owner reads it before saying yes; then Not now (the card goes, and Library keeps asking)
+ * and Make shelf, which is the moment's primary only when the card has no Open (`opens`). Make shelf is busy from its press until the card
+ * is replaced by what came of it, as Undo is. A folder the agent started on its own has no definition yet: the card says so, and offers No
+ * (turn it down) and Edit first, which opens Settings' shelf form on it to say what belongs there.
+ */
+function ShelfQuestion({ ask, opens }: { ask: ShelfAsk; opens: boolean }) {
+  const [answer, setAnswer] = useState<"make" | "no" | null>(null);
+  const yes = opens ? "secondary" : "primary";
+  return (
+    <Stack gap={6}>
+      {ask.agentMade ? (
+        <Text variant="footnote">{agentShelfLine(ask.folder)}</Text>
+      ) : (
+        <Stack gap={2}>
+          <Text variant="footnote">{shelfAskLine(ask.name)}</Text>
+          <Text variant="footnote" tone="secondary">{ask.definition}</Text>
+        </Stack>
+      )}
+      {ask.agentMade ? (
+        <Actions align="start">
+          <Button
+            size="small"
+            variant="quiet"
+            busy={answer === "no"}
+            onClick={() => {
+              setAnswer("no");
+              api.declineShelf();
+            }}
+          >
+            {SAY_NO}
+          </Button>
+          <Button size="small" variant={yes} disabled={answer !== null} onClick={() => window.avanzel.settings.openShelfDraft(ask)}>{EDIT_FIRST}</Button>
+        </Actions>
+      ) : (
+        <Actions align="start">
+          <Button size="small" variant="quiet" disabled={answer !== null} onClick={() => api.shelfLater()}>{NOT_NOW}</Button>
+          <Button
+            size="small"
+            variant={yes}
+            busy={answer === "make"}
+            onClick={() => {
+              setAnswer("make");
+              api.makeShelf();
+            }}
+          >
+            {MAKE_SHELF}
+          </Button>
+        </Actions>
+      )}
+    </Stack>
   );
 }
 

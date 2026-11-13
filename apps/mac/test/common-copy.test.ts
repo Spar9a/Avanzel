@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { SHELVES } from "@avanzel/ui";
 import { describe, expect, it } from "vitest";
-import { isShelf } from "../src/renderer/common/shelf.ts";
+import { anyShelfOf, isShelf } from "../src/renderer/common/shelf.ts";
 import { stampDate } from "../src/renderer/common/stamp.ts";
 import * as setupCopy from "../src/renderer/setup/copy.ts";
 
@@ -35,5 +35,21 @@ describe("isShelf", () => {
 
   it("is the one setup's copy re-exports", () => {
     expect(setupCopy.isShelf).toBe(isShelf);
+  });
+});
+
+describe("anyShelfOf", () => {
+  const own = [{ folder: "projects", name: "Projects" }];
+
+  it("is one of the six as it is, an own shelf by its name, and Meetings in the own look", () => {
+    expect(anyShelfOf("ideas", own)).toBe("ideas");
+    expect(anyShelfOf("projects", own)).toEqual({ own: "projects", name: "Projects" });
+    expect(anyShelfOf("meetings", own)).toEqual({ own: "meetings", name: "Meetings" });
+  });
+
+  it("names a folder it doesn't know by the folder, and a page on no shelf has none", () => {
+    expect(anyShelfOf("reading", own)).toEqual({ own: "reading", name: "reading" });
+    expect(anyShelfOf(null, own)).toBeUndefined();
+    expect(anyShelfOf("", own)).toBeUndefined();
   });
 });

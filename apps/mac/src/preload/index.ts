@@ -49,6 +49,7 @@ const bridge: AvanzelBridge = {
     useShortcut: (key, accelerator) => ipcRenderer.send("capsule:use-shortcut", key, accelerator),
     makeShelf: () => ipcRenderer.send("capsule:shelf-make"),
     shelfLater: () => ipcRenderer.send("capsule:shelf-later"),
+    declineShelf: () => ipcRenderer.send("capsule:shelf-decline"),
   },
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),

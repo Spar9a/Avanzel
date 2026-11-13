@@ -4107,6 +4107,7 @@ export class Controller {
     const root = vault.root;
     const key = fromSuggestion ?? shelf.folder;
     this.shelvesGoing.add(key);
+    this.refreshPanel(); // Library's buttons for it are busy from now
     try {
       const made = await this.enqueue(async () => {
         const pending = fromSuggestion === undefined ? null : (this.shelfSuggestions.list(root).find((other) => other.folder === fromSuggestion) ?? null);
@@ -4140,6 +4141,7 @@ export class Controller {
       return true;
     } finally {
       this.shelvesGoing.delete(key);
+      this.refreshPanel();
     }
   }
 
@@ -4210,6 +4212,7 @@ export class Controller {
     if (!vault || this.quitting || this.shelvesGoing.has(folder)) return;
     const root = vault.root;
     this.shelvesGoing.add(folder);
+    this.refreshPanel(); // Library's buttons for it are busy from now
     try {
       const declined = await this.enqueue(async () => {
         const pending = this.shelfSuggestions.list(root).find((shelf) => shelf.folder === folder);
@@ -4222,15 +4225,23 @@ export class Controller {
         }
         return true;
       });
+      this.dropCardSuggestion(folder); // answered, now or meanwhile: a card still asking would wait on its busy No for ever
       if (!declined) return;
-      this.dropCardSuggestion(folder);
       if (this.shelfDraft?.folder === folder) this.shelfDraft = null;
       this.shelvesChanged();
     } catch (error) {
       this.tellShelfProblem("decline", folder, error);
     } finally {
       this.shelvesGoing.delete(folder);
+      this.refreshPanel();
     }
+  }
+
+  /** No, on the filed card (`capsule.declineShelf`): the card's own suggestion is turned down, as Library's No does. */
+  async declineShelfFromCard(): Promise<void> {
+    const card = this.capsuleState;
+    if (card.kind !== "filed" || !card.suggestion) return;
+    return this.declineShelf(card.suggestion.folder);
   }
 
   /**
@@ -5840,6 +5851,7 @@ export class Controller {
       opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
       update: this.updates.snapshot(),
       shelfSuggestions: vault ? this.shelfSuggestions.list(vault.root).map(askOf) : [],
+      shelvesGoing: [...this.shelvesGoing],
     };
   }
 

@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { filedLine, moreLine, notedLine, pageCaption, recordedLine, SHOWN_PAGES, shortTitle, stillInMenuLine, stoppedLine, TITLE_CELLS, titleCells } from "../src/renderer/capsule/copy.ts";
+import {
+  agentShelfLine,
+  EDIT_FIRST,
+  filedLine,
+  MAKE_SHELF,
+  moreLine,
+  notedLine,
+  NOT_NOW,
+  pageCaption,
+  recordedLine,
+  SAY_NO,
+  shelfAskLine,
+  shelfMadeLine,
+  SHOWN_PAGES,
+  shortTitle,
+  stillInMenuLine,
+  stoppedLine,
+  TITLE_CELLS,
+  titleCells,
+} from "../src/renderer/capsule/copy.ts";
+import { shelfQuestion } from "../src/renderer/panel/copy.ts";
 import { cancelledLine } from "../src/renderer/setup/copy.ts";
 
 // The capsule's result cards' words that are made from values: what a filing says of itself, of its pages, and the two Stopped
@@ -159,6 +179,39 @@ describe("stillInMenuLine: the taken notice's second sentence", () => {
   });
 });
 
+describe("the shelf question: on the filed card, in Library, and the bar once Make shelf is done", () => {
+  it("asks on the card with the suggested shelf's name, the definition going under it", () => {
+    expect(shelfAskLine("Projects")).toBe("This might belong on a new shelf: Projects");
+    expect(shelfAskLine("Reading list")).toBe("This might belong on a new shelf: Reading list");
+  });
+
+  it("says when the agent started a folder of its own, by the folder's name, and what the person can do", () => {
+    expect(agentShelfLine("projects")).toBe("The agent started a projects shelf. Say what belongs on it, or turn it down.");
+  });
+
+  it("asks in Library with the shelf's name; the Notice's body is the definition", () => {
+    expect(shelfQuestion("Projects")).toBe("Make a Projects shelf?");
+  });
+
+  it("says “an” before a name that starts with a vowel, so the question still reads", () => {
+    expect(shelfQuestion("Errands")).toBe("Make an Errands shelf?");
+    expect(agentShelfLine("errands")).toBe("The agent started an errands shelf. Say what belongs on it, or turn it down.");
+  });
+
+  it("names its buttons with verbs, in sentence case", () => {
+    expect([MAKE_SHELF, NOT_NOW, EDIT_FIRST, SAY_NO]).toEqual(["Make shelf", "Not now", "Edit first", "No"]);
+  });
+
+  it("tells what Make shelf did in the bar, in one page or many, and the pages that stayed", () => {
+    expect(shelfMadeLine("Projects", 1, 0)).toBe("Made the Projects shelf and moved 1 page.");
+    expect(shelfMadeLine("Projects", 3, 0)).toBe("Made the Projects shelf and moved 3 pages.");
+    expect(shelfMadeLine("Projects", 1, 1)).toBe("Made the Projects shelf and moved 1 page. 1 page stayed where it was, as one with its name is already there.");
+    expect(shelfMadeLine("Projects", 2, 2)).toBe(
+      "Made the Projects shelf and moved 2 pages. 2 pages stayed where they were, as ones with their names are already there.",
+    );
+  });
+});
+
 describe("the result cards' words are written as the design rules ask", () => {
   /** The lines that are sentences. */
   const sentences = [
@@ -167,6 +220,14 @@ describe("the result cards' words are written as the design rules ask", () => {
     ...REVIEWS.flatMap((review) => [stoppedLine("Claude Code", false, 0, review), stoppedLine("Claude Code", true, 0, review), recordedLine(review)]),
     stillInMenuLine("ask"),
     stillInMenuLine("undo"),
+    shelfAskLine("Projects"),
+    agentShelfLine("projects"),
+    shelfQuestion("Projects"),
+    shelfMadeLine("Projects", 2, 1),
+    MAKE_SHELF,
+    NOT_NOW,
+    EDIT_FIRST,
+    SAY_NO,
   ];
   /** A row's small words, under the title or beside it. */
   const captions = [pageCaption({ created: true }), pageCaption({}), moreLine(2)];

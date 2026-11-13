@@ -1,6 +1,7 @@
 // The panel's words that are made from values: a page's date, a review's next run and how its last one ended, and the day's line.
-import { SHELF_NAMES, SHELVES, type Shelf } from "@avanzel/ui";
+import { SHELVES } from "@avanzel/ui";
 import type { PanelPage, PanelReview } from "../../shared/ipc.ts";
+import { withArticle } from "../capsule/copy.ts";
 
 const MONTH_DAY = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
 const MONTH_DAY_YEAR = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -78,8 +79,13 @@ const SORT_LABELS: Record<PageSort, string> = {
 };
 export const sortLabel = (sort: PageSort) => SORT_LABELS[sort];
 
-/** What Library shows: every page, a shelf's, or those of one status. */
-export type PageFilter = { kind: "all" } | { kind: "shelf"; shelf: Shelf } | { kind: "status"; status: string };
+/** What Library shows: every page, a shelf's (one of the six, or another, by its folder), or those of one status. */
+export type PageFilter = { kind: "all" } | { kind: "shelf"; shelf: string } | { kind: "status"; status: string };
+
+/** Library's question about a shelf the librarian suggested, the Notice's title: its body is the shelf's definition. */
+export function shelfQuestion(name: string): string {
+  return `Make ${withArticle(name)} shelf?`;
+}
 
 const SHELF_ORDER: readonly string[] = SHELVES;
 
@@ -91,6 +97,8 @@ export function sortPages(pages: readonly PanelPage[], sort: PageSort): PanelPag
   if (sort === "changed") return list.sort(byChange);
   if (sort === "made") return list.sort((a, b) => newest(a.created, b.created) || byChange(a, b));
   if (sort === "title") return list.sort((a, b) => a.title.localeCompare(b.title) || byChange(a, b));
-  const rank = (p: PanelPage) => (p.shelf === null ? SHELF_ORDER.length : SHELF_ORDER.indexOf(p.shelf));
-  return list.sort((a, b) => rank(a) - rank(b) || byChange(a, b));
+  // The six in their order, then the shelves outside them (the owner's, meetings) by folder, then the pages on none.
+  const rank = (p: PanelPage) => (p.shelf === null ? SHELF_ORDER.length + 1 : SHELF_ORDER.includes(p.shelf) ? SHELF_ORDER.indexOf(p.shelf) : SHELF_ORDER.length);
+  const other = (a: PanelPage, b: PanelPage) => (rank(a) === SHELF_ORDER.length ? (a.shelf ?? "").localeCompare(b.shelf ?? "") : 0);
+  return list.sort((a, b) => rank(a) - rank(b) || other(a, b) || byChange(a, b));
 }

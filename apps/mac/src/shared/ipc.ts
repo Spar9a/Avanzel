@@ -1152,6 +1152,11 @@ export interface AvanzelBridge {
     makeShelf(): void;
     /** Not now, on the filed card: the card goes, and its suggestion stays pending in the panel. */
     shelfLater(): void;
+    /**
+     * No, on the filed card that asks about a folder the agent started: the card's own suggestion is turned down (`declined_shelves`),
+     * as Library's No does, and the card goes.
+     */
+    declineShelf(): void;
   };
   settings: {
     get(): Promise<SettingsSnapshot>;
@@ -1561,6 +1566,11 @@ export interface PanelSnapshot {
    * `"shelf-edit:<folder>"`, `"shelf-decline:<folder>"`). Empty without a library.
    */
   shelfSuggestions: ShelfAsk[];
+  /**
+   * The folders whose Make shelf or No is waiting for the library or running now: Library's buttons for each are busy until it ends,
+   * whether it was made, turned down or refused.
+   */
+  shelvesGoing: string[];
 }
 
 /** A file or screenshot added to a recording, as its Add list shows it: its name and when it was added (Date.now()). */

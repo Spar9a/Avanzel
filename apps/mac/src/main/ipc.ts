@@ -38,6 +38,7 @@ export function registerIpc(controller: Controller): void {
   // suggestion of the card the capsule shows, never on one the page names.
   on("capsule:shelf-make", () => void controller.makeShelfFromCard());
   on("capsule:shelf-later", () => controller.shelfLater());
+  on("capsule:shelf-decline", () => void controller.declineShelfFromCard());
   on("capsule:open", () => controller.openFiled());
   // What the page sends is checked where it is used: only the capsule's own page is heard, and only for a page its filing wrote.
   on("capsule:open-page", (e, rel: unknown) => controller.openFiledPage(e.sender, rel));

@@ -203,6 +203,9 @@ describe("panel copy", () => {
     expect(sortPages(pages, "title").map((p) => p.path)).toEqual(["b", "a", "c"]);
     expect(sortPages(pages, "shelf").map((p) => p.path)).toEqual(["b", "a", "c"]);
     expect(pages.map((p) => p.path)).toEqual(["a", "b", "c"]);
+    // By shelf, the six come first in their order, then the shelves outside them by folder, then the pages on none.
+    const more = [...pages, page("d", "Delta", "projects", "2026-11-02", "2026-11-07"), page("e", "Eps", "meetings", "2026-11-02", "2026-11-02")];
+    expect(sortPages(more, "shelf").map((p) => p.path)).toEqual(["b", "a", "e", "d", "c"]);
   });
 
   it("words the inbox", () => {

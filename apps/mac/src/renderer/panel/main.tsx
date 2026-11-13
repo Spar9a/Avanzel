@@ -2,7 +2,7 @@
 // over a quiet moving aura, Library runs the reviews and lists the library's pages (sorted and filtered as the person picks), each
 // folding open in place, and Settings is Settings. It arranges @avanzel/ui's parts and paints nothing of its own.
 import "@avanzel/ui/base.css";
-import { ActionTile, Aura, Button, Confirm, Disclosure, Dust, Expiring, Group, GroupRow, GroupReveal, SpokenField, Switch, FileLink, FilePreview, Items, More, UndoBar, Notice, PageRow, Progress, RecordingStage, Row, Select, SHELF_NAMES, ShelfTag, SHELVES, Spinner, Stack, TabPanel, Tabs, Text, TextField, type Item, type Shelf } from "@avanzel/ui";
+import { ActionTile, Actions, Aura, Button, Confirm, Disclosure, Dust, Expiring, Group, GroupRow, GroupReveal, SpokenField, Switch, FileLink, FilePreview, Items, More, UndoBar, Notice, PageRow, Progress, RecordingStage, Row, Select, ShelfTag, shelfName, SHELVES, Spinner, Stack, TabPanel, Tabs, Text, TextField, type AnyShelf, type Item } from "@avanzel/ui";
 import { answeredLine, ASKING_LINES, failedAnswer, waitingLine } from "../ask/copy.ts";
 import { problemBody } from "../common/problem.tsx";
 import { sourceTitle } from "../setup/copy.ts";
@@ -17,10 +17,12 @@ import { ListeningControls } from "../common/listening-controls.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { prettyAccelerator } from "../../main/shortcuts.ts";
-import { isSettingsPane, PANEL_TABS, type AskResult, type AvanzelBridge, type PanelFiling, type PanelPage, type PanelReview, type PanelSnapshot, type PanelTab, type SettingsPane, type Shortcuts } from "../../shared/ipc.ts";
+import { isSettingsPane, PANEL_TABS, type AskResult, type AvanzelBridge, type PanelFiling, type PanelPage, type PanelReview, type PanelSnapshot, type PanelTab, type SettingsPane, type SettingsSnapshot, type ShelfAsk, type Shortcuts } from "../../shared/ipc.ts";
+import { agentShelfLine, EDIT_FIRST, MAKE_SHELF, SAY_NO } from "../capsule/copy.ts";
+import { anyShelfOf } from "../common/shelf.ts";
 import { SettingsApp } from "../settings/SettingsApp.tsx";
 import { UPDATE_NOT_NOW, updateReadyState } from "../settings/copy.ts";
-import { inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, SORTS, sortLabel, sortPages, type PageFilter, type PageSort } from "./copy.ts";
+import { inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, shelfQuestion, SORTS, sortLabel, sortPages, type PageFilter, type PageSort } from "./copy.ts";
 import "./styles.css";
 
 declare global {
@@ -30,7 +32,8 @@ declare global {
 const api = window.avanzel.panel;
 const act = (action: string) => api.act(action);
 
-const isShelf = (value: string | null): value is Shelf => value !== null && (SHELVES as readonly string[]).includes(value);
+/** The library's own shelves, folder and name, as Settings is sent them: what Library tags and filters a page on one of them by. */
+type OwnShelves = readonly { folder: string; name: string }[];
 
 /** A shortcut as macOS writes it, when it is set and registered. */
 function keyOf(snap: PanelSnapshot, key: keyof Shortcuts): string | undefined {
@@ -875,11 +878,73 @@ function useClock(ms: number, ticking: boolean): number {
   return now;
 }
 
+/** The chip of the shelf a page is on: one of the six, one of the owner's, or meetings (`anyShelfOf`); nothing for a page on none. */
+function ShelfOf({ folder, own }: { folder: string | null; own: OwnShelves }) {
+  const shelf = anyShelfOf(folder, own);
+  return shelf ? <ShelfTag shelf={shelf} /> : null;
+}
+
+/**
+ * Library's question about a shelf the librarian suggested, at the top of Library until it is answered: "Make a Projects shelf?" over the
+ * definition that would go into AGENTS.md, with No, Edit first (Settings' shelf form, filled in) and Make shelf. A folder the agent started
+ * on its own has no definition yet, so it is asked as the filed card asks it, with No and Edit first. Make shelf and No are busy while
+ * main makes or turns down the shelf (`going`), which waits for the library as a filing does, and the other buttons wait with them.
+ */
+function ShelfQuestion({ ask, going }: { ask: ShelfAsk; going: boolean }) {
+  // Pressed, and main hasn't said yet that it has it in hand: busy from the press, not a moment later.
+  const [pressed, setPressed] = useState<"make" | "no" | null>(null);
+  const [wasGoing, setWasGoing] = useState(false);
+  if (going !== wasGoing) {
+    setWasGoing(going);
+    if (!going) setPressed(null); // it ended: made, turned down, or refused (which a notification tells)
+  }
+  // What is going on: what was pressed here, or, pressed elsewhere (the filed card), a Make shelf.
+  const doing = pressed ?? (going ? "make" : null);
+  const press = (which: "make" | "no") => {
+    setPressed(which);
+    act(`shelf-${which === "make" ? "make" : "decline"}:${ask.folder}`);
+  };
+  const no = (
+    <Button size="small" variant="quiet" busy={doing === "no"} disabled={doing === "make"} onClick={() => press("no")}>
+      {SAY_NO}
+    </Button>
+  );
+  if (ask.agentMade) {
+    return (
+      <Notice
+        title={agentShelfLine(ask.folder)}
+        actions={
+          <Actions align="start">
+            {no}
+            <Button size="small" variant="primary" disabled={doing !== null} onClick={() => act(`shelf-edit:${ask.folder}`)}>{EDIT_FIRST}</Button>
+          </Actions>
+        }
+      />
+    );
+  }
+  return (
+    <Notice
+      title={shelfQuestion(ask.name)}
+      actions={
+        <Actions align="start">
+          {no}
+          <Button size="small" variant="secondary" disabled={doing !== null} onClick={() => act(`shelf-edit:${ask.folder}`)}>{EDIT_FIRST}</Button>
+          <Button size="small" variant="primary" busy={doing === "make"} disabled={doing === "no"} onClick={() => press("make")}>
+            {MAKE_SHELF}
+          </Button>
+        </Actions>
+      }
+    >
+      {ask.definition}
+    </Notice>
+  );
+}
+
 /**
  * The question asked in Library and its answer, over the pages: while the agent looks, a spinner, the waiting line and Stop; then the
  * answer's lines, the pages it used (each opens), and who answered; or what went wrong, with Ask again.
  */
-function AskReply({ ask, onStop, onAgain, onClose }: { ask: PanelAsk; onStop(): void; onAgain(): void; onClose(): void }) {
+function AskReply({ ask, own, onStop, onAgain, onClose }: { ask: PanelAsk; own: OwnShelves; onStop(): void; onAgain(): void; onClose(): void }) {
   const running = ask.outcome === null;
   const now = useClock(250, running);
   const { line } = waitingLine(ask.progress, (now - ask.since) / 1000, ASKING_LINES);
@@ -916,7 +981,7 @@ function AskReply({ ask, onStop, onAgain, onClose }: { ask: PanelAsk; onStop(): 
               <Text variant="footnote" tone="secondary">Notes used:</Text>
               {outcome.sources.map((page) => (
                 <Row key={page.path} gap={6} wrap>
-                  {isShelf(page.shelf) && <ShelfTag shelf={page.shelf} />}
+                  <ShelfOf folder={page.shelf} own={own} />
                   <Button variant="page" wrap onClick={() => act(`open-md:${page.path}`)}>{sourceTitle(page.title)}</Button>
                 </Row>
               ))}
@@ -930,10 +995,12 @@ function AskReply({ ask, onStop, onAgain, onClose }: { ask: PanelAsk; onStop(): 
 }
 
 /**
- * Library: the reviews, then the pages, found by the field beside the filters as the words are typed. Return in it asks the library
- * the words as a question, and the answer shows over the pages. Ask your library… in Capture brings the field forward (`focusAsk`).
+ * Library: first the question about each shelf the librarian suggested (`ShelfQuestion`), then the reviews, then the pages, found by
+ * the field beside the filters as the words are typed. Return in it asks the library the words as a question, and the answer shows over
+ * the pages. Ask your library… in Capture brings the field forward (`focusAsk`). A page on a shelf the owner made, or on meetings, is
+ * tagged and filtered by it in the own-shelf look, by the name Settings knows it by (`own`).
  */
-function Library({ snap, pages, focusAsk }: { snap: PanelSnapshot; pages: PanelPage[]; focusAsk: number }) {
+function Library({ snap, pages, own, focusAsk }: { snap: PanelSnapshot; pages: PanelPage[]; own: OwnShelves; focusAsk: number }) {
   // The open page is remembered, so the panel comes back to it as it was: after a file it opened, a restart, or a reload.
   const [open, setOpen] = useRemembered<string | null>("panel.open", null, (value): value is string | null => value === null || typeof value === "string");
   // Deleting a page: its bin asks first (Move to the Trash? Cancel, Delete), then the row turns to dust, and only then is it sent to the
@@ -1010,7 +1077,11 @@ function Library({ snap, pages, focusAsk }: { snap: PanelSnapshot; pages: PanelP
     api.cancelAsk();
     setAsk((now) => (now && now.outcome === null ? { ...now, outcome: "stopped" } : now));
   };
-  const shelves = useMemo(() => SHELVES.filter((shelf) => pages.some((p) => p.shelf === shelf)), [pages]);
+  // The shelves that hold a page, by folder: the six in their order, then the others (the owner's, meetings) in sortPages' order.
+  const shelves = useMemo(() => {
+    const others = [...new Set(pages.map((p) => p.shelf).filter((s): s is string => !!s && !(SHELVES as readonly string[]).includes(s)))].sort((a, b) => a.localeCompare(b));
+    return [...SHELVES.filter((shelf) => pages.some((p) => p.shelf === shelf)), ...others];
+  }, [pages]);
   const statuses = useMemo(() => [...new Set(pages.map((p) => p.status).filter((s): s is string => !!s))].sort(), [pages]);
   // A filter that matches nothing any more (its shelf emptied, its status gone) leaves the list on All: nothing is filtered out of sight.
   const live: PageFilter =
@@ -1020,21 +1091,23 @@ function Library({ snap, pages, focusAsk }: { snap: PanelSnapshot; pages: PanelP
     sort,
   );
   // The filter's choices, under their headings: every page, a shelf, a status.
+  const shelfOf = (folder: string): AnyShelf => anyShelfOf(folder, own) ?? { own: folder, name: folder };
   const filterOptions = [
     { value: "all", label: "All notes" },
-    ...shelves.map((shelf, i) => ({ value: `shelf:${shelf}`, label: SHELF_NAMES[shelf], shelf, ...(i === 0 ? { section: "Shelves" } : {}) })),
+    ...shelves.map((folder, i) => ({ value: `shelf:${folder}`, label: shelfName(shelfOf(folder)), shelf: shelfOf(folder), ...(i === 0 ? { section: "Shelves" } : {}) })),
     ...statuses.map((status, i) => ({ value: `status:${status}`, label: status, ...(i === 0 ? { section: "Status" } : {}) })),
   ];
   const filterValue = live.kind === "all" ? "all" : live.kind === "shelf" ? `shelf:${live.shelf}` : `status:${live.status}`;
   const chooseFilter = (picked: string) => {
     if (picked === "all") setFilter({ kind: "all" });
-    else if (picked.startsWith("shelf:") && isShelf(picked.slice(6))) setFilter({ kind: "shelf", shelf: picked.slice(6) as Shelf });
+    else if (picked.startsWith("shelf:")) setFilter({ kind: "shelf", shelf: picked.slice(6) });
     else if (picked.startsWith("status:")) setFilter({ kind: "status", status: picked.slice(7) });
   };
   const dictate = keyOf(snap, "dictate");
   return (
     <div className="panel-pad panel-library">
       <Stack gap={16}>
+        {snap.shelfSuggestions.map((ask) => <ShelfQuestion key={ask.folder} ask={ask} going={snap.shelvesGoing.includes(ask.folder)} />)}
         {snap.reviews.length > 0 && (
           <Stack gap={12}>
             {snap.reviews.map((review) => <ReviewLine key={review.id} review={review} />)}
@@ -1043,7 +1116,7 @@ function Library({ snap, pages, focusAsk }: { snap: PanelSnapshot; pages: PanelP
             )}
           </Stack>
         )}
-        {ask && <AskReply ask={ask} onStop={stopAsk} onAgain={() => askNow(ask.question)} onClose={() => setAsk(null)} />}
+        {ask && <AskReply ask={ask} own={own} onStop={stopAsk} onAgain={() => askNow(ask.question)} onClose={() => setAsk(null)} />}
         <Stack gap={8}>
           <Row gap={6}>
             <div className="panel-grow">
@@ -1068,7 +1141,7 @@ function Library({ snap, pages, focusAsk }: { snap: PanelSnapshot; pages: PanelP
                   icon="settings"
                   options={filterOptions}
                   value={filterValue}
-                  buttonLabel={live.kind === "all" ? "Filter" : live.kind === "shelf" ? SHELF_NAMES[live.shelf] : live.status}
+                  buttonLabel={live.kind === "all" ? "Filter" : live.kind === "shelf" ? shelfName(shelfOf(live.shelf)) : live.status}
                   onChange={chooseFilter}
                   clearable={live.kind !== "all"}
                   clearLabel="Clear the filter"
@@ -1090,7 +1163,7 @@ function Library({ snap, pages, focusAsk }: { snap: PanelSnapshot; pages: PanelP
             <PageRow
               order={i}
               title={page.title}
-              shelf={isShelf(page.shelf) ? page.shelf : undefined}
+              shelf={anyShelfOf(page.shelf, own)}
               status={page.status ?? undefined}
               tags={page.tags}
               date={pageDay(sort === "made" ? page.created : (page.updated ?? page.created))}
@@ -1205,6 +1278,13 @@ function App() {
   // The pane Settings opens on when something asked for one before its tab showed.
   const [pane, setPane] = useState<SettingsPane | undefined>(undefined);
   const readPages = useCallback(() => void api.pages().then(setPages), []);
+  // The library's own shelves, for Library's tags and filter: Settings' snapshot has them, and comes again as they change.
+  const [own, setOwn] = useState<OwnShelves>([]);
+  useEffect(() => {
+    const take = (settings: SettingsSnapshot) => setOwn(settings.library?.ownShelves ?? []);
+    void window.avanzel.settings.get().then(take);
+    return window.avanzel.settings.onChanged(take);
+  }, []);
   useEffect(() => {
     api.get().then(setSnap);
     readPages();
@@ -1263,7 +1343,7 @@ function App() {
           pages={[
             { value: "capture", content: <Capture snap={snap} onAsk={toAsk} /> },
             ...(processing ? [{ value: "processing" as const, content: <Processing snap={snap} leaving={leaving} onLeft={() => setLeaving(null)} /> }] : []),
-            { value: "library", content: <Library snap={snap} pages={pages} focusAsk={focusAsk} /> },
+            { value: "library", content: <Library snap={snap} pages={pages} own={own} focusAsk={focusAsk} /> },
             { value: "settings", content: <SettingsApp startPane={pane} /> },
           ]}
         />

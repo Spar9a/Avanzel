@@ -5,9 +5,11 @@ import { inMenuLine } from "../../main/shortcuts.ts";
 import type { FiledPage, Shortcuts } from "../../shared/ipc.ts";
 import { shortened } from "../../shared/clip.ts";
 import { reviewDoes, stoppedLine } from "../../shared/problems.ts";
+import { shelfMadeLine } from "../../shared/shelves.ts";
 
-// What a Stopped filing's card says is shared with the main process, which tells the same in a notification when the card is gone.
-export { stoppedLine };
+// What a Stopped filing's card says is shared with the main process, which tells the same in a notification when the card is gone. So is
+// the bar's line once Make shelf is done, which main's notification says when the capsule is busy.
+export { shelfMadeLine, stoppedLine };
 
 /** The bar's line once a filing ends well: who filed it, in whole seconds, and never "0 s": a filing that took no time took one. */
 export function filedLine(agent: string, seconds: number): string {
@@ -104,3 +106,24 @@ export function recordedLine(review: string | null): string {
 export function stillInMenuLine(key: keyof Shortcuts): string {
   return `Pick another shortcut. ${inMenuLine(key)}`;
 }
+
+/** "a" or "an" before `word`, as it is read: "an" before a vowel ("an Errands shelf"), "a" before anything else ("a Projects shelf"). */
+export function withArticle(word: string): string {
+  return `${/^[aeiou]/i.test(word) ? "an" : "a"} ${word}`;
+}
+
+/** The filed card's question, when the librarian suggests a new shelf for the pages: the shelf's name. Its definition goes under it. */
+export function shelfAskLine(name: string): string {
+  return `This might belong on a new shelf: ${name}`;
+}
+
+/** The filed card's line when the agent filed into a folder of its own making, which has no definition yet: by the folder's name. */
+export function agentShelfLine(folder: string): string {
+  return `The agent started ${withArticle(folder)} shelf. Say what belongs on it, or turn it down.`;
+}
+
+/** The buttons that answer the shelf question, on the filed card and in Library. */
+export const MAKE_SHELF = "Make shelf";
+export const NOT_NOW = "Not now";
+export const EDIT_FIRST = "Edit first";
+export const SAY_NO = "No";
