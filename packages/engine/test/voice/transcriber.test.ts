@@ -47,7 +47,7 @@ describe("makeTranscriber", () => {
     await expect(makeTranscriber(voice({ model: "whisper-base" }), tempDir())).rejects.toThrow(/whisper-base/);
     // Silero VAD is a known model, but not one to transcribe with; the message lists the Parakeet models.
     await expect(makeTranscriber(voice({ model: "silero-vad" }), tempDir())).rejects.toThrow(
-      /'silero-vad' is not supported; use "nemo-parakeet-tdt-0\.6b-v3" or "nemo-parakeet-tdt-0\.6b-v2"/,
+      /'silero-vad' is not supported; use "nemo-parakeet-tdt-0\.6b-v3", "moondream-parakeet-ultra-0\.6b" or "nemo-parakeet-tdt-0\.6b-v2"\./,
     );
     await expect(makeTranscriber(voice({ quantization: "fp16" }), tempDir())).rejects.toThrow(AvanzelError);
   });

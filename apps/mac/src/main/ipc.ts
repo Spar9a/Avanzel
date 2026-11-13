@@ -93,6 +93,7 @@ export function registerIpc(controller: Controller): void {
   handle("settings:set-library", (_e, patch: LibraryPatch) => controller.setLibrarySettings(patch));
   handle("settings:download-hosted", (_e, id: unknown) => controller.downloadHosted(String(id)));
   handle("settings:cancel-hosted-download", (_e, id: unknown) => controller.cancelHostedDownload(String(id)));
+  handle("settings:cancel-speech-model-download", () => controller.cancelSpeechModelDownload());
   handle("settings:remove-hosted", (_e, id: unknown) => controller.removeHosted(String(id)));
   handle("settings:generate-private-key", () => controller.generatePrivateKey());
   handle("settings:paste-private-key", () => controller.pastePrivateKey());

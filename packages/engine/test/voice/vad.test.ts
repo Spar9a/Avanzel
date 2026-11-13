@@ -1,6 +1,6 @@
 import { type InferenceSession, Tensor } from "onnxruntime-node";
 import { describe, expect, it } from "vitest";
-import { findSegments, mergeSegments, segmentSpeech, speechProbabilities } from "../../src/voice/vad.ts";
+import { findSegments, mergeSegments, packSegments, segmentSpeech, speechProbabilities } from "../../src/voice/vad.ts";
 
 describe("mergeSegments (onnx-asr vad.py at 16 kHz)", () => {
   // 16 kHz defaults: pad 480, min speech 4000-960, max speech 320000-960, min silence 1600+960 samples.
@@ -94,5 +94,22 @@ describe("segmentSpeech", () => {
     const probs = [0.1, 0.1, ...new Array(14).fill(0.9), ...new Array(15).fill(0.1)];
     const { session } = fakeVad(probs);
     expect(await segmentSpeech(new Float32Array(512 * 30 + 100), session)).toEqual([[544, 8672]]);
+  });
+});
+
+describe("packSegments", () => {
+  // In samples, with pieces of at most 100.
+  const cases: [string, [number, number][], [number, number][]][] = [
+    ["nothing", [], []],
+    ["one segment stays as it is", [[10, 40]], [[10, 40]]],
+    ["segments join, pauses and all, up to the most a piece takes", [[0, 30], [40, 70], [80, 100]], [[0, 100]]],
+    ["the segment that would make a piece too long starts the next", [[0, 30], [40, 70], [80, 101]], [[0, 70], [80, 101]]],
+    ["a piece starts where its first segment does", [[50, 90], [95, 140], [160, 200]], [[50, 140], [160, 200]]],
+    ["a segment longer than a piece is cut into pieces", [[0, 30], [40, 290]], [[0, 30], [40, 140], [140, 240], [240, 290]]],
+    ["what is left of a cut segment takes the next ones", [[0, 150], [160, 180]], [[0, 100], [100, 180]]],
+  ];
+
+  it.each(cases)("%s", (_name, segments, expected) => {
+    expect(packSegments(segments, 100)).toEqual(expected);
   });
 });
