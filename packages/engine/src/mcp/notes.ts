@@ -41,9 +41,13 @@ const RESERVED_KEYS = new Set([
   "related",
   "supersedes",
 ]);
-// Zero-width characters, bidi controls and invisible operators, and HTML comments: how hidden instructions are smuggled into stored memory.
-const INVISIBLE = /[​-‏‪-‮⁠-⁤﻿]/g;
+// Characters a reader can't see: soft hyphen, Arabic letter mark, Mongolian vowel separator, zero-width and bidi controls
+// (U+200B-200F, U+202A-202E, U+2060-2069 with the isolates), the byte order mark, and the Unicode tag block, the usual way
+// to hide instructions in text. HTML comments are the other way, so they go too.
+const INVISIBLE = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF\u{E0000}-\u{E007F}]/gu;
 const COMMENT = /<!--[\s\S]*?-->/g;
+// What is left of a comment that never closes: it would hide everything after it once the Markdown is rendered.
+const COMMENT_OPEN = /<!--/g;
 
 export interface RememberInput {
   text: string;
@@ -91,11 +95,11 @@ export function unfiledAgentNotes(vault: Vault): number {
   return count;
 }
 
-/** Remove invisible characters and HTML comments until nothing is left to remove (one removal can join the pieces of another). */
+/** Remove invisible characters, HTML comments and a comment's unclosed opening until nothing is left to remove (one removal can join the pieces of another). */
 function clean(value: string): { value: string; stripped: boolean } {
   let current = value;
   for (;;) {
-    const next = current.replace(INVISIBLE, "").replace(COMMENT, "");
+    const next = current.replace(INVISIBLE, "").replace(COMMENT, "").replace(COMMENT_OPEN, "");
     if (next === current) return { value: current, stripped: current !== value };
     current = next;
   }
