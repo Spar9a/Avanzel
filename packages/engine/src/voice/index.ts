@@ -21,16 +21,18 @@ export {
   MODELS,
   type ModelSpec,
   missingModels,
+  modelBytes,
   modelFiles,
   VAD_MODEL,
 } from "./models.ts";
 export { type ParakeetOptions, ParakeetTranscriber } from "./parakeet.ts";
 export { resampleTo16k } from "./resample.ts";
-export { segmentSpeech } from "./vad.ts";
+export { packSegments, segmentSpeech } from "./vad.ts";
 export { readWav, type WavAudio, writeWav } from "./wav.ts";
 
-/** Speech models the onnx-asr backend runs: every known model but Silero VAD. */
-const PARAKEET_MODELS = Object.keys(MODELS).filter((id) => id !== VAD_MODEL);
+/** Speech models the onnx-asr backend runs, the default first: every known model but Silero VAD. */
+export const SPEECH_MODELS: readonly string[] = Object.keys(MODELS).filter((id) => id !== VAD_MODEL);
+const PARAKEET_MODELS = SPEECH_MODELS;
 
 /**
  * Throws an `AvanzelError` unless `options` name a backend, model and quantization `makeTranscriber` can run. A
@@ -40,7 +42,8 @@ function checkVoice({ backend, model, quantization }: VoiceOptions): void {
   if (backend === "command") return;
   if (backend !== "onnx-asr") throw new AvanzelError(`Unknown voice backend '${backend}'; use "onnx-asr" or "command".`);
   if (!PARAKEET_MODELS.includes(model)) {
-    throw new AvanzelError(`Speech model '${model}' is not supported; use "${PARAKEET_MODELS.join('" or "')}".`);
+    const names = PARAKEET_MODELS.map((id) => `"${id}"`);
+    throw new AvanzelError(`Speech model '${model}' is not supported; use ${names.slice(0, -1).join(", ")} or ${names.at(-1)}.`);
   }
   modelFiles(model, quantization); // rejects an unknown quantization now rather than on first use
 }

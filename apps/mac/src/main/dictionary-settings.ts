@@ -10,6 +10,7 @@ import {
   PRIVATE_APIS,
   type PrivateModel,
   type Settings,
+  SPEECH_MODELS,
   type Transcriber,
   type VoiceSettings,
   withDictionary,
@@ -43,6 +44,12 @@ export function cleanDictionary(typed: readonly string[]): string[] {
     );
   }
   return kept;
+}
+
+/** A speech model to keep as `[voice] model`: one the engine runs, else it throws in words for Settings' Notice. */
+export function cleanSpeechModel(model: string): string {
+  if (!SPEECH_MODELS.includes(model)) throw new AvanzelError("Avanzel doesn't have that speech model. Choose one from the list.");
+  return model;
 }
 
 /**
@@ -83,7 +90,11 @@ export function patchedSettings(settings: Settings, patch: LibraryPatch): Settin
     ...(patch.models !== undefined ? { models: patch.models } : {}),
     ...(patch.private !== undefined ? { private: cleanPrivate({ ...settings.private, ...patch.private }) } : {}),
     ...(patch.timeoutSeconds !== undefined ? { timeoutSeconds: patch.timeoutSeconds } : {}),
-    ...(patch.dictionary !== undefined ? { voice: { ...settings.voice, dictionary: cleanDictionary(patch.dictionary) } } : {}),
+    voice: {
+      ...settings.voice,
+      ...(patch.dictionary !== undefined ? { dictionary: cleanDictionary(patch.dictionary) } : {}),
+      ...(patch.speechModel !== undefined ? { model: cleanSpeechModel(patch.speechModel) } : {}),
+    },
     dictation,
   };
 }

@@ -590,11 +590,37 @@ export interface LibraryPatch {
   timeoutSeconds?: number;
   /** The Dictionary field's lines as typed: main stores them cleaned (`cleanDictionary`). */
   dictionary?: string[];
+  /**
+   * `[voice] model`: one of the engine's speech models (`SpeechModelInfo.id`). One on this Mac is saved at once; one that isn't is
+   * downloaded first while the model in use goes on hearing, and saved when it is here (`SettingsSnapshot.speechModelSwitch`).
+   */
+  speechModel?: string;
   dictationLog?: boolean;
   /** The skip-list fields' lines as typed: main stores them cleaned (`cleanSkipList`). */
   dictationSkipApps?: string[];
   dictationSkipSites?: string[];
 }
+
+/** A speech model the engine runs, as Settings → Voice offers it. What it hears is the window's copy, by `id`. */
+export interface SpeechModelInfo {
+  /** The engine's name for it, as config.toml's `[voice] model` says it. */
+  id: string;
+  /**
+   * With the library's quantization: what it takes on disk when it is on this Mac, else what choosing it downloads (Silero VAD with
+   * it when that is missing too); 0 when that quantization can't be used.
+   */
+  bytes: number;
+  /** A complete copy is on this Mac, in Avanzel's models folder or the Hugging Face cache. */
+  onThisMac: boolean;
+}
+
+/**
+ * A speech model chosen in Settings → Voice that this Mac didn't have: its download, while the model in use goes on hearing, or why
+ * that download stopped (`resumable`: a part was kept, and choosing it again continues from it).
+ */
+export type SpeechModelSwitch =
+  | { id: string; kind: "downloading"; receivedBytes: number; totalBytes: number }
+  | { id: string; kind: "failed"; message: string; resumable: boolean };
 
 /** Everything the settings window shows, in one snapshot. */
 export interface SettingsSnapshot {
@@ -613,6 +639,10 @@ export interface SettingsSnapshot {
    * it hears from these. A backend the engine doesn't know reads "onnx-asr": its Notice says the settings can't be used.
    */
   voice: { backend: "onnx-asr" | "command"; model: string };
+  /** The speech models the engine runs, the default first, for Settings → Voice's choice; the chosen one is `voice.model`. */
+  speechModels: SpeechModelInfo[];
+  /** A chosen speech model downloading before the library moves to it, or whose download failed; null when there is none. */
+  speechModelSwitch: SpeechModelSwitch | null;
   permissions: { microphone: PermissionStatus; screen: PermissionStatus };
   tasks: TaskInfo[];
   taskProblems: TaskFileProblem[];
@@ -1101,6 +1131,8 @@ export interface AvanzelBridge {
     /** Starts downloading a hosted model, which goes on in the background; the answer is the snapshot as it is then. */
     downloadHosted(id: string): Promise<SettingsSnapshot>;
     cancelHostedDownload(id: string): Promise<SettingsSnapshot>;
+    /** Stops the download of the speech model chosen in Voice; the model in use stays (`SettingsSnapshot.speechModelSwitch`). */
+    cancelSpeechModelDownload(): Promise<SettingsSnapshot>;
     /** Deletes a hosted model and its server from this Mac. */
     removeHosted(id: string): Promise<SettingsSnapshot>;
     generatePrivateKey(): Promise<SettingsSnapshot>;

@@ -42,6 +42,31 @@ describe("saving the dictionary (setLibrarySettings)", () => {
   });
 });
 
+describe("choosing the speech model (setLibrarySettings)", () => {
+  it("writes [voice] model and keeps the dictionary and the rest of [voice]", async () => {
+    const root = await library();
+    saveSettings(root, patchedSettings(loadSettings(root), { dictionary: ["Komrakov"] }));
+    saveSettings(root, patchedSettings(loadSettings(root), { speechModel: "nemo-parakeet-tdt-0.6b-v2" }));
+    expect(configText(root)).toMatch(/\[voice\][\s\S]*model = "nemo-parakeet-tdt-0\.6b-v2"/);
+    const after = loadSettings(root);
+    expect(after.voice.model).toBe("nemo-parakeet-tdt-0.6b-v2");
+    expect(after.voice.dictionary).toEqual(["Komrakov"]);
+    expect(after.voice.quantization).toBe("int8");
+    // A patch without one leaves it as it was.
+    saveSettings(root, patchedSettings(loadSettings(root), { harness: "claude" }));
+    expect(loadSettings(root).voice.model).toBe("nemo-parakeet-tdt-0.6b-v2");
+  });
+
+  it("refuses a model the engine doesn't run, and keeps nothing of the patch", async () => {
+    const root = await library();
+    expect(() => patchedSettings(loadSettings(root), { speechModel: "parakeet-v9", harness: "claude" })).toThrow(
+      "Avanzel doesn't have that speech model. Choose one from the list.",
+    );
+    expect(() => patchedSettings(loadSettings(root), { speechModel: "silero-vad" })).toThrow(/speech model/);
+    expect(loadSettings(root).voice.model).toBe("nemo-parakeet-tdt-0.6b-v3");
+  });
+});
+
 describe("cleanDictionary", () => {
   it("keeps two lines for one term apart: each is short enough, and both are used", () => {
     expect(cleanDictionary(["Ollama = Alema", "Ollama = Polymer"])).toEqual(["Ollama = Alema", "Ollama = Polymer"]);

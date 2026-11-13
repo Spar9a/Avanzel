@@ -10,7 +10,24 @@ import type { SettingsSnapshot } from "../src/shared/ipc.ts";
 import { ownLine } from "../src/shared/problems.ts";
 import { expectProblem } from "./capsule-helpers.ts";
 import { zel } from "./setup-helpers.ts";
-import { call, capsuleKind, closeModelHubs, emptyHfCache, fakeModelHub, hfSnapshot, launch, makeLibrary, openSettings, shown, snap, windowFor, toolbarItem } from "./helpers.ts";
+import {
+  call,
+  capsuleKind,
+  closeModelHubs,
+  emptyHfCache,
+  fakeModelHub,
+  hfSnapshot,
+  launch,
+  makeLibrary,
+  openSettings,
+  pickIn,
+  popUp,
+  popUpOptions,
+  shown,
+  snap,
+  windowFor,
+  toolbarItem,
+} from "./helpers.ts";
 
 const PARAKEET = "nemo-parakeet-tdt-0.6b-v3";
 /** Parakeet's English-only sibling, which the library's config.toml may name. */
@@ -23,6 +40,8 @@ const pinnedSize = (id: string) => MODELS[id]!.files.int8!.reduce((sum, name) =>
 const total = pinnedSize(PARAKEET) + pinnedSize(SILERO);
 
 const modelStatus = async (app: ElectronApplication) => ((await call(app, "snapshot")) as SettingsSnapshot).model;
+/** The speech model chosen in Voice that is downloading, or whose download failed. */
+const speechSwitch = async (app: ElectronApplication) => ((await call(app, "snapshot")) as SettingsSnapshot).speechModelSwitch;
 
 test.afterEach(closeModelHubs);
 
@@ -89,9 +108,9 @@ test("Settings → Voice says Ready once both speech models are on this Mac, and
   expect((await modelStatus(app)).kind).toBe("ready");
   const settings = await openSettings(app, "Voice");
   await expect(settings.getByText("Ready", { exact: true })).toBeVisible();
-  // The row says which languages it hears, and names no model.
+  // The row names the model in use and the languages it hears.
   await expect(
-    settings.getByText("Turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.", { exact: true }),
+    settings.getByText("NVIDIA Parakeet TDT 0.6B v3 turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.", { exact: true }),
   ).toBeVisible();
   await expect(settings.getByRole("button", { name: /^Download|^Try again/ })).toHaveCount(0);
   await expect(settings.getByRole("progressbar")).toHaveCount(0);
@@ -112,10 +131,10 @@ test("Settings → Voice says the speech row hears English alone for a library t
   expect(((await call(app, "snapshot")) as SettingsSnapshot).voice).toEqual({ backend: "onnx-asr", model: PARAKEET_ENGLISH });
   const settings = await openSettings(app, "Voice");
   await expect(settings.getByText("Ready", { exact: true })).toBeVisible();
-  await expect(settings.getByText("Turns your voice into English text on this Mac. Nothing is sent anywhere.", { exact: true })).toBeVisible();
-  // It no longer claims the 25 languages the default model hears, and still names no model.
+  await expect(settings.getByText("NVIDIA Parakeet TDT 0.6B v2 turns your voice into text on this Mac, in English only. Nothing is sent anywhere.", { exact: true })).toBeVisible();
+  // It no longer claims the 25 languages the default model hears.
   await expect(settings.getByText(/25 European languages/)).toHaveCount(0);
-  await expect(settings.getByText(/parakeet|nemo/i)).toHaveCount(0);
+  await expect(settings.getByText(/nemo-parakeet/)).toHaveCount(0); // the model by its name, never the engine's id
   await snap(settings, "settings-voice-english-only");
   await app.close();
 });
@@ -131,6 +150,102 @@ test("Settings → Voice says the speech row runs the library's command for a li
   // It says no language, and not that nothing is sent anywhere: a command can do either.
   await expect(settings.getByText("Turns your voice into text with the command in this library's settings.", { exact: true })).toBeVisible();
   await expect(settings.getByText(/25 European languages|sent anywhere/)).toHaveCount(0);
+  await app.close();
+});
+
+test("Settings → Voice offers the speech models by their languages and size, and one on this Mac is used at once", async () => {
+  const cache = emptyHfCache();
+  hfSnapshot(cache, PARAKEET);
+  hfSnapshot(cache, PARAKEET_ENGLISH);
+  hfSnapshot(cache, SILERO);
+  const hub = await fakeModelHub("stall");
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: cache });
+  const settings = await openSettings(app, "Voice");
+  expect(await popUpOptions(settings, "Choose a model")).toEqual([
+    { label: "Parakeet TDT 0.6B v3: 25 European languages, 670 MB", checked: true },
+    { label: "Parakeet Ultra 0.6B: 25 European languages, 670 MB to download", checked: false },
+    { label: "Parakeet TDT 0.6B v2: English only, 661 MB", checked: false },
+  ]);
+  await pickIn(settings, "Choose a model", "Parakeet TDT 0.6B v2: English only, 661 MB");
+  // Saved to the library, and the row says what the new one hears; it is here, so nothing downloads.
+  await expect.poll(() => loadSettings(library).voice.model).toBe(PARAKEET_ENGLISH);
+  await expect(settings.getByText("NVIDIA Parakeet TDT 0.6B v2 turns your voice into text on this Mac, in English only. Nothing is sent anywhere.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Ready", { exact: true })).toBeVisible();
+  await expect(popUp(settings, "Choose a model")).toHaveText(/Parakeet TDT 0.6B v2: English only, 661 MB/);
+  expect((await modelStatus(app)).kind).toBe("ready");
+  expect(hub.requests).toEqual([]);
+  await snap(settings, "settings-voice-speech-model-choice");
+  await app.close();
+});
+
+test("choosing a speech model this Mac doesn't have downloads it while the one in use goes on hearing, and Cancel keeps that one", async () => {
+  const cache = emptyHfCache();
+  hfSnapshot(cache, PARAKEET);
+  hfSnapshot(cache, SILERO);
+  const hub = await fakeModelHub("stall");
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: cache });
+  const settings = await openSettings(app, "Voice");
+  await pickIn(settings, "Choose a model", "Parakeet TDT 0.6B v2: English only, 661 MB to download");
+  // Only the English model is fetched: Silero VAD is already here.
+  await expect.poll(() => speechSwitch(app)).toMatchObject({ id: PARAKEET_ENGLISH, kind: "downloading", totalBytes: pinnedSize(PARAKEET_ENGLISH) });
+  await expect(settings.getByRole("progressbar", { name: "Downloading Parakeet TDT 0.6B v2" })).toBeVisible();
+  await expect(settings.getByText("0 of 661 MB", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Parakeet TDT 0.6B v2 downloads while Avanzel goes on hearing with the model in use.", { exact: true })).toBeVisible();
+  expect(hub.requests.length).toBeGreaterThan(0);
+  expect(hub.requests.filter((request) => !request.includes("parakeet-tdt-0.6b-v2"))).toEqual([]);
+  // Meanwhile the library keeps the model in use, which is ready, and the choice still says so.
+  expect(loadSettings(library).voice.model).toBe(PARAKEET);
+  expect((await modelStatus(app)).kind).toBe("ready");
+  await expect(popUp(settings, "Choose a model")).toHaveText(/Parakeet TDT 0.6B v3: 25 European languages, 670 MB/);
+  await snap(settings, "settings-voice-speech-model-downloading");
+  // Cancel stops it, and everything stays as it was.
+  await settings.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.poll(() => speechSwitch(app)).toBeNull();
+  await expect(settings.getByRole("progressbar")).toHaveCount(0);
+  expect(loadSettings(library).voice.model).toBe(PARAKEET);
+  expect((await modelStatus(app)).kind).toBe("ready");
+  await app.close();
+});
+
+test("a chosen speech model whose download fails says why, keeps the model in use, and Not now puts the Notice away", async () => {
+  const cache = emptyHfCache();
+  hfSnapshot(cache, PARAKEET);
+  hfSnapshot(cache, SILERO);
+  const hub = await fakeModelHub("missing");
+  const library = await makeLibrary();
+  const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_MODELS_URL: hub.url, HF_HUB_CACHE: cache });
+  const settings = await openSettings(app, "Voice");
+  await pickIn(settings, "Choose a model", "Parakeet TDT 0.6B v2: English only, 661 MB to download");
+  await expect.poll(() => speechSwitch(app)).toMatchObject({ id: PARAKEET_ENGLISH, kind: "failed" });
+  const notice = settings.getByRole("alert").filter({ hasText: "The new speech model didn't finish downloading." });
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("Avanzel goes on hearing with the model in use, and Try again");
+  await expect(notice.getByRole("button", { name: "Try again" })).toHaveAttribute("data-variant", "primary");
+  expect(loadSettings(library).voice.model).toBe(PARAKEET);
+  expect((await modelStatus(app)).kind).toBe("ready");
+  await notice.getByRole("button", { name: "Not now" }).click();
+  await expect.poll(() => speechSwitch(app)).toBeNull();
+  await expect(notice).toHaveCount(0);
+  await app.close();
+});
+
+test("a library naming a speech model Avanzel doesn't run asks for a choice, and choosing one fixes it", async () => {
+  const cache = emptyHfCache();
+  hfSnapshot(cache, PARAKEET);
+  hfSnapshot(cache, SILERO);
+  const library = await makeLibrary();
+  const config = loadSettings(library);
+  saveSettings(library, { ...config, voice: { ...config.voice, model: "parakeet-v9" } });
+  const app = await launch({ AVANZEL_LIBRARY: library, HF_HUB_CACHE: cache });
+  const settings = await openSettings(app, "Voice");
+  // The button asks for a choice; the engine's name is only in the Notice that says why the settings can't be used.
+  await expect(popUp(settings, "Choose a model")).toHaveText(/Choose…/);
+  await expect(popUp(settings, "Choose a model")).not.toHaveText(/parakeet-v9/);
+  await pickIn(settings, "Choose a model", "Parakeet TDT 0.6B v3: 25 European languages, 670 MB");
+  await expect.poll(() => loadSettings(library).voice.model).toBe(PARAKEET);
+  await expect.poll(async () => (await modelStatus(app)).kind).toBe("ready");
   await app.close();
 });
 

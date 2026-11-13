@@ -29,6 +29,7 @@ import {
   MODELS,
   type ModelSpec,
   missingModels,
+  modelBytes,
   modelFiles,
   parakeetFileNames,
   VAD_MODEL,
@@ -218,6 +219,21 @@ describe("missingModels", () => {
   it("rejects unknown models and quantizations", () => {
     expect(() => missingModels(["whisper-base"], tempDir())).toThrow(AvanzelError);
     expect(() => missingModels([V3], tempDir(), "fp16")).toThrow(/fp16/);
+  });
+});
+
+describe("modelBytes", () => {
+  it("adds up the pinned sizes of a model's files, whether or not they are on this Mac", () => {
+    expect(modelBytes(V3)).toBe(670_480_039); // the "670 MB" Settings → Voice gives the 25-language model
+    expect(modelBytes("moondream-parakeet-ultra-0.6b")).toBe(670_479_254);
+    expect(modelBytes("nemo-parakeet-tdt-0.6b-v2")).toBe(661_191_781);
+    expect(modelBytes(VAD_MODEL)).toBe(2_327_524);
+    expect(modelBytes(V3, "")).toBeGreaterThan(2_500_000_000); // full precision
+  });
+
+  it("refuses a model or quantization it doesn't know", () => {
+    expect(() => modelBytes("parakeet-v9")).toThrow(AvanzelError);
+    expect(() => modelBytes(V3, "int4")).toThrow(AvanzelError);
   });
 });
 

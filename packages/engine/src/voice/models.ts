@@ -57,6 +57,17 @@ export const MODELS: Readonly<Record<string, ModelSpec>> = {
     "encoder-model.onnx.data": { size: 2435420160, sha256: "9a22d372c51455c34f13405da2520baefb7125bd16981397561423ed32d24f36" },
     "decoder_joint-model.onnx": { size: 72520893, sha256: "e978ddf6688527182c10fde2eb4b83068421648985ef23f7a86be732be8706c1" },
   }),
+  // Moondream's post-training of v3, in the same files: the v3 export's graphs with Parakeet Ultra's weights, so its
+  // config and vocabulary are v3's to the byte. One community account converts it, hence the pinned commit (2026-11-13).
+  "moondream-parakeet-ultra-0.6b": parakeet("Masterx/parakeet-tdt-0.6b-ultra-onnx", "99b09f030a5a6efeaa13cf2cf54592100ce2c3f1", {
+    "config.json": { size: 97, sha256: "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466" },
+    "vocab.txt": { size: 93939, sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" },
+    "encoder-model.int8.onnx": { size: 652183214, sha256: "46e78f85f1ae43b43bd359889c966da5c7ca401df60a42eeffc2e7699b357ba6" },
+    "decoder_joint-model.int8.onnx": { size: 18202004, sha256: "2276a335d4c8dc48686e931475a634595954956427d485830e1214c0d1a18d07" },
+    "encoder-model.onnx": { size: 41770866, sha256: "98a74b21b4cc0017c1e7030319a4a96f4a9506e50f0708f3a516d02a77c96bb1" },
+    "encoder-model.onnx.data": { size: 2435420160, sha256: "1209bc92c87a2f596767ae080aec04702d94a2a41eaba4cee5a89f69a9c22c12" },
+    "decoder_joint-model.onnx": { size: 72520893, sha256: "87cdaae0a1102f6be1cb2bb45d6a7d4d914b23b764d5fba704a82960f988f958" },
+  }),
   "nemo-parakeet-tdt-0.6b-v2": parakeet("istupakov/parakeet-tdt-0.6b-v2-onnx", "0bbb45a3365852604aef28b538a8f066f4ccaa85", {
     "config.json": { size: 97, sha256: "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466" },
     "vocab.txt": { size: 9384, sha256: "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d" },
@@ -115,6 +126,12 @@ function quantizedFiles({ files }: ModelSpec, quantization: string, label: strin
 /** The files model `id` needs with `quantization` ("int8" or "" for full precision). */
 export function modelFiles(id: string, quantization = "int8"): readonly string[] {
   return quantizedFiles(spec(id), quantization, id);
+}
+
+/** The pinned sizes of model `id`'s files with `quantization`, added up: what it takes on disk, wherever its copy is. */
+export function modelBytes(id: string, quantization = "int8"): number {
+  const model = spec(id);
+  return quantizedFiles(model, quantization, id).reduce((sum, name) => sum + digestOf(model, name).size, 0);
 }
 
 /** Where huggingface_hub keeps its cache: HF_HUB_CACHE, else HF_HOME/hub, else ~/.cache/huggingface/hub. */

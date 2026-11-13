@@ -48,6 +48,7 @@ import {
   opencodeModels,
   makeTranscriber,
   missingModels,
+  modelBytes,
   nextRun,
   parseSchedule,
   readWav,
@@ -56,7 +57,9 @@ import {
   saveSettings,
   saveTask,
   selectHarness,
+  SPEECH_MODELS,
   speechModels,
+  VAD_MODEL,
   writeWav,
   type AgentCheck,
   type Capture,
@@ -123,6 +126,8 @@ import type {
   ScreenContext,
   SettingsPane,
   SettingsSnapshot,
+  SpeechModelInfo,
+  SpeechModelSwitch,
   SetupSnapshot,
   SetupStep,
   Shortcuts,
@@ -131,7 +136,7 @@ import type {
 import { callAppLabel, runningCallApps, type CallApp } from "./call-apps.ts";
 import { CALL_CONSENT_DIALOG, CALL_KEPT_LINE, CallNotes, MAX_CALL_MS, type CallHost } from "./call-notes.ts";
 import { CallTap } from "./calltap.ts";
-import { fakeCallTranscriber, fakeTranscript, patchedSettings } from "./dictionary-settings.ts";
+import { cleanSpeechModel, fakeCallTranscriber, fakeTranscript, patchedSettings } from "./dictionary-settings.ts";
 import { TranscriberCache } from "./transcriber-cache.ts";
 import { browserWindow, frontContext } from "./front-app.ts";
 import { electronClipboard } from "./cursor-clipboard.ts";
@@ -562,6 +567,9 @@ export class Controller {
     })),
   );
   private model: ModelStatus = { kind: "missing", bytes: 0 };
+  /** A speech model chosen in Settings → Voice that is downloading, or whose download failed, before the library moves to it. */
+  private speechSwitch: SpeechModelSwitch | null = null;
+  private speechSwitchAbort: AbortController | null = null;
   private libraryProblem: string | null = null;
   /**
    * The remembered library's place when it isn't there, as `openLibrary` found it: moved, renamed or unmounted since it was
@@ -754,6 +762,7 @@ export class Controller {
     const leaving = this.calls.leave();
     for (const abort of this.runs.keys()) abort.abort();
     this.stopAgentChecks();
+    this.stopSpeechSwitch();
     this.keepEdit();
     let timer: NodeJS.Timeout | undefined;
     const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, quitWaitMs())));
@@ -791,6 +800,7 @@ export class Controller {
     this.lastReceipt = null;
     this.undoCheckedFor = null;
     this.dropTranscriber();
+    this.stopSpeechSwitch(); // a model chosen for the library that closes
     this.libraryProblem = null;
     this.libraryMissing = null;
     this.filedUntil = null; // a stamp for a filing in the library that closes
@@ -5583,7 +5593,8 @@ export class Controller {
     const exists = vault?.exists() ?? false;
     // What turns speech into words: the library's settings, else the defaults. A backend the engine doesn't know can't be used
     // either way (the model status says so), and reads as the one it would have been.
-    const { backend, model } = (settings ?? defaultSettings()).voice;
+    const voice = (settings ?? defaultSettings()).voice;
+    const { backend, model } = voice;
     return {
       app: this.store.get(),
       library: vault
@@ -5637,6 +5648,8 @@ export class Controller {
       selectedHarness: selected,
       model: this.model,
       voice: { backend: backend === "command" ? "command" : "onnx-asr", model },
+      speechModels: this.speechModelInfo(voice),
+      speechModelSwitch: this.speechSwitch,
       permissions: { microphone: permissionStatus("microphone"), screen: permissionStatus("screen") },
       libraryProblem: this.libraryProblem,
       tasks: report.tasks.map((task) => this.taskInfo(task, stateRuns, now)),
@@ -5702,11 +5715,107 @@ export class Controller {
 
   async setLibrarySettings(patch: LibraryPatch): Promise<SettingsSnapshot> {
     const vault = this.requireVault();
-    await this.enqueue(async () => {
-      saveSettings(vault.root, patchedSettings(loadSettings(vault.root), patch));
-    });
+    const { speechModel, ...rest } = patch;
+    if (speechModel !== undefined) await this.chooseSpeechModel(vault, speechModel);
+    if (speechModel === undefined || Object.keys(rest).length > 0) {
+      await this.enqueue(async () => {
+        saveSettings(vault.root, patchedSettings(loadSettings(vault.root), rest));
+      });
+    }
     this.broadcast();
     return this.snapshot();
+  }
+
+  /**
+   * Settings → Voice's choice of speech model. One on this Mac is the library's `[voice] model` at once, and the next thought or
+   * dictation hears with it. One that isn't downloads first, while the model in use goes on hearing: the library moves to it when it
+   * is here, and Cancel, or choosing the one in use again, stops the download and leaves everything as it was. While the model in
+   * use is itself downloading (at launch, or its Download), that download comes first.
+   */
+  private async chooseSpeechModel(vault: Vault, id: string): Promise<void> {
+    cleanSpeechModel(id); // one the engine doesn't run is refused before anything stops
+    if (this.model.kind === "downloading") {
+      throw new AvanzelError("The speech model in use is still downloading. Choose another one once it is here.");
+    }
+    if (this.speechSwitch?.kind === "downloading" && this.speechSwitch.id === id) return; // it is on its way already
+    this.stopSpeechSwitch();
+    const voice = loadSettings(vault.root).voice;
+    if (voice.model === id) return;
+    const wanted = { ...voice, model: id };
+    const missing = missingModels(speechModels(wanted), this.modelsDir, wanted.quantization);
+    if (missing.length === 0) return this.useSpeechModel(vault, id);
+    const bytes = downloadSize(missing, this.modelsDir, wanted.quantization);
+    const abort = new AbortController();
+    this.speechSwitchAbort = abort;
+    this.speechSwitch = { id, kind: "downloading", receivedBytes: 0, totalBytes: bytes };
+    let lastBroadcast = 0;
+    void downloadModels(missing, this.modelsDir, {
+      quantization: wanted.quantization,
+      signal: abort.signal,
+      baseUrl: process.env.AVANZEL_MODELS_URL || undefined, // unset: Hugging Face; the e2e tests set a local stand-in
+      onProgress: (p) => {
+        if (abort.signal.aborted) return;
+        this.speechSwitch = { id, kind: "downloading", receivedBytes: p.overallReceived, totalBytes: p.overallTotal ?? bytes };
+        if (Date.now() - lastBroadcast > 250) {
+          lastBroadcast = Date.now();
+          this.broadcastProgress();
+        }
+      },
+    })
+      .then(async () => {
+        if (abort.signal.aborted) return;
+        this.speechSwitch = null;
+        this.speechSwitchAbort = null;
+        if (this.vault !== vault) return; // the library closed meanwhile: the files stay on this Mac, and its choice is unmade
+        await this.useSpeechModel(vault, id);
+        this.notify("The new speech model is ready", "Avanzel hears with it from your next thought or dictation.");
+      })
+      .catch((error: unknown) => {
+        if (abort.signal.aborted) return; // Cancel, or another choice: no news
+        this.speechSwitchAbort = null;
+        // Its message names the file and why, with no URL in it. Only a DownloadError can have kept a part to continue from.
+        this.speechSwitch = { id, kind: "failed", message: errorMessage(error), resumable: error instanceof DownloadError && error.resumable };
+      })
+      .finally(() => this.broadcast());
+  }
+
+  /** The library hears with speech model `id`, which is on this Mac: saved as `[voice] model`, and the one it replaces let go. */
+  private async useSpeechModel(vault: Vault, id: string): Promise<void> {
+    await this.enqueue(async () => {
+      saveSettings(vault.root, patchedSettings(loadSettings(vault.root), { speechModel: id }));
+    });
+    this.dropTranscriber();
+    await this.refreshModelStatus();
+  }
+
+  /** Settings → Voice's Cancel: the chosen speech model's download stops, what arrived is deleted, and the model in use stays. */
+  cancelSpeechModelDownload(): SettingsSnapshot {
+    this.stopSpeechSwitch();
+    this.broadcast();
+    return this.snapshot();
+  }
+
+  /** Stops a chosen speech model's download, and forgets one that failed. */
+  private stopSpeechSwitch(): void {
+    this.speechSwitchAbort?.abort();
+    this.speechSwitchAbort = null;
+    this.speechSwitch = null;
+  }
+
+  /**
+   * The speech models Settings → Voice offers, the default first, for `voice`'s quantization: what one on this Mac takes on disk, and
+   * what choosing one that isn't would download, Silero VAD with it when that is missing too.
+   */
+  private speechModelInfo(voice: VoiceOptions): SpeechModelInfo[] {
+    const { quantization } = voice;
+    return SPEECH_MODELS.map((id) => {
+      try {
+        if (locateModel(id, this.modelsDir, quantization) !== null) return { id, bytes: modelBytes(id, quantization), onThisMac: true };
+        return { id, bytes: downloadSize(missingModels([id, VAD_MODEL], this.modelsDir, quantization), this.modelsDir, quantization), onThisMac: false };
+      } catch {
+        return { id, bytes: 0, onThisMac: false }; // a quantization the engine doesn't know: the speech row's Notice says so
+      }
+    });
   }
 
   /** Starts downloading the hosted model `id` (Settings → Agents); it goes on in the background and shows its progress. */

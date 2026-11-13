@@ -11,6 +11,7 @@ import {
   type PickOption,
   type SettingsPane,
   type SettingsSnapshot,
+  type SpeechModelInfo,
   type TaskInfo,
   type UpdateSnapshot,
   type UpdateStatus,
@@ -223,9 +224,8 @@ export function cursorStatus(state: CursorPermissionState): { line: string; fix:
   return { line: "Avanzel can see the key and paste for you.", fix: null };
 }
 
-/** The speech model row's description for the default model: which languages it hears, as a person would want to know, naming no model. */
-export const SPEECH_MODEL_DESCRIPTION =
-  "Turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.";
+/** The speech model row's description for a model the engine doesn't run: no name or languages, which its Notice says can't be used. */
+export const SPEECH_MODEL_DESCRIPTION = "Turns your voice into text on this Mac. Nothing is sent anywhere.";
 
 /**
  * The Dictionary row's description: how a line is written, and that the heard-as entry is the sure way. A name whose sound is
@@ -237,22 +237,72 @@ export const DICTIONARY_DESCRIPTION =
   "entry. The names are also given to your filing agent.";
 
 /**
- * The speech models the engine runs that hear English alone (Parakeet v2); the others, the default among them, hear 25 languages.
- * The engine doesn't say which is which, so a model it gains is told with the default's languages until it is listed here:
- * test/settings-copy.test.ts fails for a model that no one has classified.
+ * Each speech model the engine runs as Settings → Voice tells it: its name, so a person knows which one hears them, the languages it
+ * hears in short (the choice's options) and in full (the speech model row). The engine has no such fields, so they are decided here:
+ * test/settings-copy.test.ts fails for a model the engine gains until it is added.
  */
-const ENGLISH_ONLY_MODELS: readonly string[] = ["nemo-parakeet-tdt-0.6b-v2"];
+export const SPEECH_MODEL_COPY: Readonly<Record<string, { name: string; maker: string; languages: string; hears: string }>> = {
+  "nemo-parakeet-tdt-0.6b-v3": {
+    name: "Parakeet TDT 0.6B v3",
+    maker: "NVIDIA",
+    languages: "25 European languages",
+    hears: "in 25 European languages including English, Ukrainian and Russian",
+  },
+  "moondream-parakeet-ultra-0.6b": {
+    name: "Parakeet Ultra 0.6B",
+    maker: "Moondream",
+    languages: "25 European languages",
+    hears: "in 25 European languages including English, Ukrainian and Russian",
+  },
+  "nemo-parakeet-tdt-0.6b-v2": { name: "Parakeet TDT 0.6B v2", maker: "NVIDIA", languages: "English only", hears: "in English only" },
+};
+
+/** A speech model by its maker's name for it ("Parakeet TDT 0.6B v2"); one not added yet goes by the engine's (the test catches that). */
+export const speechModelName = (id: string): string => SPEECH_MODEL_COPY[id]?.name ?? id;
 
 /**
- * The speech model row's description, true of the library's own [voice] settings (SettingsSnapshot.voice): the default model's
- * languages; English alone for the English-only model; and for a command, only that it is the library's command, since it
- * can hear any language and send the voice anywhere. A model the engine doesn't run keeps the general line: the Notice
- * under the row says its settings can't be used. It names no model.
+ * A speech model as Settings → Voice's choice offers it: its name, the languages it hears, and what it takes on disk, and that
+ * choosing it downloads it when this Mac doesn't have it ("Parakeet TDT 0.6B v2: English only, 661 MB to download"). Whole megabytes, as the
+ * download counts them.
+ */
+export function speechModelOption(info: SpeechModelInfo): string {
+  const copy = SPEECH_MODEL_COPY[info.id];
+  const name = copy ? `${copy.name}: ${copy.languages}` : info.id;
+  if (info.bytes <= 0) return name;
+  const size = `${Math.round(info.bytes / 1e6)} MB`;
+  return info.onThisMac ? `${name}, ${size}` : `${name}, ${size} to download`;
+}
+
+/** The Listening group's note, under the choice of model: why someone would choose. That a download stops nothing is the download's row's to say. */
+export const SPEECH_CHOICE_NOTE = "A model that hears English only never writes your words in another alphabet.";
+
+/** The download row of a chosen speech model: which one downloads, and that dictation isn't stopped by it. */
+export const speechSwitchLine = (id: string): string =>
+  `${speechModelName(id)} downloads while Avanzel goes on hearing with the model in use.`;
+
+/**
+ * The Notice for a chosen speech model whose download stopped: why, in the download's own words, that the model in use goes on
+ * hearing, and what Try again does (it continues from the part kept, when one was).
+ */
+export function speechSwitchFailedProblem(message: string, resumable: boolean): { title: string; body: string } {
+  const tryAgain = resumable ? "continues where it stopped" : "downloads it again";
+  return {
+    title: "The new speech model didn't finish downloading.",
+    body: [ownLine(message), `Avanzel goes on hearing with the model in use, and Try again ${tryAgain}.`].filter(Boolean).join(" "),
+  };
+}
+
+/**
+ * The speech model row's description, true of the library's own [voice] settings (SettingsSnapshot.voice): the model in use by
+ * name, with the languages it hears; and for a command, only that it is the library's command, since it can hear any language
+ * and send the voice anywhere. A model the engine doesn't run keeps the general line: the Notice under the row says its settings
+ * can't be used.
  */
 export function speechModelLine(voice: SettingsSnapshot["voice"]): string {
   if (voice.backend === "command") return "Turns your voice into text with the command in this library's settings.";
-  if (ENGLISH_ONLY_MODELS.includes(voice.model)) return "Turns your voice into English text on this Mac. Nothing is sent anywhere.";
-  return SPEECH_MODEL_DESCRIPTION;
+  const copy = SPEECH_MODEL_COPY[voice.model];
+  if (!copy) return SPEECH_MODEL_DESCRIPTION;
+  return `${copy.maker} ${copy.name} turns your voice into text on this Mac, ${copy.hears}. Nothing is sent anywhere.`;
 }
 
 /**

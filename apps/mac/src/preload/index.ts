@@ -64,6 +64,7 @@ const bridge: AvanzelBridge = {
     setLibrary: (patch) => ipcRenderer.invoke("settings:set-library", patch),
     downloadHosted: (id: string) => ipcRenderer.invoke("settings:download-hosted", id),
     cancelHostedDownload: (id: string) => ipcRenderer.invoke("settings:cancel-hosted-download", id),
+    cancelSpeechModelDownload: () => ipcRenderer.invoke("settings:cancel-speech-model-download"),
     removeHosted: (id: string) => ipcRenderer.invoke("settings:remove-hosted", id),
     generatePrivateKey: () => ipcRenderer.invoke("settings:generate-private-key"),
     pastePrivateKey: () => ipcRenderer.invoke("settings:paste-private-key"),

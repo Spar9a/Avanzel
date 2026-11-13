@@ -77,10 +77,11 @@ describe.skipIf(process.env.AVANZEL_TEST_ASR !== "1")("Parakeet v3 end to end (A
 
     const transcript = await transcriber.transcribe(wav);
     expect(transcript.seconds).toBeGreaterThan(25);
-    // The clip is the macOS voice Samantha (macOS 26.6) reading `spoken`. Avanzel v0.1 (OnnxAsrTranscriber, int8, onnx-asr
-    // 0.12.0) printed exactly that for it: eight sentences, each with its full stop, one space between them. If a macOS
-    // update changes the voice and this fails, run v0.1's transcriber on the new `say` output and expect what it prints.
-    expect(transcript.text).toBe(spoken);
+    // The clip is the macOS voice Samantha (macOS 26.6) reading `spoken`: eight sentences, each with its full stop, one space
+    // between them. Avanzel v0.1 (onnx-asr 0.12.0), which heard it pause by pause, printed exactly `spoken`; heard in pieces of
+    // up to 25 s, as now, Parakeet spells the one word the American way. If a macOS update changes the voice and this fails,
+    // expect what the transcriber prints for the new `say` output.
+    expect(transcript.text).toBe(spoken.replaceAll("harbour", "harbor"));
   }, 60_000);
 
   it("reads other sample rates and channel counts", async () => {

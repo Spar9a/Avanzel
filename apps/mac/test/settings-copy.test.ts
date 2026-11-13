@@ -1,4 +1,4 @@
-import { MODELS, VAD_MODEL } from "@avanzel/engine";
+import { modelBytes, MODELS, SPEECH_MODELS, VAD_MODEL } from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SKIP_APPS } from "../src/main/cursor-policy.ts";
 import {
@@ -50,6 +50,10 @@ import {
   SETTING_KEPT,
   SHOW_MORE_DICTATIONS,
   speechModelLine,
+  speechModelName,
+  speechModelOption,
+  speechSwitchFailedProblem,
+  SPEECH_MODEL_COPY,
   SPEECH_MODEL_DESCRIPTION,
   RESTART_NOT_CALLED_OFF,
   RESTART_NOT_STARTED,
@@ -202,46 +206,55 @@ describe("settings copy", () => {
     expect(microphoneName("b", [])).toBe("Microphone not connected");
   });
 
-  it("the speech model row says which languages it hears, and names no model", () => {
-    expect(SPEECH_MODEL_DESCRIPTION).toBe(
-      "Turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.",
+  it("speechModelLine names the model in use and the languages it hears, and for a command only that it is the library's", () => {
+    expect(speechModelLine({ backend: "onnx-asr", model: "nemo-parakeet-tdt-0.6b-v3" })).toBe(
+      "NVIDIA Parakeet TDT 0.6B v3 turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.",
     );
-    // The languages are for the person to know; which model hears them is the app's business.
-    expect(SPEECH_MODEL_DESCRIPTION).not.toMatch(/parakeet|whisper|silero|nemo/i);
-  });
-
-  it("speechModelLine follows the library's voice settings: the default model, the English-only one, and a command", () => {
-    // The engine's own names: the default model and its English-only sibling are both models it runs.
-    expect(Object.keys(MODELS)).toEqual(expect.arrayContaining(["nemo-parakeet-tdt-0.6b-v3", "nemo-parakeet-tdt-0.6b-v2"]));
-    expect(speechModelLine({ backend: "onnx-asr", model: "nemo-parakeet-tdt-0.6b-v3" })).toBe(SPEECH_MODEL_DESCRIPTION);
+    expect(speechModelLine({ backend: "onnx-asr", model: "moondream-parakeet-ultra-0.6b" })).toBe(
+      "Moondream Parakeet Ultra 0.6B turns your voice into text on this Mac, in 25 European languages including English, Ukrainian and Russian. Nothing is sent anywhere.",
+    );
     expect(speechModelLine({ backend: "onnx-asr", model: "nemo-parakeet-tdt-0.6b-v2" })).toBe(
-      "Turns your voice into English text on this Mac. Nothing is sent anywhere.",
+      "NVIDIA Parakeet TDT 0.6B v2 turns your voice into text on this Mac, in English only. Nothing is sent anywhere.",
     );
     // A command is whatever the library's settings run: it promises neither a language nor that nothing leaves the Mac.
     const command = "Turns your voice into text with the command in this library's settings.";
     expect(speechModelLine({ backend: "command", model: "" })).toBe(command);
     expect(speechModelLine({ backend: "command", model: "nemo-parakeet-tdt-0.6b-v2" })).toBe(command);
-    // A model the engine doesn't run is told by the Notice under the row, not by this line, which stays the general one.
+    // A model the engine doesn't run is told by the Notice under the row: this line claims no name and no languages for it.
     expect(speechModelLine({ backend: "onnx-asr", model: "parakeet-v9" })).toBe(SPEECH_MODEL_DESCRIPTION);
-    for (const line of [speechModelLine({ backend: "onnx-asr", model: "nemo-parakeet-tdt-0.6b-v2" }), command]) {
-      expect(line).not.toMatch(/parakeet|whisper|silero|nemo|v2/i);
-    }
+    expect(SPEECH_MODEL_DESCRIPTION).toBe("Turns your voice into text on this Mac. Nothing is sent anywhere.");
   });
 
-  it("every speech model the engine has is classified as English-only or not, so a new one can't get the wrong languages", () => {
-    // What each model hears: the engine has no such field, so this is where it is decided. A model added to the engine's MODELS
-    // fails the first expectation until it is put here, and would otherwise be told with the default's 25 languages.
-    const hears: Record<string, "english" | "25 languages"> = {
-      "nemo-parakeet-tdt-0.6b-v3": "25 languages",
-      "nemo-parakeet-tdt-0.6b-v2": "english",
-    };
-    const speech = Object.keys(MODELS).filter((id) => id !== VAD_MODEL);
-    expect(Object.keys(hears).sort()).toEqual(speech.sort());
-    for (const model of speech) {
-      const line = speechModelLine({ backend: "onnx-asr", model });
-      if (hears[model] === "english") expect(line, model).toBe("Turns your voice into English text on this Mac. Nothing is sent anywhere.");
-      else expect(line, model).toBe(SPEECH_MODEL_DESCRIPTION);
-    }
+  it("every speech model the engine runs has its name, maker and languages, in the engine's order", () => {
+    // The engine has no such fields, so this is where they are decided: a model added to the engine fails here until it is added.
+    expect(Object.keys(SPEECH_MODEL_COPY)).toEqual([...SPEECH_MODELS]);
+    expect(SPEECH_MODELS).toEqual(Object.keys(MODELS).filter((id) => id !== VAD_MODEL));
+    expect(Object.values(SPEECH_MODEL_COPY).map((copy) => `${copy.maker} ${copy.name}: ${copy.languages}`)).toEqual([
+      "NVIDIA Parakeet TDT 0.6B v3: 25 European languages",
+      "Moondream Parakeet Ultra 0.6B: 25 European languages",
+      "NVIDIA Parakeet TDT 0.6B v2: English only",
+    ]);
+    expect(speechModelName("nemo-parakeet-tdt-0.6b-v2")).toBe("Parakeet TDT 0.6B v2");
+  });
+
+  it("speechModelOption gives the name, the languages and the size, and says a model not on this Mac is downloaded", () => {
+    const english = "nemo-parakeet-tdt-0.6b-v2";
+    expect(speechModelOption({ id: english, bytes: modelBytes(english), onThisMac: true })).toBe("Parakeet TDT 0.6B v2: English only, 661 MB");
+    expect(speechModelOption({ id: english, bytes: modelBytes(english), onThisMac: false })).toBe("Parakeet TDT 0.6B v2: English only, 661 MB to download");
+    expect(speechModelOption({ id: "nemo-parakeet-tdt-0.6b-v3", bytes: 670_480_039, onThisMac: true })).toBe(
+      "Parakeet TDT 0.6B v3: 25 European languages, 670 MB",
+    );
+    // A size the snapshot couldn't tell (a quantization the engine doesn't know) isn't given; a model with no copy yet goes by the engine's name.
+    expect(speechModelOption({ id: english, bytes: 0, onThisMac: false })).toBe("Parakeet TDT 0.6B v2: English only");
+    expect(speechModelOption({ id: "parakeet-v9", bytes: 0, onThisMac: false })).toBe("parakeet-v9");
+  });
+
+  it("a chosen speech model whose download stopped says why, that the model in use goes on, and what Try again does", () => {
+    expect(speechSwitchFailedProblem("The file wasn't found (404).", true)).toEqual({
+      title: "The new speech model didn't finish downloading.",
+      body: "The file wasn't found (404). Avanzel goes on hearing with the model in use, and Try again continues where it stopped.",
+    });
+    expect(speechSwitchFailedProblem("", false).body).toBe("Avanzel goes on hearing with the model in use, and Try again downloads it again.");
   });
 
   it("leavesThisMacLine says the voice stays on this Mac, unless the library's settings hand it to a command", () => {

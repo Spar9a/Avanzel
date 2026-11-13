@@ -7,7 +7,7 @@ import { AvanzelError, type TimedText, type Transcriber, type Transcript } from 
 import { parakeetFileNames } from "./models.ts";
 import { assetsDir, SESSION_OPTIONS } from "./onnx.ts";
 import { resampleTo16k } from "./resample.ts";
-import { segmentSpeech } from "./vad.ts";
+import { packSegments, segmentSpeech } from "./vad.ts";
 import { loadAudio, SAMPLE_RATE } from "./wav.ts";
 
 export { assetsDir, SESSION_OPTIONS } from "./onnx.ts";
@@ -257,7 +257,10 @@ export class ParakeetTranscriber implements Transcriber {
     if (samples.length < MIN_SAMPLES) {
       text = "";
     } else if (needsSegments(seconds)) {
-      text = await recognizeSegments(samples, await this.#speech(samples), (batch) => this.#recognize(batch));
+      // Heard in pieces of up to 25 s rather than pause by pause: each word with the speech around it. Calls don't come
+      // here: `transcribeSegments` keeps every stretch apart, so that the two sides of a call interleave by when they spoke.
+      const pieces = packSegments(await this.#speech(samples), VAD_THRESHOLD_SECONDS * SAMPLE_RATE);
+      text = await recognizeSegments(samples, pieces, (batch) => this.#recognize(batch));
     } else {
       text = (await this.#recognize([samples]))[0]!;
     }
