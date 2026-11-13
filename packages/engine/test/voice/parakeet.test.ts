@@ -203,10 +203,12 @@ describe("recognizeSegments", () => {
     return { batches, recognize };
   }
 
-  it("recognizes long audio eight segments at a time and joins the texts", async () => {
+  // One at a time: eight 25 s pieces in one run made ONNX Runtime ask for a block Electron's allocator refuses, and the app
+  // crashed on recordings of about two minutes or more.
+  it("recognizes long audio one segment at a time and joins the texts", async () => {
     const { batches, recognize } = recognizer();
     expect(await recognizeSegments(samples, segments, recognize)).toBe("a b c d e f g h i j k l m");
-    expect(batches.map((batch) => batch.length)).toEqual([8, 8, 1]);
+    expect(batches.map((batch) => batch.length)).toEqual(segments.map(() => 1));
     expect(batches.flat()).toEqual(segments.map(([start, end]) => samples.subarray(start, end)));
   });
 
@@ -239,6 +241,16 @@ describe("recognizeTimed", () => {
       { start: 0.5, end: 2.5, text: "first" },
       { start: 4.5, end: 7.5, text: "third" },
     ]);
+  });
+
+  it("recognizes one segment at a time unless told otherwise", async () => {
+    const sizes: number[] = [];
+    const recognize = async (batch: Float32Array[]) => {
+      sizes.push(batch.length);
+      return batch.map(() => "x");
+    };
+    await recognizeTimed(samples, segments, recognize);
+    expect(sizes).toEqual([1, 1, 1]);
   });
 
   it("recognizes in batches of the given size", async () => {

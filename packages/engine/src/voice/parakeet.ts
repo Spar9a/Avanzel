@@ -14,8 +14,12 @@ export { assetsDir, SESSION_OPTIONS } from "./onnx.ts";
 
 /** Audio longer than this is cut into speech segments with Silero VAD first (as Avanzel v0.1 does). */
 export const VAD_THRESHOLD_SECONDS = 25;
-/** Segments recognised per encoder run, as in onnx-asr. */
-const VAD_BATCH_SIZE = 8;
+/**
+ * Segments recognised per encoder run. onnx-asr runs eight, but eight 25 s pieces in one run grow ONNX Runtime's memory
+ * by ~2 GB, in one block Electron's allocator refuses: the app crashed (SIGTRAP) on recordings of about two minutes or
+ * more. One at a time keeps a run at most 25 s of audio (~400 MB however long the recording) and is no slower.
+ */
+const VAD_BATCH_SIZE = 1;
 /** Two 10 ms feature frames: with one, the per-feature variance is 0/0 and the model emits <unk> noise. */
 const MIN_SAMPLES = 2 * 160;
 
