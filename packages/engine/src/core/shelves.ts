@@ -157,3 +157,71 @@ export function writeShelfSection(root: string, shelves: readonly OwnShelf[]): v
   const current = lstatOrNull(path)?.isFile() ? readFileSync(path, "utf8") : "";
   replaceInside(root, "AGENTS.md", withShelfSection(current, shelves));
 }
+
+// --- index.md headings ---------------------------------------------------------------------------------------------------------
+//
+// One `## <Name>` heading per shelf, its pages' lines below it. These change only the heading and lines asked for.
+
+const SHELF_HEADING = /^## (.*?)\s*$/;
+const ANY_HEADING = /^#{1,2} /;
+
+function headingAt(lines: readonly string[], name: string): number {
+  const wanted = name.trim().toLowerCase();
+  return lines.findIndex((line) => SHELF_HEADING.exec(line)?.[1]?.toLowerCase() === wanted);
+}
+
+/** Where the block under the heading at `heading` ends: the next heading, or the end of the file. */
+function blockEnd(lines: readonly string[], heading: number): number {
+  const next = lines.findIndex((line, at) => at > heading && ANY_HEADING.test(line));
+  return next === -1 ? lines.length : next;
+}
+
+/** `index` with a `## <name>` heading after the last block, unless it has one with that name already. */
+export function withIndexHeading(index: string, name: string): string {
+  if (headingAt(index.split("\n"), name) !== -1) return index;
+  if (index === "") return `## ${name}\n`;
+  const gap = index.endsWith("\n\n") ? "" : index.endsWith("\n") ? "\n" : "\n\n";
+  return `${index}${gap}## ${name}\n`;
+}
+
+/** `index` with the heading `from` renamed to `to`, unless there is none, or one called `to` already. */
+export function withIndexHeadingRenamed(index: string, from: string, to: string): string {
+  const lines = index.split("\n");
+  const at = headingAt(lines, from);
+  const existing = headingAt(lines, to);
+  if (at === -1 || (existing !== -1 && existing !== at)) return index;
+  lines[at] = `## ${to}`;
+  return lines.join("\n");
+}
+
+/** `index` without the heading `name` and the blank lines after it, when nothing but blank lines sits under it. */
+export function withoutEmptyIndexHeading(index: string, name: string): string {
+  const lines = index.split("\n");
+  const at = headingAt(lines, name);
+  if (at === -1) return index;
+  const end = blockEnd(lines, at);
+  if (lines.slice(at + 1, end).some((line) => line.trim() !== "")) return index;
+  let stop = at + 1;
+  while (stop < lines.length && lines[stop]?.trim() === "") stop++;
+  if (stop === lines.length && lines[stop - 1] === "" && stop - 1 > at) stop--; // keep the file's final newline
+  lines.splice(at, stop - at);
+  return lines.join("\n");
+}
+
+/**
+ * `index` with the line holding `[[<stem>]]` moved to the end of the block under the heading `name`, adding the heading when it
+ * is missing. Without such a line the index stays as it is.
+ */
+export function withIndexLineMoved(index: string, stem: string, name: string): string {
+  const lines = index.split("\n");
+  const from = lines.findIndex((line) => line.includes(`[[${stem}]]`));
+  if (from === -1) return index;
+  const [line] = lines.splice(from, 1) as [string];
+  const moved = withIndexHeading(lines.join("\n"), name).split("\n");
+  const heading = headingAt(moved, name);
+  let last = blockEnd(moved, heading) - 1;
+  while (last > heading && moved[last]?.trim() === "") last--;
+  if (last === heading) moved.splice(heading + 1, 0, "", line);
+  else moved.splice(last + 1, 0, line);
+  return moved.join("\n");
+}

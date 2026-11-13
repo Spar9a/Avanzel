@@ -10,6 +10,10 @@ import {
   SHELF_SECTION_END,
   SHELF_SECTION_START,
   suggestFolder,
+  withIndexHeading,
+  withIndexHeadingRenamed,
+  withIndexLineMoved,
+  withoutEmptyIndexHeading,
   withShelfSection,
   writeShelfSection,
   type OwnShelf,
@@ -186,6 +190,40 @@ describe("withShelfSection", () => {
     expect(out.startsWith(input)).toBe(true);
     expect(out).toContain("| `projects/` |");
     expect(withShelfSection(out, [projects])).toBe(out);
+  });
+});
+
+describe("index headings", () => {
+  const index = "# Index\n\nIntro.\n\n## Ideas\n\n- [[acme]] — Acme\n- [[beta]] — Beta\n\n## Topics\n";
+
+  it("adds a heading after the last block, once", () => {
+    const added = withIndexHeading(index, "Projects");
+    expect(added).toBe(`${index}\n## Projects\n`);
+    expect(withIndexHeading(added, "projects")).toBe(added);
+    expect(withIndexHeading("", "Projects")).toBe("## Projects\n");
+  });
+
+  it("moves a line to the end of the block under a heading, adding the heading when missing", () => {
+    const moved = withIndexLineMoved(withIndexHeading(index, "Projects"), "acme", "Projects");
+    expect(moved).toBe("# Index\n\nIntro.\n\n## Ideas\n\n- [[beta]] — Beta\n\n## Topics\n\n## Projects\n\n- [[acme]] — Acme\n");
+    expect(withIndexLineMoved(moved, "beta", "Projects")).toContain("- [[acme]] — Acme\n- [[beta]] — Beta\n");
+    expect(withIndexLineMoved(index, "acme", "Topics")).toBe(
+      "# Index\n\nIntro.\n\n## Ideas\n\n- [[beta]] — Beta\n\n## Topics\n\n- [[acme]] — Acme\n",
+    );
+    expect(withIndexLineMoved(index, "missing", "Topics")).toBe(index);
+  });
+
+  it("renames a heading, unless the new name is a heading already", () => {
+    expect(withIndexHeadingRenamed(index, "Ideas", "Sparks")).toContain("## Sparks\n");
+    expect(withIndexHeadingRenamed(index, "Ideas", "Topics")).toBe(index);
+    expect(withIndexHeadingRenamed(index, "Nope", "Sparks")).toBe(index);
+  });
+
+  it("removes an empty heading and the blank lines after it, and nothing else", () => {
+    const withEmpty = `${index}\n## Projects\n\n## People\n\n- [[ann]] — Ann\n`;
+    expect(withoutEmptyIndexHeading(withEmpty, "Projects")).toBe(`${index}\n## People\n\n- [[ann]] — Ann\n`);
+    expect(withoutEmptyIndexHeading(withEmpty, "People")).toBe(withEmpty);
+    expect(withoutEmptyIndexHeading(withEmpty, "Ideas")).toBe(withEmpty);
   });
 });
 

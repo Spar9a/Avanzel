@@ -6,12 +6,12 @@
 // a name that never overwrites another, the library's rules, settings and shadow tasks are put back,
 // and every filing is its own git commit, so it can be undone.
 
-import { copyFileSync, existsSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { AvanzelError, type Transcriber } from "../types.ts";
 import { Changes, diff, snapshot, type Snapshot } from "./changes.ts";
 import type { ToolStep } from "./claude-stream.ts";
-import type { Settings } from "./config.ts";
+import { loadSettings, saveSettings, type Settings } from "./config.ts";
 import { localDate } from "./dates.ts";
 import type { HostedProvider } from "./hosted-model.ts";
 import { flowItems, frontmatterFields, splitFrontmatter } from "./frontmatter.ts";
@@ -28,9 +28,25 @@ import {
   type RunFailure,
   type RunResult,
 } from "./harness.ts";
-import { createInside, lstatOrNull, realFoldersTo, removeInside, writeInside } from "./inside.ts";
+import { createInside, lstatOrNull, realFoldersTo, removeInside, replaceInside, writeInside } from "./inside.ts";
 import { parseDictionary } from "./dictionary.ts";
 import { askPrompt, filePrompt, reviewPrompt } from "./prompts.ts";
+import {
+  BUILT_IN_SHELVES,
+  MAX_OWN_SHELVES,
+  MAX_SHELF_NAME,
+  cleanDefinition,
+  folderProblem,
+  nameBreaksRules,
+  sameShelf,
+  shelfTextLength,
+  withIndexHeading,
+  withIndexHeadingRenamed,
+  withIndexLineMoved,
+  withoutEmptyIndexHeading,
+  writeShelfSection,
+  type OwnShelf,
+} from "./shelves.ts";
 import { insideLibrary, stepPath, type FilingStep } from "./steps.ts";
 import { AUDIO_EXTS, IMAGE_EXTS, SPECIAL_DIRS, TEXT_EXTS, type Capture, type Vault } from "./vault.ts";
 import { watchWrites } from "./watch.ts";
@@ -179,6 +195,13 @@ interface WithBefore {
   steps?: ((step: FilingStep) => void) | undefined;
 }
 
+/** What a shelf operation did: its commit (null with no git or auto-commit off) and the pages (library-relative, as they were) moved or kept. */
+export interface ShelfResult {
+  commit: string | null;
+  moved: string[];
+  notMoved: string[];
+}
+
 /** What one agent run gives: its result, and what the guard put back after it. */
 interface Ran {
   result: RunResult;
@@ -189,7 +212,7 @@ function quiet(): void {}
 
 export class Librarian {
   readonly vault: Vault;
-  readonly settings: Settings;
+  #settings: Settings;
   readonly harnessName: string | null;
   readonly clock: () => Date;
   readonly #transcriber: Transcriber | null;
@@ -205,10 +228,15 @@ export class Librarian {
     this.#privateKey = privateKey;
     this.#hosted = hosted;
     this.vault = vault;
-    this.settings = settings;
+    this.#settings = settings;
     this.harnessName = harnessName;
     this.clock = clock;
     this.#transcriber = transcriber;
+  }
+
+  /** The settings this librarian works with. The shelf operations refresh its shelves and declined shelves after they save. */
+  get settings(): Settings {
+    return this.#settings;
   }
 
   /** The agent CLI doing the work, picked on first use. */
@@ -314,6 +342,171 @@ export class Librarian {
       this.vault.ensureFolders();
       return undone;
     });
+  }
+
+  // --- shelves ------------------------------------------------------------------------------
+
+  /**
+   * Make a shelf of the owner's own: its folder (one that is already there is adopted as it is), its entry in config.toml and
+   * `AGENTS.md`, its heading in `index.md`, and `pages` moved into it (`ShelfResult.notMoved` names the ones that could not).
+   * All of it is one commit, which `undo` takes back.
+   */
+  async makeShelf(shelf: OwnShelf, pages: readonly string[] = []): Promise<ShelfResult> {
+    const root = this.vault.root;
+    return this.#shelfOperation(`make shelf ${shelf.folder}`, (current) => {
+      const folder = shelf.folder;
+      const name = checkedName(shelf.name);
+      const definition = checkedDefinition(shelf.definition);
+      const clash = current.shelves.find((other) => sameShelf(other.folder, folder) || sameShelf(other.name, name));
+      if (clash) throw new AvanzelError(`A shelf called ${clash.name} already exists. Choose another name.`);
+      if (current.shelves.length >= MAX_OWN_SHELVES) {
+        throw new AvanzelError(`You have ${MAX_OWN_SHELVES} shelves of your own, and that is the most. Remove one you don't use, then try again.`);
+      }
+      const problem = folderProblem(folder, current.shelves.map((other) => other.folder));
+      if (problem) throw new AvanzelError(problem);
+      const there = lstatOrNull(join(root, folder));
+      if (there && !there.isDirectory()) {
+        throw new AvanzelError(`A file or link called ${folder} is already in the library, so no shelf was made. Choose another folder name.`);
+      }
+      const next = { ...current, shelves: [...current.shelves, { folder, name, definition }] };
+      return {
+        next,
+        apply: () => {
+          realFoldersTo(root, `${folder}/page`, true);
+          this.#editIndex((index) => withIndexHeading(index, name));
+          const moved: string[] = [];
+          const notMoved: string[] = [];
+          for (const rel of new Set(pages)) (this.#movePage(rel, folder, name) ? moved : notMoved).push(rel);
+          this.vault.appendLog("shelf", moved.length ? `${folder} → ${moved.map(wikilink).join(", ")}` : folder, this.clock());
+          return { moved, notMoved };
+        },
+      };
+    });
+  }
+
+  /** Change the name or the definition of one of the owner's shelves (its folder stays); the index heading follows a new name. */
+  async editShelf(folder: string, change: { name?: string; definition?: string }): Promise<ShelfResult> {
+    return this.#shelfOperation(`edit shelf ${folder}`, (current) => {
+      const shelf = ownShelf(current, folder);
+      const name = change.name === undefined ? shelf.name : checkedName(change.name);
+      const definition = change.definition === undefined ? shelf.definition : checkedDefinition(change.definition);
+      const clash = current.shelves.find((other) => other !== shelf && sameShelf(other.name, name));
+      if (clash) throw new AvanzelError(`A shelf called ${clash.name} already exists. Choose another name.`);
+      const next = { ...current, shelves: current.shelves.map((other) => (other === shelf ? { folder, name, definition } : other)) };
+      return {
+        next,
+        apply: () => {
+          if (name !== shelf.name) this.#editIndex((index) => withIndexHeadingRenamed(index, shelf.name, name));
+          return { moved: [], notMoved: [] };
+        },
+      };
+    });
+  }
+
+  /**
+   * Remove one of the owner's shelves that holds no pages: its entry, its empty index heading and its row in `AGENTS.md`, and its
+   * folder (unless something that isn't a page is in it, which stays).
+   */
+  async removeShelf(folder: string): Promise<ShelfResult> {
+    const root = this.vault.root;
+    return this.#shelfOperation(`remove shelf ${folder}`, (current) => {
+      const shelf = ownShelf(current, folder);
+      if ((this.vault.shelfCounts()[folder] ?? 0) > 0) {
+        throw new AvanzelError(`The ${shelf.name} shelf still has pages, so it was kept. Move or remove its pages first.`);
+      }
+      const next = { ...current, shelves: current.shelves.filter((other) => other !== shelf) };
+      return {
+        next,
+        apply: () => {
+          if (lstatOrNull(join(root, folder))?.isDirectory() && isEmptyFolder(join(root, folder))) removeInside(root, folder);
+          this.#editIndex((index) => withoutEmptyIndexHeading(index, shelf.name));
+          return { moved: [], notMoved: [] };
+        },
+      };
+    });
+  }
+
+  /**
+   * Turn down a shelf the librarian suggested: remember its folder so it is not suggested again, move the pages the agent made
+   * there (`agentMadePages`) to `topics/`, and remove the folder when nothing is left in it.
+   */
+  async declineShelf(folder: string, agentMadePages: readonly string[] = []): Promise<ShelfResult> {
+    const root = this.vault.root;
+    return this.#shelfOperation(`decline shelf ${folder}`, (current) => {
+      if (
+        folder === "" ||
+        folder === "." ||
+        folder === ".." ||
+        /[/\\]/.test(folder) ||
+        folder.startsWith(".") ||
+        BUILT_IN_SHELVES.includes(folder) ||
+        SPECIAL_DIRS.includes(folder) ||
+        current.shelves.some((shelf) => shelf.folder === folder)
+      ) {
+        throw new AvanzelError(`${folder} is not a suggested shelf, so nothing was turned down. Choose a suggestion.`);
+      }
+      const declinedShelves = current.declinedShelves.includes(folder) ? current.declinedShelves : [...current.declinedShelves, folder];
+      return {
+        next: { ...current, declinedShelves },
+        apply: () => {
+          const moved: string[] = [];
+          const notMoved: string[] = [];
+          for (const rel of new Set(agentMadePages)) {
+            (rel.startsWith(`${folder}/`) && this.#movePage(rel, "topics", "Topics") ? moved : notMoved).push(rel);
+          }
+          if (lstatOrNull(join(root, folder))?.isDirectory() && isEmptyFolder(join(root, folder))) removeInside(root, folder);
+          return { moved, notMoved };
+        },
+      };
+    });
+  }
+
+  /**
+   * One shelf operation, as the other runs that change the library are: under the lock, after the owner's own changes are
+   * committed, and as one commit. `plan` reads the settings as they are on disk now, refuses what it must (before anything
+   * changes), and says what the settings become and how to carry out the rest. The saved shelves are then also this librarian's.
+   */
+  async #shelfOperation(
+    what: string,
+    plan: (current: Settings) => { next: Settings; apply: () => Pick<ShelfResult, "moved" | "notMoved"> },
+  ): Promise<ShelfResult> {
+    const root = this.vault.root;
+    return this.vault.withLock(async () => {
+      const current = loadSettings(root);
+      const { next, apply } = plan(current);
+      await this.#commitOwnerChanges(what);
+      saveSettings(root, next);
+      this.#settings = { ...this.#settings, shelves: next.shelves, declinedShelves: next.declinedShelves };
+      if (JSON.stringify(next.shelves) !== JSON.stringify(current.shelves)) writeShelfSection(root, next.shelves);
+      const { moved, notMoved } = apply();
+      const commit = await this.#commit(`avanzel: ${what}`);
+      return { commit, moved, notMoved };
+    });
+  }
+
+  /**
+   * Move the page `rel` (library-relative) into `folder`: set its `shelf:` to the folder and its `index.md` line under the
+   * heading `heading`. False, with the page where it was, when it isn't a page of a shelf, a link, or something is in its way.
+   */
+  #movePage(rel: string, folder: string, heading: string): boolean {
+    const root = this.vault.root;
+    const parts = rel.split("/");
+    if (!isShelfPage(rel) || rel.includes("\\") || parts.some((part) => part === "" || part.startsWith("."))) return false;
+    if (!lstatOrNull(join(root, rel))?.isFile() || !realFoldersTo(root, rel, false)) return false;
+    const target = `${folder}/${basename(rel)}`;
+    if (lstatOrNull(join(root, target)) || !realFoldersTo(root, target, true)) return false;
+    renameSync(join(root, rel), join(root, target));
+    replaceInside(root, target, withShelfField(readFileSync(join(root, target), "utf8"), folder));
+    this.#editIndex((index) => withIndexLineMoved(index, stem(rel), heading));
+    return true;
+  }
+
+  /** Rewrite `index.md` as `change` says (not at all when it changes nothing). */
+  #editIndex(change: (index: string) => string): void {
+    const path = this.vault.indexPath;
+    const index = lstatOrNull(path)?.isFile() ? readFileSync(path, "utf8") : "";
+    const edited = change(index);
+    if (edited !== index) replaceInside(this.vault.root, "index.md", edited);
   }
 
   async #fileQueue(
@@ -779,6 +972,47 @@ function moveFile(from: string, to: string): void {
     copyFileSync(from, to);
     unlinkSync(from);
   }
+}
+
+function ownShelf(settings: Settings, folder: string): OwnShelf {
+  const shelf = settings.shelves.find((other) => other.folder === folder);
+  if (!shelf) throw new AvanzelError(`${folder} is not one of your shelves, so nothing was changed.`);
+  return shelf;
+}
+
+function checkedName(name: string): string {
+  const trimmed = name.trim();
+  const length = shelfTextLength(trimmed);
+  if (length < 1) throw new AvanzelError("Give the shelf a name, then save it.");
+  if (length > MAX_SHELF_NAME) {
+    throw new AvanzelError(`A shelf name can be at most ${MAX_SHELF_NAME} characters, and this one has ${length}. Choose a shorter name.`);
+  }
+  if (nameBreaksRules(trimmed)) throw new AvanzelError("A shelf name can't hold | or a line break. Remove them, then save it.");
+  return trimmed;
+}
+
+function checkedDefinition(text: string): string {
+  const definition = cleanDefinition(text);
+  if (definition === "") throw new AvanzelError("Say what belongs on the shelf, then save it.");
+  return definition;
+}
+
+/** Whether the folder holds nothing but hidden files such as .DS_Store. */
+function isEmptyFolder(path: string): boolean {
+  return readdirSync(path).every((name) => name.startsWith("."));
+}
+
+/** `text` (a page) with `shelf: <folder>` in its front matter: replaced if there, added if not, a block made if there is none. */
+function withShelfField(text: string, folder: string): string {
+  const line = `shelf: ${folder}`;
+  if (!text.startsWith("---\n") || text.indexOf("\n---\n", 3) === -1) return `---\n${line}\n---\n${text}`;
+  const [block, body] = splitFrontmatter(text);
+  const lines = block === "" ? [] : block.split("\n");
+  const at = lines.findIndex((each) => /^shelf:/.test(each));
+  const carriage = (lines[at === -1 ? lines.length - 1 : at] ?? "").endsWith("\r") ? "\r" : "";
+  if (at === -1) lines.push(`${line}${carriage}`);
+  else lines[at] = `${line}${carriage}`;
+  return `---\n${lines.join("\n")}\n---\n${body}`;
 }
 
 function stem(path: string): string {
