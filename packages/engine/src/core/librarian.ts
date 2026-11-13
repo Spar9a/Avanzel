@@ -339,6 +339,13 @@ export class Librarian {
         const message = `avanzel: undo ${subject.replace(/^avanzel: /, "")}`;
         if ((await gitops.revertKeeping(root, sha, message, (rel) => this.#keptOnUndo(rel))) !== null) undone += 1;
       }
+      // An undone shelf operation changed the saved shelves; a config that can't be read is reported where settings are read.
+      try {
+        const saved = loadSettings(root);
+        this.#settings = { ...this.#settings, shelves: saved.shelves, declinedShelves: saved.declinedShelves };
+      } catch {
+        /* keep what this librarian had */
+      }
       this.vault.ensureFolders();
       return undone;
     });
@@ -359,6 +366,7 @@ export class Librarian {
       const definition = checkedDefinition(shelf.definition);
       const clash = current.shelves.find((other) => sameShelf(other.folder, folder) || sameShelf(other.name, name));
       if (clash) throw new AvanzelError(`A shelf called ${clash.name} already exists. Choose another name.`);
+      refuseBuiltInName(name);
       if (current.shelves.length >= MAX_OWN_SHELVES) {
         throw new AvanzelError(`You have ${MAX_OWN_SHELVES} shelves of your own, and that is the most. Remove one you don't use, then try again.`);
       }
@@ -392,6 +400,7 @@ export class Librarian {
       const definition = change.definition === undefined ? shelf.definition : checkedDefinition(change.definition);
       const clash = current.shelves.find((other) => other !== shelf && sameShelf(other.name, name));
       if (clash) throw new AvanzelError(`A shelf called ${clash.name} already exists. Choose another name.`);
+      if (name !== shelf.name) refuseBuiltInName(name);
       const next = { ...current, shelves: current.shelves.map((other) => (other === shelf ? { folder, name, definition } : other)) };
       return {
         next,
@@ -978,6 +987,14 @@ function ownShelf(settings: Settings, folder: string): OwnShelf {
   const shelf = settings.shelves.find((other) => other.folder === folder);
   if (!shelf) throw new AvanzelError(`${folder} is not one of your shelves, so nothing was changed.`);
   return shelf;
+}
+
+/** A built-in shelf's index heading is its folder name with a capital: an own shelf can't take it, or removing that shelf would take the heading. */
+function refuseBuiltInName(name: string): void {
+  const builtIn = BUILT_IN_SHELVES.find((folder) => sameShelf(folder, name));
+  if (builtIn) {
+    throw new AvanzelError(`A shelf called ${builtIn.charAt(0).toUpperCase()}${builtIn.slice(1)} already exists. Choose another name.`);
+  }
 }
 
 function checkedName(name: string): string {

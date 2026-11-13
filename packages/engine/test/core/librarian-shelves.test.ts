@@ -89,6 +89,24 @@ describe.skipIf(!git.available())("shelf operations", () => {
     expect(read(join(vault.root, "AGENTS.md"))).toBe(before.agents);
     expect(read(join(vault.root, ".avanzel/config.toml"))).toBe(before.config);
     expect(loadSettings(vault.root).shelves).toEqual([]);
+    expect(librarian.settings.shelves).toEqual([]);
+  });
+
+  it("refuses a name that is a built-in shelf's index heading, when making and when editing", async () => {
+    const index = read(vault.indexPath);
+    const made = await rejection(librarian.makeShelf({ folder: "my-ideas", name: "Ideas", definition: "Mine." }));
+    expect(made.message).toBe("A shelf called Ideas already exists. Choose another name.");
+    expect((await rejection(librarian.makeShelf({ folder: "notes", name: "meeting", definition: "Mine." }))).message).toBe(
+      "A shelf called Meetings already exists. Choose another name.",
+    );
+    expect(loadSettings(vault.root).shelves).toEqual([]);
+    await librarian.makeShelf(PROJECTS);
+    const edited = await rejection(librarian.editShelf("projects", { name: "topics" }));
+    expect(edited.message).toBe("A shelf called Topics already exists. Choose another name.");
+    expect(loadSettings(vault.root).shelves[0]?.name).toBe("Projects");
+    expect(read(vault.indexPath)).toContain("## Projects");
+    expect(read(vault.indexPath)).toContain("## Topics");
+    expect(read(vault.indexPath).startsWith(index.trimEnd())).toBe(true);
   });
 
   it("refuses a shelf that is the same as one of the owner's (case and a trailing s ignored)", async () => {
