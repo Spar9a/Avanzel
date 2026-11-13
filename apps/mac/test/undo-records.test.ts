@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { normalizeUndoRecord, UndoRecordStore, type FilingReceipt } from "../src/main/undo-records.ts";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "avz-undo-records-"));
-const none = { filing: null, evening: [], receipt: null };
+const none = { filing: null, evening: [], receipt: null, shelf: null };
 
 // Commits as git prints them: 40 hex digits (SHA-1), or 64 (SHA-256).
 const A = "a".repeat(40);
@@ -43,9 +43,9 @@ describe("undo record store", () => {
     store.patch("/libs/b/../b", { evening: [B1, B2] });
     expect(Object.keys(onDisk(file)).sort()).toEqual(["/libs/a", "/libs/b"]);
     const again = new UndoRecordStore(file);
-    expect(again.get("/libs/a")).toEqual({ filing: A, evening: [], receipt: null });
-    expect(again.get("/libs/b")).toEqual({ filing: null, evening: [B1, B2], receipt: null });
-    expect(again.get("/libs/b/./")).toEqual({ filing: null, evening: [B1, B2], receipt: null }); // however the library's path is spelled
+    expect(again.get("/libs/a")).toEqual({ filing: A, evening: [], receipt: null, shelf: null });
+    expect(again.get("/libs/b")).toEqual({ filing: null, evening: [B1, B2], receipt: null, shelf: null });
+    expect(again.get("/libs/b/./")).toEqual({ filing: null, evening: [B1, B2], receipt: null, shelf: null }); // however the library's path is spelled
     expect(again.get("/libs/c")).toEqual(none);
   });
 
@@ -54,14 +54,14 @@ describe("undo record store", () => {
     const store = new UndoRecordStore(file);
     store.patch("/libs/a", { filing: A });
     store.patch("/libs/a", { evening: [B1, B2] });
-    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: A, evening: [B1, B2], receipt: null });
+    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: A, evening: [B1, B2], receipt: null, shelf: null });
     store.patch("/libs/a", { filing: null });
-    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: null, evening: [B1, B2], receipt: null });
+    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: null, evening: [B1, B2], receipt: null, shelf: null });
     store.patch("/libs/a", { filing: E });
     store.patch("/libs/a", { evening: [] });
-    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: E, evening: [], receipt: null });
+    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: E, evening: [], receipt: null, shelf: null });
     store.patch("/libs/a", { filing: undefined }); // naming nothing is naming nothing
-    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: E, evening: [], receipt: null });
+    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: E, evening: [], receipt: null, shelf: null });
   });
 
   it("takes a library out of the file once it has nothing to undo, and leaves the others be", () => {
@@ -94,7 +94,7 @@ describe("undo record store", () => {
     store.patch("/libs/b", { filing: null }); // another library with nothing to take out
     expect(readFileSync(file, "utf8")).toBe(held);
     store.patch("/libs/a", { evening: [B1] }); // a change of the list is a change
-    expect(onDisk(file)).toEqual({ "/libs/a": { filing: A, evening: [B1], receipt: null } });
+    expect(onDisk(file)).toEqual({ "/libs/a": { filing: A, evening: [B1], receipt: null, shelf: null } });
     expect(readFileSync(file, "utf8")).not.toBe(held);
   });
 
@@ -105,8 +105,8 @@ describe("undo record store", () => {
     const store = new UndoRecordStore(file);
     expect(store.get("/libs/a")).toEqual(none);
     store.patch("/libs/a", { filing: A });
-    expect(onDisk(file)).toEqual({ "/libs/a": { filing: A, evening: [], receipt: null } });
-    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: A, evening: [], receipt: null });
+    expect(onDisk(file)).toEqual({ "/libs/a": { filing: A, evening: [], receipt: null, shelf: null } });
+    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: A, evening: [], receipt: null, shelf: null });
     for (const wrong of ["[]", "null", '"HEAD"', "7"]) {
       writeFileSync(file, wrong); // valid JSON, and no record of anything
       expect(new UndoRecordStore(file).get("/libs/a")).toEqual(none);
@@ -129,11 +129,11 @@ describe("undo record store", () => {
     );
     const store = new UndoRecordStore(file);
     expect(store.get("/libs/a")).toEqual(none);
-    expect(store.get("/libs/b")).toEqual({ filing: A, evening: [], receipt: null });
-    expect(store.get("/libs/c")).toEqual({ filing: LONG, evening: [], receipt: null });
+    expect(store.get("/libs/b")).toEqual({ filing: A, evening: [], receipt: null, shelf: null });
+    expect(store.get("/libs/c")).toEqual({ filing: LONG, evening: [], receipt: null, shelf: null });
     expect(store.get("/libs/d")).toEqual(none);
     expect(store.get("/libs/e")).toEqual(none);
-    expect(store.get("/libs/f")).toEqual({ filing: A, evening: [], receipt: null });
+    expect(store.get("/libs/f")).toEqual({ filing: A, evening: [], receipt: null, shelf: null });
     expect(store.get("/libs/g")).toEqual(none);
   });
 
@@ -141,13 +141,13 @@ describe("undo record store", () => {
     const file = path.join(tmp(), "undo-records.json");
     const store = new UndoRecordStore(file);
     // A whole receipt round-trips equal, in the same file as the commits, under the library's path.
-    store.patch("/libs/a", { filing: A, receipt: RECEIPT });
-    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: A, evening: [], receipt: RECEIPT });
-    expect(onDisk(file)).toEqual({ "/libs/a": { filing: A, evening: [], receipt: RECEIPT } });
+    store.patch("/libs/a", { filing: A, receipt: RECEIPT, shelf: null });
+    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: A, evening: [], receipt: RECEIPT, shelf: null });
+    expect(onDisk(file)).toEqual({ "/libs/a": { filing: A, evening: [], receipt: RECEIPT, shelf: null } });
     // A filing that left no commit (no git, or auto_commit off) has a receipt all the same; one that only noted its capture has no page.
     const noCommit: FilingReceipt = { ...RECEIPT, commit: null, noted: true, restored: false, pages: [] };
-    store.patch("/libs/b", { receipt: noCommit });
-    expect(new UndoRecordStore(file).get("/libs/b")).toEqual({ filing: null, evening: [], receipt: noCommit });
+    store.patch("/libs/b", { receipt: noCommit, shelf: null });
+    expect(new UndoRecordStore(file).get("/libs/b")).toEqual({ filing: null, evening: [], receipt: noCommit, shelf: null });
     // A receipt is kept only whole. Whatever else is wrong with it, the record's commits are kept as they are.
     const broken: [string, unknown][] = [
       ["seconds that are words", { ...RECEIPT, seconds: "23" }],
@@ -170,31 +170,31 @@ describe("undo record store", () => {
       ["a string", "Filed"],
     ];
     for (const [what, receipt] of broken) {
-      writeFileSync(file, JSON.stringify({ "/libs/a": { filing: A, evening: [B1], receipt } }));
-      expect(new UndoRecordStore(file).get("/libs/a"), what).toEqual({ filing: A, evening: [B1], receipt: null });
+      writeFileSync(file, JSON.stringify({ "/libs/a": { filing: A, evening: [B1], receipt, shelf: null } }));
+      expect(new UndoRecordStore(file).get("/libs/a"), what).toEqual({ filing: A, evening: [B1], receipt: null, shelf: null });
     }
     // An unknown field of a whole receipt goes, as a record's does; the page's too.
     writeFileSync(file, JSON.stringify({ "/libs/a": { receipt: { ...RECEIPT, surprise: true, pages: [{ ...RECEIPT.pages[1], surprise: 1 }] } } }));
-    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: null, evening: [], receipt: { ...RECEIPT, pages: [RECEIPT.pages[1]] } });
+    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: null, evening: [], receipt: { ...RECEIPT, pages: [RECEIPT.pages[1]] }, shelf: null });
   });
 
   it("changes a receipt without touching the commits, and keeps a library for its receipt alone", () => {
     const file = path.join(tmp(), "undo-records.json");
     const store = new UndoRecordStore(file);
-    store.patch("/libs/a", { filing: A, evening: [B1, B2], receipt: RECEIPT });
-    store.patch("/libs/a", { receipt: null });
-    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: A, evening: [B1, B2], receipt: null });
-    store.patch("/libs/a", { receipt: RECEIPT });
+    store.patch("/libs/a", { filing: A, evening: [B1, B2], receipt: RECEIPT, shelf: null });
+    store.patch("/libs/a", { receipt: null, shelf: null });
+    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: A, evening: [B1, B2], receipt: null, shelf: null });
+    store.patch("/libs/a", { receipt: RECEIPT, shelf: null });
     store.patch("/libs/a", { filing: null, evening: [] }); // no Undo left, and the receipt is: the library stays in the file (F2)
     expect(Object.keys(onDisk(file))).toEqual(["/libs/a"]);
-    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: null, evening: [], receipt: RECEIPT });
-    store.patch("/libs/a", { receipt: null }); // and with the receipt gone it has nothing: the library goes
+    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: null, evening: [], receipt: RECEIPT, shelf: null });
+    store.patch("/libs/a", { receipt: null, shelf: null }); // and with the receipt gone it has nothing: the library goes
     expect(onDisk(file)).toEqual({});
     // A receipt of one library is no other's, and a patch that names the same receipt writes nothing.
-    store.patch("/libs/a", { receipt: RECEIPT });
+    store.patch("/libs/a", { receipt: RECEIPT, shelf: null });
     const held = readFileSync(file, "utf8");
     store.patch("/libs/a", { receipt: { ...RECEIPT, pages: RECEIPT.pages.map((page) => ({ ...page })) } });
-    store.patch("/libs/b", { receipt: null });
+    store.patch("/libs/b", { receipt: null, shelf: null });
     expect(readFileSync(file, "utf8")).toBe(held);
     expect(new UndoRecordStore(file).get("/libs/b")).toEqual(none);
     store.patch("/libs/a", { receipt: { ...RECEIPT, seconds: 24 } }); // a change of the receipt is a change
@@ -219,8 +219,8 @@ describe("undo record store", () => {
 
 describe("normalizeUndoRecord", () => {
   it("reads a good record as it is, and anything else as none", () => {
-    expect(normalizeUndoRecord({ filing: A, evening: [B1, B2] })).toEqual({ filing: A, evening: [B1, B2], receipt: null });
-    expect(normalizeUndoRecord({ filing: A.toUpperCase(), evening: [E.toUpperCase()] })).toEqual({ filing: A.toUpperCase(), evening: [E.toUpperCase()], receipt: null });
+    expect(normalizeUndoRecord({ filing: A, evening: [B1, B2] })).toEqual({ filing: A, evening: [B1, B2], receipt: null, shelf: null });
+    expect(normalizeUndoRecord({ filing: A.toUpperCase(), evening: [E.toUpperCase()] })).toEqual({ filing: A.toUpperCase(), evening: [E.toUpperCase()], receipt: null, shelf: null });
     for (const raw of [undefined, null, 7, "HEAD", [], [A], {}, { filing: 7 }, { evening: null }, { evening: [E, ""] }]) {
       expect(normalizeUndoRecord(raw), JSON.stringify(raw)).toEqual(none);
     }
@@ -240,7 +240,7 @@ describe("normalizeUndoRecord", () => {
     given.pages[0]!.title = "Changed";
     expect(record.receipt).toEqual(RECEIPT);
     expect(normalizeUndoRecord({ receipt: { ...RECEIPT, filedAt: -1 } }).receipt).toBeNull();
-    expect(normalizeUndoRecord({ receipt: null }).receipt).toBeNull();
+    expect(normalizeUndoRecord({ receipt: null, shelf: null }).receipt).toBeNull();
     expect(normalizeUndoRecord({ filing: A }).receipt).toBeNull(); // a record from before receipts had none
   });
 
@@ -261,7 +261,31 @@ describe("normalizeUndoRecord", () => {
       ["a list", [ASK]],
     ];
     for (const [what, suggestion] of broken) {
-      expect(normalizeUndoRecord({ filing: A, receipt: { ...RECEIPT, suggestion } }), what).toEqual({ filing: A, evening: [], receipt: { ...RECEIPT, suggestion: null } });
+      expect(normalizeUndoRecord({ filing: A, receipt: { ...RECEIPT, suggestion } }), what).toEqual({ filing: A, evening: [], receipt: { ...RECEIPT, suggestion: null }, shelf: null });
     }
+  });
+
+  it("reads the last Make shelf: none when it is missing or broken, its suggestion none when that isn't whole", () => {
+    const pending = { folder: "projects", name: "Projects", definition: "Work with a goal.", agentMade: false, pages: [{ path: "ideas/launch.md", captureId: "c1" }] };
+    const shelf = { commit: A, name: "Projects", pending };
+    expect(normalizeUndoRecord({ filing: A }).shelf).toBeNull(); // a record from before shelves
+    expect(normalizeUndoRecord({ filing: A, shelf }).shelf).toEqual(shelf);
+    expect(normalizeUndoRecord({ filing: A, shelf: { ...shelf, pending: null } }).shelf).toEqual({ ...shelf, pending: null }); // made in Settings from a draft gone meanwhile
+    expect(normalizeUndoRecord({ filing: A, shelf: { ...shelf, surprise: 1 } }).shelf).toEqual(shelf);
+    expect(normalizeUndoRecord({ filing: A, shelf: { ...shelf, pending: "projects" } }).shelf).toEqual({ ...shelf, pending: null });
+    for (const broken of [{ ...shelf, commit: "HEAD" }, { ...shelf, commit: undefined }, { ...shelf, name: 3 }, "projects", [shelf]]) {
+      expect(normalizeUndoRecord({ filing: A, shelf: broken }), JSON.stringify(broken)).toEqual({ filing: A, evening: [], receipt: null, shelf: null });
+    }
+  });
+
+  it("keeps a library for its made shelf alone, until a patch clears it", () => {
+    const file = path.join(tmp(), "undo-records.json");
+    const store = new UndoRecordStore(file);
+    const shelf = { commit: A, name: "Projects", pending: null };
+    store.patch("/libs/a", { filing: A, receipt: null, shelf });
+    store.patch("/libs/a", { filing: null }); // its Undo was asked for: the marker stays for the take-back to read
+    expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: null, evening: [], receipt: null, shelf });
+    store.patch("/libs/a", { shelf: null });
+    expect(onDisk(file)).toEqual({});
   });
 });

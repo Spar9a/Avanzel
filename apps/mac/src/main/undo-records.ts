@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { FiledPage, ShelfAsk } from "../shared/ipc.ts";
 import { parseShelfAsk } from "./shelf-asks.ts";
+import { normalizePending, type PendingShelf } from "./shelf-suggestions.ts";
 import { writeJsonAtomic } from "./store.ts";
 
 /** What a filing that ended well told the person, kept so that the card can be printed again (`Controller.showLastReceipt`). */
@@ -34,6 +35,18 @@ export interface UndoRecord {
   evening: string[];
   /** The last filing's receipt, kept after the filing's Undo is gone (a review that wrote, a failed filing) until the next filing replaces it; null for none. */
   receipt: FilingReceipt | null;
+  /**
+   * The last Make shelf, when `filing` is its commit (`MadeShelf`), so that its Undo after a relaunch still says the shelf is gone and puts
+   * its suggestion back; null for none. A newer filing clears it.
+   */
+  shelf: MadeShelf | null;
+}
+
+/** A shelf Make shelf made: its commit, the shelf's name, and the suggestion it answered, which its Undo puts back as pending (null for none). */
+export interface MadeShelf {
+  commit: string;
+  name: string;
+  pending: PendingShelf | null;
 }
 
 /** A commit's name in full: 40 hex digits (SHA-1), up to 64 (SHA-256). A shorter one, or a name such as HEAD, names no commit for sure. */
@@ -68,18 +81,28 @@ function normalizeReceipt(raw: unknown): FilingReceipt | null {
   return { commit, text, agent, seconds, pages, noted, restored, filedAt, suggestion: parseShelfAsk(raw.suggestion) };
 }
 
-/** A record from whatever was read: a `filing` that is no commit is none, `evening` is kept only when every item is a commit, and a receipt only when whole. */
+/**
+ * A made shelf from whatever was read: a commit and a name, or none (a record from before shelves, or a broken one). A suggestion that
+ * isn't whole is none, and the shelf stays: its Undo then says the shelf is gone, and puts nothing back.
+ */
+function normalizeShelf(raw: unknown): MadeShelf | null {
+  if (!isObject(raw) || !isCommit(raw.commit) || typeof raw.name !== "string") return null;
+  return { commit: raw.commit, name: raw.name, pending: raw.pending === null ? null : normalizePending(raw.pending) };
+}
+
+/** A record from whatever was read: a `filing` that is no commit is none, `evening` is kept only when every item is a commit, and a receipt and a made shelf only when whole. */
 export function normalizeUndoRecord(raw: unknown): UndoRecord {
   const r = isObject(raw) ? raw : {};
   return {
     filing: isCommit(r.filing) ? r.filing : null,
     evening: Array.isArray(r.evening) && r.evening.every(isCommit) ? [...r.evening] : [],
     receipt: normalizeReceipt(r.receipt),
+    shelf: normalizeShelf(r.shelf),
   };
 }
 
 /** Whether a record has nothing to keep: no Undo and no receipt. It is taken out of the file; a record with only a receipt stays. */
-const isEmpty = (record: UndoRecord) => record.filing === null && record.evening.length === 0 && record.receipt === null;
+const isEmpty = (record: UndoRecord) => record.filing === null && record.evening.length === 0 && record.receipt === null && record.shelf === null;
 
 export class UndoRecordStore {
   constructor(private readonly file: string) {}

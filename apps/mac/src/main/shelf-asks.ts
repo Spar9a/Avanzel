@@ -2,6 +2,8 @@
 // Settings lists them. Pure: the controller does the asking and the making (`Controller.makeShelf`, `changeShelves`).
 import { BUILT_IN_SHELVES, type OwnShelf } from "@avanzel/engine";
 import type { LibraryInfo, ShelfAsk, ShelfOp } from "../shared/ipc.ts";
+import { undoRefused, type Problem } from "../shared/problems.ts";
+import { shelfUndoneNote } from "../shared/shelves.ts";
 import type { PendingShelf } from "./shelf-suggestions.ts";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -63,4 +65,12 @@ export function ownShelvesInfo(shelves: readonly OwnShelf[], counts: Readonly<Re
     .filter(([folder]) => !BUILT_IN_SHELVES.includes(folder) && !shelves.some((shelf) => shelf.folder === folder))
     .map(([folder, pages]) => ({ folder, name: folder, definition: "", pages }));
   return [...own, ...handMade];
+}
+
+/**
+ * What an Undo of a Make shelf tells, by notification (no filed card is of it): a refusal is told as any refused Undo (`undoRefused`);
+ * otherwise the shelf is gone, and Library asks about its suggestion again only when `restored`: the suggestion is pending again for sure.
+ */
+export function shelfUndoNotice(undone: boolean, name: string, restored: boolean): Problem {
+  return undone ? { title: "Undone", body: shelfUndoneNote(name, restored) } : undoRefused;
 }

@@ -198,8 +198,8 @@ import { captureDisplay, captureRegion, looksBlank, previewOf } from "./screensh
 import { Setup, type SetupHost } from "./setup.ts";
 import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
 import { ShelfSuggestions, type PendingShelf } from "./shelf-suggestions.ts";
-import { askOf, ownShelvesInfo, parseShelfAsk, parseShelfOp } from "./shelf-asks.ts";
-import { shelfMadeLine, shelfUndoneNote } from "../shared/shelves.ts";
+import { askOf, ownShelvesInfo, parseShelfAsk, parseShelfOp, shelfUndoNotice } from "./shelf-asks.ts";
+import { shelfMadeLine } from "../shared/shelves.ts";
 import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
@@ -593,10 +593,11 @@ export class Controller {
   /** The shelves the librarian suggested that the owner hasn't answered, for each library on this Mac (`<userData>/shelf-suggestions.json`). */
   private readonly shelfSuggestions: ShelfSuggestions;
   /**
-   * The shelves Make shelf made in this app run, by their commit: the library, the shelf's name, and the suggestion it answered (null for
-   * one Settings made from nothing), which an Undo of that commit puts back as pending (`afterUndo`).
+   * The Undos of a Make shelf that have landed or failed (`revertFiling`), by commit, until `tellUndone` tells them: the shelf's name, and
+   * whether its suggestion is pending again. What Make shelf made is kept in the library's undo record (`UndoRecord.shelf`), so that its
+   * Undo says the right thing after a relaunch too.
    */
-  private readonly madeShelves = new Map<string, { library: string; name: string; pending: PendingShelf | null }>();
+  private readonly shelfUndos = new Map<string, { name: string; restored: boolean }>();
   /** The capture each filing's commit filed, in this app run (a filing's, or one of an evening review's): its Undo takes the capture's pages off any suggestion. */
   private readonly filedCaptures = new Map<string, string>();
   /** The folders whose Make shelf or No is waiting or running: a second press of either does nothing meanwhile. */
@@ -1231,7 +1232,7 @@ export class Controller {
     // The record goes whether or not the filing is held in memory: while git can't run, `checkUndo` dropped it from memory only and kept it
     // on disk, and a filing that begins now makes it stale (a patch that changes nothing writes nothing). The receipt is no part of this: it
     // stays until the next filing that ends well replaces it, or the take-back of its filing clears it (`forgetFiling`).
-    this.undoRecords.patch(root, { filing: null });
+    this.undoRecords.patch(root, { filing: null, shelf: null }); // a Make shelf's marker goes with its Undo
     if (root !== this.vault?.root || this.lastFiled === null) return;
     this.lastFiled = null;
     this.refreshMenu();
@@ -3134,7 +3135,7 @@ export class Controller {
     // Kept with the note's own library, open or not: it is offered again whenever that library opens (`openLibrary`). A filing that ends
     // while Avanzel quits returned above, before this, and its start has cleared the record before it: a quit loses that Undo. A filing that
     // failed, was stopped or was gone returned above too, and leaves the receipt as it was.
-    if (receipt) this.undoRecords.patch(library.root, outcome.commit ? { filing: outcome.commit, receipt } : { receipt });
+    if (receipt) this.undoRecords.patch(library.root, outcome.commit ? { filing: outcome.commit, receipt, shelf: null } : { receipt, shelf: null });
     this.keepDuration(job, library, seconds);
     this.noteFiled((capture) => capture === job.capturePath);
     // Setup's thought is filed, which counts whether its window is still there to show it or has closed (§5.4).
@@ -3919,15 +3920,35 @@ export class Controller {
    * and its card may be up after another library has opened. It is taken as the Undo is asked for, before the queue.
    */
   private async revertFiling(commit: string, library: Vault = this.requireVault()): Promise<boolean> {
+    // A Make shelf's commit, as the record kept it (across a relaunch too): read before anything forgets it, and cleared as it is taken.
+    const made = this.undoRecords.get(library.root).shelf;
+    const shelf = made?.commit === commit ? made : null;
     this.forgetFiling(commit, library.root); // before the first await: the menu doesn't offer a commit that is being taken back
     this.reverting.add(commit); // from before it waits in the queue until it lands: a reprint's Undo of this commit does nothing meanwhile
+    let undone = false;
     try {
-      const undone = (await this.enqueue(async () => (await this.librarianFor(library)).undo([commit]))) === 1;
-      if (undone) this.afterUndo(library.root, [commit]);
+      undone = (await this.enqueue(async () => (await this.librarianFor(library)).undo([commit]))) === 1;
       return undone;
     } finally {
+      if (shelf) {
+        this.undoRecords.patch(library.root, { shelf: null }); // taken back, or refused: either way it is offered no more
+        const restored = undone && shelf.pending !== null && this.restoreSuggestion(library.root, shelf.pending);
+        this.shelfUndos.set(commit, { name: shelf.name, restored });
+      }
+      if (undone) this.afterUndo(library.root, [commit]);
       this.reverting.delete(commit);
       this.readLog();
+    }
+  }
+
+  /** Puts back as pending the suggestion a Make shelf answered, which its Undo took back: whether it is pending again. */
+  private restoreSuggestion(root: string, pending: PendingShelf): boolean {
+    try {
+      this.shelfSuggestions.restore(root, pending);
+      return this.shelfSuggestions.list(root).some((shelf) => shelf.folder === pending.folder);
+    } catch (error) {
+      console.error("shelf suggestions", error);
+      return false;
     }
   }
 
@@ -4022,15 +4043,13 @@ export class Controller {
   }
 
   /**
-   * An Undo of `commits` landed in the library at `root`. A shelf Make shelf made is gone: the suggestion it answered waits again. A
-   * filing is gone: its capture's pages leave any suggestion, and one left with no page goes. After a relaunch the captures of older
+   * An Undo of `commits` landed in the library at `root` (a Make shelf's suggestion is put back before, by `revertFiling`). A filing is
+   * gone: its capture's pages leave any suggestion, and one left with no page goes. After a relaunch the captures of older
    * commits aren't known, so a pending page that is no page any more takes its capture off as well. Library and Settings are told.
    */
   private afterUndo(root: string, commits: readonly string[]): void {
     try {
       for (const commit of commits) {
-        const made = this.madeShelves.get(commit);
-        if (made?.pending) this.shelfSuggestions.restore(made.library, made.pending);
         const capture = this.filedCaptures.get(commit);
         this.filedCaptures.delete(commit);
         if (capture !== undefined) this.shelfSuggestions.forgetCapture(root, capture);
@@ -4056,8 +4075,8 @@ export class Controller {
   /**
    * Make shelf: `ask`'s shelf is made, as `edited` says when the owner changed it first (Settings' form), and the pages of its pending
    * suggestion move onto it. All of it is one commit, in turn with the library's other runs (`enqueue`), and the engine takes the
-   * library's lock. The commit is the library's latest Undo (`lastFiled`, `undoRecords`), and its Undo puts the suggestion back as pending
-   * (`afterUndo`). A bar says how it went (`shelf-made`), or a notification when the capsule is busy. A suggestion the agent made with no
+   * library's lock. The commit is the library's latest Undo (`lastFiled`, `undoRecords` with its `shelf`), and its Undo puts the suggestion back as pending
+   * (`revertFiling`). A bar says how it went (`shelf-made`), or a notification when the capsule is busy. A suggestion the agent made with no
    * definition is not made: Settings' shelf form opens on it, for the owner to say what belongs on it. A refusal (a name that is taken, a
    * file in the folder's way) is told as a failed Undo is: on the card that asked, else by notification. A second press while the first
    * waits or runs does nothing, and so does one for a suggestion no longer pending (answered meanwhile, or its filing undone).
@@ -4106,9 +4125,10 @@ export class Controller {
         return false;
       }
       const { result, removed } = made;
-      if (result.commit) {
-        this.madeShelves.set(result.commit, { library: root, name: shelf.name, pending: removed });
-        this.undoRecords.patch(root, { filing: result.commit, receipt: null });
+      // A shelf made from a suggestion (Make shelf, Edit first's Save) is the library's latest Undo, which puts the suggestion back; one
+      // Settings adds from nothing is not, and leaves the last filing's Undo as it was.
+      if (result.commit && fromSuggestion !== undefined) {
+        this.undoRecords.patch(root, { filing: result.commit, receipt: null, shelf: { commit: result.commit, name: shelf.name, pending: removed } });
         if (this.vault?.root === root) {
           this.lastFiled = { commit: result.commit, library: root };
           this.lastReceipt = null; // its pages moved: the receipt of the filing before would print them where they no longer are
@@ -4290,11 +4310,11 @@ export class Controller {
    */
   private tellUndone(undone: boolean, commit: string): void {
     // A shelf that Make shelf made: no filed card is of it, and no words went back to the inbox.
-    const shelf = this.madeShelves.get(commit);
+    const shelf = this.shelfUndos.get(commit);
     if (shelf) {
-      this.madeShelves.delete(commit);
-      if (undone) this.notify("Undone", shelfUndoneNote(shelf.name, shelf.pending !== null));
-      else this.notify(undoRefused.title, undoRefused.body);
+      this.shelfUndos.delete(commit);
+      const notice = shelfUndoNotice(undone, shelf.name, shelf.restored);
+      this.notify(notice.title, notice.body);
       return this.refreshMenu();
     }
     // The filed card the capsule shows: the reprint when one does, else the newest filing's. It is this filing's when its commit is `commit`,

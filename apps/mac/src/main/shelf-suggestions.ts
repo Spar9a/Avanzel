@@ -22,7 +22,7 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** A pending shelf from whatever was read, or null when it isn't whole: pages that aren't a path and a capture are dropped. */
-function normalizePending(raw: unknown): PendingShelf | null {
+export function normalizePending(raw: unknown): PendingShelf | null {
   if (!isObject(raw) || typeof raw.folder !== "string" || typeof raw.name !== "string") return null;
   const definition = typeof raw.definition === "string" ? raw.definition : "";
   const pages = Array.isArray(raw.pages)

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { askOf, ownShelvesInfo, parseShelfAsk, parseShelfOp } from "../src/main/shelf-asks.ts";
+import { askOf, ownShelvesInfo, parseShelfAsk, parseShelfOp, shelfUndoNotice } from "../src/main/shelf-asks.ts";
+import { undoRefused } from "../src/shared/problems.ts";
 import { shelfMadeLine, shelfUndoneNote } from "../src/shared/shelves.ts";
 
 const ASK = { folder: "projects", name: "Projects", definition: "Work with a goal and a deadline.", agentMade: false };
@@ -81,5 +82,17 @@ describe("shelfMadeLine", () => {
     expect(shelfMadeLine("Projects", 2, 0)).toBe("Made the Projects shelf and moved 2 pages.");
     expect(shelfMadeLine("Projects", 0, 1)).toBe("Made the Projects shelf and moved 0 pages. 1 page stayed where it was, as one with its name is already there.");
     expect(shelfMadeLine("Projects", 1, 2)).toBe("Made the Projects shelf and moved 1 page. 2 pages stayed where they were, as ones with their names are already there.");
+  });
+});
+
+describe("shelfUndoNotice, what an Undo of Make shelf tells", () => {
+  it("says Library asks again only when the suggestion is pending again", () => {
+    expect(shelfUndoNotice(true, "Projects", true)).toEqual({ title: "Undone", body: "The Projects shelf is gone, and its pages are back where they were. Library asks about it again." });
+    expect(shelfUndoNotice(true, "Projects", false)).toEqual({ title: "Undone", body: "The Projects shelf is gone, and its pages are back where they were." });
+  });
+
+  it("tells a refused one as any refused Undo, never that the words are in the inbox", () => {
+    for (const restored of [true, false]) expect(shelfUndoNotice(false, "Projects", restored)).toEqual(undoRefused);
+    for (const restored of [true, false]) expect(shelfUndoNotice(true, "Projects", restored).body).not.toMatch(/inbox/);
   });
 });
