@@ -36,3 +36,34 @@ Avanzel enforces a few guarantees no matter how the agent behaves:
   commands for later runs; edit those files yourself while no agent run is active, or in
   `avanzel chat`;
 - if the library is a git repo, each run is a commit you can inspect or revert (git hooks never run).
+
+## Your own shelves
+
+Besides the six shelves, you can have shelves of your own, such as `projects/` or `recipes/`. A shelf
+has a name, a folder (lowercase letters, digits and dashes) and a line on what belongs on it. Own
+shelves share one brown look in Library and on the filing card.
+
+Add one in Settings → General → "Your shelves": give it a name, a folder and "What belongs on it". You
+can edit a shelf later. You can remove it only while it is empty. A folder you made by hand shows "No
+definition yet" until you choose "Add definition".
+
+The definitions live in `.avanzel/config.toml`, as `[[shelves]]`. Avanzel also writes them into a
+marked "Your shelves" section of the library's `AGENTS.md`, so every filing is told about them. Edit
+the definitions in Settings, not in that section: Avanzel rewrites it. The rest of `AGENTS.md` stays
+yours.
+
+### When the librarian suggests a shelf
+
+When a thought fits no shelf, the librarian files it on the closest one and may suggest a new one.
+
+- The filing card says "This might belong on a new shelf: <name>" and shows the definition. Choose
+  "Make shelf" or "Not now". "Not now" leaves the question in Library.
+- Library asks "Make a shelf called <name>?" with "Make shelf", "Edit first" and "No".
+- "Make shelf" makes the shelf and moves that page onto it. "Undo" takes it back, and Library asks again.
+- "No" is remembered in `declined_shelves` in `.avanzel/config.toml`, so the librarian doesn't suggest
+  that shelf again. There is no button to take a No back: edit `declined_shelves` by hand, while no
+  agent run is active.
+
+If the librarian makes a folder itself, the card says "The agent started a shelf called <folder>." Choose
+"Edit first" to say what belongs on it, or "No" to turn it down. Turning it down moves its pages to
+Topics and removes the folder.
