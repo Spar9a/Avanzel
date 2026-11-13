@@ -2,7 +2,7 @@
 // and in the panel's Processing) and in Library, where Make shelf, Edit first and No answer it. Each filing here is a real one, by the
 // engine's fake agent, which ends its reply with "New shelf: …" (FAKE_AGENT_SUGGEST) as a librarian that asks for a shelf does.
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadSettings } from "../../../packages/engine/src/index.ts";
 import { barOf, holdTheQueue, launchOn, letTheQueueGo, notified, panelOn, panelSnapshot } from "./capsule-helpers.ts";
@@ -42,7 +42,36 @@ const MADE = "avanzel: make shelf projects";
 const pagesIn = (library: string, folder: string) => filesUnder(library, folder).filter((name) => name.startsWith("idea-"));
 
 /** Library's question about a pending shelf: a Notice, by its title. */
-const libraryQuestion = (panel: Page, name = "Projects") => panel.getByRole("status").filter({ hasText: `Make a ${name} shelf?` });
+const libraryQuestion = (panel: Page, name = "Projects") => panel.getByRole("status").filter({ hasText: `Make a shelf called ${name}?` });
+/** Its body: the definition, then what Make shelf does with the one page suggested. */
+const LIBRARY_BODY = `${DEFINITION} Making it moves the suggested page onto it, and Undo takes it back.`;
+
+/**
+ * With AVANZEL_SHELF_SHOTS=<dir>, a picture of `page` (one of the app's own windows) for the design pass, in light and in dark, as
+ * <dir>/<name>-light.png and -dark.png; the appearance goes back to the system's after. Without it, nothing: no test asserts on a picture.
+ */
+async function shelfShot(app: ElectronApplication, page: Page, name: string): Promise<void> {
+  const dir = process.env.AVANZEL_SHELF_SHOTS;
+  if (!dir) return;
+  mkdirSync(dir, { recursive: true });
+  for (const mode of ["light", "dark"] as const) {
+    await app.evaluate(({ nativeTheme }, source) => {
+      nativeTheme.themeSource = source;
+    }, mode);
+    await page.emulateMedia({ colorScheme: mode });
+    await page.waitForTimeout(350); // let the appearance settle, and any appear animation end
+    try {
+      // omitBackground: the capsule's window is see-through, so it is pictured on nothing rather than on white
+      await page.screenshot({ path: path.join(dir, `${name}-${mode}.png`), omitBackground: true, timeout: 5_000 });
+    } catch (error) {
+      console.warn(`shelfShot ${name}-${mode}: ${String(error).split("\n")[0]}`); // a picture for people, not an assertion
+    }
+  }
+  await app.evaluate(({ nativeTheme }) => {
+    nativeTheme.themeSource = "system";
+  });
+  await page.emulateMedia({ colorScheme: "light" });
+}
 
 /** A row of Library's list, by its page's path. */
 const row = (panel: Page, rel: string) => panel.locator(`[id="page-${rel}"]`);
@@ -73,6 +102,12 @@ test("(b) the filed card asks, Make shelf moves the page onto the new shelf, and
   const card = filedCard(capsule);
   await expect(card.getByText(QUESTION, { exact: true })).toBeVisible();
   await expect(card.getByText(DEFINITION, { exact: true })).toBeVisible();
+  // The question's words are a live region of their own, so VoiceOver hears it; its buttons are not in it.
+  const said = card.getByRole("status").filter({ hasText: QUESTION });
+  await expect(said).toHaveCount(1);
+  await expect(said).toContainText(DEFINITION);
+  await expect(said.getByRole("button")).toHaveCount(0);
+  await shelfShot(app, capsule, "i-filed-card-suggestion");
   // Open is the moment's primary, so Make shelf is a regular button beside Not now.
   const make = card.getByRole("button", { name: "Make shelf", exact: true });
   await expect(make).toHaveAttribute("data-variant", "secondary");
@@ -86,6 +121,9 @@ test("(b) the filed card asks, Make shelf moves the page onto the new shelf, and
   expect(loadSettings(library).shelves.map((shelf) => shelf.folder)).toEqual(["projects"]);
   await expect.poll(() => capsuleKind(app)).toBe("shelf-made");
   await expect(barOf(capsule)).toContainText("Made the Projects shelf and moved 1 page.");
+  await shelfShot(app, capsule, "v-shelf-made-bar");
+  // Every page moved, so nothing more is told.
+  expect(await notified(app, "The Projects shelf is made")).toEqual([]);
   // Library lists the page on its shelf, tagged Projects in the own look, asks nothing, and filters by the shelf.
   const panel = await panelOn(app, "library");
   const moved = row(panel, `projects/${page}`);
@@ -108,8 +146,11 @@ test("(c) No in Library turns the shelf down, and the next filing that suggests 
   const panel = await panelOn(app, "library");
   const question = libraryQuestion(panel);
   await expect(question).toBeVisible();
-  await expect(question.getByText(DEFINITION, { exact: true })).toBeVisible();
+  await expect(question.getByText(LIBRARY_BODY, { exact: true })).toBeVisible();
   await expect(question.getByRole("button")).toHaveText(["No", "Edit first", "Make shelf"]);
+  // The buttons are a group named by the question, so two questions' Make shelf are told apart.
+  await expect(question.getByRole("group", { name: "Make a shelf called Projects?", exact: true }).getByRole("button")).toHaveCount(3);
+  await shelfShot(app, panel, "iii-library-notice");
   await question.getByRole("button", { name: "No", exact: true }).click();
   await expect.poll(() => loadSettings(library).declinedShelves, { timeout: 30_000 }).toEqual(["projects"]);
   await expect(question).toHaveCount(0);
@@ -212,6 +253,7 @@ test("(f) Edit first in Library opens Settings' shelf form filled in, and Save m
   await expect(general.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("projects");
   await expect(general.getByRole("textbox", { name: "What belongs on it", exact: true })).toHaveValue(DEFINITION);
   await expect(general.getByText("Saving makes the shelf and moves the page it was suggested for onto it.", { exact: true })).toBeVisible();
+  await shelfShot(app, panel, "iv-settings-edit-first");
   await general.getByRole("textbox", { name: "Name", exact: true }).fill("Work projects");
   await general.getByRole("button", { name: "Save shelf", exact: true }).click();
   await expect.poll(() => lastCommit(library), { timeout: 30_000 }).toBe(MADE);
@@ -223,5 +265,34 @@ test("(f) Edit first in Library opens Settings' shelf form filled in, and Save m
   await expect(libraryQuestion(after)).toHaveCount(0);
   await expect(libraryQuestion(after, "Work projects")).toHaveCount(0);
   await expect(row(after, `projects/${page}`).locator('[data-shelf="own"]')).toHaveText("Work projects");
+  await app.close();
+});
+
+test("(g) No on the card about a folder the agent started turns it down: its page goes to Topics and the folder goes", async () => {
+  // The agent files into errands/, a folder nobody asked for, so the card asks about it by the folder's name, with no definition.
+  const library = await makeLibrary({ git: true });
+  const { app, capsule } = await launchOn(library, { FAKE_AGENT_MODE: "make-folder", FAKE_AGENT_FOLDER: "errands" });
+  await fileAThought(app);
+  const [page] = filesUnder(library, "errands");
+  expect(page).toMatch(/^p-.*\.md$/);
+  const card = filedCard(capsule);
+  const line = "The agent started a shelf called errands. Say what belongs on it, or turn it down.";
+  await expect(card.getByRole("status").filter({ hasText: line })).toHaveCount(1);
+  await expect(card.getByRole("button", { name: "Edit first", exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Make shelf", exact: true })).toHaveCount(0);
+  expect((await panelSnapshot(app)).shelfSuggestions.map((ask) => ask.folder)).toEqual(["errands"]);
+  await shelfShot(app, capsule, "ii-agent-made-card");
+  await card.getByRole("button", { name: "No", exact: true }).click();
+  await expect.poll(() => lastCommit(library), { timeout: 30_000 }).toBe("avanzel: decline shelf errands");
+  expect(loadSettings(library).declinedShelves).toEqual(["errands"]);
+  expect(filesUnder(library, "topics")).toContain(page);
+  expect(existsSync(path.join(library, "errands"))).toBe(false);
+  expect(loadSettings(library).shelves).toEqual([]);
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  // Library no longer asks about it, and lists the page on Topics.
+  expect((await panelSnapshot(app)).shelfSuggestions).toEqual([]);
+  const panel = await panelOn(app, "library");
+  await expect(panel.getByRole("status").filter({ hasText: "The agent started a shelf called errands." })).toHaveCount(0);
+  await expect(row(panel, `topics/${page}`)).toBeVisible();
   await app.close();
 });

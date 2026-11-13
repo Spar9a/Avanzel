@@ -80,20 +80,26 @@ function FiledCard({ state }: { state: StateOf<"filed"> }) {
  * and Make shelf, which is the moment's primary only when the card has no Open (`opens`). Make shelf is busy from its press until the card
  * is replaced by what came of it, as Undo is. A folder the agent started on its own has no definition yet: the card says so, and offers No
  * (turn it down) and Edit first, which opens Settings' shelf form on it to say what belongs there.
+ *
+ * The question's words are a live region of their own, as the filed line is, so VoiceOver hears that a shelf is suggested; its buttons
+ * stay out of it. They are small, in their own row under the pages, while Undo and Open stay regular at the foot's right: on purpose, so
+ * the question reads as an aside to the filing and not as its main actions.
  */
 function ShelfQuestion({ ask, opens }: { ask: ShelfAsk; opens: boolean }) {
   const [answer, setAnswer] = useState<"make" | "no" | null>(null);
   const yes = opens ? "secondary" : "primary";
   return (
     <Stack gap={6}>
-      {ask.agentMade ? (
-        <Text variant="footnote">{agentShelfLine(ask.folder)}</Text>
-      ) : (
-        <Stack gap={2}>
-          <Text variant="footnote">{shelfAskLine(ask.name)}</Text>
-          <Text variant="footnote" tone="secondary">{ask.definition}</Text>
-        </Stack>
-      )}
+      <div role="status">
+        {ask.agentMade ? (
+          <Text variant="footnote">{agentShelfLine(ask.folder)}</Text>
+        ) : (
+          <Stack gap={2}>
+            <Text variant="footnote">{shelfAskLine(ask.name)}</Text>
+            <Text variant="footnote" tone="secondary">{ask.definition}</Text>
+          </Stack>
+        )}
+      </div>
       {ask.agentMade ? (
         <Actions align="start">
           <Button

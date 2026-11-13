@@ -162,6 +162,17 @@ export interface ShelfAsk {
   agentMade: boolean;
 }
 
+/** A suggestion as Library asks about it: a `ShelfAsk`, with how many `pages` Make shelf would move onto the shelf, which its Notice says. */
+export interface LibraryShelfAsk extends ShelfAsk {
+  pages: number;
+}
+
+/** A shelf operation main is waiting on or running for `folder`: Make shelf (`make`, from a suggestion or Settings) or No (`decline`). */
+export interface ShelfGoing {
+  folder: string;
+  op: "make" | "decline";
+}
+
 /** A shelf of the owner's own, as Settings sends it: the engine's `OwnShelf`. */
 export interface OwnShelfInput {
   folder: string;
@@ -1565,12 +1576,12 @@ export interface PanelSnapshot {
    * The open library's pending shelf suggestions, oldest first: Library asks about each (`act("shelf-make:<folder>")`,
    * `"shelf-edit:<folder>"`, `"shelf-decline:<folder>"`). Empty without a library.
    */
-  shelfSuggestions: ShelfAsk[];
+  shelfSuggestions: LibraryShelfAsk[];
   /**
-   * The folders whose Make shelf or No is waiting for the library or running now: Library's buttons for each are busy until it ends,
-   * whether it was made, turned down or refused.
+   * The folders whose Make shelf or No is waiting for the library or running now, and which of the two: Library's button for that one is
+   * busy until it ends, whether it was made, turned down or refused, and the others wait with it.
    */
-  shelvesGoing: string[];
+  shelvesGoing: ShelfGoing[];
 }
 
 /** A file or screenshot added to a recording, as its Add list shows it: its name and when it was added (Date.now()). */

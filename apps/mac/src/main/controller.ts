@@ -198,8 +198,8 @@ import { captureDisplay, captureRegion, looksBlank, previewOf } from "./screensh
 import { Setup, type SetupHost } from "./setup.ts";
 import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
 import { ShelfSuggestions, type PendingShelf } from "./shelf-suggestions.ts";
-import { askOf, ownShelvesInfo, parseShelfAsk, parseShelfOp, shelfUndoNotice } from "./shelf-asks.ts";
-import { shelfMadeLine } from "../shared/shelves.ts";
+import { askOf, libraryAskOf, ownShelvesInfo, parseShelfAsk, parseShelfOp, shelfUndoNotice } from "./shelf-asks.ts";
+import { shelfMadeNotes } from "../shared/shelves.ts";
 import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
@@ -221,7 +221,7 @@ import {
 } from "./windows.ts";
 import { libraryPages, pagePrompt, sourcesOnlyOf, withoutItem } from "./library-pages.ts";
 import { heardTrigger, withoutStopWord } from "../shared/trigger.ts";
-import type { AddingKind, FileMode, PanelPage, PanelSnapshot, PanelTab, ShelfAsk, UpdateWait } from "../shared/ipc.ts";
+import type { AddingKind, FileMode, PanelPage, PanelSnapshot, PanelTab, ShelfAsk, ShelfGoing, UpdateWait } from "../shared/ipc.ts";
 
 /** What the panel may ask for (`panel:act`): the menu's own actions, and a page to open by its path. */
 const PANEL_ACTIONS = new Set([
@@ -600,8 +600,11 @@ export class Controller {
   private readonly shelfUndos = new Map<string, { name: string; restored: boolean }>();
   /** The capture each filing's commit filed, in this app run (a filing's, or one of an evening review's): its Undo takes the capture's pages off any suggestion. */
   private readonly filedCaptures = new Map<string, string>();
-  /** The folders whose Make shelf or No is waiting or running: a second press of either does nothing meanwhile. */
-  private readonly shelvesGoing = new Set<string>();
+  /**
+   * The folders whose Make shelf (`make`) or No (`decline`) is waiting or running, and which: a second press of either does nothing
+   * meanwhile, and Library's button for the one going is busy (`PanelSnapshot.shelvesGoing`).
+   */
+  private readonly shelvesGoing = new Map<string, ShelfGoing["op"]>();
   /** Edit first's suggestion, for Settings → General's shelf form (`SettingsSnapshot.shelfDraft`), until the form takes it. */
   private shelfDraft: ShelfAsk | null = null;
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
@@ -4083,7 +4086,8 @@ export class Controller {
    */
   async makeShelf(ask: ShelfAsk, edited?: OwnShelf): Promise<void> {
     const vault = this.vault;
-    if (!vault || this.quitting || this.shelvesGoing.has(ask.folder)) return;
+    // Nothing to do: Library is sent a snapshot all the same, so a button it shows busy from its press defers to main's state again.
+    if (!vault || this.quitting || this.shelvesGoing.has(ask.folder)) return this.refreshPanel();
     if (!edited && ask.definition.trim() === "") return this.openShelfDraft(ask);
     const shelf = edited ?? { folder: ask.folder, name: ask.name, definition: ask.definition };
     try {
@@ -4106,8 +4110,8 @@ export class Controller {
   ): Promise<boolean> {
     const root = vault.root;
     const key = fromSuggestion ?? shelf.folder;
-    this.shelvesGoing.add(key);
-    this.refreshPanel(); // Library's buttons for it are busy from now
+    this.shelvesGoing.set(key, "make");
+    this.refreshPanel(); // Library's Make shelf for it is busy from now
     try {
       const made = await this.enqueue(async () => {
         const pending = fromSuggestion === undefined ? null : (this.shelfSuggestions.list(root).find((other) => other.folder === fromSuggestion) ?? null);
@@ -4147,11 +4151,10 @@ export class Controller {
 
   /** Make shelf made `name`'s shelf: a bar says so over a finished card or none; over a capture, an editor or a problem, a notification. */
   private tellShelfMade(name: string, moved: number, notMoved: number): void {
-    if (!this.quitting && !this.capturing() && this.showsFinishedCard()) {
-      this.setCapsule({ kind: "shelf-made", name, moved, notMoved }, SHELF_MADE_SHOW_MS);
-    } else {
-      this.notify("Shelf made", shelfMadeLine(name, moved, notMoved));
-    }
+    // The bar is one line: the pages that stayed are told beside it, by notification (`shelfMadeNotes`).
+    const onBar = !this.quitting && !this.capturing() && this.showsFinishedCard();
+    if (onBar) this.setCapsule({ kind: "shelf-made", name, moved, notMoved }, SHELF_MADE_SHOW_MS);
+    for (const note of shelfMadeNotes(name, moved, notMoved, onBar)) this.notify(note.title, note.body);
   }
 
   /**
@@ -4194,6 +4197,7 @@ export class Controller {
   private async makePendingShelf(folder: string): Promise<void> {
     const pending = this.vault ? this.shelfSuggestions.list(this.vault.root).find((shelf) => shelf.folder === folder) : undefined;
     if (pending) await this.makeShelf(askOf(pending));
+    else this.refreshPanel(); // answered meanwhile: the snapshot lets Library's pressed button go
   }
 
   /** Library's Edit first (`shelf-edit:<folder>`): Settings' shelf form opens on the pending suggestion for `folder`. */
@@ -4209,10 +4213,10 @@ export class Controller {
    */
   async declineShelf(folder: string): Promise<void> {
     const vault = this.vault;
-    if (!vault || this.quitting || this.shelvesGoing.has(folder)) return;
+    if (!vault || this.quitting || this.shelvesGoing.has(folder)) return this.refreshPanel(); // as makeShelf's: a pressed No defers to main
     const root = vault.root;
-    this.shelvesGoing.add(folder);
-    this.refreshPanel(); // Library's buttons for it are busy from now
+    this.shelvesGoing.set(folder, "decline");
+    this.refreshPanel(); // Library's No for it is busy from now
     try {
       const declined = await this.enqueue(async () => {
         const pending = this.shelfSuggestions.list(root).find((shelf) => shelf.folder === folder);
@@ -5850,8 +5854,8 @@ export class Controller {
       undoableReview: input.undoableReview,
       opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
       update: this.updates.snapshot(),
-      shelfSuggestions: vault ? this.shelfSuggestions.list(vault.root).map(askOf) : [],
-      shelvesGoing: [...this.shelvesGoing],
+      shelfSuggestions: vault ? this.shelfSuggestions.list(vault.root).map(libraryAskOf) : [],
+      shelvesGoing: [...this.shelvesGoing].map(([folder, op]) => ({ folder, op })),
     };
   }
 

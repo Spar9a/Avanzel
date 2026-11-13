@@ -1,7 +1,7 @@
 // The shelf questions as the windows see them (`ShelfAsk`, `ShelfOp`), read from whatever a page or a file sent, and the shelves as
 // Settings lists them. Pure: the controller does the asking and the making (`Controller.makeShelf`, `changeShelves`).
 import { BUILT_IN_SHELVES, type OwnShelf } from "@avanzel/engine";
-import type { LibraryInfo, ShelfAsk, ShelfOp } from "../shared/ipc.ts";
+import type { LibraryInfo, LibraryShelfAsk, ShelfAsk, ShelfOp } from "../shared/ipc.ts";
 import { undoRefused, type Problem } from "../shared/problems.ts";
 import { shelfUndoneNote } from "../shared/shelves.ts";
 import type { PendingShelf } from "./shelf-suggestions.ts";
@@ -12,6 +12,11 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 /** A pending suggestion as the windows ask about it: without its pages. */
 export function askOf(shelf: Pick<PendingShelf, "folder" | "name" | "definition" | "agentMade">): ShelfAsk {
   return { folder: shelf.folder, name: shelf.name, definition: shelf.definition, agentMade: shelf.agentMade };
+}
+
+/** A pending suggestion as Library asks about it: with how many pages Make shelf would move, which its Notice says. */
+export function libraryAskOf(shelf: Pick<PendingShelf, "folder" | "name" | "definition" | "agentMade" | "pages">): LibraryShelfAsk {
+  return { ...askOf(shelf), pages: shelf.pages.length };
 }
 
 /** A suggestion from whatever was read or sent: its four fields of the right types, in one order, or null. Anything else about it goes. */

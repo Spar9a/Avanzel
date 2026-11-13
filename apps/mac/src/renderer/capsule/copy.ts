@@ -107,19 +107,25 @@ export function stillInMenuLine(key: keyof Shortcuts): string {
   return `Pick another shortcut. ${inMenuLine(key)}`;
 }
 
-/** "a" or "an" before `word`, as it is read: "an" before a vowel ("an Errands shelf"), "a" before anything else ("a Projects shelf"). */
-export function withArticle(word: string): string {
-  return `${/^[aeiou]/i.test(word) ? "an" : "a"} ${word}`;
-}
-
 /** The filed card's question, when the librarian suggests a new shelf for the pages: the shelf's name. Its definition goes under it. */
 export function shelfAskLine(name: string): string {
   return `This might belong on a new shelf: ${name}`;
 }
 
-/** The filed card's line when the agent filed into a folder of its own making, which has no definition yet: by the folder's name. */
+/**
+ * A folder the agent filed into of its own making, which has no definition yet, by the folder's name: Library's Notice title. The name
+ * comes after "called", so no "a" or "an" has to be guessed from its first letter.
+ */
+export function agentShelfTitle(folder: string): string {
+  return `The agent started a shelf called ${folder}.`;
+}
+
+/** What the person can do about a folder the agent started: Library's Notice body, and the filed card's second sentence. */
+export const AGENT_SHELF_ASK = "Say what belongs on it, or turn it down.";
+
+/** The filed card's line when the agent filed into a folder of its own making: the title and what can be done, in one line. */
 export function agentShelfLine(folder: string): string {
-  return `The agent started ${withArticle(folder)} shelf. Say what belongs on it, or turn it down.`;
+  return `${agentShelfTitle(folder)} ${AGENT_SHELF_ASK}`;
 }
 
 /** The buttons that answer the shelf question, on the filed card and in Library. */

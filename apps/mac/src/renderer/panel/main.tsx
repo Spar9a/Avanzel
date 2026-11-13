@@ -17,12 +17,13 @@ import { ListeningControls } from "../common/listening-controls.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { prettyAccelerator } from "../../main/shortcuts.ts";
-import { isSettingsPane, PANEL_TABS, type AskResult, type AvanzelBridge, type PanelFiling, type PanelPage, type PanelReview, type PanelSnapshot, type PanelTab, type SettingsPane, type SettingsSnapshot, type ShelfAsk, type Shortcuts } from "../../shared/ipc.ts";
-import { agentShelfLine, EDIT_FIRST, MAKE_SHELF, SAY_NO } from "../capsule/copy.ts";
+import { isSettingsPane, PANEL_TABS, type AskResult, type AvanzelBridge, type PanelFiling, type PanelPage, type PanelReview, type PanelSnapshot, type PanelTab, type SettingsPane, type SettingsSnapshot, type LibraryShelfAsk, type Shortcuts } from "../../shared/ipc.ts";
+import { AGENT_SHELF_ASK, agentShelfTitle, EDIT_FIRST, MAKE_SHELF, SAY_NO } from "../capsule/copy.ts";
 import { anyShelfOf } from "../common/shelf.ts";
 import { SettingsApp } from "../settings/SettingsApp.tsx";
 import { UPDATE_NOT_NOW, updateReadyState } from "../settings/copy.ts";
-import { inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, shelfQuestion, SORTS, sortLabel, sortPages, type PageFilter, type PageSort } from "./copy.ts";
+import { inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, shelfMakesLine, shelfQuestion, SORTS, sortLabel, sortPages, type PageFilter, type PageSort } from "./copy.ts";
+import { shelfBusy, type ShelfPress } from "./shelf-busy.ts";
 import "./styles.css";
 
 declare global {
@@ -885,41 +886,37 @@ function ShelfOf({ folder, own }: { folder: string | null; own: OwnShelves }) {
 }
 
 /**
- * Library's question about a shelf the librarian suggested, at the top of Library until it is answered: "Make a Projects shelf?" over the
- * definition that would go into AGENTS.md, with No, Edit first (Settings' shelf form, filled in) and Make shelf. A folder the agent started
- * on its own has no definition yet, so it is asked as the filed card asks it, with No and Edit first. Make shelf and No are busy while
- * main makes or turns down the shelf (`going`), which waits for the library as a filing does, and the other buttons wait with them.
+ * Library's question about a shelf the librarian suggested, at the top of Library until it is answered: "Make a shelf called Projects?"
+ * over the definition that would go into AGENTS.md and what Make shelf does, with No, Edit first (Settings' shelf form, filled in) and
+ * Make shelf. A folder the agent started on its own has no definition yet, so it says so and what can be done, with No and Edit first.
+ * The busy button is the one whose operation main names (`shelfBusy`), from whichever window it was pressed, and the other buttons wait
+ * with it; a press here makes its own button busy only until main's next snapshot.
  */
-function ShelfQuestion({ ask, going }: { ask: ShelfAsk; going: boolean }) {
-  // Pressed, and main hasn't said yet that it has it in hand: busy from the press, not a moment later.
-  const [pressed, setPressed] = useState<"make" | "no" | null>(null);
-  const [wasGoing, setWasGoing] = useState(false);
-  if (going !== wasGoing) {
-    setWasGoing(going);
-    if (!going) setPressed(null); // it ended: made, turned down, or refused (which a notification tells)
-  }
-  // What is going on: what was pressed here, or, pressed elsewhere (the filed card), a Make shelf.
-  const doing = pressed ?? (going ? "make" : null);
-  const press = (which: "make" | "no") => {
-    setPressed(which);
-    act(`shelf-${which === "make" ? "make" : "decline"}:${ask.folder}`);
+function ShelfQuestion({ ask, snap }: { ask: LibraryShelfAsk; snap: PanelSnapshot }) {
+  const [pressed, setPressed] = useState<ShelfPress | null>(null);
+  const doing = shelfBusy(ask.folder, snap, pressed);
+  const press = (op: ShelfPress["op"]) => {
+    setPressed({ op, under: snap });
+    act(`shelf-${op}:${ask.folder}`);
   };
   const no = (
-    <Button size="small" variant="quiet" busy={doing === "no"} disabled={doing === "make"} onClick={() => press("no")}>
+    <Button size="small" variant="quiet" busy={doing === "decline"} disabled={doing === "make"} onClick={() => press("decline")}>
       {SAY_NO}
     </Button>
   );
   if (ask.agentMade) {
     return (
       <Notice
-        title={agentShelfLine(ask.folder)}
+        title={agentShelfTitle(ask.folder)}
         actions={
           <Actions align="start">
             {no}
             <Button size="small" variant="primary" disabled={doing !== null} onClick={() => act(`shelf-edit:${ask.folder}`)}>{EDIT_FIRST}</Button>
           </Actions>
         }
-      />
+      >
+        {AGENT_SHELF_ASK}
+      </Notice>
     );
   }
   return (
@@ -929,13 +926,13 @@ function ShelfQuestion({ ask, going }: { ask: ShelfAsk; going: boolean }) {
         <Actions align="start">
           {no}
           <Button size="small" variant="secondary" disabled={doing !== null} onClick={() => act(`shelf-edit:${ask.folder}`)}>{EDIT_FIRST}</Button>
-          <Button size="small" variant="primary" busy={doing === "make"} disabled={doing === "no"} onClick={() => press("make")}>
+          <Button size="small" variant="primary" busy={doing === "make"} disabled={doing === "decline"} onClick={() => press("make")}>
             {MAKE_SHELF}
           </Button>
         </Actions>
       }
     >
-      {ask.definition}
+      {`${ask.definition} ${shelfMakesLine(ask.pages)}`}
     </Notice>
   );
 }
@@ -1107,7 +1104,7 @@ function Library({ snap, pages, own, focusAsk }: { snap: PanelSnapshot; pages: P
   return (
     <div className="panel-pad panel-library">
       <Stack gap={16}>
-        {snap.shelfSuggestions.map((ask) => <ShelfQuestion key={ask.folder} ask={ask} going={snap.shelvesGoing.includes(ask.folder)} />)}
+        {snap.shelfSuggestions.map((ask) => <ShelfQuestion key={ask.folder} ask={ask} snap={snap} />)}
         {snap.reviews.length > 0 && (
           <Stack gap={12}>
             {snap.reviews.map((review) => <ReviewLine key={review.id} review={review} />)}

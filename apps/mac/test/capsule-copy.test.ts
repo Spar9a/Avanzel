@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_SHELF_ASK,
   agentShelfLine,
+  agentShelfTitle,
   EDIT_FIRST,
   filedLine,
   MAKE_SHELF,
@@ -19,7 +21,7 @@ import {
   TITLE_CELLS,
   titleCells,
 } from "../src/renderer/capsule/copy.ts";
-import { shelfQuestion } from "../src/renderer/panel/copy.ts";
+import { shelfMakesLine, shelfQuestion } from "../src/renderer/panel/copy.ts";
 import { cancelledLine } from "../src/renderer/setup/copy.ts";
 
 // The capsule's result cards' words that are made from values: what a filing says of itself, of its pages, and the two Stopped
@@ -186,29 +188,31 @@ describe("the shelf question: on the filed card, in Library, and the bar once Ma
   });
 
   it("says when the agent started a folder of its own, by the folder's name, and what the person can do", () => {
-    expect(agentShelfLine("projects")).toBe("The agent started a projects shelf. Say what belongs on it, or turn it down.");
+    expect(agentShelfLine("projects")).toBe("The agent started a shelf called projects. Say what belongs on it, or turn it down.");
+    // Library's Notice says the same: the first sentence its title, the second its body.
+    expect(agentShelfTitle("projects")).toBe("The agent started a shelf called projects.");
+    expect(AGENT_SHELF_ASK).toBe("Say what belongs on it, or turn it down.");
   });
 
-  it("asks in Library with the shelf's name; the Notice's body is the definition", () => {
-    expect(shelfQuestion("Projects")).toBe("Make a Projects shelf?");
+  it("asks in Library with the shelf's name, whatever sound it starts with", () => {
+    expect(shelfQuestion("Projects")).toBe("Make a shelf called Projects?");
+    for (const name of ["Errands", "Users", "University", "One-offs"]) expect(shelfQuestion(name)).toBe(`Make a shelf called ${name}?`);
+    expect(agentShelfTitle("one-offs")).toBe("The agent started a shelf called one-offs.");
   });
 
-  it("says “an” before a name that starts with a vowel, so the question still reads", () => {
-    expect(shelfQuestion("Errands")).toBe("Make an Errands shelf?");
-    expect(agentShelfLine("errands")).toBe("The agent started an errands shelf. Say what belongs on it, or turn it down.");
+  it("says in Library what Make shelf does, for one page or more, and that Undo takes it back", () => {
+    expect(shelfMakesLine(1)).toBe("Making it moves the suggested page onto it, and Undo takes it back.");
+    expect(shelfMakesLine(3)).toBe("Making it moves the suggested pages onto it, and Undo takes them back.");
   });
 
   it("names its buttons with verbs, in sentence case", () => {
     expect([MAKE_SHELF, NOT_NOW, EDIT_FIRST, SAY_NO]).toEqual(["Make shelf", "Not now", "Edit first", "No"]);
   });
 
-  it("tells what Make shelf did in the bar, in one page or many, and the pages that stayed", () => {
-    expect(shelfMadeLine("Projects", 1, 0)).toBe("Made the Projects shelf and moved 1 page.");
-    expect(shelfMadeLine("Projects", 3, 0)).toBe("Made the Projects shelf and moved 3 pages.");
-    expect(shelfMadeLine("Projects", 1, 1)).toBe("Made the Projects shelf and moved 1 page. 1 page stayed where it was, as one with its name is already there.");
-    expect(shelfMadeLine("Projects", 2, 2)).toBe(
-      "Made the Projects shelf and moved 2 pages. 2 pages stayed where they were, as ones with their names are already there.",
-    );
+  it("tells what Make shelf did in the bar in one line, in one page or many", () => {
+    expect(shelfMadeLine("Projects", 1)).toBe("Made the Projects shelf and moved 1 page.");
+    expect(shelfMadeLine("Projects", 3)).toBe("Made the Projects shelf and moved 3 pages.");
+    expect(shelfMadeLine("Projects", 0)).toBe("Made the Projects shelf and moved no pages.");
   });
 });
 
@@ -222,8 +226,12 @@ describe("the result cards' words are written as the design rules ask", () => {
     stillInMenuLine("undo"),
     shelfAskLine("Projects"),
     agentShelfLine("projects"),
+    agentShelfTitle("projects"),
+    AGENT_SHELF_ASK,
     shelfQuestion("Projects"),
-    shelfMadeLine("Projects", 2, 1),
+    shelfMakesLine(1),
+    shelfMakesLine(2),
+    shelfMadeLine("Projects", 2),
     MAKE_SHELF,
     NOT_NOW,
     EDIT_FIRST,

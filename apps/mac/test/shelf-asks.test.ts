@@ -1,13 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { askOf, ownShelvesInfo, parseShelfAsk, parseShelfOp, shelfUndoNotice } from "../src/main/shelf-asks.ts";
+import { askOf, libraryAskOf, ownShelvesInfo, parseShelfAsk, parseShelfOp, shelfUndoNotice } from "../src/main/shelf-asks.ts";
 import { undoRefused } from "../src/shared/problems.ts";
-import { shelfMadeLine, shelfUndoneNote } from "../src/shared/shelves.ts";
+import { shelfMadeLine, shelfMadeNotes, shelfUndoneNote } from "../src/shared/shelves.ts";
 
 const ASK = { folder: "projects", name: "Projects", definition: "Work with a goal and a deadline.", agentMade: false };
 
 describe("askOf", () => {
   it("is a pending suggestion without its pages", () => {
     expect(askOf({ ...ASK, pages: [{ path: "ideas/launch.md", captureId: "c1" }] } as Parameters<typeof askOf>[0])).toEqual(ASK);
+  });
+});
+
+describe("libraryAskOf", () => {
+  it("is a pending suggestion as Library asks about it: with how many pages Make shelf would move", () => {
+    const pages = [
+      { path: "ideas/launch.md", captureId: "c1" },
+      { path: "ideas/plan.md", captureId: "c2" },
+    ];
+    expect(libraryAskOf({ ...ASK, pages } as Parameters<typeof libraryAskOf>[0])).toEqual({ ...ASK, pages: 2 });
   });
 });
 
@@ -76,12 +86,33 @@ describe("shelfUndoneNote", () => {
   });
 });
 
-describe("shelfMadeLine", () => {
-  it("says what moved, in one page or many, and what stayed because its name was taken", () => {
-    expect(shelfMadeLine("Projects", 1, 0)).toBe("Made the Projects shelf and moved 1 page.");
-    expect(shelfMadeLine("Projects", 2, 0)).toBe("Made the Projects shelf and moved 2 pages.");
-    expect(shelfMadeLine("Projects", 0, 1)).toBe("Made the Projects shelf and moved 0 pages. 1 page stayed where it was, as one with its name is already there.");
-    expect(shelfMadeLine("Projects", 1, 2)).toBe("Made the Projects shelf and moved 1 page. 2 pages stayed where they were, as ones with their names are already there.");
+describe("shelfMadeLine, the bar's one line once Make shelf is done", () => {
+  it("says what moved, in one page, many or none, and nothing of what stayed", () => {
+    expect(shelfMadeLine("Projects", 1)).toBe("Made the Projects shelf and moved 1 page.");
+    expect(shelfMadeLine("Projects", 2)).toBe("Made the Projects shelf and moved 2 pages.");
+    expect(shelfMadeLine("Projects", 0)).toBe("Made the Projects shelf and moved no pages.");
+  });
+});
+
+describe("shelfMadeNotes, the notifications once Make shelf is done", () => {
+  it("adds none to the bar when every page moved", () => {
+    expect(shelfMadeNotes("Projects", 2, 0, true)).toEqual([]);
+  });
+
+  it("tells, beside the bar, the page that stayed, and the pages that stayed", () => {
+    expect(shelfMadeNotes("Projects", 0, 1, true)).toEqual([
+      { title: "The Projects shelf is made", body: "1 page stayed where it was, as a page with its name is already there." },
+    ]);
+    expect(shelfMadeNotes("Projects", 1, 2, true)).toEqual([
+      { title: "The Projects shelf is made", body: "2 pages stayed where they were, as pages with their names are already there." },
+    ]);
+  });
+
+  it("tells it all in one notification when there is no bar", () => {
+    expect(shelfMadeNotes("Projects", 1, 0, false)).toEqual([{ title: "Shelf made", body: "Made the Projects shelf and moved 1 page." }]);
+    expect(shelfMadeNotes("Projects", 1, 1, false)).toEqual([
+      { title: "Shelf made", body: "Made the Projects shelf and moved 1 page. 1 page stayed where it was, as a page with its name is already there." },
+    ]);
   });
 });
 

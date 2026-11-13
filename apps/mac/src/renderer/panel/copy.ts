@@ -1,7 +1,6 @@
 // The panel's words that are made from values: a page's date, a review's next run and how its last one ended, and the day's line.
 import { SHELVES } from "@avanzel/ui";
 import type { PanelPage, PanelReview } from "../../shared/ipc.ts";
-import { withArticle } from "../capsule/copy.ts";
 
 const MONTH_DAY = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
 const MONTH_DAY_YEAR = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -82,9 +81,19 @@ export const sortLabel = (sort: PageSort) => SORT_LABELS[sort];
 /** What Library shows: every page, a shelf's (one of the six, or another, by its folder), or those of one status. */
 export type PageFilter = { kind: "all" } | { kind: "shelf"; shelf: string } | { kind: "status"; status: string };
 
-/** Library's question about a shelf the librarian suggested, the Notice's title: its body is the shelf's definition. */
+/**
+ * Library's question about a shelf the librarian suggested, the Notice's title: its body is the shelf's definition, then what Make shelf
+ * does (`shelfMakesLine`). The name comes after "called", so no "a" or "an" has to be guessed from its first letter.
+ */
 export function shelfQuestion(name: string): string {
-  return `Make ${withArticle(name)} shelf?`;
+  return `Make a shelf called ${name}?`;
+}
+
+/** What Make shelf does, after the definition in Library's question: the suggestion's `pages` move onto the shelf, and Undo takes them back. */
+export function shelfMakesLine(pages: number): string {
+  return pages === 1
+    ? "Making it moves the suggested page onto it, and Undo takes it back."
+    : "Making it moves the suggested pages onto it, and Undo takes them back.";
 }
 
 const SHELF_ORDER: readonly string[] = SHELVES;

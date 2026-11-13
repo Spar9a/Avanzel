@@ -95,9 +95,12 @@ function dictationRefusedScene(): Scene {
   return { bar: { mood: "filed", line: DICTATION_REFUSED_LINE } };
 }
 
-/** Make shelf made a shelf: a bar says how many pages moved onto it, drawn as Undo's is, and goes by itself. */
+/**
+ * Make shelf made a shelf: a bar says how many pages moved onto it, drawn as Undo's is, and goes by itself. It is one line, so the pages
+ * that stayed where they were are told by notification instead (`shelfMadeNotes`).
+ */
 function shelfMadeScene(state: StateOf<"shelf-made">): Scene {
-  return { bar: { mood: "filed", line: shelfMadeLine(state.name, state.moved, state.notMoved) } };
+  return { bar: { mood: "filed", line: shelfMadeLine(state.name, state.moved) } };
 }
 
 /**
