@@ -129,6 +129,31 @@ describe("library pages", () => {
     expect(pages[1]).toMatchObject({ title: "Older idea", shelf: "ideas", status: null, tags: [] });
   });
 
+  it("lists the pages of the owner's own shelves, by front matter or folder, and of meetings", () => {
+    const root = library();
+    mkdirSync(path.join(root, "projects"));
+    mkdirSync(path.join(root, "meetings"));
+    mkdirSync(path.join(root, "ideas"));
+    mkdirSync(path.join(root, "handmade"));
+    writeFileSync(path.join(root, "projects", "acme.md"), "---\nshelf: projects\n---\n# Acme\n");
+    writeFileSync(path.join(root, "projects", "plain.md"), "# Plain\n");
+    writeFileSync(path.join(root, "meetings", "2026-11-13-x.md"), "# Weekly sync\n");
+    writeFileSync(path.join(root, "ideas", "tagged.md"), "---\nshelf: projects\n---\n# Filed by front matter\n");
+    writeFileSync(path.join(root, "ideas", "odd.md"), "---\nshelf: handmade\n---\n# Odd shelf\n");
+    writeFileSync(path.join(root, "handmade", "x.md"), "# No definition\n");
+    const without = libraryPages(root);
+    expect(without.map((p) => p.path).sort()).toEqual(["ideas/odd.md", "ideas/tagged.md", "meetings/2026-11-13-x.md"]);
+    expect(without.find((p) => p.path === "meetings/2026-11-13-x.md")?.shelf).toBe("meetings");
+    expect(without.find((p) => p.path === "ideas/tagged.md")?.shelf).toBe("ideas");
+    const withOwn = libraryPages(root, ["projects"]);
+    expect(withOwn.map((p) => p.path).sort()).toEqual(["ideas/odd.md", "ideas/tagged.md", "meetings/2026-11-13-x.md", "projects/acme.md", "projects/plain.md"]);
+    expect(withOwn.find((p) => p.path === "projects/acme.md")?.shelf).toBe("projects");
+    expect(withOwn.find((p) => p.path === "projects/plain.md")?.shelf).toBe("projects");
+    expect(withOwn.find((p) => p.path === "ideas/tagged.md")?.shelf).toBe("projects");
+    // A folder with no definition is no shelf, whether it is the page's folder or its front matter's word.
+    expect(withOwn.find((p) => p.path === "ideas/odd.md")?.shelf).toBe("ideas");
+  });
+
   it("follows no link out of the library", () => {
     const root = library();
     const outside = library();

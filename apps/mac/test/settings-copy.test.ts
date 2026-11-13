@@ -135,8 +135,19 @@ describe("settings copy", () => {
     expect(libraryLine(shelves, true, true, true)).toBe("128 notes on six shelves. Every change is a commit you can undo.");
     expect(libraryLine({ ideas: 1 }, true, true, true)).toBe("1 note on six shelves. Every change is a commit you can undo.");
     expect(libraryLine({}, true, true, true)).toBe("Your first thought will fill a shelf. Every change is a commit you can undo.");
-    // A folder of the library's own that isn't one of the six shelves doesn't count.
-    expect(libraryLine({ ideas: 2, projects: 5 }, false, true, true)).toBe("2 notes on six shelves. This folder has no git history, so changes can't be undone.");
+    // Pages on any other shelf count, and the shelf makes the count seven.
+    expect(libraryLine({ ideas: 2, projects: 5 }, false, true, true)).toBe("7 notes on 7 shelves. This folder has no git history, so changes can't be undone.");
+  });
+
+  it("libraryLine counts a shelf beyond the six only when it holds a page", () => {
+    const six = { goals: 12, ideas: 41, problems: 9, memories: 18, people: 27, topics: 21 };
+    expect(libraryLine({ ...six, projects: 2 }, true, true, true)).toBe("130 notes on 7 shelves. Every change is a commit you can undo.");
+    expect(libraryLine({ ...six, meetings: 1, projects: 2, reading: 1 }, true, true, true)).toBe("132 notes on 9 shelves. Every change is a commit you can undo.");
+    expect(libraryLine({ ideas: 1, meetings: 1 }, true, true, true)).toBe("2 notes on 7 shelves. Every change is a commit you can undo.");
+    // A shelf with no pages raises nothing, and says nothing.
+    expect(libraryLine({ ...six, projects: 0, meetings: 0 }, true, true, true)).toBe("128 notes on six shelves. Every change is a commit you can undo.");
+    expect(libraryLine({ projects: 0 }, true, true, true)).toBe("Your first thought will fill a shelf. Every change is a commit you can undo.");
+    expect(libraryLine({ projects: 3 }, true, true, true)).toBe("3 notes on 7 shelves. Every change is a commit you can undo.");
   });
 
   it("libraryLine says so when the library's settings turn automatic commits off, since then no change is a commit", () => {

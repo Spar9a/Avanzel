@@ -32,15 +32,18 @@ export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
 };
 
 /**
- * The library row's description, from LibraryInfo.shelves (the six shelves count; others don't), isGit, autoCommit and gitUsable.
+ * The library row's description, from LibraryInfo.shelves (every shelf's pages count; each shelf beyond the six that holds a page,
+ * meetings and the owner's own among them, makes the shelf count one more than six), isGit, autoCommit and gitUsable.
  * It says only what is true of the library. A folder with no .git has no history to speak of. One that has, on a Mac that can't
  * run git (Apple's stub), has its history, but nothing commits there and nothing can be undone, which is the Mac's doing, not the
  * library's: it says so in the words setup does (NO_GIT_LINE). Only a library with git, on a Mac that runs it, promises Undo,
  * and not when the library's own settings turn automatic commits off.
  */
 export function libraryLine(shelves: Readonly<Record<string, number>>, isGit: boolean, autoCommit: boolean, gitUsable: boolean): string {
-  const pages = SHELVES.reduce((sum, shelf) => sum + (shelves[shelf] ?? 0), 0);
-  const filled = pages === 0 ? "Your first thought will fill a shelf." : `${pages} ${pages === 1 ? "note" : "notes"} on six shelves.`;
+  const pages = Object.values(shelves).reduce((sum, count) => sum + count, 0);
+  const others = Object.entries(shelves).filter(([folder, count]) => count > 0 && !(SHELVES as readonly string[]).includes(folder)).length;
+  const on = others === 0 ? "six" : String(6 + others);
+  const filled = pages === 0 ? "Your first thought will fill a shelf." : `${pages} ${pages === 1 ? "note" : "notes"} on ${on} shelves.`;
   if (!isGit) return `${filled} This folder has no git history, so changes can't be undone.`;
   if (!gitUsable) return `${filled} ${NO_GIT_LINE}`;
   const undo = autoCommit

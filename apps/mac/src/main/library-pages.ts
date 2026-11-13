@@ -3,9 +3,10 @@
 import { lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { PANEL_PAGES, type PanelPage } from "../shared/ipc.ts";
-import { isShelf } from "./shelf-glyphs.ts";
 
 const SHELF_FOLDERS = ["goals", "ideas", "problems", "memories", "people", "topics"] as const;
+/** The folders every library lists besides the owner's own: the six shelves and meetings. */
+const BUILT_IN_FOLDERS: readonly string[] = [...SHELF_FOLDERS, "meetings"];
 /** How deep under a shelf's folder pages are looked for. */
 const DEPTH = 3;
 /** How long a page may be and still be read whole: a bigger one is read only for its head. */
@@ -131,8 +132,11 @@ function dateField(value: string | string[] | undefined): string | null {
   return match ? match[0] : null;
 }
 
-/** One page, read from `file` (absolute) in the library at `root`. Null for a file that can't be read. */
-export function readPage(root: string, file: string): PanelPage | null {
+/**
+ * One page, read from `file` (absolute) in the library at `root`. Its shelf is the front matter's `shelf:` when that is a built-in or
+ * own folder (`ownFolders`), else its folder when that is one, else null. Null for a file that can't be read.
+ */
+export function readPage(root: string, file: string, ownFolders: readonly string[] = []): PanelPage | null {
   let text: string;
   let stat: ReturnType<typeof statSync>;
   try {
@@ -148,7 +152,8 @@ export function readPage(root: string, file: string): PanelPage | null {
   const words = pageText(body);
   const folder = rel.split("/")[0] ?? "";
   const shelfField = typeof fields.shelf === "string" ? fields.shelf.toLowerCase() : "";
-  const shelf = isShelf(shelfField) ? shelfField : isShelf(folder) ? folder : null;
+  const known = (name: string) => BUILT_IN_FOLDERS.includes(name) || ownFolders.includes(name);
+  const shelf = known(shelfField) ? shelfField : known(folder) ? folder : null;
   const tagsField = fields.tags;
   const tags = (Array.isArray(tagsField) ? tagsField : typeof tagsField === "string" ? splitList(tagsField) : []).map((t) => t.replace(/^#/, "")).filter(Boolean);
   const title = (typeof fields.title === "string" && fields.title) || words.heading || path.basename(file, ".md");
@@ -310,11 +315,12 @@ function markdownFiles(dir: string, depth: number, into: { file: string; mtime: 
 
 /**
  * The pages on the library's shelves at `root`, the newest change first: by the front matter's `updated`, then by the file's own
- * time. PANEL_PAGES at most. Links are never followed out of the library: a shelf folder or a page that is a link is skipped.
+ * time. The shelves are the six, meetings and the owner's own (`ownFolders`); a folder with no definition is not one. PANEL_PAGES at
+ * most. Links are never followed out of the library: a shelf folder or a page that is a link is skipped.
  */
-export function libraryPages(root: string): PanelPage[] {
+export function libraryPages(root: string, ownFolders: readonly string[] = []): PanelPage[] {
   const files: { file: string; mtime: number }[] = [];
-  for (const shelf of SHELF_FOLDERS) {
+  for (const shelf of new Set([...BUILT_IN_FOLDERS, ...ownFolders])) {
     const dir = path.join(root, shelf);
     try {
       if (!lstatSync(dir).isDirectory()) continue; // a link, even to a folder, leads out of the library
@@ -326,7 +332,7 @@ export function libraryPages(root: string): PanelPage[] {
   files.sort((a, b) => b.mtime - a.mtime);
   const pages: { page: PanelPage; mtime: number }[] = [];
   for (const { file, mtime } of files.slice(0, PANEL_PAGES * 2)) {
-    const page = readPage(root, file);
+    const page = readPage(root, file, ownFolders);
     if (page) pages.push({ page, mtime });
   }
   pages.sort((a, b) => (b.page.updated ?? "").localeCompare(a.page.updated ?? "") || b.mtime - a.mtime);

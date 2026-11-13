@@ -5743,12 +5743,21 @@ export class Controller {
     return this.panelCallChoices.map((app) => callAppLabel(app.name));
   }
 
+  /** The folders of the owner's own shelves in the library at `root`. A config that can't be read gives none: the built-in pages still list. */
+  private ownFolders(root: string): string[] {
+    try {
+      return loadSettings(root).shelves.map((shelf) => shelf.folder);
+    } catch {
+      return [];
+    }
+  }
+
   /** The library's pages, for the panel's Library. */
   panelPages(): PanelPage[] {
     const vault = this.vault;
     if (!vault) return [];
     try {
-      return libraryPages(vault.root);
+      return libraryPages(vault.root, this.ownFolders(vault.root));
     } catch (error) {
       console.warn("panel pages", error);
       return [];
