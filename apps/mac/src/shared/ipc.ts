@@ -120,7 +120,8 @@ export type LibraryFolder = "missing" | "empty" | "has-files" | "library";
  * that fixes the problem; opens Terminal, where an agent signs in; opens Type a thought, where the words of a thought that couldn't
  * be saved still are (`type-a-thought`); or (`refile:<agent>`, the agent's harness name) files the note the card is about again
  * with that agent; or (`finish-call`) makes the notes of the call whose notes weren't made, from what it kept (`CallNotes.finishKept`);
- * or (`copy-dictation`) copies the words of a dictation that couldn't go in at the cursor, the ones its card shows; or
+ * or (`copy-dictation`) copies the words of a dictation that couldn't go in at the cursor, the ones its card shows, or of one whose paste
+ * couldn't be confirmed (`dictation-sent`); or
  * (`open-automation-settings`) opens System Settings at Automation, where Avanzel is allowed to ask a browser which page it shows.
  */
 export type CardAction =
@@ -381,7 +382,12 @@ export type CapsuleState =
   /** A thought, a screen comment or a question was asked for while notes on a call run: a bar says so. It hides by itself. */
   | { kind: "call-running" }
   /** A dictation into any app was asked for while a thought records or notes on a call run: a bar says so. It hides by itself. */
-  | { kind: "dictation-refused" };
+  | { kind: "dictation-refused" }
+  /**
+   * A dictation was pasted into `app` where Accessibility couldn't say the cursor takes text (an Electron app, a web page), so it may have
+   * gone nowhere: a bar names the app, with its `icon` when one is known, and offers Copy (`copy-dictation`). It hides by itself.
+   */
+  | { kind: "dictation-sent"; app: string; icon?: string };
 
 /**
  * The capsule's cards the panel shows too, in its Processing tab: a filing, and what came of it (filed, stopped, or a problem). The

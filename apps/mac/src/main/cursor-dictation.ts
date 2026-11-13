@@ -44,14 +44,19 @@ export interface CursorHost {
   /** The library log; `library` is the root of the library it writes to, which the entry then carries (`DictationEntry.library`). */
   logTo(): { enabled: boolean; library?: string; write(entry: DictationEntry): void };
   showCopyPrompt(p: { text: string; app: string; reason: "failed" | "focus-moved" }): void;
+  /**
+   * The words were pasted, but Accessibility couldn't say whether the cursor takes text (an Electron app, a web page, nothing in focus),
+   * so they may have gone nowhere: the host offers them to copy for a moment. The person's clipboard is theirs again by now.
+   */
+  showPasted(p: { text: string; app: string }): void;
   say(line: "refused" | "nothing-heard" | "cancelled"): void;
   history: DictationHistory;
   now(): Date;
   newId(): string;
 }
 
-/** How long the copy prompt stays up when the words could not be pasted. */
-export const COPY_PROMPT_MS = 5000;
+/** How long the copy prompt stays up when the words could not be pasted, and the Copy offer after a paste that couldn't be confirmed. */
+export const COPY_PROMPT_MS = 3000;
 
 /** How long taps are refused after a cancel while recognising, waiting for that recognition's late words to drain. */
 const DRAIN_MS = 10_000;
@@ -343,6 +348,14 @@ export class CursorDictation {
       console.error("cursor dictation", error);
       await this.offer(text, fixed.app.name);
       return false;
+    }
+    // Only an element that says it takes text confirms the paste. Under secure keyboard entry nothing is offered: the words may be a password.
+    if (fresh.element?.takesText !== "yes" && !fresh.element?.secure) {
+      try {
+        this.host.showPasted({ text, app: fixed.app.name });
+      } catch (error) {
+        console.error("cursor dictation", error);
+      }
     }
     return true;
   }

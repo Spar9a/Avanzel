@@ -114,13 +114,45 @@ test("when focus moved to another window, nothing is pasted and the copy card na
   await app.close();
 });
 
-test("the copy card goes by itself after five seconds", async () => {
+test("the copy card goes by itself after three seconds", async () => {
   const { script } = fakeCursor({ targets: [slack(501), slack(777)], taps: [500, 1500] });
   const { app } = await launchWith(script);
   await call(app, "setCursorDictation", { enabled: true });
   await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("error");
-  await wait(3_500);
+  await wait(1_500);
   expect(await capsuleKind(app)).toBe("error");
+  await expect.poll(() => capsuleKind(app), { timeout: 5_000 }).toBe("hidden");
+  await app.close();
+});
+
+/** Slack with focus somewhere Accessibility can't say takes text, as in an Electron app or a web page with no field focused. */
+const slackUnsure = (pid = 501): Target => ({ ...slack(pid), element: { role: "AXGroup", secure: false, takesText: "unknown" } });
+
+test("a paste that can't be confirmed goes in, and a bar names the app for a moment; its Copy puts the words on the clipboard", async () => {
+  const { script, pasteOut } = fakeCursor({ targets: [slackUnsure(), slackUnsure()], taps: [500, 1500] });
+  const { app } = await launchWith(script);
+  await setClipboard(app, "what was on the clipboard");
+  await call(app, "setCursorDictation", { enabled: true });
+  const capsule = await windowFor(app, "capsule");
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("dictation-sent");
+  expect(pasted(pasteOut)).toBe(WORDS);
+  await expect(capsule.getByText("Pasted into Slack.", { exact: true })).toBeVisible();
+  // An offer, not a miss: the person's clipboard is theirs until they press Copy.
+  expect(await clipboardText(app)).toBe("what was on the clipboard");
+  await capsule.getByRole("button", { name: "Copy", exact: true }).click();
+  await expect.poll(() => clipboardText(app)).toBe(WORDS);
+  await expect.poll(() => capsuleKind(app)).toBe("hidden");
+  await expect.poll(() => history(app)).toEqual([expect.objectContaining({ text: WORDS, app: "Slack", inserted: true })]);
+  await app.close();
+});
+
+test("the bar after a paste that can't be confirmed goes by itself after three seconds", async () => {
+  const { script } = fakeCursor({ targets: [slackUnsure(), slackUnsure()], taps: [500, 1500] });
+  const { app } = await launchWith(script);
+  await call(app, "setCursorDictation", { enabled: true });
+  await expect.poll(() => capsuleKind(app), { timeout: 30_000 }).toBe("dictation-sent");
+  await wait(1_500);
+  expect(await capsuleKind(app)).toBe("dictation-sent");
   await expect.poll(() => capsuleKind(app), { timeout: 5_000 }).toBe("hidden");
   await app.close();
 });
@@ -294,7 +326,7 @@ test("a dictation's card waits while a thought listens, and shows once the thoug
   expect(await capsuleKind(app)).toBe("listening");
   expect(pasted(pasteOut)).toBe("");
   expect(await clipboardText(app)).toBe(WORDS);
-  // The thought is given up: the capsule is free, and the dictation's card shows, its five seconds counted from then.
+  // The thought is given up: the capsule is free, and the dictation's card shows, its three seconds counted from then.
   expect(await call(app, "pressShortcutForTests", "Escape")).toBe(true);
   await expect.poll(() => capsuleKind(app)).toBe("error");
   await expectProblem(capsule, {
@@ -302,7 +334,7 @@ test("a dictation's card waits while a thought listens, and shows once the thoug
     lines: [`The words were meant for Slack. “${WORDS}” They are on your clipboard.`],
     fix: "Copy",
   });
-  await wait(3_500);
+  await wait(1_500);
   expect(await capsuleKind(app)).toBe("error");
   await expect.poll(() => capsuleKind(app), { timeout: 5_000 }).toBe("hidden");
   await app.close();

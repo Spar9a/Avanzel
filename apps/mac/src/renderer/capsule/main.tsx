@@ -7,7 +7,7 @@ import type { AddingKind, AttachedItem, CapsuleState } from "../../shared/ipc.ts
 import { addChoices, attachedItems } from "../common/attached.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
 import { shelfMadeLine } from "../../shared/shelves.ts";
-import { CALL_RUNNING_LINE, DICTATION_REFUSED_LINE } from "../../shared/transcribing.ts";
+import { CALL_RUNNING_LINE, DICTATION_REFUSED_LINE, dictationSentLine } from "../../shared/transcribing.ts";
 import { api, type StateOf } from "./api.ts";
 import { stillInMenuLine } from "./copy.ts";
 import { editorScene } from "./editor.tsx";
@@ -104,6 +104,26 @@ function shelfMadeScene(state: StateOf<"shelf-made">): Scene {
 }
 
 /**
+ * A dictation was pasted where the app couldn't say its cursor takes text, so it may have gone nowhere: a bar names the app, in Zel's
+ * place when its icon is known, and offers Copy while it shows. The words aren't shown: someone else may be looking at the screen.
+ */
+function dictationSentScene(state: StateOf<"dictation-sent">): Scene {
+  return {
+    bar: {
+      mood: "filed",
+      line: dictationSentLine(state.app),
+      // An app with no icon leaves the place empty: Zel stands for the library, and these words didn't go there (`appOf`).
+      app: state.icon ? { icon: state.icon, label: state.app } : null,
+      actions: (
+        <Button size="small" variant="secondary" onClick={() => api.openSettingsFor("copy-dictation")}>
+          Copy
+        </Button>
+      ),
+    },
+  };
+}
+
+/**
  * What each stacked state draws, from the top of its stack: its card and its bar. Every kind of state is here: a kind added
  * without a scene is a type error, not a blank panel, as `cancelled` and `recorded` were for two tasks.
  */
@@ -135,6 +155,8 @@ function sceneOf(state: Stacked, levels: readonly number[], onAdd?: () => void):
       return dictationRefusedScene();
     case "shelf-made":
       return shelfMadeScene(state);
+    case "dictation-sent":
+      return dictationSentScene(state);
     default: {
       const unhandled: never = state;
       return unhandled;

@@ -84,3 +84,9 @@ export const CALL_RUNNING_LINE = "Notes on the call are running. Stop them to re
 
 /** The capsule's bar when a dictation into any app is asked for while a thought records or notes on a call are taken. */
 export const DICTATION_REFUSED_LINE = "Something else is recording. Try again when it stops.";
+
+/**
+ * The capsule's bar after a dictation was pasted where Accessibility couldn't say the cursor takes text (`dictation-sent`): it went to
+ * `app`, and its Copy button is there in case it didn't go in.
+ */
+export const dictationSentLine = (app: string): string => (app.trim() ? `Pasted into ${app.trim()}.` : "Pasted into the app in front.");

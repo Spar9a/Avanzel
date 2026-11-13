@@ -33,6 +33,7 @@ function stubHost(
     logFails?: boolean;
     writeFails?: boolean;
     promptFails?: boolean;
+    pastedFails?: boolean;
     skipFails?: boolean;
     newIdFails?: boolean;
   } = {},
@@ -43,6 +44,7 @@ function stubHost(
   const added: DictationEntry[] = [];
   const written: DictationEntry[] = [];
   const prompts: Array<{ text: string; app: string; reason: string }> = [];
+  const sent: Array<{ text: string; app: string }> = [];
   const said: string[] = [];
   const pasted: Array<string | undefined> = [];
   const unasked: Array<{ app: { name: string; bundleId: string }; inserted: boolean }> = [];
@@ -133,6 +135,11 @@ function stubHost(
       prompts.push(p);
       if (over.promptFails) throw new Error("capsule window gone");
     },
+    showPasted(p) {
+      calls.push("showPasted");
+      sent.push(p);
+      if (over.pastedFails) throw new Error("capsule window gone");
+    },
     say(line) {
       calls.push(`say:${line}`);
       said.push(line);
@@ -151,7 +158,7 @@ function stubHost(
       return `id-${++ids}`;
     },
   };
-  return { host, calls, added, written, prompts, said, pasted, unasked, liveWords, focuses, state };
+  return { host, calls, added, written, prompts, sent, said, pasted, unasked, liveWords, focuses, state };
 }
 
 /** Two taps then the words: one whole dictation. */
@@ -240,6 +247,51 @@ describe("a dictation that pastes", () => {
 
     expect(stub.pasted).toEqual(["milk and eggs"]);
     expect(stub.state.clip).toBe(BEFORE);
+  });
+
+  it("offers Copy after a paste into an element that can't be told to take text, as it may have gone nowhere", async () => {
+    const unknown = { role: "AXGroup", secure: false, takesText: "unknown" as const };
+    const stub = stubHost({ targets: [target({ element: unknown }), target({ element: unknown })] });
+    await dictate(new CursorDictation(stub.host));
+
+    expect(stub.pasted).toEqual(["milk and eggs"]);
+    expect(stub.sent).toEqual([{ text: "milk and eggs", app: "Notes" }]);
+    // It is an offer, not a miss: the clipboard keeps what the person had, no copy card shows, and the entry says inserted.
+    expect(stub.state.clip).toBe(BEFORE);
+    expect(stub.prompts).toEqual([]);
+    expect(stub.added[0]).toMatchObject({ inserted: true });
+    expect(stub.calls.indexOf("paste")).toBeLessThan(stub.calls.indexOf("showPasted"));
+  });
+
+  it("offers Copy after a paste where nothing could be read of the focused element", async () => {
+    const stub = stubHost({ targets: [target(), target({ element: null })] });
+    await dictate(new CursorDictation(stub.host));
+
+    expect(stub.pasted).toEqual(["milk and eggs"]);
+    expect(stub.sent).toEqual([{ text: "milk and eggs", app: "Notes" }]);
+  });
+
+  it("offers nothing after a paste into an element that takes text", async () => {
+    const stub = stubHost();
+    await dictate(new CursorDictation(stub.host));
+    expect(stub.sent).toEqual([]);
+  });
+
+  it("offers nothing while secure keyboard entry is on, so a password-like dictation isn't put up to copy", async () => {
+    const unreadableButSecure = { role: null, secure: true, takesText: "unknown" as const };
+    const stub = stubHost({ targets: [target(), target({ element: unreadableButSecure })] });
+    await dictate(new CursorDictation(stub.host));
+
+    expect(stub.pasted).toEqual(["milk and eggs"]);
+    expect(stub.sent).toEqual([]);
+  });
+
+  it("keeps the dictation when the Copy offer fails to show", async () => {
+    const stub = stubHost({ targets: [target(), target({ element: null })], pastedFails: true });
+    await dictate(new CursorDictation(stub.host));
+
+    expect(stub.added[0]).toMatchObject({ inserted: true });
+    expect(stub.written).toHaveLength(1);
   });
 
   it("records the site of a browser tab, by domain only", async () => {
@@ -1000,7 +1052,7 @@ describe("taps, cancels and empty words", () => {
 });
 
 describe("the copy prompt", () => {
-  it("is shown for about five seconds", () => {
-    expect(COPY_PROMPT_MS).toBe(5000);
+  it("is shown for about three seconds", () => {
+    expect(COPY_PROMPT_MS).toBe(3000);
   });
 });

@@ -278,7 +278,7 @@ const SHELF_MADE_SHOW_MS = 5_000;
  * fix away. Ask `showsFinishedCard`, not the set: a Stopped card and a Saved card are in it by their kind, but are not finished when the
  * Stopped card says that the stopped run's edits stay, or the Saved card has a line about what became of its recording.
  */
-const FINISHED_CARDS: ReadonlySet<CapsuleState["kind"]> = new Set<CapsuleState["kind"]>(["hidden", "filed", "saved", "cancelled", "recorded", "shortcut-picked", "nothing-to-undo", "shelf-made"]);
+const FINISHED_CARDS: ReadonlySet<CapsuleState["kind"]> = new Set<CapsuleState["kind"]>(["hidden", "filed", "saved", "cancelled", "recorded", "shortcut-picked", "nothing-to-undo", "shelf-made", "dictation-sent"]);
 // How long the capsule says that a filing or a transcription is stopped (hovering over it keeps it longer, as it does any card that
 // hides itself).
 const STOPPED_SHOW_MS = 6_000;
@@ -518,8 +518,10 @@ export class Controller {
   private liveWords: LiveWords | null = null;
   /** A dictation's words are being made (`heardForCursor`), so dropping it must tell the session that they won't come. */
   private cursorRecognising = false;
-  /** The words of the last copy prompt, which its Copy button copies (`copy-dictation`). */
+  /** The words of the last copy prompt or `dictation-sent` bar, which its Copy button copies (`copy-dictation`). */
   private copyPromptText: string | null = null;
+  /** The app the last dictation looked to be going to (`dictatingInto`), with its icon: the `dictation-sent` bar shows it. */
+  private lastDictationApp: { name: string; icon?: string } | null = null;
   /**
    * A dictation's cards held back while a thought's recording or transcribing card has the capsule (`showCursorCard`): a dictation's
    * card never covers it (Ruling F4). Each shows, in turn, when the capsule next goes hidden with no thought holding it. One of each
@@ -1509,7 +1511,7 @@ export class Controller {
   /**
    * Shows a dictation's card now, or, while a thought's recording or transcribing card has the capsule, holds it until the capsule is
    * next hidden with no thought holding it (Ruling F4): the card must not take the thought's place, and its hide would hide the
-   * capsule while the microphone is on. A card's own timer (the copy card's five seconds) starts when it shows.
+   * capsule while the microphone is on. A card's own timer (the copy card's three seconds) starts when it shows.
    */
   private showCursorCard(kind: "outcome" | "browser" | "helper", show: () => void): void {
     if (!this.thoughtHoldsCapsule()) return show();
@@ -2210,6 +2212,7 @@ export class Controller {
     if (wordsMayShow) this.liveWords?.allow();
     else this.endLiveWords();
     const seen = app && { name: app.name, ...(app.icon ? { icon: `data:image/png;base64,${app.icon}` } : {}) };
+    if (seen) this.lastDictationApp = seen;
     this.changeListening(recording, (state) => {
       const shown = wordsMayShow ? state : withoutWords(state);
       const known = shown.dictation?.app;
@@ -2581,6 +2584,15 @@ export class Controller {
           this.copyPromptText = prompt.text;
           this.fail(copyPromptProblem(prompt), "copy-dictation", "Copy");
           this.scheduleHide(COPY_PROMPT_MS); // after `fail`, whose `setCapsule` clears any hide that was set
+        }),
+      // The words went to an app that couldn't say whether its cursor takes text: a bar names it for a moment and offers Copy. Its icon is
+      // the one the capsule showed while listening, when that was the same app.
+      showPasted: ({ text, app }) =>
+        this.showCursorCard("outcome", () => {
+          this.copyPromptText = text;
+          const seen = this.lastDictationApp;
+          const icon = seen && seen.name === app ? seen.icon : undefined;
+          this.setCapsule({ kind: "dictation-sent", app, ...(icon ? { icon } : {}) }, COPY_PROMPT_MS);
         }),
       browserUnanswered: (app, inserted) => this.browserUnanswered(app, inserted),
       say: (line) => this.sayForCursor(line),
@@ -4570,10 +4582,12 @@ export class Controller {
     }
     if (action === "copy-dictation") {
       // The copy prompt's Copy: the words it shows, whole, go on the clipboard again (the person may have copied something since).
-      if (this.capsuleState.kind === "error" && this.copyPromptText !== null) {
+      // The `dictation-sent` bar's Copy too: its words, which the paste gave back with the person's clipboard.
+      const shown = this.capsuleState.kind === "error" || this.capsuleState.kind === "dictation-sent";
+      if (shown && this.copyPromptText !== null) {
         void Promise.resolve(electronClipboard.writeText(this.copyPromptText)).catch((error: unknown) => console.error("copy dictation", error));
       }
-      if (this.capsuleState.kind === "error") this.setCapsule({ kind: "hidden" });
+      if (shown) this.setCapsule({ kind: "hidden" });
       return;
     }
     if (action === "type-a-thought") {
