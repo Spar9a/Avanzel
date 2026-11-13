@@ -18,6 +18,11 @@ An agent connected to Avanzel has five tools:
 - `remember`: leaves a note in your inbox, with tags, a suggested title and shelf, and the pages it
   relates to.
 
+`search`, `library_overview` and `remember` answer in JSON, every key in snake_case: `remember` gives the
+note's `id`, `new_tags` (its tags the library didn't use yet), `similar` (up to three pages that look like
+the same thing) and `when` it will be filed; `library_overview` gives `shelves`, `tags`, `more_tags` (how
+many tags didn't fit), `index`, and `index_cut` when `index.md` was cut.
+
 They read what Ask reads: shelf pages, `index.md`, `log.md`, `reviews/`, and the captures in
 `inbox/` and `raw/`, your unfiled ones and call notes included. Words from a capture reach the agent
 marked as someone's words, not instructions.
@@ -41,7 +46,8 @@ A note from an agent is a capture in `inbox/` like any other, marked `source: ag
 agent gave itself (`agent: claude-code`). The librarian files it at the next filing: the evening
 review, or when you file the inbox from Avanzel's panel.
 
-It files the note as the agent's, not yours. The page's log says so ("From Claude Code: prefers pnpm"),
+It files the note as the agent's, not yours. The page's log says so, by the name the agent gave itself
+("From claude-code: prefers pnpm"),
 and so does the page wherever it repeats what the note said. Where a note disagrees with something you
 said, the page keeps your version and the log records the disagreement. A note that changes an older
 fact names that page, and the librarian writes the change out in its log rather than dropping the old
