@@ -44,6 +44,10 @@
 // line for each question: {tool, path, status, decision, reason, error}.
 // FAKE_AGENT_READS=<n> (stream mode) reports n Reads of ideas/seen-<i>.md before the agent files, back to back, with
 // no wait between them. The pages need not exist: each is answered as read all the same.
+// FAKE_AGENT_SUGGEST=<text> appends "\nNew shelf: <text>" to a filing's reply, as a librarian that asks for a new shelf does;
+// "{page}" in the text is replaced by the page the run wrote (ideas/idea-<id>.md, or projects/p-<id>.md in make-folder mode).
+// FAKE_AGENT_MODE=make-folder writes the filing's page as projects/p-<id>.md, in a top-level folder nobody asked for, instead
+// of under ideas/.
 // FAKE_AGENT_MODE=limit hits a usage limit and exits 1, as an agent does when its owner has used up their quota, right
 // after the stream's init event and before any task, so asks hit it too. FAKE_AGENT_RESETS_AT=<epoch seconds> is when the
 // limit resets. In stream mode it prints a rate_limit_event, in the shape of test/fixtures/claude-filing.jsonl's first
@@ -417,20 +421,23 @@ if (task === "file") {
   }
   if (streaming) await readStep(join(root, "index.md")); // Claude Code reads the index before it files
   lookAround();
+  const pageStem = mode === "make-folder" ? `p-${captureId}` : `idea-${captureId}`;
+  const pageRel = mode === "make-folder" ? `projects/${pageStem}.md` : `ideas/${pageStem}.md`;
+  if (mode === "make-folder") mkdirSync(join(root, "projects"), { recursive: true });
   await writeStep(
-    `ideas/idea-${captureId}.md`,
-    `---\ntitle: ${words}\nshelf: ideas\nstatus: seed\n---\n# ${words}\n\n## Log\n- ${words} ([[${captureId}]])\n`,
+    pageRel,
+    `---\ntitle: ${words}\nshelf: ${mode === "make-folder" ? "projects" : "ideas"}\nstatus: seed\n---\n# ${words}\n\n## Log\n- ${words} ([[${captureId}]])\n`,
   );
   await tryRefusedWrite();
   if (mode === "link-page") {
     // swaps the page it wrote for a link to a file outside the library ($FAKE_AGENT_OUTSIDE), which opening the page would open
-    const page = join(root, "ideas", `idea-${captureId}.md`);
+    const page = join(root, pageRel);
     rmSync(page);
     symlinkSync(process.env.FAKE_AGENT_OUTSIDE, page);
   }
-  await editStep("index.md", `- [[idea-${captureId}]] — ${words}\n`);
+  await editStep("index.md", `- [[${pageStem}]] — ${words}\n`);
   if (mode !== "nolog" && mode !== "link-log" && mode !== "hardlink-log") {
-    await editStep("log.md", `- ${logStamp()} | file | [[${captureId}]] → [[idea-${captureId}]]\n`);
+    await editStep("log.md", `- ${logStamp()} | file | [[${captureId}]] → [[${pageStem}]]\n`);
   }
   if (mode === "tamper" || mode === "link-year") writeFileSync(capture, "rewritten by a careless agent");
   if (mode === "move") {
@@ -442,7 +449,8 @@ if (task === "file") {
   if (mode === "spawn" && !existsSync(late)) {
     writeFileSync(late, "---\nid: 2026-10-20-150000-late\ntype: capture\nsource: text\n---\n\nLate thought\n");
   }
-  await reply(`Filed into [[idea-${captureId}]].`);
+  const suggestion = process.env.FAKE_AGENT_SUGGEST ? `\nNew shelf: ${process.env.FAKE_AGENT_SUGGEST.replaceAll("{page}", pageRel)}` : "";
+  await reply(`Filed into [[${pageStem}]].${suggestion}`);
 } else if (task === "ask") {
   const pages = readdirSync(root)
     .filter((name) => !name.startsWith(".") && !["inbox", "raw", "tasks"].includes(name) && isDir(join(root, name)))

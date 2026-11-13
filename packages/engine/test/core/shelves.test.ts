@@ -2,10 +2,14 @@ import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  agentMadeFolders,
+  BUILT_IN_DEFINITIONS,
   BUILT_IN_SHELVES,
+  checkedSuggestion,
   cleanDefinition,
   folderProblem,
   MAX_OWN_SHELVES,
+  parseSuggestion,
   sameShelf,
   SHELF_SECTION_END,
   SHELF_SECTION_START,
@@ -250,5 +254,160 @@ describe("writeShelfSection", () => {
     writeShelfSection(join(tmp(), "lib"), [projects]);
     expect(readFileSync(outside, "utf8")).toBe("outside text");
     expect(readFileSync(join(tmp(), "lib", "AGENTS.md"), "utf8")).toBe(withShelfSection("", [projects]));
+  });
+});
+
+describe("BUILT_IN_DEFINITIONS", () => {
+  it("holds what AGENTS.md's table says each built-in shelf holds", () => {
+    const table = template("AGENTS.md");
+    expect(Object.keys(BUILT_IN_DEFINITIONS).sort()).toEqual([...BUILT_IN_SHELVES].sort());
+    for (const folder of BUILT_IN_SHELVES) {
+      expect(table).toContain(`| \`${folder}/\` | ${BUILT_IN_DEFINITIONS[folder]} |`);
+    }
+  });
+});
+
+describe("parseSuggestion", () => {
+  const line = "New shelf: projects | Projects | Work. | ideas/a.md";
+  const parsed = { folder: "projects", name: "Projects", definition: "Work.", page: "ideas/a.md" };
+
+  it("reads the four parts of the line", () => {
+    expect(parseSuggestion(`Filed.\n${line}`)).toEqual(parsed);
+  });
+
+  it("takes the last well-formed line", () => {
+    expect(parseSuggestion(`${line}\nNew shelf: trips | Trips | Journeys. | ideas/b.md`)).toEqual({
+      folder: "trips",
+      name: "Trips",
+      definition: "Journeys.",
+      page: "ideas/b.md",
+    });
+    expect(parseSuggestion(`${line}\nNew shelf: broken`)).toEqual(parsed);
+  });
+
+  it("ignores a line inside a fenced block", () => {
+    expect(parseSuggestion(`Here:\n\`\`\`\n${line}\n\`\`\`\nFiled.`)).toBeNull();
+    expect(parseSuggestion(`\`\`\`text\n${line}\n\`\`\`\n${line.replace("projects", "trips")}`)?.folder).toBe("trips");
+  });
+
+  it("accepts surrounding space and a full stop after the path", () => {
+    expect(parseSuggestion(`  ${line}.  `)).toEqual(parsed);
+  });
+
+  it("is null when the line is malformed", () => {
+    expect(parseSuggestion("Filed.")).toBeNull();
+    expect(parseSuggestion("New shelf: projects | Projects | ideas/a.md")).toBeNull(); // three parts
+    expect(parseSuggestion(`${line} | extra`)).toBeNull(); // five parts
+    expect(parseSuggestion("New shelf: projects |  | Work. | ideas/a.md")).toBeNull();
+    expect(parseSuggestion("New shelf: ")).toBeNull();
+  });
+});
+
+describe("checkedSuggestion", () => {
+  const parsed = { folder: "projects", name: "Projects", definition: "Work with a goal.", page: "ideas/a.md" };
+  const state = {
+    created: ["ideas/a.md"],
+    own: [] as OwnShelf[],
+    declined: [] as string[],
+    pending: [] as Array<{ folder: string; name: string; definition: string }>,
+    onDisk: ["goals", "ideas", "inbox"],
+  };
+
+  it("keeps a good suggestion, with its page", () => {
+    expect(checkedSuggestion(parsed, state)).toEqual({
+      folder: "projects",
+      name: "Projects",
+      definition: "Work with a goal.",
+      pages: ["ideas/a.md"],
+      agentMade: false,
+    });
+    expect(checkedSuggestion(null, state)).toBeNull();
+  });
+
+  it("cleans the name and the definition", () => {
+    const checked = checkedSuggestion({ ...parsed, name: " My|  Projects ", definition: "Work <b>with</b>\n`a` goal. [[x]]" }, state);
+    expect(checked?.name).toBe("My Projects");
+    expect(checked?.definition).toBe("Work bwith/b a goal. x");
+  });
+
+  it("drops a folder that breaks the folder rules, or is a built-in or special folder", () => {
+    for (const folder of ["Projects", "my projects", "goals", "meetings", "inbox", ".hidden", "", "a".repeat(41)]) {
+      expect(checkedSuggestion({ ...parsed, folder }, state), folder).toBeNull();
+    }
+  });
+
+  it("drops a folder, name or definition that is empty after trimming, however it matches", () => {
+    expect(checkedSuggestion({ ...parsed, name: "   " }, state)).toBeNull();
+    expect(checkedSuggestion({ ...parsed, name: "|" }, state)).toBeNull();
+    expect(checkedSuggestion({ ...parsed, folder: "  " }, state)).toBeNull();
+    expect(checkedSuggestion({ ...parsed, definition: "<>" }, state)).toBeNull();
+    expect(checkedSuggestion({ ...parsed, name: "  ", folder: "x" }, { ...state, declined: ["", "y"] })).toBeNull();
+  });
+
+  it("drops a folder that is on disk already", () => {
+    expect(checkedSuggestion(parsed, { ...state, onDisk: ["projects"] })).toBeNull();
+    expect(checkedSuggestion(parsed, { ...state, onDisk: ["Projects"] })).toBeNull();
+  });
+
+  it("drops one that was declined, the same shelf as one declined, or the same as an own or built-in shelf", () => {
+    expect(checkedSuggestion(parsed, { ...state, declined: ["projects"] })).toBeNull();
+    expect(checkedSuggestion({ ...parsed, folder: "project" }, { ...state, declined: ["projects"] })).toBeNull();
+    expect(checkedSuggestion({ ...parsed, folder: "work", name: "Projects" }, { ...state, declined: ["project"] })).toBeNull();
+    const own = [{ folder: "work", name: "Work", definition: "Jobs." }];
+    expect(checkedSuggestion({ ...parsed, folder: "jobs", name: "Works" }, { ...state, own })).toBeNull();
+    expect(checkedSuggestion({ ...parsed, folder: "works", name: "Jobs" }, { ...state, own })).toBeNull();
+    expect(checkedSuggestion({ ...parsed, folder: "idea", name: "Notions" }, state)).toBeNull();
+    expect(checkedSuggestion({ ...parsed, folder: "notions", name: "Memories" }, state)).toBeNull();
+  });
+
+  it("drops a page that this run did not create", () => {
+    expect(checkedSuggestion(parsed, { ...state, created: [] })).toBeNull();
+    expect(checkedSuggestion({ ...parsed, page: "people/ann.md" }, state)).toBeNull();
+  });
+
+  it("drops a page path that is not a shelf page", () => {
+    for (const page of ["goals/", "goals", "log.md", "inbox/x.md", "raw/x.md", "meetings/x.md", "ideas/x.txt", "ideas/sub/x.md", "projects/x.md"]) {
+      expect(checkedSuggestion({ ...parsed, page }, { ...state, created: [page] }), page).toBeNull();
+    }
+  });
+
+  it("takes a page of an own shelf", () => {
+    const own = [{ folder: "work", name: "Work", definition: "Jobs." }];
+    expect(checkedSuggestion({ ...parsed, page: "work/a.md" }, { ...state, own, created: ["work/a.md"] })?.pages).toEqual(["work/a.md"]);
+  });
+
+  it("joins a pending suggestion that is the same shelf, with this page", () => {
+    const pending = [{ folder: "projects", name: "Projects", definition: "Mine." }];
+    expect(checkedSuggestion({ ...parsed, folder: "project", name: "Project" }, { ...state, pending })).toEqual({
+      folder: "projects",
+      name: "Projects",
+      definition: "Mine.",
+      pages: ["ideas/a.md"],
+      agentMade: false,
+    });
+    // by name alone, and when the pending folder is already on disk (the agent made it)
+    expect(checkedSuggestion({ ...parsed, folder: "plans" }, { ...state, pending, onDisk: [...state.onDisk, "projects"] })?.folder).toBe("projects");
+    // a page that is not this run's is still dropped
+    expect(checkedSuggestion({ ...parsed, folder: "project" }, { ...state, pending, created: [] })).toBeNull();
+  });
+});
+
+describe("agentMadeFolders", () => {
+  const known = [...BUILT_IN_SHELVES, "work", "inbox", "raw", "reviews", "tasks"];
+
+  it("maps each unknown top-level folder to its created pages", () => {
+    expect(agentMadeFolders(["projects/a.md", "ideas/b.md", "meetings/c.md"], known)).toEqual(new Map([["projects", ["projects/a.md"]]]));
+    expect(agentMadeFolders(["trips/a.md", "projects/b.md", "trips/c.md", "work/d.md", "raw/x.md"], known)).toEqual(
+      new Map([
+        ["trips", ["trips/a.md", "trips/c.md"]],
+        ["projects", ["projects/b.md"]],
+      ]),
+    );
+  });
+
+  it("counts only pages inside a folder", () => {
+    expect(agentMadeFolders(["index.md", "notes.md", "trips/map.png", "trips/sub/deep.md"], known)).toEqual(
+      new Map([["trips", ["trips/sub/deep.md"]]]),
+    );
   });
 });

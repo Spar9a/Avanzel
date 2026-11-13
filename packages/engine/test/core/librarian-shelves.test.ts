@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadSettings } from "../../src/core/config.ts";
 import * as git from "../../src/core/git.ts";
 import { Librarian, type ShelfResult } from "../../src/core/librarian.ts";
 import { Vault } from "../../src/core/vault.ts";
 import { NOW, envHome, gitIdentity, write } from "./helpers.ts";
-import { fakeSettings, read, tmp } from "./librarian-fixtures.ts";
+import { fakeSettings, mode, only, read, recordRuns, tmp } from "./librarian-fixtures.ts";
 
 const PROJECTS = { folder: "projects", name: "Projects", definition: "Work | with a goal." };
 
@@ -336,5 +336,149 @@ describe("shelf operations without git", () => {
     await librarian.editShelf("projects", { name: "Work" });
     await librarian.removeShelf("projects");
     expect(readFileSync(vault.indexPath, "utf8")).not.toContain("## Work");
+  });
+});
+
+describe("filing and suggesting a shelf", () => {
+  const SUGGEST = "projects | Projects | Work with a goal. | {page}";
+  let vault: Vault;
+  let librarian: Librarian;
+
+  const suggest = (text: string) => vi.stubEnv("FAKE_AGENT_SUGGEST", text);
+  const fileOne = (options: Parameters<Librarian["file"]>[1] = {}) => only(librarian.file(null, options));
+
+  beforeEach(async () => {
+    envHome(tmp());
+    vault = await Vault.init(join(tmp(), "lib"), { git: false });
+    librarian = new Librarian(vault, fakeSettings(), { clock: () => NOW });
+  });
+
+  it("carries the suggestion on the outcome and leaves the filing as it was", async () => {
+    suggest(SUGGEST);
+    const capture = librarian.captureText("A thought");
+    const outcome = await fileOne();
+    expect(outcome.ok).toBe(true);
+    expect(outcome.message).toContain(`Filed into [[idea-${capture.id}]].`);
+    expect(outcome.suggestion).toEqual({
+      folder: "projects",
+      name: "Projects",
+      definition: "Work with a goal.",
+      pages: [`ideas/idea-${capture.id}.md`],
+      agentMade: false,
+    });
+    expect(outcome.changes.pages).toEqual([`ideas/idea-${capture.id}.md`]);
+    expect(existsSync(join(vault.root, "projects"))).toBe(false);
+  });
+
+  it("has no suggestion when the reply has no shelf line, or a garbled one, and still files", async () => {
+    librarian.captureText("One");
+    expect((await fileOne()).suggestion).toBeNull();
+    suggest("projects | Projects");
+    librarian.captureText("Two");
+    const garbled = await fileOne();
+    expect(garbled.ok).toBe(true);
+    expect(garbled.suggestion).toBeNull();
+  });
+
+  it("makes an unasked folder the suggestion, with no definition, and that wins over the reply's line", async () => {
+    mode("make-folder");
+    suggest("trips | Trips | Journeys. | {page}");
+    const capture = librarian.captureText("A thought");
+    const outcome = await fileOne();
+    expect(outcome.ok).toBe(true);
+    expect(outcome.suggestion).toEqual({
+      folder: "projects",
+      name: "Projects",
+      definition: "",
+      pages: [`projects/p-${capture.id}.md`],
+      agentMade: true,
+    });
+  });
+
+  it("does not suggest a folder the owner turned down, whoever made it", async () => {
+    librarian = new Librarian(vault, fakeSettings({ declinedShelves: ["project"] }), { clock: () => NOW });
+    suggest(SUGGEST);
+    librarian.captureText("One");
+    expect((await fileOne()).suggestion).toBeNull();
+    mode("make-folder");
+    librarian.captureText("Two");
+    expect((await fileOne()).suggestion).toBeNull();
+  });
+
+  it("does not suggest a folder that is already there", async () => {
+    mkdirSync(join(vault.root, "projects"));
+    suggest(SUGGEST);
+    librarian.captureText("One");
+    expect((await fileOne()).suggestion).toBeNull();
+  });
+
+  it("does not suggest the same shelf as one of the owner's, under another folder", async () => {
+    librarian = new Librarian(vault, fakeSettings({ shelves: [{ folder: "work", name: "Projects", definition: "Jobs." }] }), {
+      clock: () => NOW,
+    });
+    suggest(SUGGEST);
+    librarian.captureText("One");
+    expect((await fileOne()).suggestion).toBeNull();
+  });
+
+  it("joins a pending suggestion that is the same shelf, with this run's page", async () => {
+    suggest("project | Project | Other words. | {page}");
+    const capture = librarian.captureText("A thought");
+    const outcome = await fileOne({ pendingShelves: [{ folder: "projects", name: "Projects", definition: "Mine." }] });
+    expect(outcome.suggestion).toEqual({
+      folder: "projects",
+      name: "Projects",
+      definition: "Mine.",
+      pages: [`ideas/idea-${capture.id}.md`],
+      agentMade: false,
+    });
+  });
+
+  it("gives a failed filing no suggestion", async () => {
+    mode("picky");
+    suggest(SUGGEST);
+    librarian.captureText("unfileable");
+    const outcome = await fileOne();
+    expect(outcome.ok).toBe(false);
+    expect(outcome.suggestion).toBeNull();
+  });
+
+  it("tells the agent every shelf, the owner's own with their definitions, and the pending and turned-down ones", async () => {
+    const runs = recordRuns();
+    librarian = new Librarian(
+      vault,
+      fakeSettings({
+        shelves: [{ folder: "work", name: "Work", definition: "Paid jobs and clients." }],
+        declinedShelves: ["recipes"],
+      }),
+      { clock: () => NOW },
+    );
+    librarian.captureText("A thought");
+    await fileOne({ pendingShelves: [{ folder: "trips", name: "Trips", definition: "Journeys." }] });
+    const prompt = runs()[0]?.prompt ?? "";
+    for (const line of [
+      "- goals/: Outcomes the owner wants to achieve",
+      "- meetings/: One page per call",
+      "- work/: Paid jobs and clients.\n",
+      "- trips/: Journeys. (pending)\n",
+      "- recipes/: (turned down)\n",
+    ]) {
+      expect(prompt, line).toContain(line);
+    }
+    expect(prompt).toContain("New shelf: <folder> | <Name>");
+  });
+
+  it("tells ask and review the owner's own shelves, and no suggestion rule", async () => {
+    const runs = recordRuns();
+    librarian = new Librarian(vault, fakeSettings({ shelves: [{ folder: "work", name: "Work", definition: "Paid jobs and clients." }] }), {
+      clock: () => NOW,
+    });
+    await librarian.ask("What is open?");
+    await librarian.review();
+    for (const run of runs()) {
+      expect(run.prompt).toContain("<shelves>\n- work/: Paid jobs and clients.\n</shelves>");
+      expect(run.prompt).not.toContain("New shelf:");
+    }
+    expect(runs()).toHaveLength(2);
   });
 });

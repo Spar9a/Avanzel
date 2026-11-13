@@ -3,7 +3,7 @@ Avanzel task: review
 You are the librarian of this second-brain library (the current folder). Its rules are in
 AGENTS.md. Today is ${today}.
 
-Run a health check of the whole library and write the report to `${report_path}`:
+${shelves}Run a health check of the whole library and write the report to `${report_path}`:
 1. Goals: active ones with no update in 30+ days; achieved or abandoned ones still marked active.
 2. Problems still open that recent captures suggest are solved, or that block a goal.
 3. Contradictions between pages, duplicate pages about the same thing, orphan pages nothing links

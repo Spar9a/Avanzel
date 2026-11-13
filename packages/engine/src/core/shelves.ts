@@ -93,6 +93,136 @@ export function suggestFolder(name: string): string {
   return slugify(name, 5, MAX_SHELF_FOLDER);
 }
 
+/** What each shelf Avanzel keeps holds, as the "Holds" column of the table in the template `AGENTS.md` says. */
+export const BUILT_IN_DEFINITIONS: Readonly<Record<string, string>> = {
+  goals: "Outcomes the owner wants to achieve: why, status, next steps, progress",
+  ideas: "Things the owner might make, do or explore",
+  problems: "Open problems, frictions and questions the owner is wrestling with",
+  memories: "Facts, events, experiences, decisions and lessons from the owner's life",
+  people: "People the owner mentions: who they are, context, commitments",
+  meetings: "One page per call: what was decided and who promised what",
+  topics: "Knowledge and recurring themes; saved answers and syntheses",
+};
+
+// --- the librarian's suggestion of a new shelf ----------------------------------------------------------------------------------
+
+/** A shelf the librarian suggests after a filing, for the owner to make or turn down. */
+export interface ShelfSuggestion {
+  folder: string;
+  name: string;
+  /** What belongs on it. Empty for a folder the agent made on its own: the owner writes it. */
+  definition: string;
+  /** The pages this run created that would move onto the shelf. */
+  pages: string[];
+  /** The agent made the folder itself, instead of asking for it in its reply. */
+  agentMade: boolean;
+}
+
+/** A suggestion some earlier filing made that the owner has not answered yet. */
+export interface PendingShelf {
+  folder: string;
+  name: string;
+  definition: string;
+}
+
+const SUGGESTION_LINE = /^New shelf: (.+)$/;
+
+/**
+ * The shelf a reply asks for: its last well-formed `New shelf: <folder> | <Name> | <definition> | <page>` line outside a fenced
+ * block. A line with other than four non-empty parts is malformed, and skipped for an earlier one. Null when there is none.
+ */
+export function parseSuggestion(reply: string): { folder: string; name: string; definition: string; page: string } | null {
+  let fenced = false;
+  const found: Array<{ folder: string; name: string; definition: string; page: string }> = [];
+  for (const raw of reply.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith("```")) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    const body = SUGGESTION_LINE.exec(line)?.[1];
+    if (body === undefined) continue;
+    const parts = body.split(" | ").map((part) => part.trim());
+    if (parts.length !== 4 || parts.some((part) => part === "")) continue;
+    const [folder, name, definition, page] = parts as [string, string, string, string];
+    found.push({ folder: folder.replace(/\/$/, ""), name, definition, page: page.replace(/\.$/, "") });
+  }
+  return found.at(-1) ?? null;
+}
+
+/** A page of a shelf: `<folder>/<file>.md` in one of the six shelves or an own shelf (a meeting's page is a call's record). */
+function onAShelf(page: string, own: readonly OwnShelf[]): boolean {
+  const parts = page.split("/");
+  const folder = parts[0] ?? "";
+  if (parts.length !== 2 || !page.endsWith(".md") || parts[1] === ".md") return false;
+  return (SHELVES as readonly string[]).includes(folder) || own.some((shelf) => shelf.folder === folder);
+}
+
+/** A name as one line, with no `|` or line break: whitespace collapsed, cut to length. */
+function cleanName(text: string): string {
+  const line = text.replace(/\|/g, " ").replace(/\s+/g, " ").trim(); // \s takes line breaks, U+2028 and U+2029 too
+  return [...line].slice(0, MAX_SHELF_NAME).join("").trim();
+}
+
+/**
+ * `parsed` as a suggestion to keep, or null when it is dropped: a folder, name or definition that is empty once cleaned; a folder
+ * that breaks the folder rules, is on disk already, or was turned down; one that is the same shelf as a built-in, own or turned-down
+ * shelf; a page that this run did not create, or that is not a shelf page. One that is the same shelf as a pending suggestion
+ * joins it: that one's folder, name and definition, with this page. The name and the definition are cleaned.
+ */
+export function checkedSuggestion(
+  parsed: { folder: string; name: string; definition: string; page: string } | null,
+  {
+    created,
+    own,
+    declined,
+    pending,
+    onDisk,
+  }: {
+    created: readonly string[];
+    own: readonly OwnShelf[];
+    declined: readonly string[];
+    pending: readonly PendingShelf[];
+    /** The folders at the top of the library as the run left it. */
+    onDisk: readonly string[];
+  },
+): ShelfSuggestion | null {
+  if (parsed === null) return null;
+  const folder = parsed.folder.trim();
+  const name = cleanName(parsed.name);
+  const definition = cleanDefinition(parsed.definition);
+  const page = parsed.page.trim();
+  if (folder === "" || name === "" || definition === "") return null;
+  if (folderProblem(folder, own.map((shelf) => shelf.folder)) !== null) return null;
+  const sameAs = (other: { folder: string; name: string }) =>
+    [other.folder, other.name].some((theirs) => sameShelf(theirs, folder) || sameShelf(theirs, name));
+  if (declined.some((turnedDown) => sameAs({ folder: turnedDown, name: turnedDown }))) return null;
+  if (own.some(sameAs)) return null;
+  if (BUILT_IN_SHELVES.some((built) => sameAs({ folder: built, name: built }))) return null;
+  if (!created.includes(page) || !onAShelf(page, own)) return null;
+  const joined = pending.find(sameAs);
+  if (joined) return { folder: joined.folder, name: joined.name, definition: joined.definition, pages: [page], agentMade: false };
+  if (onDisk.some((existing) => sameShelf(existing, folder))) return null;
+  return { folder, name, definition, pages: [page], agentMade: false };
+}
+
+/**
+ * The top-level folders a run made that nobody asked for: the first path segment of each created page that is in no `known` folder
+ * (the built-in and own shelves and the special folders), mapped to its pages, in the order the folders first appear.
+ */
+export function agentMadeFolders(created: readonly string[], known: readonly string[]): Map<string, string[]> {
+  const made = new Map<string, string[]>();
+  for (const page of created) {
+    const at = page.indexOf("/");
+    if (at < 1 || !page.endsWith(".md")) continue;
+    const folder = page.slice(0, at);
+    if (known.includes(folder)) continue;
+    made.set(folder, [...(made.get(folder) ?? []), page]);
+  }
+  return made;
+}
+
 export const SHELF_SECTION_START = "<!-- avanzel:shelves -->";
 export const SHELF_SECTION_END = "<!-- /avanzel:shelves -->";
 

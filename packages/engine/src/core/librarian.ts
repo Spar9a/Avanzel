@@ -30,14 +30,18 @@ import {
 } from "./harness.ts";
 import { createInside, lstatOrNull, realFoldersTo, removeInside, replaceInside, writeInside } from "./inside.ts";
 import { parseDictionary } from "./dictionary.ts";
-import { askPrompt, filePrompt, reviewPrompt } from "./prompts.ts";
+import { askPrompt, filePrompt, reviewPrompt, type ShelfNote } from "./prompts.ts";
 import {
+  BUILT_IN_DEFINITIONS,
   BUILT_IN_SHELVES,
   MAX_OWN_SHELVES,
   MAX_SHELF_NAME,
+  agentMadeFolders,
+  checkedSuggestion,
   cleanDefinition,
   folderProblem,
   nameBreaksRules,
+  parseSuggestion,
   sameShelf,
   shelfTextLength,
   withIndexHeading,
@@ -46,6 +50,8 @@ import {
   withoutEmptyIndexHeading,
   writeShelfSection,
   type OwnShelf,
+  type PendingShelf,
+  type ShelfSuggestion,
 } from "./shelves.ts";
 import { insideLibrary, stepPath, type FilingStep } from "./steps.ts";
 import { AUDIO_EXTS, IMAGE_EXTS, SPECIAL_DIRS, TEXT_EXTS, type Capture, type Vault } from "./vault.ts";
@@ -99,6 +105,12 @@ export interface FileOutcome {
    * transcribed): then only `error` says why.
    */
   failure: RunFailure | null;
+  /**
+   * A shelf this filing suggests, for the owner to make or turn down: one the agent asked for in the last line of its reply, or a
+   * folder it made on its own (`agentMade`). Null when the filing failed, the agent asked for none, or the suggestion broke a rule
+   * (see `checkedSuggestion`): a dropped suggestion changes nothing about the filing.
+   */
+  suggestion: ShelfSuggestion | null;
 }
 
 export interface AgentOutcome {
@@ -169,6 +181,8 @@ export interface FileOptions {
    * the capture, anything under inbox/ or raw/, or a dot path. Narration is best effort: it never fails a filing.
    */
   steps?: (step: FilingStep) => void;
+  /** The shelves the librarian suggested that the owner has not answered yet: the prompt lists them, and a suggestion that is the same shelf joins one. */
+  pendingShelves?: readonly PendingShelf[];
 }
 
 export interface LibrarianOptions {
@@ -520,9 +534,11 @@ export class Librarian {
 
   async #fileQueue(
     only: readonly string[] | null,
-    { progress = quiet, instructions = null, signal, leave = () => false, steps }: FileOptions,
+    { progress = quiet, instructions = null, signal, leave = () => false, steps, pendingShelves = [] }: FileOptions,
   ): Promise<FileOutcome[]> {
     const outcomes: FileOutcome[] = [];
+    // The suggestions this run makes are pending for the captures after them.
+    const pending: PendingShelf[] = [...pendingShelves];
     const attempted = new Set<string>();
     while (!signal?.aborted) {
       const queue = only ?? this.vault.pending();
@@ -556,7 +572,12 @@ export class Librarian {
       attempted.add(path);
       progress(`Filing ${basename(path)} with ${this.harness.name}…`);
       try {
-        outcomes.push(await this.#fileOne(path, instructions, signal, steps));
+        const filed = await this.#fileOne(path, instructions, signal, steps, pending);
+        const { suggestion } = filed;
+        if (suggestion && !pending.some((other) => other.folder === suggestion.folder)) {
+          pending.push({ folder: suggestion.folder, name: suggestion.name, definition: suggestion.definition });
+        }
+        outcomes.push(filed);
       } catch (error) {
         // The agent is gone, and so it is for every capture: say so, instead of failing each in turn.
         if (error instanceof NoAgentError) throw error;
@@ -586,6 +607,7 @@ export class Librarian {
     instructions: string | null,
     signal?: AbortSignal,
     steps?: (step: FilingStep) => void,
+    pending: readonly PendingShelf[] = [],
   ): Promise<FileOutcome> {
     const root = this.vault.root;
     const now = this.clock();
@@ -600,7 +622,7 @@ export class Librarian {
     const call = this.#isCall(original.toString("utf8"));
     const continues = this.#continues(original.toString("utf8"));
     const files = original.toString("utf8").includes("raw/attachments/");
-    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, continues, files, names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term), instructions });
+    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, continues, files, names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term), instructions, shelves: this.#shelfNotes(pending) });
     // Only a caller that asked for the steps is told them: Claude Code's come from its own events, and other agents'
     // from the folder. The changes below are read from `after`, the library as the run left it, whether or not they are.
     const { result, guarded, after } = await this.#run(prompt, { write: true, images: attachments, signal, before, steps });
@@ -626,7 +648,56 @@ export class Librarian {
     }
     const archivedTo = this.vault.archive(path, now);
     const commit = await this.#commit(`avanzel: file ${captureId}`);
-    return outcome(captureId, { ...ran, ok: true, archivedTo, commit });
+    return outcome(captureId, { ...ran, ok: true, archivedTo, commit, suggestion: this.#suggestion(changes, result.output, pending) });
+  }
+
+  /** Every shelf as the filing prompt lists it: the built-in ones, the owner's own, the pending suggestions and the ones turned down. */
+  #shelfNotes(pending: readonly PendingShelf[]): ShelfNote[] {
+    const { shelves, declinedShelves } = this.settings;
+    const built = BUILT_IN_SHELVES.map((folder) => ({
+      folder,
+      name: capitalised(folder),
+      definition: BUILT_IN_DEFINITIONS[folder] ?? "",
+      kind: "built-in" as const,
+    }));
+    return [
+      ...built,
+      ...shelves.map((shelf) => ({ ...shelf, kind: "own" as const })),
+      ...pending.map((shelf) => ({ ...shelf, kind: "pending" as const })),
+      ...declinedShelves.map((folder) => ({ folder, name: folder, definition: "", kind: "declined" as const })),
+    ];
+  }
+
+  /**
+   * The shelf a successful filing suggests, or null. A top-level folder the agent made on its own comes first, whatever its reply
+   * says; else the last well-formed `New shelf:` line of the reply, when it passes `checkedSuggestion`.
+   */
+  #suggestion(changes: Changes, reply: string, pending: readonly PendingShelf[]): ShelfSuggestion | null {
+    const { shelves, declinedShelves } = this.settings;
+    const known = [...BUILT_IN_SHELVES, ...shelves.map((shelf) => shelf.folder), ...SPECIAL_DIRS];
+    const turnedDown = (folder: string) => declinedShelves.some((declined) => sameShelf(declined, folder));
+    for (const [folder, pages] of agentMadeFolders(changes.created, known)) {
+      if (folderProblem(folder, []) !== null || turnedDown(folder)) continue;
+      return { folder, name: capitalised(folder), definition: "", pages, agentMade: true };
+    }
+    return checkedSuggestion(parseSuggestion(reply), {
+      created: changes.created,
+      own: shelves,
+      declined: declinedShelves,
+      pending,
+      onDisk: this.#topLevelFolders(),
+    });
+  }
+
+  /** The folders at the top of the library now, hidden ones left out. */
+  #topLevelFolders(): string[] {
+    try {
+      return readdirSync(this.vault.root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+        .map((entry) => entry.name);
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -714,7 +785,7 @@ export class Librarian {
       if (waited) progress(LOOKING);
       if (save) await this.#commitOwnerChanges("saving an answer");
       const before = snapshot(this.vault.root);
-      const prompt = askPrompt(question, { save, now, answer });
+      const prompt = askPrompt(question, { save, now, answer, shelves: this.settings.shelves });
       const { result, guarded } = await this.#run(prompt, { write: save, signal });
       const changes = diff(before, snapshot(this.vault.root)).without(guarded);
       let commit: string | null = null;
@@ -745,7 +816,7 @@ export class Librarian {
       realFoldersTo(root, reportRel, true); // reviews/, for the agent to write into
       await this.#commitOwnerChanges(`review ${stem(report)}`);
       const before = snapshot(root);
-      const { result, guarded } = await this.#run(reviewPrompt(reportRel, now), { write: true, signal });
+      const { result, guarded } = await this.#run(reviewPrompt(reportRel, now, this.settings.shelves), { write: true, signal });
       if (result.ok && result.output) {
         // Only when the agent wrote no report; never through a link it may have put there.
         createInside(root, reportRel, `# Review ${localDate(now)}\n\n${result.output}\n`);
@@ -886,6 +957,7 @@ function outcome(captureId: string, fields: Partial<Omit<FileOutcome, "captureId
     refused: [],
     commit: null,
     failure: null,
+    suggestion: null,
     ...fields,
   };
 }
@@ -1051,6 +1123,10 @@ function isPage(path: string): boolean {
 /** A page of a shelf: a page in none of the folders that hold no shelf pages (inbox/, raw/, reviews/ and tasks/: `SPECIAL_DIRS`). */
 function isShelfPage(path: string): boolean {
   return isPage(path) && !SPECIAL_DIRS.includes(path.split("/")[0] ?? "");
+}
+
+function capitalised(folder: string): string {
+  return folder.charAt(0).toUpperCase() + folder.slice(1);
 }
 
 function collapse(text: string): string {
