@@ -9,6 +9,7 @@ import {
 } from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SKIP_APPS } from "../src/main/cursor-policy.ts";
+import { shortcutRefusedLine } from "../src/renderer/settings/copy.ts";
 import {
   agentNotChecked,
   AGENTS_NOT_CHECKED,
@@ -859,5 +860,12 @@ describe("Settings → Your shelves", () => {
     expect(shelfRowLine("Work with a goal.", 0)).toBe("Work with a goal. · 0 pages");
     expect(shelfRowLine("Work with a goal.", 1)).toBe("Work with a goal. · 1 page");
     expect(shelfRowLine("", 12)).toBe("No definition yet · 12 pages");
+  });
+});
+
+describe("shortcutRefusedLine", () => {
+  it("says why ⌘ and ⇧ alone aren't taken, and offers the same keys with ⌥", () => {
+    expect(shortcutRefusedLine("Alt+Shift+R")).toBe("A shortcut needs ⌃ or ⌥, as apps use ⌘ and ⇧ for their own. Try ⌥⇧R.");
+    expect(shortcutRefusedLine("Alt+K")).toBe("A shortcut needs ⌃ or ⌥, as apps use ⌘ and ⇧ for their own. Try ⌥K.");
   });
 });

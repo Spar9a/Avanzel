@@ -356,10 +356,13 @@ test("A key cap takes no shortcut without ⌃ or ⌥, which apps use themselves,
   });
   await row.getByRole("button", { name: CHANGE }).click();
   await expect(listening).toBeVisible();
-  // ⌘W, ⌘⇧Z and ⇧A would take a key from every app: the recorder keeps listening, and saves nothing.
-  for (const keys of ["Meta+W", "Meta+Shift+Z", "Shift+A"]) {
+  // ⌘W, ⌘⇧Z and ⇧A would take a key from every app: the recorder keeps listening, saves nothing, and its row says why, with the
+  // same keys and ⌥ to try instead, so a recorder that keeps listening is not taken for a broken one.
+  const told = "A shortcut needs ⌃ or ⌥, as apps use ⌘ and ⇧ for their own. Try ";
+  for (const [keys, instead] of [["Meta+W", "⌥W"], ["Meta+Shift+Z", "⌥⇧Z"], ["Shift+A", "⌥⇧A"]] as const) {
     await settings.keyboard.press(keys);
     await expect(listening).toBeVisible();
+    await expect(row.getByText(`${told}${instead}.`, { exact: true })).toBeVisible();
   }
   expect((await snapshot(app)).app.shortcuts.type).toBe("Alt+Shift+Space");
   // The ⌘ ones went on to the app as if nothing listened (so ⌘Q would quit); ⇧A was kept from it.
@@ -372,6 +375,7 @@ test("A key cap takes no shortcut without ⌃ or ⌥, which apps use themselves,
   await settings.keyboard.press("Control+Alt+K");
   await expect.poll(async () => (await snapshot(app)).app.shortcuts.type).toBe("Control+Alt+K");
   await expect(row.getByText("⌃⌥K", { exact: true })).toBeVisible();
+  await expect(row.getByText(told, { exact: false })).toHaveCount(0); // said only while it records
   await app.close();
 });
 

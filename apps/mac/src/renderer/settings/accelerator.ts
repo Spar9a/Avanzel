@@ -31,6 +31,18 @@ export function toAccelerator(key: Pick<KeyboardEvent, "code" | "ctrlKey" | "alt
 }
 
 /**
+ * A whole shortcut the recorder won't take because it has neither Control nor Alt (⌘⇧R, ⇧R, a plain K), as the same keys
+ * with Alt instead of Command, which it would take ("Alt+Shift+R"): the person is told why, and what to try. Null for a
+ * shortcut it takes, a bare F-key, a modifier on its own, or a key it never offers (Escape, Enter, Tab).
+ */
+export function refusedShortcut(key: Pick<KeyboardEvent, "code" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey">): string | null {
+  const name = keyName(key.code);
+  if (!name || key.ctrlKey || key.altKey) return null;
+  if (!key.shiftKey && !key.metaKey && /^F\d+$/.test(name)) return null;
+  return ["Alt", key.shiftKey && "Shift", name].filter((part) => part !== false).join("+");
+}
+
+/**
  * Whether the recorder lets a keydown go on to the app: one with Command and without Control or Alt, which it never
  * takes, so the app's own ⌘ keys work while it listens (⌘Q quits, ⌘H hides). It keeps every other key from the page, so
  * a plain Space or Return doesn't press the focused button.

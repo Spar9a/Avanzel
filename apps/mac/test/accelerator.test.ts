@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { passesThrough, toAccelerator } from "../src/renderer/settings/accelerator.ts";
+import { passesThrough, refusedShortcut, toAccelerator } from "../src/renderer/settings/accelerator.ts";
 
 type Modifier = "ctrl" | "alt" | "shift" | "meta";
 
@@ -65,5 +65,28 @@ describe("passesThrough", () => {
     expect(passesThrough(down("KeyW", "ctrl", "meta"))).toBe(false);
     expect(passesThrough(down("KeyW", "alt", "meta"))).toBe(false);
     expect(passesThrough(down("KeyK", "ctrl", "alt"))).toBe(false);
+  });
+});
+
+describe("refusedShortcut", () => {
+  it("a whole shortcut without Control or Alt is refused, and the same keys with Alt are offered instead", () => {
+    expect(refusedShortcut(down("KeyR", "meta", "shift"))).toBe("Alt+Shift+R");
+    expect(refusedShortcut(down("KeyR", "meta"))).toBe("Alt+R");
+    expect(refusedShortcut(down("KeyR", "shift"))).toBe("Alt+Shift+R");
+    expect(refusedShortcut(down("KeyK"))).toBe("Alt+K");
+    expect(refusedShortcut(down("Space", "meta", "shift"))).toBe("Alt+Shift+Space");
+    expect(refusedShortcut(down("Digit5", "meta"))).toBe("Alt+5");
+  });
+
+  it("a shortcut it takes, a bare F-key, a lone modifier or a key it never offers is not refused", () => {
+    expect(refusedShortcut(down("KeyR", "alt", "shift"))).toBeNull();
+    expect(refusedShortcut(down("KeyK", "ctrl"))).toBeNull();
+    expect(refusedShortcut(down("KeyW", "ctrl", "meta"))).toBeNull();
+    expect(refusedShortcut(down("F5"))).toBeNull();
+    expect(refusedShortcut(down("MetaLeft", "meta"))).toBeNull();
+    expect(refusedShortcut(down("ShiftRight", "shift"))).toBeNull();
+    expect(refusedShortcut(down("Escape"))).toBeNull();
+    expect(refusedShortcut(down("Enter"))).toBeNull();
+    expect(refusedShortcut(down("Tab"))).toBeNull();
   });
 });

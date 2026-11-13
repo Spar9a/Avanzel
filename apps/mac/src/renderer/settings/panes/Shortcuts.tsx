@@ -4,7 +4,8 @@ import { Actions, Button, Group, GroupRow, Notice, ShortcutField, Stack } from "
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, inMenuLine, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { Shortcuts as ShortcutKeys } from "../../../shared/ipc.ts";
-import { passesThrough, toAccelerator } from "../accelerator.ts";
+import { passesThrough, refusedShortcut, toAccelerator } from "../accelerator.ts";
+import { shortcutRefusedLine } from "../copy.ts";
 import type { PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -28,6 +29,9 @@ export function Shortcuts({ primary, ...props }: PaneProps & { primary: boolean 
   const [recording, setRecording] = useState<keyof ShortcutKeys | null>(null);
   // How the last recording ended, which its field tells a screen reader, as nothing else on screen says so.
   const [saved, setSaved] = useState<{ key: keyof ShortcutKeys; said: string } | null>(null);
+  // The last whole shortcut pressed while recording that it won't take (no ⌃ or ⌥), as the keys to try instead: its row says why, as
+  // the recording keeps listening and would otherwise look stuck. A new recording starts without one.
+  const [refused, setRefused] = useState<string | null>(null);
   // Each shortcut row's box, to put the focus back on its field when a button the person used has gone.
   const boxes = useRef<Partial<Record<keyof ShortcutKeys, HTMLDivElement | null>>>({});
   const rows = Object.entries(ACTION_NAMES) as [keyof ShortcutKeys, string][];
@@ -60,6 +64,9 @@ export function Shortcuts({ primary, ...props }: PaneProps & { primary: boolean 
     if (recording === null) return;
     const listen = (event: KeyboardEvent) => {
       if (event.key === "Tab") return; // the focus may leave the row, which ends the recording
+      // ⌘⇧R or ⇧R is a whole shortcut it won't take: said before a ⌘ key goes on to the app, which it still does.
+      const instead = refusedShortcut(event);
+      if (instead) setRefused(instead);
       if (passesThrough(event)) return; // a ⌘ key it never takes is the app's: ⌘Q still quits while it listens
       event.preventDefault();
       event.stopPropagation();
@@ -83,6 +90,8 @@ export function Shortcuts({ primary, ...props }: PaneProps & { primary: boolean 
 
   // While it records, Avanzel's own shortcuts are let go: macOS would hand a key Avanzel holds to it, and the page would never see it.
   const listening = recording !== null;
+  // A recording that starts, moves to another row, or ends says nothing yet of keys it won't take.
+  useLayoutEffect(() => setRefused(null), [recording]);
   useLayoutEffect(() => {
     if (!listening) return;
     api.recordingShortcut(true);
@@ -93,7 +102,12 @@ export function Shortcuts({ primary, ...props }: PaneProps & { primary: boolean 
     <>
       <Group label="Shortcuts" note="They work in every app. Click one to change it.">
         {rows.map(([key, name]) => (
-          <GroupRow key={key} label={name}>
+          <GroupRow
+            key={key}
+            label={name}
+            description={recording === key && refused ? shortcutRefusedLine(refused) : undefined}
+            live={recording === key && refused !== null}
+          >
             <div
               ref={(box) => {
                 boxes.current[key] = box;

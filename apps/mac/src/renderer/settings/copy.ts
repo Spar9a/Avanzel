@@ -3,6 +3,7 @@
 // scheduled review's schedule, last run and kind, with the checks its editor makes and what a failed save says, and what
 // the window says of a change main refused, and what the Updates group says of Avanzel's own update.
 import { SHELVES } from "@avanzel/ui";
+import { prettyAccelerator } from "../../main/shortcuts.ts";
 import {
   DICTATION_PAGE,
   noSuchReview,
@@ -19,6 +20,14 @@ import {
 } from "../../shared/ipc.ts";
 import { NO_GIT_LINE, ownLine } from "../../shared/problems.ts";
 import { CURSOR_KEYS, cursorKeyName } from "../../shared/transcribing.ts";
+
+/**
+ * What a shortcut row says when the keys pressed while it records have neither ⌃ nor ⌥ (`refusedShortcut`), so the
+ * recorder, which keeps listening, is not taken for broken: why, and the same keys with ⌥ (`instead`) to try.
+ */
+export function shortcutRefusedLine(instead: string): string {
+  return `A shortcut needs ⌃ or ⌥, as apps use ⌘ and ⇧ for their own. Try ${prettyAccelerator(instead)}.`;
+}
 
 /** Each pane's name on the toolbar, which is also the window's title. The scheduled reviews' pane keeps its id, "tasks", and dictation's its "dictations". */
 export const PANE_LABELS: Readonly<Record<SettingsPane, string>> = {
