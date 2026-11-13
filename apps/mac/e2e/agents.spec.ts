@@ -33,6 +33,7 @@ import {
   windowFor,
 } from "./helpers.ts";
 import { expectProblem } from "./capsule-helpers.ts";
+import { sentToCapsule, watchCapsule } from "./setup-helpers.ts";
 
 /** The one button that checks every installed agent. */
 const checkAgents = (settings: Page) => settings.getByRole("button", { name: "Check agents", exact: true });
@@ -580,9 +581,9 @@ test("Open Settings moves a Settings window that is open to the pane, and a pane
   await app.close();
 });
 
-/** Dictates once with `audio` standing in for the microphone, then waits for the error card it ends in. */
-async function dictateUntilCard(audio: string, error: string | RegExp): Promise<{ app: ElectronApplication; capsule: Page }> {
-  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_AUDIO: audio, AVANZEL_FAKE_TRANSCRIPT: "unused" });
+/** Dictates once with `audio` standing in for the microphone, heard as `transcript`, then waits for the error card it ends in. */
+async function dictateUntilCard(audio: string, error: string | RegExp, transcript = "unused"): Promise<{ app: ElectronApplication; capsule: Page }> {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_AUDIO: audio, AVANZEL_FAKE_TRANSCRIPT: transcript });
   await call(app, "toggleDictate");
   await call(app, "toggleDictate");
   const capsule = await windowFor(app, "capsule");
@@ -592,9 +593,9 @@ async function dictateUntilCard(audio: string, error: string | RegExp): Promise<
 
 const scratchDir = () => mkdtempSync(path.join(tmpdir(), "avz-e2e-audio-"));
 
-test("a recording too short to hold speech says nothing was heard or saved, and Choose microphone opens Settings → Voice", async () => {
+test("a recording the microphone gave nothing to says nothing was heard or saved, and Choose microphone opens Settings → Voice", async () => {
   const blip = path.join(scratchDir(), "blip.wav");
-  writeWav(blip, new Float32Array(1600)); // 0.1 s: under 0.3 s Avanzel doesn't try to transcribe
+  writeWav(blip, new Float32Array(1600)); // 0.1 s of digital silence: no input at all, however short
   const { app, capsule } = await dictateUntilCard(blip, "Nothing was heard.");
   // What happened, what is safe, and the one fix, which names what to do: the microphone is chosen in Voice.
   expect(await call(app, "capsuleStateForTests")).toMatchObject({
@@ -608,6 +609,31 @@ test("a recording too short to hold speech says nothing was heard or saved, and 
   await capsule.getByRole("button", { name: "Choose microphone", exact: true }).click();
   const settings = await windowFor(app, "panel");
   await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-selected", "true");
+  await app.close();
+});
+
+/** `seconds` of steady, quiet sound: a microphone that hears a room, and no words in it. */
+function roomTone(seconds: number): string {
+  const file = path.join(scratchDir(), "room.wav");
+  writeWav(file, new Float32Array(Math.round(seconds * 16000)).fill(0.01));
+  return file;
+}
+
+test("a short recording with no words in it just goes: a press and a change of mind needs no card", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_AUDIO: roomTone(1), AVANZEL_FAKE_TRANSCRIPT: "" });
+  await windowFor(app, "capsule");
+  await watchCapsule(app);
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+  await expect.poll(() => sentToCapsule(app), { timeout: 30_000 }).toEqual(expect.arrayContaining(["transcribing", "hidden"]));
+  expect(await sentToCapsule(app)).not.toContain("error");
+  expect(await capsuleKind(app)).toBe("hidden");
+  await app.close();
+});
+
+test("a recording past five seconds with no words in it says nothing was heard", async () => {
+  const { app, capsule } = await dictateUntilCard(roomTone(6), "Nothing was heard.", "");
+  await expectProblem(capsule, { title: "Nothing was heard.", lines: ["Is the right microphone selected? Nothing was saved."], fix: "Choose microphone" });
   await app.close();
 });
 

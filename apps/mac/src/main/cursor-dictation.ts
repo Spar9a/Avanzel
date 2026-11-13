@@ -164,8 +164,11 @@ export class CursorDictation {
     }
   }
 
-  /** The audio is in and recognised: `{ text, heard?, seconds }` (text may be empty). */
-  async heard(words: { text: string; heard?: string; seconds: number }): Promise<void> {
+  /**
+   * The audio is in and recognised: `{ text, heard?, seconds }` (text may be empty). `quiet`: no words, and nothing to say about it
+   * (a short press with sound in it), so nothing is said.
+   */
+  async heard(words: { text: string; heard?: string; seconds: number; quiet?: true }): Promise<void> {
     if (this.cancelledAt) {
       // These are the cancelled dictation's late words: no tap could start a new one while cancelledAt was set.
       this.cancelledAt = null;
@@ -178,7 +181,7 @@ export class CursorDictation {
     const at = this.startedAt ?? this.host.now();
     try {
       if (!words.text.trim()) {
-        this.host.say("nothing-heard");
+        if (!words.quiet) this.host.say("nothing-heard");
         return;
       }
       if (!fixed) {

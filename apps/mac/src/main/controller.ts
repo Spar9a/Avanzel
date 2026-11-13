@@ -169,6 +169,7 @@ import { keychainCipher } from "./private-key-keychain.ts";
 import { forgetKept, logDictation } from "./library-log.ts";
 import { LiveWords } from "./live-words.ts";
 import { filedLine, reviewProgress, speechProblemOf, waitingLine, type MenuInput } from "./menu-model.ts";
+import { saysNothingHeard } from "./silence.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
 import { RunStateStore } from "./run-state.ts";
@@ -294,7 +295,10 @@ const FILED_FACE_MS = 2_000;
  */
 const reasonMax = (error: unknown): number | undefined => (error instanceof AvanzelError ? undefined : CAPSULE_LINE_MAX);
 
-/** A recording that holds no words (too short to hold speech, or nothing said) leaves nothing, thought or question: its card says so. */
+/**
+ * A recording that holds no words (too short to hold speech, or nothing said) leaves nothing, thought or question. Its card says so only
+ * when that points at the microphone (`saysNothingHeard`); a press and a quick change of mind just goes.
+ */
 const NOTHING_HEARD: Problem = { title: "Nothing was heard.", body: "Is the right microphone selected? Nothing was saved." };
 
 /** Fewer samples than this (0.3 s at 16 kHz) are too short to hold speech: a recording of them, a thought's or a question's, has no words. */
@@ -2069,10 +2073,7 @@ export class Controller {
       }
       // Nothing said, but files were added to it: they are its note.
       if (!text && recording.attachments?.length) text = "Files added, with no words.";
-      if (!text) {
-        // Its recording went with it: nothing is kept.
-        return this.recordingFailed(recording, { problem: "silence" }, NOTHING_HEARD, "open-settings:voice", "Choose microphone");
-      }
+      if (!text) return this.heardNothing(recording, samples); // its recording went with it: nothing is kept
       const attachments = (recording.attachments ?? []).map((file) => file.path);
       // What was added to it (Add: files, screenshots) goes with it, named in its words, so the agent opens each.
       const words = attachments.length ? `${text}\n\nAdded: ${attachments.map((file) => vault.relativePath(file)).join(", ")}.` : text;
@@ -2098,6 +2099,18 @@ export class Controller {
   }
 
   /**
+   * `recording`, a thought or a question, made no words from `samples`. Its card says nothing was heard when that points at the
+   * microphone (`saysNothingHeard`), and always for setup's first spoken thought, which waits for one. Otherwise its card just goes,
+   * when it is still up and is its own: a recording stopped since has the card.
+   */
+  private heardNothing(recording: Recording, samples: Float32Array): void {
+    if (recording.forSetup || saysNothingHeard(samples)) {
+      return this.recordingFailed(recording, { problem: "silence" }, NOTHING_HEARD, "open-settings:voice", "Choose microphone");
+    }
+    if (this.capsuleState.kind === "transcribing" && this.transcribingCardOf === recording) this.setCapsule({ kind: "hidden" });
+  }
+
+  /**
    * `recording`, a question for the Ask window (`pressDictate`), has its audio. Its words go to that window's field (`ask:heard`) and
    * nowhere in the library: no capture, no kept recording, no count of kept recordings and no filing (`afterCapture`), and no
    * notification. Under 0.3 s of samples there are no words, as for a thought, and the card says so, as it says a recording that could
@@ -2115,7 +2128,7 @@ export class Controller {
         if (!transcript) return; // Stop dropped the question meanwhile: the words it made, or its failure, are dropped
         words = transcript.text.trim();
       }
-      if (!words) return this.recordingFailed(recording, { problem: "silence" }, NOTHING_HEARD, "open-settings:voice", "Choose microphone");
+      if (!words) return this.heardNothing(recording, samples);
       // Only the question's own card: a recording stopped since has taken the card (`transcribingCardOf`), and its slow state and Stop are its.
       if (this.capsuleState.kind === "transcribing" && this.transcribingCardOf === recording) this.setCapsule({ kind: "hidden" });
       const win = this.askWindow;
@@ -2197,7 +2210,7 @@ export class Controller {
     const generation = this.cursorGeneration;
     const dropped = () => generation !== this.cursorGeneration;
     this.cursorRecognising = true;
-    let words: { text: string; heard?: string; seconds: number } = NO_WORDS;
+    let words: { text: string; heard?: string; seconds: number; quiet?: true } = NO_WORDS;
     try {
       const samples = await this.samplesOf(received);
       if (samples.length >= MIN_SPEECH_SAMPLES) {
@@ -2205,6 +2218,8 @@ export class Controller {
         const heard = transcript.heard?.trim();
         words = { text: transcript.text.trim(), ...(heard ? { heard } : {}), seconds: samples.length / 16000 };
       }
+      // No words from a short press with sound in it: the dictation just goes, without the card that sends the person to the microphone.
+      if (!words.text && !saysNothingHeard(samples)) words = { ...words, quiet: true };
     } catch (error) {
       console.error("cursor dictation", error);
       if (dropped()) return;
