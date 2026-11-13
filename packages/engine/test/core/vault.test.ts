@@ -173,6 +173,25 @@ describe("captures", () => {
     expect(text.endsWith("hello\n\n![[2026-10-20-140312.wav]]\n")).toBe(true);
   });
 
+  it("writes list fields as flow sequences after the context fields", () => {
+    const capture = vault.newCapture("Prefers pnpm.", {
+      source: "agent",
+      now: NOW,
+      context: { agent: "claude-code" },
+      lists: { tags: ["tooling", "работа/avanzel"], related: ["[[web-shop]]"], empty: [] },
+    });
+    const text = read(capture.path);
+    expect(text).toContain('agent: claude-code\ntags: [tooling, работа/avanzel]\nrelated: ["[[web-shop]]"]\n---');
+    expect(text).not.toContain("empty:");
+  });
+
+  it("refuses a list key that is reserved or also a context key", () => {
+    expect(() => vault.newCapture("x", { source: "agent", lists: { source: ["a"] } })).toThrow("Invalid capture field: source");
+    expect(() => vault.newCapture("x", { source: "agent", context: { tags: "a" }, lists: { tags: ["b"] } })).toThrow(
+      "Invalid capture field: tags",
+    );
+  });
+
   it("embed screenshots and record where they came from", () => {
     const image = vault.newAttachmentPath(NOW, ".png");
     const capture = vault.newCapture("", {
