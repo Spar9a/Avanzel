@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   BUILT_IN_SHELVES,
@@ -5,8 +7,15 @@ import {
   folderProblem,
   MAX_OWN_SHELVES,
   sameShelf,
+  SHELF_SECTION_END,
+  SHELF_SECTION_START,
   suggestFolder,
+  withShelfSection,
+  writeShelfSection,
+  type OwnShelf,
 } from "../../src/core/shelves.ts";
+import { template } from "../../src/core/templates.ts";
+import { useTmp } from "./helpers.ts";
 
 describe("folderProblem", () => {
   it("accepts a lowercase kebab-case folder", () => {
@@ -93,5 +102,115 @@ describe("suggestFolder", () => {
 
   it("is empty when the name has no Latin letters", () => {
     expect(suggestFolder("Проекты")).toBe("");
+  });
+});
+
+describe("withShelfSection", () => {
+  const projects: OwnShelf = { folder: "projects", name: "Projects", definition: "Work with a goal." };
+  const agentsMd = template("AGENTS.md");
+  const pairs = (text: string) => text.split(SHELF_SECTION_START).length - 1;
+
+  it("puts the section right before ## Pages in the template, and again gives the same text", () => {
+    // The template ships the empty section; take it out to see where a section goes when there is none.
+    const bare = agentsMd.replace(/<!-- avanzel:shelves -->[\s\S]*?<!-- \/avanzel:shelves -->\n\n/, "");
+    expect(bare).not.toContain(SHELF_SECTION_START);
+    const once = withShelfSection(bare, [projects]);
+    const pagesAt = bare.indexOf("## Pages");
+    expect(once.slice(0, once.indexOf(SHELF_SECTION_START))).toBe(bare.slice(0, pagesAt));
+    expect(once.slice(once.indexOf(SHELF_SECTION_END) + SHELF_SECTION_END.length)).toBe(`\n\n${bare.slice(pagesAt)}`);
+    expect(withShelfSection(once, [projects])).toBe(once);
+    expect(withShelfSection(agentsMd, [projects])).toBe(once);
+  });
+
+  it("writes one row per shelf in a Path and Holds table", () => {
+    const text = withShelfSection("# Rules\n", [projects, { folder: "trips", name: "Trips", definition: "Places to go." }]);
+    expect(text).toContain("## Your shelves");
+    expect(text).toContain("| Path | Holds |\n|---|---|\n");
+    expect(text).toContain("| `projects/` | Work with a goal. |\n| `trips/` | Places to go. |\n");
+  });
+
+  it("says none yet with no shelves, and the template ships that empty section", () => {
+    const none = withShelfSection("# Rules\n", []);
+    expect(none).toContain("## Your shelves");
+    expect(none).toContain("None yet. The owner adds them in Avanzel's Settings.");
+    expect(none).not.toContain("| Path |");
+    expect(withShelfSection(agentsMd, [])).toBe(agentsMd);
+  });
+
+  it("rewrites the section in place and keeps the owner's line after the end marker", () => {
+    const first = withShelfSection("Intro.\n\n## Pages\n", [projects]);
+    const edited = first.replace(SHELF_SECTION_END, `${SHELF_SECTION_END}\nOwner note.`);
+    const next = withShelfSection(edited, [{ ...projects, definition: "Work with a deadline." }]);
+    expect(next).toContain("Work with a deadline.");
+    expect(next).not.toContain("Work with a goal.");
+    expect(next).toContain(`${SHELF_SECTION_END}\nOwner note.\n\n## Pages`);
+    expect(pairs(next)).toBe(1);
+  });
+
+  it("keeps the first pair and drops later ones, with every other byte", () => {
+    const section = withShelfSection("", [projects]).trimEnd();
+    const input = `Top.\n\n${section}\n\nMiddle.\n\n${section}\n\nEnd.\n`;
+    const out = withShelfSection(input, [projects]);
+    expect(pairs(out)).toBe(1);
+    expect(out).toBe(`Top.\n\n${section}\n\nMiddle.\n\nEnd.\n`);
+  });
+
+  it("appends the section after one blank line when there is no ## Pages", () => {
+    const section = withShelfSection("", [projects]);
+    expect(withShelfSection("Just rules.", [projects])).toBe(`Just rules.\n\n${section}`);
+    expect(withShelfSection("Just rules.\n", [projects])).toBe(`Just rules.\n\n${section}`);
+    expect(withShelfSection("Just rules.\n\n", [projects])).toBe(`Just rules.\n\n${section}`);
+    expect(section.startsWith(SHELF_SECTION_START)).toBe(true);
+  });
+
+  it("writes the table row exactly", () => {
+    expect(withShelfSection("", [projects])).toContain("\n| `projects/` | Work with a goal. |\n");
+  });
+
+  it("makes a shelf that holds a pipe or a line break one clean cell", () => {
+    const rough: OwnShelf = { folder: "pro|jects\n", name: "x", definition: "a | b\nc" };
+    const rows = withShelfSection("", [rough])
+      .split("\n")
+      .filter((line) => line.startsWith("| `"));
+    expect(rows).toEqual(["| `projects/` | a b c |"]);
+  });
+
+  it("keeps a $ in a definition as it is", () => {
+    const out = withShelfSection("## Pages\n", [{ ...projects, definition: "Costs in $& and $1." }]);
+    expect(out).toContain("| Costs in $& and $1. |");
+  });
+
+  it("leaves a lone marker alone and adds one section", () => {
+    const input = `Mine.\n${SHELF_SECTION_START}\nrest\n`;
+    const out = withShelfSection(input, [projects]);
+    expect(out.startsWith(input)).toBe(true);
+    expect(out).toContain("| `projects/` |");
+    expect(withShelfSection(out, [projects])).toBe(out);
+  });
+});
+
+describe("writeShelfSection", () => {
+  const tmp = useTmp();
+  const projects: OwnShelf = { folder: "projects", name: "Projects", definition: "Work with a goal." };
+
+  it("adds the section to the file and keeps the rest", () => {
+    writeFileSync(join(tmp(), "AGENTS.md"), "# Mine\n\n## Pages\nx\n");
+    writeShelfSection(tmp(), [projects]);
+    expect(readFileSync(join(tmp(), "AGENTS.md"), "utf8")).toBe(withShelfSection("# Mine\n\n## Pages\nx\n", [projects]));
+  });
+
+  it("starts from nothing when there is no AGENTS.md", () => {
+    writeShelfSection(tmp(), [projects]);
+    expect(readFileSync(join(tmp(), "AGENTS.md"), "utf8")).toBe(withShelfSection("", [projects]));
+  });
+
+  it("replaces a symlink instead of following it, and starts from nothing", () => {
+    const outside = join(tmp(), "outside.md");
+    writeFileSync(outside, "outside text");
+    mkdirSync(join(tmp(), "lib"));
+    symlinkSync(outside, join(tmp(), "lib", "AGENTS.md"));
+    writeShelfSection(join(tmp(), "lib"), [projects]);
+    expect(readFileSync(outside, "utf8")).toBe("outside text");
+    expect(readFileSync(join(tmp(), "lib", "AGENTS.md"), "utf8")).toBe(withShelfSection("", [projects]));
   });
 });

@@ -23,7 +23,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, sep } from "nod
 import { setTimeout as sleep } from "node:timers/promises";
 import { AvanzelError } from "../types.ts";
 import { visibleFiles } from "./changes.ts";
-import { CONFIG_NAME, defaultSettings, saveSettings, VAULT_MARKER } from "./config.ts";
+import { CONFIG_NAME, defaultSettings, loadSettings, saveSettings, VAULT_MARKER } from "./config.ts";
 import { idStamp, isoLocal, localMinute, yearMonth } from "./dates.ts";
 import { AUDIO_EXTS, TEXT_EXTS } from "./extensions.ts";
 import { yamlScalar } from "./frontmatter.ts";
@@ -159,6 +159,14 @@ export class Vault {
   ensureFolders(): void {
     for (const folder of ["inbox", "raw", "reviews", ...SHELVES]) mkdirSync(join(this.root, folder), { recursive: true });
     mkdirSync(this.logsDir, { recursive: true });
+    // The owner's own shelves too; a config that can't be read must never stop the library from opening.
+    let own: readonly { folder: string }[] = [];
+    try {
+      own = loadSettings(this.root).shelves;
+    } catch {
+      /* a broken config.toml is reported where settings are read */
+    }
+    for (const { folder } of own) mkdirSync(join(this.root, folder), { recursive: true });
   }
 
   // --- captures -----------------------------------------------------------------------------

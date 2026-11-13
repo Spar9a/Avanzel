@@ -3,6 +3,9 @@
 // The shelf list and the shelves the owner turned down live in `.avanzel/config.toml` (see config.ts); this file holds the rules both
 // the settings reader and the app's shelf form check against.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { lstatOrNull, replaceInside } from "./inside.ts";
 import { slugify } from "./vault.ts";
 
 /** The shelves every library starts with. Kept here, and re-exported by vault.ts, so these rules can use them while vault.ts loads. */
@@ -88,4 +91,69 @@ export function sameShelf(a: string, b: string): boolean {
 /** A folder to suggest for a shelf name, made as page slugs are. Empty when the name has no Latin letters or digits. */
 export function suggestFolder(name: string): string {
   return slugify(name, 5, MAX_SHELF_FOLDER);
+}
+
+export const SHELF_SECTION_START = "<!-- avanzel:shelves -->";
+export const SHELF_SECTION_END = "<!-- /avanzel:shelves -->";
+
+const NO_SHELVES_LINE = "None yet. The owner adds them in Avanzel's Settings.";
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** A marker pair with no other start marker inside it, so a lone start marker never swallows the text up to a later pair's end. */
+const SECTION_PAIR = new RegExp(
+  `${escapeRegExp(SHELF_SECTION_START)}(?:(?!${escapeRegExp(SHELF_SECTION_START)})[\\s\\S])*?${escapeRegExp(SHELF_SECTION_END)}`,
+  "g",
+);
+
+/** A cell of the shelves table: never holds the table separator, a backtick or a line break, whatever the shelf object holds. */
+function tableCell(text: string): string {
+  return text.replace(/[|`]/g, "").replace(new RegExp(LINE_BREAK.source, "g"), "").trim();
+}
+
+function shelfSection(shelves: readonly OwnShelf[]): string {
+  const body =
+    shelves.length === 0
+      ? [NO_SHELVES_LINE]
+      : [
+          "| Path | Holds |",
+          "|---|---|",
+          ...shelves.map((shelf) => `| \`${tableCell(shelf.folder)}/\` | ${tableCell(cleanDefinition(shelf.definition))} |`),
+        ];
+  return [SHELF_SECTION_START, "## Your shelves", "", ...body, "", SHELF_SECTION_END].join("\n");
+}
+
+/**
+ * `agentsMd` with the owner's shelves in the marked section: the first marker pair is rewritten in place, later pairs are dropped,
+ * and with no pair the section goes before `## Pages` (else at the end). Every other byte stays as it was.
+ */
+export function withShelfSection(agentsMd: string, shelves: readonly OwnShelf[]): string {
+  const section = shelfSection(shelves);
+  const pairs = [...agentsMd.matchAll(SECTION_PAIR)];
+  if (pairs.length > 0) {
+    let out = "";
+    let at = 0;
+    pairs.forEach((pair, index) => {
+      out += agentsMd.slice(at, pair.index);
+      let end = pair.index + pair[0].length;
+      if (index === 0) out += section;
+      else end += /^\n{1,2}/.exec(agentsMd.slice(end))?.[0].length ?? 0;
+      at = end;
+    });
+    return out + agentsMd.slice(at);
+  }
+  const pages = /^## Pages$/m.exec(agentsMd);
+  if (pages) return `${agentsMd.slice(0, pages.index)}${section}\n\n${agentsMd.slice(pages.index)}`;
+  if (agentsMd === "") return `${section}\n`;
+  const gap = agentsMd.endsWith("\n\n") ? "" : agentsMd.endsWith("\n") ? "\n" : "\n\n";
+  return `${agentsMd}${gap}${section}\n`;
+}
+
+/** Put the owner's shelves into `AGENTS.md` in the library at `root`. A symlink or other non-file there is replaced, never followed. */
+export function writeShelfSection(root: string, shelves: readonly OwnShelf[]): void {
+  const path = join(root, "AGENTS.md");
+  const current = lstatOrNull(path)?.isFile() ? readFileSync(path, "utf8") : "";
+  replaceInside(root, "AGENTS.md", withShelfSection(current, shelves));
 }

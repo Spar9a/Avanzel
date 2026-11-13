@@ -5,7 +5,7 @@ import { uptime } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { defaultSettings, loadSettings } from "../../src/core/config.ts";
+import { defaultSettings, loadSettings, saveSettings } from "../../src/core/config.ts";
 import * as git from "../../src/core/git.ts";
 import { SHELVES, Vault, isoLocal, parseElapsed, slugify } from "../../src/core/vault.ts";
 import { AvanzelError } from "../../src/types.ts";
@@ -43,6 +43,22 @@ describe("Vault.init", () => {
     const again = await Vault.init(vault.root, { git: false });
     expect(read(join(again.root, "AGENTS.md"))).toBe("my rules");
     expect(read(join(again.root, "goals", "x.md"))).toBe("x");
+  });
+
+  it("makes the folder of each own shelf when it is missing", () => {
+    saveSettings(vault.root, { ...defaultSettings(), shelves: [{ folder: "projects", name: "Projects", definition: "Work with a goal." }] });
+    expect(isDir(join(vault.root, "projects"))).toBe(false);
+    vault.ensureFolders();
+    expect(isDir(join(vault.root, "projects"))).toBe(true);
+    rmSync(join(vault.root, "projects"), { recursive: true });
+    vault.ensureFolders();
+    expect(isDir(join(vault.root, "projects"))).toBe(true);
+  });
+
+  it("opens even when config.toml is broken", () => {
+    writeFileSync(join(vault.root, ".avanzel", "config.toml"), "this is = = not toml [[");
+    expect(() => vault.ensureFolders()).not.toThrow();
+    for (const folder of SHELVES) expect(isDir(join(vault.root, folder)), folder).toBe(true);
   });
 
   it("is required before use", () => {
