@@ -46,9 +46,9 @@ async function connect(userData: string) {
   transport.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk.toString()));
   const problems: string[] = [];
   const client = new Client({ name: "e2e-agent", version: "1.0.0" });
+  // A line on stdout that isn't a protocol message comes back here, from the start on: nothing but the protocol may be written there.
+  client.onerror = (error) => problems.push(String(error));
   await client.connect(transport);
-  // A line on stdout that isn't a protocol message comes back here: nothing but the protocol may be written there.
-  transport.onerror = (error) => problems.push(String(error));
   const call = async (name: string, args: Record<string, unknown>) => {
     const result = await client.callTool({ name, arguments: args });
     return (result.content as Array<{ text: string }>).map((part) => part.text).join("");
@@ -78,6 +78,8 @@ test("an outside agent reads the library and leaves a note in its inbox, and the
   expect(Date.now() - closing, stderr.join("")).toBeLessThan(2_000);
   expect(() => process.kill(pid as number, 0)).toThrow();
   expect(problems).toEqual([]);
+  // Chromium's own state stays in a folder of its own, apart from the open app's.
+  expect(readdirSync(userData).sort()).toEqual(["mcp", "settings.json"]);
   // The settings file is only read: MCP mode never rewrites it.
   expect(JSON.parse(readFileSync(path.join(userData, "settings.json"), "utf8"))).toEqual({ version: 1, libraryPath: library, agentAccess: true });
 });

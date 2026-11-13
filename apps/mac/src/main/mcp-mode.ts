@@ -25,7 +25,11 @@ export async function runMcpMode(): Promise<never> {
   // The protocol owns stdout: anything else logged goes to stderr, which MCP clients keep as the server's log.
   console.log = console.info = console.debug = (...args: unknown[]) => console.error(...args);
   app.dock?.hide();
-  const file = path.join(app.getPath("userData"), "settings.json");
+  const userData = app.getPath("userData");
+  const file = path.join(userData, "settings.json");
+  // Chromium's own state (Local State, GPU caches) goes to a folder of its own, still before `ready`: its caches aren't made for two
+  // browser processes at once, and this one runs beside the open app, without the lock that would keep them apart.
+  app.setPath("userData", path.join(userData, "mcp"));
   const settings = () => new SettingsStore(file).get();
   const access: AgentAccess = {
     root: () => settings().libraryPath || null,
