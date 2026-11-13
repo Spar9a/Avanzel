@@ -12,6 +12,13 @@ import { parse, TomlError } from "smol-toml";
 import { AvanzelError, type VoiceOptions } from "../types.ts";
 import { MAX_DICTIONARY_ENTRIES, plainLine } from "./dictionary.ts";
 import { defaultPrivateModel, PRIVATE_APIS, PRIVATE_SOURCES, type PrivateApi, type PrivateModel, type PrivateSource } from "./private-model.ts";
+import {
+  folderProblem,
+  MAX_OWN_SHELVES,
+  MAX_SHELF_DEFINITION,
+  MAX_SHELF_NAME,
+  type OwnShelf,
+} from "./shelves.ts";
 import { render } from "./templates.ts";
 
 export const VAULT_MARKER = ".avanzel";
@@ -73,6 +80,10 @@ export interface Settings {
   harness: string;
   timeoutSeconds: number;
   autoCommit: boolean;
+  /** The owner's own shelves, in the order they were made. */
+  shelves: OwnShelf[];
+  /** Folders of the shelves the librarian suggested and the owner turned down, in the order declined. */
+  declinedShelves: string[];
   models: Record<string, string>;
   harnesses: Record<string, CustomHarness>;
   voice: VoiceSettings;
@@ -85,6 +96,8 @@ export function defaultSettings(): Settings {
     harness: "auto",
     timeoutSeconds: 900,
     autoCommit: true,
+    shelves: [],
+    declinedShelves: [],
     models: {},
     harnesses: {},
     voice: {
@@ -164,6 +177,7 @@ function renderConfig(settings: Settings): string {
     harness: tomlString(settings.harness),
     timeout_seconds: String(settings.timeoutSeconds),
     auto_commit: String(settings.autoCommit),
+    declined_shelves: tomlLines("declined_shelves", settings.declinedShelves),
     models: Object.entries(settings.models)
       .map(([name, model]) => `${tomlKey(name)} = ${tomlString(model)}\n`)
       .join(""),
@@ -179,6 +193,12 @@ function renderConfig(settings: Settings): string {
     dictation_log: String(settings.dictation.log),
     dictation_skip_apps: tomlLines("skip_apps", settings.dictation.skipApps),
     dictation_skip_sites: tomlLines("skip_sites", settings.dictation.skipSites),
+    shelves: settings.shelves
+      .map(
+        (shelf) =>
+          `\n[[shelves]]\nfolder = ${tomlString(shelf.folder)}\nname = ${tomlString(shelf.name)}\ndefinition = ${tomlString(shelf.definition)}\n`,
+      )
+      .join(""),
     harnesses: Object.entries(settings.harnesses)
       .map(
         ([name, spec]) =>
@@ -293,6 +313,8 @@ function parseSettings(data: Table, path: string): Settings {
     harness: stringValue(data, "harness", defaults.harness, path),
     timeoutSeconds: positiveInt(data, "timeout_seconds", defaults.timeoutSeconds, path),
     autoCommit: booleanValue(data, "auto_commit", defaults.autoCommit, path),
+    shelves: ownShelves(data, path),
+    declinedShelves: stringList(data, "declined_shelves", path),
     models,
     harnesses,
     voice,
@@ -338,6 +360,42 @@ function stringList(data: Table, key: string, path: string, prefix = ""): string
     throw new AvanzelError(`${path}: \`${prefix}${key}\` must be a list of strings`);
   }
   return [...value];
+}
+
+/** The `[[shelves]]` tables, refusing one that could not be a shelf: a hand edit is refused, not cleaned. */
+function ownShelves(data: Table, path: string): OwnShelf[] {
+  const value = Object.hasOwn(data, "shelves") ? data.shelves : [];
+  if (!Array.isArray(value)) throw new AvanzelError(`${path}: \`shelves\` must be a list of [[shelves]] tables`);
+  if (value.length > MAX_OWN_SHELVES) {
+    throw new AvanzelError(
+      `${path}: \`shelves\` has ${value.length} shelves, and ${MAX_OWN_SHELVES} is the most. Remove the ones you use least.`,
+    );
+  }
+  const shelves: OwnShelf[] = [];
+  value.forEach((entry: unknown, index) => {
+    const prefix = `shelves[${index}].`;
+    if (!isTable(entry)) throw new AvanzelError(`${path}: \`shelves[${index}]\` must be a table`);
+    const folder = requiredString(entry, "folder", path, prefix);
+    const problem = folderProblem(folder, shelves.map((shelf) => shelf.folder));
+    if (problem) throw new AvanzelError(`${path}: \`${prefix}folder\` is "${folder}". ${problem}`);
+    const name = requiredString(entry, "name", path, prefix);
+    if (name.length < 1 || name.length > MAX_SHELF_NAME) {
+      throw new AvanzelError(`${path}: \`${prefix}name\` must be 1 to ${MAX_SHELF_NAME} characters, and it has ${name.length}`);
+    }
+    const definition = requiredString(entry, "definition", path, prefix);
+    if (definition.length < 1 || definition.length > MAX_SHELF_DEFINITION) {
+      throw new AvanzelError(
+        `${path}: \`${prefix}definition\` must be 1 to ${MAX_SHELF_DEFINITION} characters, and it has ${definition.length}`,
+      );
+    }
+    shelves.push({ folder, name, definition });
+  });
+  return shelves;
+}
+
+function requiredString(data: Table, key: string, path: string, prefix: string): string {
+  if (!Object.hasOwn(data, key)) throw new AvanzelError(`${path}: \`${prefix}${key}\` is missing`);
+  return stringValue(data, key, "", path, prefix);
 }
 
 export const MAX_DICTIONARY_LINE_LENGTH = 200;

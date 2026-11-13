@@ -10,6 +10,8 @@ timeout_seconds = ${timeout_seconds}
 # Commit the library to git after every agent run (only when this folder is a git repo).
 auto_commit = ${auto_commit}
 
+# Shelves the librarian suggested and you turned down. It won't suggest them again.
+${declined_shelves}
 # Optional model per harness, to keep filing quick and cheap on your subscription,
 # e.g. claude = "sonnet", codex = "<model name>", opencode = "<provider>/<model>".
 [models]
@@ -57,6 +59,8 @@ log = ${dictation_log}
 ${dictation_skip_apps}# Websites whose dictations are never kept, in the same way, such as "bank.example.com".
 ${dictation_skip_sites}
 
+# Your own shelves: a folder each, and what belongs on it. The librarian files on them as on the built-in ones.
+${shelves}
 # Any other agent CLI: {prompt} and {vault} are substituted.
 # [harnesses.my-agent]
 # headless = ["my-agent", "run", "{prompt}"]

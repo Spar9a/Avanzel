@@ -29,14 +29,14 @@ import { AUDIO_EXTS, TEXT_EXTS } from "./extensions.ts";
 import { yamlScalar } from "./frontmatter.ts";
 import * as gitops from "./git.ts";
 import { lstatOrNull, realFoldersTo, replaceInside } from "./inside.ts";
+import { SHELVES, SPECIAL_DIRS } from "./shelves.ts";
 import { ensureDefaultTasks } from "./tasks.ts";
 import { template } from "./templates.ts";
 
 export { isoLocal } from "./dates.ts";
 
-export const SHELVES = ["goals", "ideas", "problems", "memories", "people", "topics"] as const;
-/** Top-level folders that are not shelves. */
-export const SPECIAL_DIRS: readonly string[] = ["inbox", "raw", "reviews", "tasks"];
+// Defined in shelves.ts, which config.ts loads while this file is still loading.
+export { SHELVES, SPECIAL_DIRS } from "./shelves.ts";
 export { AUDIO_EXTS, IMAGE_EXTS, TEXT_EXTS } from "./extensions.ts";
 
 // vault-relative path -> template name (`.avanzel/config.toml` is rendered from the default settings)

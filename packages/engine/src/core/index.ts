@@ -2,6 +2,7 @@
 export * from "./config.ts";
 export { idStamp, isoLocal, localDate, localMinute } from "./dates.ts";
 export * from "./vault.ts";
+export * from "./shelves.ts";
 export * from "./changes.ts";
 export * from "./steps.ts";
 export * from "./search.ts";
