@@ -47,7 +47,7 @@
 // FAKE_AGENT_SUGGEST=<text> appends "\nNew shelf: <text>" to a filing's reply, as a librarian that asks for a new shelf does;
 // "{page}" in the text is replaced by the page the run wrote (ideas/idea-<id>.md, or projects/p-<id>.md in make-folder mode).
 // FAKE_AGENT_MODE=make-folder writes the filing's page as projects/p-<id>.md, in a top-level folder nobody asked for, instead
-// of under ideas/.
+// of under ideas/. FAKE_AGENT_FOLDER=<folder> names that folder instead of projects (the folder may already exist).
 // FAKE_AGENT_MODE=limit hits a usage limit and exits 1, as an agent does when its owner has used up their quota, right
 // after the stream's init event and before any task, so asks hit it too. FAKE_AGENT_RESETS_AT=<epoch seconds> is when the
 // limit resets. In stream mode it prints a rate_limit_event, in the shape of test/fixtures/claude-filing.jsonl's first
@@ -422,11 +422,12 @@ if (task === "file") {
   if (streaming) await readStep(join(root, "index.md")); // Claude Code reads the index before it files
   lookAround();
   const pageStem = mode === "make-folder" ? `p-${captureId}` : `idea-${captureId}`;
-  const pageRel = mode === "make-folder" ? `projects/${pageStem}.md` : `ideas/${pageStem}.md`;
-  if (mode === "make-folder") mkdirSync(join(root, "projects"), { recursive: true });
+  const madeFolder = process.env.FAKE_AGENT_FOLDER || "projects";
+  const pageRel = mode === "make-folder" ? `${madeFolder}/${pageStem}.md` : `ideas/${pageStem}.md`;
+  if (mode === "make-folder") mkdirSync(join(root, madeFolder), { recursive: true });
   await writeStep(
     pageRel,
-    `---\ntitle: ${words}\nshelf: ${mode === "make-folder" ? "projects" : "ideas"}\nstatus: seed\n---\n# ${words}\n\n## Log\n- ${words} ([[${captureId}]])\n`,
+    `---\ntitle: ${words}\nshelf: ${mode === "make-folder" ? madeFolder : "ideas"}\nstatus: seed\n---\n# ${words}\n\n## Log\n- ${words} ([[${captureId}]])\n`,
   );
   await tryRefusedWrite();
   if (mode === "link-page") {

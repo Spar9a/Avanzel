@@ -619,6 +619,7 @@ export class Librarian {
     const archiveExisted = lstatOrNull(join(root, archiveRel)) !== null;
     const attachments = this.#attachments(original.toString("utf8"));
     const before = snapshot(root);
+    const foldersBefore = this.#topLevelFolders();
     const call = this.#isCall(original.toString("utf8"));
     const continues = this.#continues(original.toString("utf8"));
     const files = original.toString("utf8").includes("raw/attachments/");
@@ -648,7 +649,7 @@ export class Librarian {
     }
     const archivedTo = this.vault.archive(path, now);
     const commit = await this.#commit(`avanzel: file ${captureId}`);
-    return outcome(captureId, { ...ran, ok: true, archivedTo, commit, suggestion: this.#suggestion(changes, result.output, pending) });
+    return outcome(captureId, { ...ran, ok: true, archivedTo, commit, suggestion: this.#suggestion(changes, result.output, pending, foldersBefore) });
   }
 
   /** Every shelf as the filing prompt lists it: the built-in ones, the owner's own, the pending suggestions and the ones turned down. */
@@ -669,15 +670,22 @@ export class Librarian {
   }
 
   /**
-   * The shelf a successful filing suggests, or null. A top-level folder the agent made on its own comes first, whatever its reply
-   * says; else the last well-formed `New shelf:` line of the reply, when it passes `checkedSuggestion`.
+   * The shelf a successful filing suggests, or null. A top-level folder the run made on the agent's own (one that was not there
+   * before it, `foldersBefore`) comes first, whatever its reply says; else the last well-formed `New shelf:` line of the reply,
+   * when it passes `checkedSuggestion`. A made folder that is the same shelf as a built-in, own or turned-down one is left as a
+   * hand-made folder is; one that is the same shelf as a pending suggestion joins it.
    */
-  #suggestion(changes: Changes, reply: string, pending: readonly PendingShelf[]): ShelfSuggestion | null {
+  #suggestion(changes: Changes, reply: string, pending: readonly PendingShelf[], foldersBefore: readonly string[]): ShelfSuggestion | null {
     const { shelves, declinedShelves } = this.settings;
-    const known = [...BUILT_IN_SHELVES, ...shelves.map((shelf) => shelf.folder), ...SPECIAL_DIRS];
+    const known = [...BUILT_IN_SHELVES, ...shelves.map((shelf) => shelf.folder), ...SPECIAL_DIRS, ...foldersBefore];
     const turnedDown = (folder: string) => declinedShelves.some((declined) => sameShelf(declined, folder));
+    const keptShelf = (folder: string) =>
+      BUILT_IN_SHELVES.some((built) => sameShelf(built, folder)) ||
+      shelves.some((shelf) => sameShelf(shelf.folder, folder) || sameShelf(shelf.name, folder));
     for (const [folder, pages] of agentMadeFolders(changes.created, known)) {
-      if (folderProblem(folder, []) !== null || turnedDown(folder)) continue;
+      if (folderProblem(folder, []) !== null || turnedDown(folder) || keptShelf(folder)) continue;
+      const joined = pending.find((other) => sameShelf(other.folder, folder) || sameShelf(other.name, folder));
+      if (joined) return { ...joined, pages, agentMade: joined.definition === "" };
       return { folder, name: capitalised(folder), definition: "", pages, agentMade: true };
     }
     return checkedSuggestion(parseSuggestion(reply), {

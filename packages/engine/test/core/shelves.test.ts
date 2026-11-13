@@ -376,6 +376,17 @@ describe("checkedSuggestion", () => {
     expect(checkedSuggestion({ ...parsed, page: "work/a.md" }, { ...state, own, created: ["work/a.md"] })?.pages).toEqual(["work/a.md"]);
   });
 
+  it("joins a pending shelf that has no definition yet, taking this suggestion's", () => {
+    const pending = [{ folder: "projects", name: "Projects", definition: "" }];
+    expect(checkedSuggestion({ ...parsed, folder: "project" }, { ...state, pending })).toEqual({
+      folder: "projects",
+      name: "Projects",
+      definition: "Work with a goal.",
+      pages: ["ideas/a.md"],
+      agentMade: false,
+    });
+  });
+
   it("joins a pending suggestion that is the same shelf, with this page", () => {
     const pending = [{ folder: "projects", name: "Projects", definition: "Mine." }];
     expect(checkedSuggestion({ ...parsed, folder: "project", name: "Project" }, { ...state, pending })).toEqual({

@@ -230,7 +230,7 @@ describe("the shelves in a prompt", () => {
     expect(note).toContain("- trips/: Journeys. (pending)\n");
     expect(note).toContain("- work/: (turned down)\n</shelves>\n");
     expect(note).toContain("New shelf: <folder> | <Name> | <one-sentence definition> | <path of that page>");
-    expect(note).toContain("Never create a top-level folder yourself.");
+    expect(note).toContain("Never create a top-level folder yourself, except `meetings/` for a call.");
     expect(note.endsWith("\n\n")).toBe(true);
     expect(prompt).not.toContain("$");
   });
@@ -240,6 +240,12 @@ describe("the shelves in a prompt", () => {
     const at = (text: string) => prompt.indexOf(text);
     expect(at("Spell them exactly this way")).toBeLessThan(at("The library's shelves"));
     expect(at("The library's shelves")).toBeLessThan(at("standing instructions"));
+  });
+
+  it("states the exception for meetings when the capture is a call", () => {
+    const prompt = filePrompt("inbox/x.md", "x", NOW, { call: true, shelves: [built] });
+    expect(prompt).toContain("create the `meetings/` folder if it is missing");
+    expect(prompt).toContain("Never create a top-level folder yourself, except `meetings/` for a call.");
   });
 
   it("adds no note without shelves", () => {

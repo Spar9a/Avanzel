@@ -434,6 +434,80 @@ describe("filing and suggesting a shelf", () => {
     });
   });
 
+  it("gives a folder that was there before the run no suggestion, though the run added a page to it", async () => {
+    mkdirSync(join(vault.root, "recipes"));
+    mode("make-folder");
+    vi.stubEnv("FAKE_AGENT_FOLDER", "recipes");
+    librarian.captureText("A thought");
+    const outcome = await fileOne();
+    expect(outcome.changes.created.some((page) => page.startsWith("recipes/"))).toBe(true);
+    expect(outcome.suggestion).toBeNull();
+  });
+
+  it("leaves an agent-made folder that is the same shelf as a built-in or own one as a hand-made folder", async () => {
+    mode("make-folder");
+    vi.stubEnv("FAKE_AGENT_FOLDER", "idea");
+    librarian.captureText("One");
+    expect((await fileOne()).suggestion).toBeNull(); // ideas
+    librarian = new Librarian(vault, fakeSettings({ shelves: [{ folder: "work", name: "Jobs", definition: "Paid work." }] }), {
+      clock: () => NOW,
+    });
+    vi.stubEnv("FAKE_AGENT_FOLDER", "works");
+    librarian.captureText("Two");
+    expect((await fileOne()).suggestion).toBeNull(); // own work
+    vi.stubEnv("FAKE_AGENT_FOLDER", "job");
+    librarian.captureText("Three");
+    expect((await fileOne()).suggestion).toBeNull(); // own, by name
+  });
+
+  it("joins a pending shelf with an agent-made folder that is the same shelf as it, exactly or by the trailing s", async () => {
+    mode("make-folder");
+    const pending = [{ folder: "projects", name: "Projects", definition: "Work with a goal." }];
+    const first = librarian.captureText("One");
+    expect((await fileOne({ pendingShelves: pending })).suggestion).toEqual({
+      ...pending[0],
+      pages: [`projects/p-${first.id}.md`],
+      agentMade: false,
+    });
+    vi.stubEnv("FAKE_AGENT_FOLDER", "project");
+    const second = librarian.captureText("Two");
+    expect((await fileOne({ pendingShelves: pending })).suggestion).toEqual({
+      ...pending[0],
+      pages: [`project/p-${second.id}.md`],
+      agentMade: false,
+    });
+  });
+
+  it("lets a later capture of one run join the shelf an earlier one made, and lists it as pending", async () => {
+    const runs = recordRuns();
+    mode("make-folder");
+    librarian.captureText("First thought");
+    librarian.captureText("Second thought");
+    let picks = 0;
+    const outcomes = await librarian.file(null, {
+      leave: () => {
+        // the second pick is a capture filed by a run that asks for the shelf, with a definition
+        if (++picks === 2) {
+          vi.stubEnv("FAKE_AGENT_MODE", "ok");
+          vi.stubEnv("FAKE_AGENT_SUGGEST", "project | Project | Work with a goal. | {page}");
+        }
+        return false;
+      },
+    });
+    const second = outcomes[1]?.captureId ?? "";
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes[0]?.suggestion).toMatchObject({ folder: "projects", definition: "", agentMade: true });
+    expect(outcomes[1]?.suggestion).toEqual({
+      folder: "projects",
+      name: "Projects",
+      definition: "Work with a goal.",
+      pages: [`ideas/idea-${second}.md`],
+      agentMade: false,
+    });
+    expect(runs()[0]?.prompt).not.toContain("- projects/: (pending)");
+    expect(runs()[1]?.prompt).toContain("- projects/: (pending)\n");
+  });
+
   it("gives a failed filing no suggestion", async () => {
     mode("picky");
     suggest(SUGGEST);

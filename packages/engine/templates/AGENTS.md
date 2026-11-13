@@ -23,7 +23,7 @@ write. Everything is plain Markdown, so it works in any editor and in Obsidian.
 | `index.md` | Catalog of every shelf page, one line each. Read it first; keep it current | edit |
 | `log.md` | History of what you did | append only |
 
-The owner may add shelves of their own in Avanzel; they are listed under "Your shelves" below. Never create a top-level folder yourself: when a thought fits no shelf, file it on the closest one and suggest a shelf as the filing prompt says.
+The owner may add shelves of their own in Avanzel; they are listed under "Your shelves" below. Never create a top-level folder yourself, except `meetings/` for a call: when a thought fits no shelf, file it on the closest one and suggest a shelf as the filing prompt says.
 
 <!-- avanzel:shelves -->
 ## Your shelves

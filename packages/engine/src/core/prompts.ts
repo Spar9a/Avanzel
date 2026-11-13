@@ -93,7 +93,7 @@ const FILE_SHELVES_RULE =
   "thing none of them is for, and more thoughts of that kind seem likely, make a page of its own for it on the closest shelf, and end " +
   "your reply with one line: New shelf: <folder> | <Name> | <one-sentence definition> | <path of that page>. At most one such line. " +
   "Never suggest a shelf listed here as pending or turned down, or the same kind of thing under another name. Never create a " +
-  "top-level folder yourself.";
+  "top-level folder yourself, except `meetings/` for a call.";
 
 /** For ask and review: what the owner's own shelves hold, to read by. No rule to suggest a shelf. */
 function readOnlyShelvesNote(shelves: readonly OwnShelf[]): string {

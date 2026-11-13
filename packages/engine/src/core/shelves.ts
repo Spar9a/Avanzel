@@ -169,7 +169,7 @@ function cleanName(text: string): string {
  * `parsed` as a suggestion to keep, or null when it is dropped: a folder, name or definition that is empty once cleaned; a folder
  * that breaks the folder rules, is on disk already, or was turned down; one that is the same shelf as a built-in, own or turned-down
  * shelf; a page that this run did not create, or that is not a shelf page. One that is the same shelf as a pending suggestion
- * joins it: that one's folder, name and definition, with this page. The name and the definition are cleaned.
+ * joins it: that one's folder and name, and its definition (this one's when it has none), with this page. The name and the definition are cleaned.
  */
 export function checkedSuggestion(
   parsed: { folder: string; name: string; definition: string; page: string } | null,
@@ -202,7 +202,11 @@ export function checkedSuggestion(
   if (BUILT_IN_SHELVES.some((built) => sameAs({ folder: built, name: built }))) return null;
   if (!created.includes(page) || !onAShelf(page, own)) return null;
   const joined = pending.find(sameAs);
-  if (joined) return { folder: joined.folder, name: joined.name, definition: joined.definition, pages: [page], agentMade: false };
+  if (joined) {
+    // A pending shelf the agent made has no definition yet: this one's fills it.
+    const joinedDefinition = joined.definition || definition;
+    return { folder: joined.folder, name: joined.name, definition: joinedDefinition, pages: [page], agentMade: joinedDefinition === "" };
+  }
   if (onDisk.some((existing) => sameShelf(existing, folder))) return null;
   return { folder, name, definition, pages: [page], agentMade: false };
 }
