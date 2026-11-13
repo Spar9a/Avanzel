@@ -693,8 +693,11 @@ export type SpeechModelSwitch =
 
 export type { McpClient, McpClientInfo };
 
-/** What Add to Claude Code came to in this app run: not pressed yet, added (or there already), or why it failed (a sentence). */
-export type ClaudeCodeSetup = { kind: "idle" } | { kind: "added" } | { kind: "failed"; detail: string };
+/**
+ * What Add to Claude Code came to while the switch has been on: not pressed yet, added (or there already), Claude Code not installed,
+ * or failed, with what happened as a plain sentence ("Claude Code stopped with code 1.").
+ */
+export type ClaudeCodeSetup = { kind: "idle" } | { kind: "added" } | { kind: "missing" } | { kind: "failed"; detail: string };
 
 /** Everything the settings window shows, in one snapshot. */
 export interface SettingsSnapshot {

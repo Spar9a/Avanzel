@@ -27,7 +27,7 @@ import {
   agentNotChecked,
   AGENTS_NOT_CHECKED,
   CLAUDE_CODE_NOT_ADDED,
-  claudeCodeNotAddedBody,
+  claudeCodeNotAdded,
   mcpClientDescription,
   OTHER_AGENTS_NOTE,
   OTHER_AGENTS_SWITCH,
@@ -406,26 +406,36 @@ function PrivateGroup({ lib, inUse, harnesses, hosted, onChange, attempt }: Priv
 
 /**
  * "Your other agents": the switch that lets the owner's other agents read the library and leave notes in its inbox (`agentAccess`), and,
- * while it is on, a row per client. Claude Code's Add runs `claude mcp add` in main and says "Added" once it has; the others' Copy setup
- * has main put the snippet their config takes on the clipboard, and says "Copied" for COPIED_MS. An Add that failed says why in a
- * Notice under the group, with Copy setup for Claude Code's command, to run in Terminal.
+ * while it is on, a row per client. Claude Code's Add runs `claude mcp add` in main and says "Added" once it has, and is done then; the
+ * others' Copy setup has main put the snippet their config takes on the clipboard, and says "Copied" for COPIED_MS. An Add that failed
+ * says what happened in a Notice under the group, with the one fix that fits: Claude Code's install command when it isn't installed,
+ * else its command, to run in Terminal.
  */
 function OtherAgentsGroup({ snap, onChange, attempt }: Pick<PaneProps, "snap" | "onChange" | "attempt">): ReactNode {
   const on = snap.app.agentAccess;
   const setup = snap.claudeCodeSetup;
+  const added = setup.kind === "added";
   // Add to Claude Code is running.
   const [adding, setAdding] = useState(false);
-  // The client whose setup was copied, for COPIED_MS.
-  const [copied, setCopied] = useState<McpClient | null>(null);
+  // What was copied, for COPIED_MS: a client's setup, or Claude Code's install command.
+  const [copied, setCopied] = useState<McpClient | "install" | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
-  // Main copies the snippet it makes for the client named: the page never says what goes on the clipboard.
-  const copy = (client: McpClient) => {
-    api.copyMcpSetup(client);
-    setCopied(client);
+  const copiedNow = (what: McpClient | "install") => {
+    setCopied(what);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(null), COPIED_MS);
   };
+  // Main copies the text it holds for what is named: the page never says what goes on the clipboard.
+  const copy = (client: McpClient) => {
+    api.copyMcpSetup(client);
+    copiedNow(client);
+  };
+  const copyInstall = () => {
+    window.avanzel.setup.copy("claude");
+    copiedNow("install");
+  };
+  const problem = setup.kind === "missing" || setup.kind === "failed" ? claudeCodeNotAdded(setup) : null;
   const add = async () => {
     setAdding(true);
     try {
@@ -445,9 +455,9 @@ function OtherAgentsGroup({ snap, onChange, attempt }: Pick<PaneProps, "snap" | 
         />
         <GroupReveal open={on}>
           <GroupRow label="Claude Code" description="Adds Avanzel to Claude Code for every project.">
-            {/* Busy rather than disabled while it runs, so it keeps the focus. */}
-            <Button size="small" variant="secondary" busy={adding} onClick={() => void add()}>
-              {setup.kind === "added" ? "Added" : "Add to Claude Code"}
+            {/* Busy rather than disabled while it runs, so it keeps the focus; once added there is nothing left to do. */}
+            <Button size="small" variant="secondary" busy={adding} disabled={added} onClick={() => void add()}>
+              {added ? "Added" : "Add to Claude Code"}
             </Button>
           </GroupRow>
           {snap.mcpClients
@@ -459,17 +469,21 @@ function OtherAgentsGroup({ snap, onChange, attempt }: Pick<PaneProps, "snap" | 
             ))}
         </GroupReveal>
       </Group>
-      {on && setup.kind === "failed" && (
+      {on && problem && (
         <Notice
           tone="error"
           title={CLAUDE_CODE_NOT_ADDED}
           actions={
             <Actions align="start">
-              <Button size="small" variant="primary" onClick={() => copy("claude-code")}>{copied === "claude-code" ? "Copied" : "Copy setup"}</Button>
+              {setup.kind === "missing" ? (
+                <Button size="small" variant="primary" onClick={copyInstall}>{copied === "install" ? "Copied" : problem.fix}</Button>
+              ) : (
+                <Button size="small" variant="primary" onClick={() => copy("claude-code")}>{copied === "claude-code" ? "Copied" : problem.fix}</Button>
+              )}
             </Actions>
           }
         >
-          {claudeCodeNotAddedBody(setup.detail)}
+          {problem.body}
         </Notice>
       )}
     </>

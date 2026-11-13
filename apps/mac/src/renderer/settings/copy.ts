@@ -324,7 +324,8 @@ export function speechModelLine(voice: SettingsSnapshot["voice"]): string {
  */
 export function leavesThisMacLine(voice: SettingsSnapshot["voice"], agentAccess = false): string {
   const where = voice.backend === "command" ? "Your voice goes to the command in this library's settings." : "Your voice never leaves this Mac.";
-  const line = `${where} Your words, and any screen you capture with a comment, go only to the agent you chose, the same way your code already does.`;
+  // While other agents are let in, the words don't go only to the agent chosen.
+  const line = `${where} Your words, and any screen you capture with a comment, go ${agentAccess ? "" : "only "}to the agent you chose, the same way your code already does.`;
   return agentAccess
     ? `${line} The agents you connect under Agents can read your library, unfiled captures and call notes included, and what they read goes to their providers.`
     : line;
@@ -335,14 +336,19 @@ export const OTHER_AGENTS_NOTE = "Claude Code, Codex, Cursor and others can look
 
 /** Under the switch "Let your other agents use this library": what they can do, and what they can't. */
 export const OTHER_AGENTS_SWITCH =
-  "They can read your library the way Ask does, and leave notes in your inbox for the librarian to file. They can't change or delete anything.";
+  "They can read your library the way Ask does, and leave notes in your inbox for the librarian to file. They can't change or delete anything themselves: the librarian decides what to file.";
 
 /** The Notice when Add to Claude Code failed. */
 export const CLAUDE_CODE_NOT_ADDED = "Avanzel couldn't be added to Claude Code.";
 
-/** Under CLAUDE_CODE_NOT_ADDED: why (`detail`, a sentence), and what is safe. Copy setup is its fix. */
-export function claudeCodeNotAddedBody(detail: string): string {
-  return `${detail} Nothing in your library changed.`;
+/**
+ * Under CLAUDE_CODE_NOT_ADDED: what happened, what is safe, and the one fix that fits, as its button's label. Claude Code not installed
+ * is fixed by installing it (its install command); anything else by running the command by hand, in Terminal.
+ */
+export function claudeCodeNotAdded(problem: { kind: "missing" } | { kind: "failed"; detail: string }): { body: string; fix: string } {
+  return problem.kind === "missing"
+    ? { body: "Claude Code isn't installed on this Mac. Nothing in your library changed. Install it, then add Avanzel again.", fix: "Copy install command" }
+    : { body: `${problem.detail} Nothing in your library changed. Paste it into Terminal to add Avanzel by hand.`, fix: "Copy command for Terminal" };
 }
 
 /** What a client's row says: where its setup goes. */

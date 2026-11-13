@@ -22,7 +22,9 @@ They read what Ask reads: shelf pages, `index.md`, `log.md`, `reviews/`, and the
 `inbox/` and `raw/`, your unfiled ones and call notes included. Words from a capture reach the agent
 marked as someone's words, not instructions.
 
-They can't:
+They can't change or delete anything themselves: the librarian decides what to file. A note can ask
+for a change, such as one that names a page whose fact it updates, and the librarian makes it while
+filing, by the library's rules. Agents can't:
 
 - change, move or delete anything already in the library;
 - read audio, pictures or any other file that isn't Markdown;
@@ -64,7 +66,9 @@ Press "Add to Claude Code". Avanzel runs this for you, which adds it for every p
 claude mcp add avanzel --scope user -- /Applications/Avanzel.app/Contents/MacOS/Avanzel --mcp
 ```
 
-If that fails, Settings says why and offers the same line to copy and run in Terminal.
+If that fails, Settings says what happened. When Claude Code isn't installed, it offers Claude Code's
+install command; install it, then add Avanzel again. Otherwise it offers the line above to copy: paste
+it into Terminal to add Avanzel by hand.
 
 ### Claude Desktop
 

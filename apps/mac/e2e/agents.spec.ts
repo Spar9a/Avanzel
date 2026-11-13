@@ -745,7 +745,9 @@ test("Your other agents: the switch lets them in, Copy setup gives Cursor its sn
 
   // The stand-in claude takes `mcp add` and says it added the server.
   await clientRow(settings, "Claude Code").getByRole("button", { name: "Add to Claude Code" }).click();
-  await expect(clientRow(settings, "Claude Code").getByRole("button", { name: "Added" })).toBeVisible();
+  const addedButton = clientRow(settings, "Claude Code").getByRole("button", { name: "Added" });
+  await expect(addedButton).toBeVisible();
+  await expect(addedButton).toBeDisabled(); // done: it doesn't run again
   expect((await agentCalls(app)).filter((line) => line.startsWith("claude mcp add"))).toEqual([
     expect.stringMatching(/^claude mcp add avanzel --scope user -- \S+ .*--mcp$/),
   ]);
@@ -761,30 +763,44 @@ test("Your other agents: the switch lets them in, Copy setup gives Cursor its sn
   await expect(toggle).not.toBeChecked();
   await expect(reveal).toHaveAttribute("inert", "");
   await expect.poll(async () => (await appSettings(app)).agentAccess).toBe(false);
+  // On once more, the setup starts again: Add is there to press.
+  await toggle.click();
+  await expect(clientRow(settings, "Claude Code").getByRole("button", { name: "Add to Claude Code" })).toBeEnabled();
   await app.close();
 });
 
-test("Add to Claude Code that fails says why, that the library is safe, and offers the command to copy", async () => {
+test("Add to Claude Code that fails says what happened in plain words, that the library is safe, and offers the command for Terminal", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CLAUDE_MCP_FAIL: "1" });
   const settings = await openSettings(app, "Agents");
   await settings.getByRole("switch", { name: "Let your other agents use this library" }).click();
   await clientRow(settings, "Claude Code").getByRole("button", { name: "Add to Claude Code" }).click();
   const notice = settings.getByRole("group", { name: "Avanzel couldn't be added to Claude Code." });
   await expect(settings.getByText("Avanzel couldn't be added to Claude Code.", { exact: true })).toBeVisible();
-  await expect(settings.getByText("Config file is not writable. Nothing in your library changed.", { exact: true })).toBeVisible();
-  await expect(clientRow(settings, "Claude Code").getByRole("button", { name: "Add to Claude Code" })).toBeVisible(); // not added
-  await notice.getByRole("button", { name: "Copy setup" }).click();
+  await expect(
+    settings.getByText("Claude Code stopped with code 1. Nothing in your library changed. Paste it into Terminal to add Avanzel by hand.", { exact: true }),
+  ).toBeVisible();
+  await expect(settings.getByText(/not writable/)).toHaveCount(0); // what Claude Code wrote goes to the log, not the window
+  await expect(clientRow(settings, "Claude Code").getByRole("button", { name: "Add to Claude Code" })).toBeEnabled(); // not added
+  await expect(notice.getByRole("button")).toHaveCount(1); // one fix
+  await notice.getByRole("button", { name: "Copy command for Terminal" }).click();
   await expect(notice.getByRole("button", { name: "Copied" })).toBeVisible();
   await expect.poll(() => call(app, "copiedForTests")).toEqual([expect.stringMatching(/^claude mcp add avanzel --scope user -- \S+ .*--mcp$/)]);
   await app.close();
 });
 
-test("Add to Claude Code on a Mac without Claude Code says it isn't installed", async () => {
+test("Add to Claude Code on a Mac without Claude Code says it isn't installed, and offers its install command", async () => {
   const bin = mkdtempSync(path.join(tmpdir(), "avz-e2e-bin-"));
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), ...onlyAgentsIn(bin) });
   const settings = await openSettings(app, "Agents");
   await settings.getByRole("switch", { name: "Let your other agents use this library" }).click();
   await clientRow(settings, "Claude Code").getByRole("button", { name: "Add to Claude Code" }).click();
-  await expect(settings.getByText("Claude Code isn't installed on this Mac. Nothing in your library changed.", { exact: true })).toBeVisible();
+  const notice = settings.getByRole("group", { name: "Avanzel couldn't be added to Claude Code." });
+  await expect(
+    settings.getByText("Claude Code isn't installed on this Mac. Nothing in your library changed. Install it, then add Avanzel again.", { exact: true }),
+  ).toBeVisible();
+  await expect(notice.getByRole("button")).toHaveCount(1); // one fix
+  await notice.getByRole("button", { name: "Copy install command" }).click();
+  await expect(notice.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect.poll(() => call(app, "copiedForTests")).toEqual(["curl -fsSL https://claude.ai/install.sh | bash"]);
   await app.close();
 });

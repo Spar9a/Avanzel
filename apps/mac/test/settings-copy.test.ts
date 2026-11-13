@@ -16,7 +16,7 @@ import {
   asSentence,
   CHANGE_NOT_SAVED,
   CLAUDE_CODE_NOT_ADDED,
-  claudeCodeNotAddedBody,
+  claudeCodeNotAdded,
   CURSOR_DICTATION_DESCRIPTION,
   cursorKeyName,
   cursorKeyOptions,
@@ -318,8 +318,12 @@ describe("settings copy", () => {
 
   it("leavesThisMacLine says what connected agents can read, and where it goes, only while they are let in", () => {
     const voice = { backend: "onnx-asr", model: "nemo-parakeet-tdt-0.6b-v3" } as const;
+    // While other agents are let in, the words don't go only to the agent chosen: "only" goes, and the agents' sentence follows.
     expect(leavesThisMacLine(voice, true)).toBe(
-      `${leavesThisMacLine(voice, false)} The agents you connect under Agents can read your library, unfiled captures and call notes included, and what they read goes to their providers.`,
+      "Your voice never leaves this Mac. Your words, and any screen you capture with a comment, go to the agent you chose, the same way your code already does. The agents you connect under Agents can read your library, unfiled captures and call notes included, and what they read goes to their providers.",
+    );
+    expect(leavesThisMacLine(voice, false)).toBe(
+      "Your voice never leaves this Mac. Your words, and any screen you capture with a comment, go only to the agent you chose, the same way your code already does.",
     );
     expect(leavesThisMacLine(voice, true)).toContain("unfiled captures and call notes");
     expect(leavesThisMacLine(voice, false)).not.toContain("unfiled captures and call notes");
@@ -328,11 +332,23 @@ describe("settings copy", () => {
   it("Your other agents says what they can do, and what they can't", () => {
     expect(OTHER_AGENTS_NOTE).toBe("Claude Code, Codex, Cursor and others can look things up in your library and leave notes for the librarian.");
     expect(OTHER_AGENTS_SWITCH).toBe(
-      "They can read your library the way Ask does, and leave notes in your inbox for the librarian to file. They can't change or delete anything.",
+      "They can read your library the way Ask does, and leave notes in your inbox for the librarian to file. They can't change or delete anything themselves: the librarian decides what to file.",
     );
-    expect(CLAUDE_CODE_NOT_ADDED).toBe("Avanzel couldn't be added to Claude Code.");
-    expect(claudeCodeNotAddedBody("Claude Code isn't installed on this Mac.")).toBe("Claude Code isn't installed on this Mac. Nothing in your library changed.");
     expect(mcpClientDescription("~/.cursor/mcp.json")).toBe("Paste this into ~/.cursor/mcp.json.");
+  });
+
+  it("Add to Claude Code that failed says what happened, what is safe, and offers the one fix that fits", () => {
+    expect(CLAUDE_CODE_NOT_ADDED).toBe("Avanzel couldn't be added to Claude Code.");
+    // Not installed: install it first.
+    expect(claudeCodeNotAdded({ kind: "missing" })).toEqual({
+      body: "Claude Code isn't installed on this Mac. Nothing in your library changed. Install it, then add Avanzel again.",
+      fix: "Copy install command",
+    });
+    // Anything else: the command, to run by hand.
+    expect(claudeCodeNotAdded({ kind: "failed", detail: "Claude Code stopped with code 1." })).toEqual({
+      body: "Claude Code stopped with code 1. Nothing in your library changed. Paste it into Terminal to add Avanzel by hand.",
+      fix: "Copy command for Terminal",
+    });
   });
 
   it("a change main refused is told as what happened, why, and what the setting keeps, without Electron's prefix", () => {

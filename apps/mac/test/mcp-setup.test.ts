@@ -107,29 +107,32 @@ function fakeExec(result: ExecResult) {
 describe("Add to Claude Code", () => {
   it("runs claude mcp add avanzel for the user's every project, and is added when it exits 0", async () => {
     const { exec, calls } = fakeExec({ code: 0, stdout: "Added stdio MCP server avanzel to user config\n", stderr: "" });
-    expect(await addToClaudeCode(PACKAGED, exec)).toEqual({ ok: true });
+    expect(await addToClaudeCode(PACKAGED, exec)).toEqual({ kind: "added" });
     expect(calls).toEqual([{ file: "claude", args: ["mcp", "add", "avanzel", "--scope", "user", "--", BINARY, "--mcp"] }]);
   });
 
-  it("is added when Avanzel is there already", async () => {
+  it("is added when Claude Code says Avanzel's server is there already, and only then", async () => {
     const { exec } = fakeExec({ code: 1, stdout: "", stderr: "MCP server avanzel already exists in user config\n" });
-    expect(await addToClaudeCode(PACKAGED, exec)).toEqual({ ok: true });
+    expect(await addToClaudeCode(PACKAGED, exec)).toEqual({ kind: "added" });
+    // Other words that happen to say "already exists" are a failure like any other.
+    const other = fakeExec({ code: 1, stdout: "", stderr: "error: lock file already exists\n" });
+    expect(await addToClaudeCode(PACKAGED, other.exec)).toEqual({ kind: "failed", detail: "Claude Code stopped with code 1.", output: "error: lock file already exists" });
   });
 
-  it("says Claude Code isn't installed when there is no claude to run", async () => {
+  it("is missing when there is no claude to run", async () => {
     const { exec } = fakeExec({ code: "ENOENT", stdout: "", stderr: "" });
-    expect(await addToClaudeCode(PACKAGED, exec)).toEqual({ ok: false, detail: "Claude Code isn't installed on this Mac." });
+    expect(await addToClaudeCode(PACKAGED, exec)).toEqual({ kind: "missing" });
   });
 
   it("says Claude Code didn't answer when it ran past its time", async () => {
     const { exec } = fakeExec({ code: "timeout", stdout: "", stderr: "" });
-    expect(await addToClaudeCode(PACKAGED, exec)).toEqual({ ok: false, detail: "Claude Code didn't answer within 15 s." });
+    expect(await addToClaudeCode(PACKAGED, exec)).toEqual({ kind: "failed", detail: "Claude Code didn't answer within 15 s.", output: "" });
   });
 
-  it("tells the last line Claude Code wrote on a failure, as a sentence and without its colours", async () => {
+  it("says how Claude Code stopped in a plain sentence, and keeps the last line it wrote, without colours, for the log", async () => {
     const { exec } = fakeExec({ code: 1, stdout: "", stderr: "Usage: claude mcp add\n\u001b[31merror: invalid scope\u001b[39m\n\n" });
-    expect(await addToClaudeCode(PACKAGED, exec)).toEqual({ ok: false, detail: "Invalid scope." });
+    expect(await addToClaudeCode(PACKAGED, exec)).toEqual({ kind: "failed", detail: "Claude Code stopped with code 1.", output: "error: invalid scope" });
     const quiet = fakeExec({ code: 2, stdout: "", stderr: "" });
-    expect(await addToClaudeCode(PACKAGED, quiet.exec)).toEqual({ ok: false, detail: "Claude Code stopped with code 2." });
+    expect(await addToClaudeCode(PACKAGED, quiet.exec)).toEqual({ kind: "failed", detail: "Claude Code stopped with code 2.", output: "" });
   });
 });

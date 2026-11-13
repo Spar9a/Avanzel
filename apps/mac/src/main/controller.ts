@@ -6101,11 +6101,16 @@ export class Controller {
 
   /**
    * Add to Claude Code, in Settings → Agents: runs `claude mcp add` for Avanzel's server, for every project of this user, from the home
-   * folder with the PATH main widened at start. What it came to stays in the snapshot (`claudeCodeSetup`) for the pane to show.
+   * folder with the PATH main widened at start. What it came to stays in the snapshot (`claudeCodeSetup`) for the pane to show, until
+   * the switch is turned off.
    */
   async addToClaudeCode(): Promise<SettingsSnapshot> {
     const result = await addToClaudeCode(this.mcpLaunch(), execIn(homedir()));
-    this.claudeCodeSetup = result.ok ? { kind: "added" } : { kind: "failed", detail: result.detail };
+    if (result.kind === "failed") {
+      // What Claude Code wrote is for the log: the window says what happened in a plain sentence.
+      console.error(`claude mcp add: ${result.detail}${result.output ? ` ${result.output}` : ""}`);
+      this.claudeCodeSetup = { kind: "failed", detail: result.detail };
+    } else this.claudeCodeSetup = result;
     this.broadcast();
     return this.snapshot();
   }
@@ -6144,6 +6149,8 @@ export class Controller {
   private async changeApp(patch: Partial<AppSettings>, picked?: keyof Shortcuts): Promise<SettingsSnapshot> {
     const before = this.store.get();
     const after = this.store.update(patch);
+    // Turned off, the other agents' setup starts again: what Add to Claude Code came to is forgotten.
+    if (before.agentAccess && !after.agentAccess) this.claudeCodeSetup = { kind: "idle" };
     if (JSON.stringify(before.shortcuts) !== JSON.stringify(after.shortcuts)) {
       await this.applyShortcuts();
       this.followShortcuts(picked);

@@ -1,7 +1,6 @@
 // Setting up the owner's other agents to start Avanzel's MCP server (`Avanzel --mcp`, mcp-mode.ts): Settings → Agents adds it to
 // Claude Code with `claude mcp add`, and gives every other client the snippet its own config file takes.
 import { execFile } from "node:child_process";
-import { ownLine } from "../shared/clip.ts";
 
 /** The MCP clients Settings sets up, by id. */
 export type McpClient = "claude-code" | "claude-desktop" | "cursor" | "codex" | "opencode" | "gemini";
@@ -116,16 +115,22 @@ function lastLine(text: string): string {
 }
 
 /**
- * Add to Claude Code: `claude mcp add` for this user's every project. Avanzel being there already counts as added. A failure says why
- * in one sentence: Claude Code isn't installed, didn't answer, or the last line it wrote.
+ * What Add to Claude Code came to: added (or there already), missing (no `claude` on this Mac), or failed, with a plain sentence for
+ * the window (`detail`) and the last line Claude Code wrote (`output`), which goes to the log, never to the window.
  */
-export async function addToClaudeCode(launch: McpLaunch, exec: Exec): Promise<{ ok: true } | { ok: false; detail: string }> {
+export type ClaudeAddOutcome = { kind: "added" } | { kind: "missing" } | { kind: "failed"; detail: string; output: string };
+
+/** Claude Code's own words when a server of that name is there already ("MCP server avanzel already exists in user config"). */
+const ALREADY_THERE = /MCP server \S+ already exists/;
+
+/** Add to Claude Code: `claude mcp add` for this user's every project. Avanzel being there already counts as added. */
+export async function addToClaudeCode(launch: McpLaunch, exec: Exec): Promise<ClaudeAddOutcome> {
   const [file, ...args] = claudeAddArgv(launch) as [string, ...string[]];
   const result = await exec(file, args);
-  if (result.code === 0) return { ok: true };
-  if (result.code === "ENOENT") return { ok: false, detail: "Claude Code isn't installed on this Mac." };
-  if (result.code === "timeout") return { ok: false, detail: `Claude Code didn't answer within ${CLAUDE_ADD_TIMEOUT_MS / 1000} s.` };
-  if (/already exists/i.test(`${result.stderr}\n${result.stdout}`)) return { ok: true };
-  const line = lastLine(result.stderr) || lastLine(result.stdout);
-  return { ok: false, detail: ownLine(line) || `Claude Code stopped with code ${result.code}.` };
+  if (result.code === 0) return { kind: "added" };
+  if (result.code === "ENOENT") return { kind: "missing" };
+  const output = lastLine(result.stderr) || lastLine(result.stdout);
+  if (result.code === "timeout") return { kind: "failed", detail: `Claude Code didn't answer within ${CLAUDE_ADD_TIMEOUT_MS / 1000} s.`, output };
+  if (ALREADY_THERE.test(`${result.stderr}\n${result.stdout}`)) return { kind: "added" };
+  return { kind: "failed", detail: `Claude Code stopped with code ${result.code}.`, output };
 }
