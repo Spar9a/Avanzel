@@ -59,11 +59,15 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 /** A count of seconds, or a time in milliseconds: a number that is finite and not below zero (JSON keeps no NaN or Infinity, and reads them as null). */
 const isCount = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
 
-/** A page of a receipt: `title`, `shelf` and `path` are strings, and `created` is a boolean when it is there. Anything else about it goes. */
+/**
+ * A page of a receipt: `title`, `shelf` and `path` are strings, and `created` is a boolean when it is there. An own shelf's name
+ * (`shelfName`) is kept when it is a string, and goes otherwise. Anything else about it goes.
+ */
 function normalizePage(raw: unknown): FiledPage | null {
   if (!isObject(raw) || typeof raw.title !== "string" || typeof raw.shelf !== "string" || typeof raw.path !== "string") return null;
-  if (raw.created === undefined) return { title: raw.title, shelf: raw.shelf, path: raw.path };
-  return typeof raw.created === "boolean" ? { title: raw.title, shelf: raw.shelf, path: raw.path, created: raw.created } : null;
+  const named = typeof raw.shelfName === "string" ? { shelfName: raw.shelfName } : {};
+  if (raw.created === undefined) return { title: raw.title, shelf: raw.shelf, path: raw.path, ...named };
+  return typeof raw.created === "boolean" ? { title: raw.title, shelf: raw.shelf, path: raw.path, created: raw.created, ...named } : null;
 }
 
 /**

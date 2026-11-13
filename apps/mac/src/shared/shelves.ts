@@ -9,21 +9,42 @@ export function shelfMadeLine(name: string, moved: number): string {
   return `Made the ${name} shelf and moved ${moved === 0 ? "no pages" : pagesOf(moved)}.`;
 }
 
-/** `notMoved` pages stayed where they were, as a page of that name was in the shelf's folder already. */
-function stayedLine(notMoved: number): string {
-  return notMoved === 1
+/** Why Make shelf left a page where it was: a page of its name is in the shelf's folder (`taken`), or it isn't where it was filed (`missing`). */
+export type NotMovedReason = "taken" | "missing";
+
+/** `n` pages stayed where they were, as a page of that name was in the shelf's folder already. */
+function takenLine(n: number): string {
+  return n === 1
     ? "1 page stayed where it was, as a page with its name is already there."
-    : `${notMoved} pages stayed where they were, as pages with their names are already there.`;
+    : `${n} pages stayed where they were, as pages with their names are already there.`;
+}
+
+/** `n` pages weren't moved, as they are no longer where they were filed (gone, moved or renamed since). */
+function missingLine(n: number): string {
+  return n === 1 ? "1 page wasn't moved, as it's no longer where it was filed." : `${n} pages weren't moved, as they're no longer where they were filed.`;
+}
+
+/** What is said of the pages that didn't move, each reason in its own sentence: "" when every page moved. */
+function stayedLines(notMoved: readonly { reason: NotMovedReason }[]): string {
+  const taken = notMoved.filter((page) => page.reason === "taken").length;
+  const missing = notMoved.length - taken;
+  return [taken > 0 ? takenLine(taken) : "", missing > 0 ? missingLine(missing) : ""].filter(Boolean).join(" ");
 }
 
 /**
  * The notifications once Make shelf made `name`'s shelf, beside the bar (`onBar`) or in its place, when the capsule is busy. Beside the
- * bar: none when every page moved, else one that says which stayed, which the bar has no room for. In its place: one that says it all.
+ * bar: none when every page moved, else one that says which stayed and why, which the bar has no room for. In its place: one that says it all.
  */
-export function shelfMadeNotes(name: string, moved: number, notMoved: number, onBar: boolean): { title: string; body: string }[] {
-  if (onBar) return notMoved === 0 ? [] : [{ title: `The ${name} shelf is made`, body: stayedLine(notMoved) }];
+export function shelfMadeNotes(
+  name: string,
+  moved: number,
+  notMoved: readonly { reason: NotMovedReason }[],
+  onBar: boolean,
+): { title: string; body: string }[] {
+  const stayed = stayedLines(notMoved);
+  if (onBar) return stayed === "" ? [] : [{ title: `The ${name} shelf is made`, body: stayed }];
   const made = shelfMadeLine(name, moved);
-  return [{ title: "Shelf made", body: notMoved === 0 ? made : `${made} ${stayedLine(notMoved)}` }];
+  return [{ title: "Shelf made", body: stayed === "" ? made : `${made} ${stayed}` }];
 }
 
 /**

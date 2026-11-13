@@ -630,8 +630,12 @@ export function canRemoveShelf(shelf: { definition: string; pages: number }): bo
   return shelf.definition !== "" && shelf.pages === 0;
 }
 
-/** The remove question, over the Remove button of a shelf with no pages. */
-export const removeShelfQuestion = (name: string): string => `Remove the ${name} shelf? Its folder is empty, so nothing else changes.`;
+/**
+ * The remove question, over the Remove button of a shelf with no pages: its folder goes when it is `empty` (it holds nothing besides
+ * .DS_Store and .localized), else it stays with what is in it.
+ */
+export const removeShelfQuestion = (name: string, empty: boolean): string =>
+  empty ? `Remove the ${name} shelf? Its folder is empty, so nothing else changes.` : `Remove the ${name} shelf? Its folder keeps the files that aren't pages.`;
 
 /** A shelf's row: what belongs on it (or that nothing is said), and how many pages it holds. */
 export function shelfRowLine(definition: string, pages: number): string {

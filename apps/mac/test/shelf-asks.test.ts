@@ -69,13 +69,21 @@ describe("ownShelvesInfo", () => {
       { folder: "projects", name: "Projects", definition: "Work with a goal." },
       { folder: "reading", name: "Reading", definition: "Books to read." },
     ];
-    expect(ownShelvesInfo(shelves, counts)).toEqual([
-      { folder: "projects", name: "Projects", definition: "Work with a goal.", pages: 5 },
-      { folder: "reading", name: "Reading", definition: "Books to read.", pages: 0 }, // its folder isn't there yet
-      { folder: "garden", name: "garden", definition: "", pages: 3 },
-      { folder: "side-work", name: "side-work", definition: "", pages: 0 },
+    const empty = (folder: string) => folder !== "projects" && folder !== "garden";
+    expect(ownShelvesInfo(shelves, counts, empty)).toEqual([
+      { folder: "projects", name: "Projects", definition: "Work with a goal.", pages: 5, empty: false },
+      { folder: "reading", name: "Reading", definition: "Books to read.", pages: 0, empty: true }, // its folder isn't there yet
+      { folder: "garden", name: "garden", definition: "", pages: 3, empty: false },
+      { folder: "side-work", name: "side-work", definition: "", pages: 0, empty: true },
     ]);
-    expect(ownShelvesInfo([], { goals: 1, meetings: 0 })).toEqual([]); // Avanzel's own shelves, meetings among them, are never listed
+    expect(ownShelvesInfo([], { goals: 1, meetings: 0 }, empty)).toEqual([]); // Avanzel's own shelves, meetings among them, are never listed
+  });
+
+  it("says an own shelf with no pages isn't empty when its folder holds something else", () => {
+    const shelves = [{ folder: "trips", name: "Trips", definition: "Journeys." }];
+    expect(ownShelvesInfo(shelves, { trips: 0 }, () => false)).toEqual([
+      { folder: "trips", name: "Trips", definition: "Journeys.", pages: 0, empty: false },
+    ]);
   });
 });
 
@@ -95,23 +103,42 @@ describe("shelfMadeLine, the bar's one line once Make shelf is done", () => {
 });
 
 describe("shelfMadeNotes, the notifications once Make shelf is done", () => {
+  const kept = (reason: "taken" | "missing", n: number) => Array.from({ length: n }, (_, at) => ({ path: `ideas/${reason}-${at}.md`, reason }));
+  const TAKEN_ONE = "1 page stayed where it was, as a page with its name is already there.";
+  const TAKEN_MANY = "2 pages stayed where they were, as pages with their names are already there.";
+  const MISSING_ONE = "1 page wasn't moved, as it's no longer where it was filed.";
+  const MISSING_MANY = "3 pages weren't moved, as they're no longer where they were filed.";
+
   it("adds none to the bar when every page moved", () => {
-    expect(shelfMadeNotes("Projects", 2, 0, true)).toEqual([]);
+    expect(shelfMadeNotes("Projects", 2, [], true)).toEqual([]);
   });
 
   it("tells, beside the bar, the page that stayed, and the pages that stayed", () => {
-    expect(shelfMadeNotes("Projects", 0, 1, true)).toEqual([
-      { title: "The Projects shelf is made", body: "1 page stayed where it was, as a page with its name is already there." },
+    expect(shelfMadeNotes("Projects", 0, kept("taken", 1), true)).toEqual([{ title: "The Projects shelf is made", body: TAKEN_ONE }]);
+    expect(shelfMadeNotes("Projects", 1, kept("taken", 2), true)).toEqual([{ title: "The Projects shelf is made", body: TAKEN_MANY }]);
+  });
+
+  it("tells, beside the bar, the page and the pages no longer where they were filed", () => {
+    expect(shelfMadeNotes("Projects", 0, kept("missing", 1), true)).toEqual([{ title: "The Projects shelf is made", body: MISSING_ONE }]);
+    expect(shelfMadeNotes("Projects", 1, kept("missing", 3), true)).toEqual([{ title: "The Projects shelf is made", body: MISSING_MANY }]);
+  });
+
+  it("tells both reasons in one notification", () => {
+    expect(shelfMadeNotes("Projects", 0, [...kept("missing", 3), ...kept("taken", 1)], true)).toEqual([
+      { title: "The Projects shelf is made", body: `${TAKEN_ONE} ${MISSING_MANY}` },
     ]);
-    expect(shelfMadeNotes("Projects", 1, 2, true)).toEqual([
-      { title: "The Projects shelf is made", body: "2 pages stayed where they were, as pages with their names are already there." },
+    expect(shelfMadeNotes("Projects", 1, [...kept("taken", 2), ...kept("missing", 1)], false)).toEqual([
+      { title: "Shelf made", body: `Made the Projects shelf and moved 1 page. ${TAKEN_MANY} ${MISSING_ONE}` },
     ]);
   });
 
   it("tells it all in one notification when there is no bar", () => {
-    expect(shelfMadeNotes("Projects", 1, 0, false)).toEqual([{ title: "Shelf made", body: "Made the Projects shelf and moved 1 page." }]);
-    expect(shelfMadeNotes("Projects", 1, 1, false)).toEqual([
-      { title: "Shelf made", body: "Made the Projects shelf and moved 1 page. 1 page stayed where it was, as a page with its name is already there." },
+    expect(shelfMadeNotes("Projects", 1, [], false)).toEqual([{ title: "Shelf made", body: "Made the Projects shelf and moved 1 page." }]);
+    expect(shelfMadeNotes("Projects", 1, kept("taken", 1), false)).toEqual([
+      { title: "Shelf made", body: `Made the Projects shelf and moved 1 page. ${TAKEN_ONE}` },
+    ]);
+    expect(shelfMadeNotes("Projects", 0, kept("missing", 1), false)).toEqual([
+      { title: "Shelf made", body: `Made the Projects shelf and moved no pages. ${MISSING_ONE}` },
     ]);
   });
 });

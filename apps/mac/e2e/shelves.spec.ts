@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadSettings } from "../../../packages/engine/src/index.ts";
 import { barOf, holdTheQueue, launchOn, letTheQueueGo, notified, panelOn, panelSnapshot } from "./capsule-helpers.ts";
-import { call, capsuleKind, filesUnder, gitOut, makeLibrary, openSettings, paneOf, pickIn } from "./helpers.ts";
+import { call, capsuleKind, filesUnder, gitOut, makeLibrary, openSettings, paneOf, pickIn, windowFor } from "./helpers.ts";
 
 /** What the fake librarian suggests after each filing: a Projects shelf, for the page the filing wrote. */
 const SUGGEST = "projects | Projects | Work with a goal. | {page}";
@@ -294,5 +294,54 @@ test("(g) No on the card about a folder the agent started turns it down: its pag
   const panel = await panelOn(app, "library");
   await expect(panel.getByRole("status").filter({ hasText: "The agent started a shelf called errands." })).toHaveCount(0);
   await expect(row(panel, `topics/${page}`)).toBeVisible();
+  await app.close();
+});
+
+test("(h1) a suggestion whose shelf is then added in Settings is answered: Library asks nothing", async () => {
+  const { app, capsule, library } = await suggesting();
+  await fileAThought(app);
+  await filedCard(capsule).getByRole("button", { name: "Not now", exact: true }).click();
+  expect((await panelSnapshot(app)).shelfSuggestions.map((ask) => ask.folder)).toEqual(["projects"]);
+  // The owner adds the same shelf in Settings, by hand, rather than from the suggestion.
+  const settings = await openSettings(app);
+  const general = paneOf(settings, "General");
+  await general.getByRole("button", { name: "Add shelf", exact: true }).click();
+  await general.getByRole("textbox", { name: "Name", exact: true }).fill("Projects");
+  await general.getByRole("textbox", { name: "What belongs on it", exact: true }).fill(DEFINITION);
+  await general.getByRole("button", { name: "Save shelf", exact: true }).click();
+  await expect.poll(() => loadSettings(library).shelves.map((shelf) => shelf.folder), { timeout: 30_000 }).toEqual(["projects"]);
+  // The suggestion can be neither made nor turned down now: it is answered, and Library doesn't ask.
+  await expect.poll(async () => (await panelSnapshot(app)).shelfSuggestions).toEqual([]);
+  const panel = await panelOn(app, "library");
+  await expect(libraryQuestion(panel)).toHaveCount(0);
+  expect(loadSettings(library).declinedShelves).toEqual([]);
+  await app.close();
+});
+
+test("(h2) Edit first and Save on a folder the agent made: its page stays where it is, takes the shelf, and counts as moved", async () => {
+  const library = await makeLibrary({ git: true });
+  const { app, capsule } = await launchOn(library, { FAKE_AGENT_MODE: "make-folder", FAKE_AGENT_FOLDER: "errands" });
+  await fileAThought(app);
+  const [page] = filesUnder(library, "errands");
+  expect(page).toMatch(/^p-.*\.md$/);
+  const rel = `errands/${page}`;
+  await filedCard(capsule).getByRole("button", { name: "Edit first", exact: true }).click();
+  const panel = await windowFor(app, "panel");
+  const general = paneOf(panel, "General");
+  await expect(general.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("errands");
+  await general.getByRole("textbox", { name: "Name", exact: true }).fill("Errands");
+  await general.getByRole("textbox", { name: "What belongs on it", exact: true }).fill("Small jobs to get done.");
+  await general.getByRole("button", { name: "Save shelf", exact: true }).click();
+  await expect.poll(() => lastCommit(library), { timeout: 30_000 }).toBe("avanzel: make shelf errands");
+  // The page keeps its path, its shelf: is the folder, and its index line is under the new heading.
+  expect(filesUnder(library, "errands")).toEqual([page]);
+  expect(readFileSync(path.join(library, rel), "utf8")).toMatch(/^---\n[\s\S]*^shelf: errands$[\s\S]*\n---\n/m);
+  const index = readFileSync(path.join(library, "index.md"), "utf8");
+  expect(index.slice(index.indexOf("## Errands"))).toContain(`[[${page?.replace(/\.md$/, "")}]]`);
+  // It counts as moved: the bar says so, and nothing says a page stayed.
+  await expect.poll(() => capsuleKind(app)).toBe("shelf-made");
+  await expect(barOf(capsule)).toContainText("Made the Errands shelf and moved 1 page.");
+  expect(await notified(app, "The Errands shelf is made")).toEqual([]);
+  expect(await notified(app, "Shelf made")).toEqual([]);
   await app.close();
 });

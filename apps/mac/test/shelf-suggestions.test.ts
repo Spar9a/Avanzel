@@ -98,6 +98,37 @@ describe("pending shelf suggestions", () => {
     expect(store.list("/lib")).toEqual([added]);
   });
 
+  it("drops, as answered, a suggestion that is now the same shelf as one of the owner's, by folder or by name, and keeps the rest", () => {
+    const file = path.join(tmp(), "shelf-suggestions.json");
+    const store = new ShelfSuggestions(file);
+    store.add("/lib", suggestion(), "c1");
+    store.add("/lib", suggestion({ folder: "trips", name: "Trips", pages: ["trips/a.md"] }), "c2");
+    const recipes = store.add("/lib", suggestion({ folder: "recipes", name: "Recipes", pages: ["ideas/r.md"] }), "c3");
+    const left = store.dropAnswered("/lib", [
+      { folder: "project", name: "Work" }, // the same shelf as projects, by folder
+      { folder: "journeys", name: "trip" }, // the same shelf as trips, by name
+    ]);
+    expect(left).toEqual([recipes]);
+    expect(store.list("/lib")).toEqual([recipes]);
+  });
+
+  it("keeps an answered suggestion whose folder it is told to keep: a Make shelf of it is going", () => {
+    const store = new ShelfSuggestions(path.join(tmp(), "shelf-suggestions.json"));
+    const added = store.add("/lib", suggestion(), "c1");
+    expect(store.dropAnswered("/lib", [{ folder: "projects", name: "Projects" }], ["projects"])).toEqual([added]);
+    expect(store.list("/lib")).toEqual([added]);
+  });
+
+  it("writes nothing when no suggestion is answered", () => {
+    const file = path.join(tmp(), "shelf-suggestions.json");
+    const store = new ShelfSuggestions(file);
+    const added = store.add("/lib", suggestion(), "c1");
+    writeFileSync(file, readFileSync(file, "utf8").replace("{", "{ "));
+    const before = readFileSync(file, "utf8");
+    expect(store.dropAnswered("/lib", [{ folder: "trips", name: "Trips" }])).toEqual([added]);
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
   it("loads empty from a file that doesn't parse", () => {
     const file = path.join(tmp(), "shelf-suggestions.json");
     writeFileSync(file, "{ not json");

@@ -62,13 +62,24 @@ export function parseShelfOp(raw: unknown): ShelfOp | null {
 /**
  * The shelves Settings lists as the owner's (`LibraryInfo.ownShelves`): each own shelf in its saved order with the pages its folder holds
  * (`counts`, the vault's `shelfCounts`), then each other top-level folder that isn't one of Avanzel's own shelves, as it is named on disk
- * and with no definition: one made by hand, which Add definition makes a shelf.
+ * and with no definition: one made by hand, which Add definition makes a shelf. Each says whether its folder is `empty` (`emptyOf`, the
+ * engine's `isEmptyShelfFolder`): Remove's question says the folder stays when something that isn't a page is in it.
  */
-export function ownShelvesInfo(shelves: readonly OwnShelf[], counts: Readonly<Record<string, number>>): LibraryInfo["ownShelves"] {
-  const own = shelves.map((shelf) => ({ folder: shelf.folder, name: shelf.name, definition: shelf.definition, pages: counts[shelf.folder] ?? 0 }));
+export function ownShelvesInfo(
+  shelves: readonly OwnShelf[],
+  counts: Readonly<Record<string, number>>,
+  emptyOf: (folder: string) => boolean,
+): LibraryInfo["ownShelves"] {
+  const own = shelves.map((shelf) => ({
+    folder: shelf.folder,
+    name: shelf.name,
+    definition: shelf.definition,
+    pages: counts[shelf.folder] ?? 0,
+    empty: emptyOf(shelf.folder),
+  }));
   const handMade = Object.entries(counts)
     .filter(([folder]) => !BUILT_IN_SHELVES.includes(folder) && !shelves.some((shelf) => shelf.folder === folder))
-    .map(([folder, pages]) => ({ folder, name: folder, definition: "", pages }));
+    .map(([folder, pages]) => ({ folder, name: folder, definition: "", pages, empty: emptyOf(folder) }));
   return [...own, ...handMade];
 }
 

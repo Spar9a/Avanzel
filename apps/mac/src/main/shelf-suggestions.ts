@@ -35,6 +35,11 @@ export function normalizePending(raw: unknown): PendingShelf | null {
   return { folder: raw.folder, name: raw.name, definition, agentMade: definition === "", pages };
 }
 
+/** Whether the suggestion `shelf` is the same shelf (`sameShelf`, on folders or names) as one of `own`, the owner's: it is answered. */
+export function answeredBy(shelf: Pick<PendingShelf, "folder" | "name">, own: readonly { folder: string; name: string }[]): boolean {
+  return own.some((mine) => [mine.folder, mine.name].some((theirs) => sameShelf(theirs, shelf.folder) || sameShelf(theirs, shelf.name)));
+}
+
 export class ShelfSuggestions {
   constructor(private readonly file: string) {}
 
@@ -87,6 +92,20 @@ export class ShelfSuggestions {
     const [removed] = pending.splice(index, 1);
     this.save(all, library, pending);
     return removed ?? null;
+  }
+
+  /**
+   * Drops, as answered, each suggestion that is now the same shelf (`sameShelf`, on folders or names) as one of `own`, the owner's shelves:
+   * one added in Settings, or by hand in config.toml, after it was suggested. It could be neither made nor turned down any more. The
+   * suggestions for the folders in `keep` stay all the same (a Make shelf of theirs is going, and takes them out itself). Returns the
+   * suggestions left. Writes only when one goes, and throws when the file can't be written.
+   */
+  dropAnswered(library: string, own: readonly { folder: string; name: string }[], keep: readonly string[] = []): PendingShelf[] {
+    const all = this.load();
+    const before = this.of(all, library);
+    const after = before.filter((shelf) => keep.includes(shelf.folder) || !answeredBy(shelf, own));
+    if (after.length !== before.length) this.save(all, library, after);
+    return after;
   }
 
   /** Takes `captureId`'s pages off every suggestion, and drops a suggestion left with none. Throws when the file can't be written. */

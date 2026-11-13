@@ -178,6 +178,13 @@ describe("undo record store", () => {
     expect(new UndoRecordStore(file).get("/libs/a")).toEqual({ filing: null, evening: [], receipt: { ...RECEIPT, pages: [RECEIPT.pages[1]] }, shelf: null });
   });
 
+  it("keeps the own shelf's name a receipt's page carries, so a reprint draws its chip as the card did, and drops one that is no string", () => {
+    const file = path.join(tmp(), "undo-records.json");
+    const own = { title: "Acme", shelf: "projects", path: "projects/acme.md", created: true, shelfName: "Client projects" };
+    writeFileSync(file, JSON.stringify({ "/libs/a": { receipt: { ...RECEIPT, pages: [own, { ...own, path: "projects/b.md", shelfName: 3 }] } } }));
+    expect(new UndoRecordStore(file).get("/libs/a").receipt?.pages).toEqual([own, { title: "Acme", shelf: "projects", path: "projects/b.md", created: true }]);
+  });
+
   it("changes a receipt without touching the commits, and keeps a library for its receipt alone", () => {
     const file = path.join(tmp(), "undo-records.json");
     const store = new UndoRecordStore(file);

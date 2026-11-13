@@ -227,7 +227,7 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
                   {canRemoveShelf(shelf) && (
                     <Confirm
                       open={removing === shelf.folder}
-                      question={removeShelfQuestion(shelf.name)}
+                      question={removeShelfQuestion(shelf.name, shelf.empty)}
                       confirmLabel={SHELF_REMOVE}
                       onConfirm={() => {
                         setRemoving(null);

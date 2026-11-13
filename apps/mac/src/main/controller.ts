@@ -40,6 +40,7 @@ import {
   git,
   harnesses as listHarnesses,
   idStamp,
+  isEmptyShelfFolder,
   lastDue,
   loadSettings,
   loadTasksReport,
@@ -197,9 +198,9 @@ import {
 import { captureDisplay, captureRegion, looksBlank, previewOf } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
 import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
-import { ShelfSuggestions, type PendingShelf } from "./shelf-suggestions.ts";
+import { answeredBy, ShelfSuggestions, type PendingShelf } from "./shelf-suggestions.ts";
 import { askOf, libraryAskOf, ownShelvesInfo, parseShelfAsk, parseShelfOp, shelfUndoNotice } from "./shelf-asks.ts";
-import { shelfMadeNotes } from "../shared/shelves.ts";
+import { shelfMadeNotes, type NotMovedReason } from "../shared/shelves.ts";
 import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
@@ -3109,7 +3110,7 @@ export class Controller {
     if (!outcome.ok) return this.filingFailed(job, outcome.error || outcome.message || "The agent stopped without filing.", outcome, library);
     // The pages are the note's own library's, the one it was filed in. The menu lists the open library's recent pages, so it
     // takes them only while that library is the open one: not once it has closed, or another has opened.
-    const pages = filedPages(library.root, outcome.changes);
+    const pages = filedPages(library.root, outcome.changes, this.ownShelvesIn(library.root));
     job.pages = pages;
     // The shelf it suggests waits for the owner, joined to a pending one of the same shelf: the card and the receipt ask about it as kept.
     const suggestion = this.keepSuggestion(library.root, outcome);
@@ -4024,7 +4025,33 @@ export class Controller {
   /** The pending suggestions of the library at `root` as a filing's prompt lists them (`FileOptions.pendingShelves`); none without one. */
   private pendingShelvesOf(root: string | undefined): { folder: string; name: string; definition: string }[] {
     if (root === undefined) return [];
-    return this.shelfSuggestions.list(root).map(({ folder, name, definition }) => ({ folder, name, definition }));
+    return this.pendingIn(root).map(({ folder, name, definition }) => ({ folder, name, definition }));
+  }
+
+  /** The owner's own shelves in the library at `root`, as config.toml has them now; none when it can't be read. */
+  private ownShelvesIn(root: string): OwnShelf[] {
+    try {
+      return loadSettings(root).shelves;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * The suggestions pending in the library at `root`. One that is now the same shelf as one of the owner's (added in Settings, or by
+   * hand, after it was suggested) is answered: it goes (`dropAnswered`), so that Library stops asking about a shelf that can be neither
+   * made nor turned down. One whose shelf operation is going (`shelvesGoing`) is left to it: Make shelf takes its own suggestion out once
+   * the shelf is made, and keeps it for its Undo to put back.
+   */
+  private pendingIn(root: string): PendingShelf[] {
+    const own = this.ownShelvesIn(root);
+    if (own.length === 0) return this.shelfSuggestions.list(root);
+    try {
+      return this.shelfSuggestions.dropAnswered(root, own, [...this.shelvesGoing.keys()]);
+    } catch (error) {
+      console.error("shelf suggestions", error);
+      return this.shelfSuggestions.list(root);
+    }
   }
 
   /**
@@ -4038,7 +4065,9 @@ export class Controller {
     if (outcome.commit) this.filedCaptures.set(outcome.commit, outcome.captureId);
     if (!outcome.suggestion) return null;
     try {
-      return askOf(this.shelfSuggestions.add(root, outcome.suggestion, outcome.captureId));
+      const kept = this.shelfSuggestions.add(root, outcome.suggestion, outcome.captureId);
+      // One that is the same shelf as one of the owner's is answered already (`pendingIn`), and the card asks nothing.
+      return this.pendingIn(root).some((shelf) => shelf.folder === kept.folder) ? askOf(kept) : null;
     } catch (error) {
       console.error("shelf suggestions", error);
       return null;
@@ -4114,16 +4143,20 @@ export class Controller {
     this.refreshPanel(); // Library's Make shelf for it is busy from now
     try {
       const made = await this.enqueue(async () => {
-        const pending = fromSuggestion === undefined ? null : (this.shelfSuggestions.list(root).find((other) => other.folder === fromSuggestion) ?? null);
+        const pending = fromSuggestion === undefined ? null : (this.pendingIn(root).find((other) => other.folder === fromSuggestion) ?? null);
         if (needsPending && pending === null) return null;
-        const result = await (await this.librarianFor(vault)).makeShelf(shelf, pending?.pages.map((page) => page.path) ?? []);
+        // A page no longer where it was filed (deleted, moved or renamed since, or a link now: `pageAt`) isn't asked for; it is told as missing.
+        const paths = pending?.pages.map((page) => page.path) ?? [];
+        const there = paths.filter((page) => pageAt(root, page) === "page");
+        const missing = paths.filter((page) => !there.includes(page)).map((page) => ({ path: page, reason: "missing" as const }));
+        const result = await (await this.librarianFor(vault)).makeShelf(shelf, there);
         let removed: PendingShelf | null = null;
         try {
-          if (pending) removed = this.shelfSuggestions.remove(root, pending.folder);
+          if (pending) removed = this.shelfSuggestions.remove(root, pending.folder) ?? pending;
         } catch (error) {
           console.error("shelf suggestions", error); // the shelf is made all the same; its question would be refused as taken
         }
-        return { result, removed };
+        return { result: { ...result, notMoved: [...result.notMoved, ...missing] }, removed };
       });
       if (made === null) {
         this.dropCardSuggestion(key); // a card still asking about it would wait on its button for ever
@@ -4140,7 +4173,7 @@ export class Controller {
         }
       }
       if (this.shelfDraft?.folder === key) this.shelfDraft = null;
-      if (tell) this.tellShelfMade(shelf.name, result.moved.length, result.notMoved.length);
+      if (tell) this.tellShelfMade(shelf.name, result.moved.length, result.notMoved);
       this.shelvesChanged();
       return true;
     } finally {
@@ -4150,10 +4183,10 @@ export class Controller {
   }
 
   /** Make shelf made `name`'s shelf: a bar says so over a finished card or none; over a capture, an editor or a problem, a notification. */
-  private tellShelfMade(name: string, moved: number, notMoved: number): void {
-    // The bar is one line: the pages that stayed are told beside it, by notification (`shelfMadeNotes`).
+  private tellShelfMade(name: string, moved: number, notMoved: readonly { reason: NotMovedReason }[]): void {
+    // The bar is one line: the pages that stayed are told beside it, by notification (`shelfMadeNotes`), with why.
     const onBar = !this.quitting && !this.capturing() && this.showsFinishedCard();
-    if (onBar) this.setCapsule({ kind: "shelf-made", name, moved, notMoved }, SHELF_MADE_SHOW_MS);
+    if (onBar) this.setCapsule({ kind: "shelf-made", name, moved, notMoved: notMoved.length }, SHELF_MADE_SHOW_MS);
     for (const note of shelfMadeNotes(name, moved, notMoved, onBar)) this.notify(note.title, note.body);
   }
 
@@ -4182,7 +4215,7 @@ export class Controller {
   async makeShelfFromCard(): Promise<void> {
     const card = this.capsuleState;
     if (card.kind !== "filed" || !card.suggestion) return;
-    const pending = this.vault ? this.shelfSuggestions.list(this.vault.root).find((shelf) => shelf.folder === card.suggestion?.folder) : undefined;
+    const pending = this.vault ? this.pendingIn(this.vault.root).find((shelf) => shelf.folder === card.suggestion?.folder) : undefined;
     if (!pending) return this.dropCardSuggestion(card.suggestion.folder); // answered meanwhile: nothing to make
     return this.makeShelf(askOf(pending));
   }
@@ -4195,21 +4228,23 @@ export class Controller {
 
   /** Library's Make shelf (`shelf-make:<folder>`): the pending suggestion for `folder`, if there is one. */
   private async makePendingShelf(folder: string): Promise<void> {
-    const pending = this.vault ? this.shelfSuggestions.list(this.vault.root).find((shelf) => shelf.folder === folder) : undefined;
+    const pending = this.vault ? this.pendingIn(this.vault.root).find((shelf) => shelf.folder === folder) : undefined;
     if (pending) await this.makeShelf(askOf(pending));
     else this.refreshPanel(); // answered meanwhile: the snapshot lets Library's pressed button go
   }
 
   /** Library's Edit first (`shelf-edit:<folder>`): Settings' shelf form opens on the pending suggestion for `folder`. */
   private editPendingShelf(folder: string): void {
-    const pending = this.vault ? this.shelfSuggestions.list(this.vault.root).find((shelf) => shelf.folder === folder) : undefined;
+    const pending = this.vault ? this.pendingIn(this.vault.root).find((shelf) => shelf.folder === folder) : undefined;
     if (pending) this.openShelfDraft(askOf(pending));
   }
 
   /**
    * No, in Library (`shelf-decline:<folder>`): the folder goes into the library's `declined_shelves`, so the librarian doesn't suggest it
    * again, and the suggestion goes. Pages stay where the librarian put them, but for a folder the agent made itself: its pages move to
-   * topics, and the empty folder goes. One commit, in turn with the library's runs. A refusal is told as Make shelf's is.
+   * topics, and the empty folder goes. One commit, in turn with the library's runs. A refusal is told as Make shelf's is. A suggestion no
+   * longer pending does nothing, and one that is now the same shelf as one of the owner's (`answeredBy`) is answered: it goes, and the
+   * engine isn't asked, as it would turn down, and empty, a shelf the owner has.
    */
   async declineShelf(folder: string): Promise<void> {
     const vault = this.vault;
@@ -4221,6 +4256,14 @@ export class Controller {
       const declined = await this.enqueue(async () => {
         const pending = this.shelfSuggestions.list(root).find((shelf) => shelf.folder === folder);
         if (!pending) return false;
+        if (answeredBy(pending, this.ownShelvesIn(root))) {
+          try {
+            this.shelfSuggestions.remove(root, folder);
+          } catch (error) {
+            console.error("shelf suggestions", error); // Library leaves it all the same (`pendingIn`)
+          }
+          return true;
+        }
         await (await this.librarianFor(vault)).declineShelf(folder, pending.agentMade ? pending.pages.map((page) => page.path) : []);
         try {
           this.shelfSuggestions.remove(root, folder);
@@ -4393,7 +4436,7 @@ export class Controller {
     if (receipt === null || vault === null || !this.receiptShowable()) return;
     const pages = receipt.pages.filter((page) => pageAt(vault.root, page.path) === "page");
     // Its shelf question only while that suggestion still waits, as it is now (a later filing may have joined it).
-    const pending = receipt.suggestion && this.shelfSuggestions.list(vault.root).find((shelf) => shelf.folder === receipt.suggestion?.folder);
+    const pending = receipt.suggestion && this.pendingIn(vault.root).find((shelf) => shelf.folder === receipt.suggestion?.folder);
     const suggestion = pending ? askOf(pending) : null;
     this.setCapsule(
       {
@@ -5854,7 +5897,7 @@ export class Controller {
       undoableReview: input.undoableReview,
       opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
       update: this.updates.snapshot(),
-      shelfSuggestions: vault ? this.shelfSuggestions.list(vault.root).map(libraryAskOf) : [],
+      shelfSuggestions: vault ? this.pendingIn(vault.root).map(libraryAskOf) : [],
       shelvesGoing: [...this.shelvesGoing].map(([folder, op]) => ({ folder, op })),
     };
   }
@@ -5967,7 +6010,7 @@ export class Controller {
             timeoutSeconds: settings?.timeoutSeconds ?? 900,
             dictionary: settings?.voice.dictionary ?? [],
             ...dictationInfo(settings),
-            ownShelves: exists ? ownShelvesInfo(settings?.shelves ?? [], vault.shelfCounts()) : [],
+            ownShelves: exists ? ownShelvesInfo(settings?.shelves ?? [], vault.shelfCounts(), (folder) => isEmptyShelfFolder(path.join(vault.root, folder))) : [],
             declinedShelves: settings?.declinedShelves ?? [],
           }
         : kept

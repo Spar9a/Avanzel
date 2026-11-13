@@ -810,11 +810,15 @@ describe("Settings → Your shelves", () => {
     expect(SAVE_SHELF).toBe("Save shelf");
     expect(NO_DEFINITION).toBe("No definition yet");
     expect(ADD_DEFINITION).toBe("Add definition");
-    expect(removeShelfQuestion("Projects")).toBe("Remove the Projects shelf? Its folder is empty, so nothing else changes.");
+    expect(removeShelfQuestion("Projects", true)).toBe("Remove the Projects shelf? Its folder is empty, so nothing else changes.");
+    expect(removeShelfQuestion("Trips", false)).toBe("Remove the Trips shelf? Its folder keeps the files that aren't pages.");
   });
 
   it("offers Remove only on an own shelf with no pages, as the engine only removes those", () => {
     expect(canRemoveShelf({ definition: "Work with a goal.", pages: 0 })).toBe(true);
+    // A folder that holds files that aren't pages is still offered: the folder and those files stay, and its question says so.
+    const notEmpty = { definition: "Work with a goal.", pages: 0, empty: false };
+    expect(canRemoveShelf(notEmpty)).toBe(true);
     expect(canRemoveShelf({ definition: "Work with a goal.", pages: 3 })).toBe(false);
     // A folder made by hand has no definition: it is no shelf of the owner's yet, and the engine has none to remove.
     expect(canRemoveShelf({ definition: "", pages: 0 })).toBe(false);

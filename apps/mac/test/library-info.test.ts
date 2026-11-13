@@ -165,6 +165,18 @@ describe("library info", () => {
     ]);
   });
 
+  it("gives a page on one of the owner's shelves that shelf's name, and no other page one", () => {
+    const root = library();
+    mkdirSync(path.join(root, "projects"), { recursive: true });
+    writeFileSync(path.join(root, "projects/acme.md"), "# Acme\n");
+    const own = [{ folder: "projects", name: "Client projects", definition: "Work." }];
+    const pages = filedPages(root, { created: ["projects/acme.md"], modified: ["goals/launch-podcast.md"] }, own);
+    expect(pages).toEqual([
+      { title: "Acme", shelf: "projects", path: "projects/acme.md", created: true, shelfName: "Client projects" },
+      { title: "Launch the indie game dev podcast", shelf: "goals", path: "goals/launch-podcast.md", created: false },
+    ]);
+  });
+
   it("marks a page written both ways as new, and lists it once", () => {
     const pages = filedPages(library(), { created: ["people/mark.md"], modified: ["people/mark.md", "goals/launch-podcast.md"] });
     expect(pages.map((p) => [p.path, p.created])).toEqual([["people/mark.md", true], ["goals/launch-podcast.md", false]]);

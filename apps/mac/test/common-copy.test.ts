@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { SHELVES } from "@avanzel/ui";
 import { describe, expect, it } from "vitest";
-import { anyShelfOf, isShelf } from "../src/renderer/common/shelf.ts";
+import { anyShelfOf, filedShelfOf, isShelf } from "../src/renderer/common/shelf.ts";
 import { stampDate } from "../src/renderer/common/stamp.ts";
 import * as setupCopy from "../src/renderer/setup/copy.ts";
 
@@ -51,5 +51,17 @@ describe("anyShelfOf", () => {
     expect(anyShelfOf("reading", own)).toEqual({ own: "reading", name: "reading" });
     expect(anyShelfOf(null, own)).toBeUndefined();
     expect(anyShelfOf("", own)).toBeUndefined();
+  });
+});
+
+describe("filedShelfOf, the chip on the filed card", () => {
+  it("draws the six as they are, an own shelf by the name it was filed under, and meetings, in the own look", () => {
+    expect(filedShelfOf({ shelf: "ideas" })).toBe("ideas");
+    expect(filedShelfOf({ shelf: "projects", shelfName: "Projects" })).toEqual({ own: "projects", name: "Projects" });
+    expect(filedShelfOf({ shelf: "meetings" })).toEqual({ own: "meetings", name: "Meetings" });
+  });
+
+  it("draws no chip for a folder that is no shelf, which the card names by its folder", () => {
+    expect(filedShelfOf({ shelf: "recipes" })).toBeUndefined();
   });
 });

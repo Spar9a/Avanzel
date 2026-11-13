@@ -13,6 +13,11 @@ export interface FiledPage {
   title: string;
   /** First folder of the page path, e.g. "goals". */
   shelf: string;
+  /**
+   * The name of the owner's own shelf the page is on, when `shelf` is one, as config.toml had it when the filing's pages were listed
+   * (`filedPages`): the filed card draws its chip in the own look by that name. Absent for any other folder, and for a page looked up on its own.
+   */
+  shelfName?: string;
   /** Library-relative path, e.g. "goals/run-a-marathon.md". */
   path: string;
   /**
@@ -300,7 +305,7 @@ export type CapsuleState =
     }
   /**
    * Make shelf made `name`'s shelf: `moved` pages went onto it, and `notMoved` stayed where they were (one with that name was in its
-   * folder already). A bar that hides by itself.
+   * folder already, or the page was no longer where it was filed). A bar that hides by itself.
    */
   | { kind: "shelf-made"; name: string; moved: number; notMoved: number }
   /** Stop ended a filing, and its note is in the inbox. The controller's `cancelFiling` tells the rest. */
@@ -580,9 +585,10 @@ export interface LibraryInfo {
   /**
    * The owner's own shelves, in config.toml's order, each with how many pages it holds; then, with `definition` "", each top-level folder
    * that is neither one of Avanzel's own shelves nor one of these (one made by hand), named by its folder: Settings offers Add definition
-   * for it, a `make` of that folder.
+   * for it, a `make` of that folder. `empty`: the folder holds nothing besides .DS_Store and .localized (or isn't there), so removing
+   * the shelf removes it; otherwise it stays, with what is in it.
    */
-  ownShelves: { folder: string; name: string; definition: string; pages: number }[];
+  ownShelves: { folder: string; name: string; definition: string; pages: number; empty: boolean }[];
   /** config.toml's `declined_shelves`: the folders the owner turned down, which the librarian doesn't suggest again. */
   declinedShelves: string[];
 }

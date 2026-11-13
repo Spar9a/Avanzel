@@ -89,13 +89,22 @@ export function pageInfo(root: string, rel: string): FiledPage {
 
 /**
  * Pages an agent run wrote: Markdown inside a shelf folder, new pages before updated ones. Each says which it is (`created`):
- * a page the run made, or one the library had that the run changed.
+ * a page the run made, or one the library had that the run changed. A page on one of the owner's shelves (`own`, the library's) carries
+ * that shelf's name (`shelfName`), which the filed card's chip shows.
  */
-export function filedPages(root: string, changes: { created: string[]; modified: string[] }): FiledPage[] {
+export function filedPages(
+  root: string,
+  changes: { created: string[]; modified: string[] },
+  own: readonly { folder: string; name: string }[] = [],
+): FiledPage[] {
   const isPage = (rel: string) => rel.endsWith(".md") && rel.includes("/") && !NOT_PAGES.has(rel.split("/")[0] ?? "");
   const made = new Set(changes.created);
   const ordered = [...changes.created.filter(isPage), ...changes.modified.filter(isPage)];
-  return [...new Set(ordered)].map((rel) => ({ ...pageInfo(root, rel), created: made.has(rel) }));
+  return [...new Set(ordered)].map((rel) => {
+    const page = { ...pageInfo(root, rel), created: made.has(rel) };
+    const shelfName = own.find((shelf) => shelf.folder === page.shelf)?.name;
+    return shelfName === undefined ? page : { ...page, shelfName };
+  });
 }
 
 /**
