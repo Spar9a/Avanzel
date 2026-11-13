@@ -381,7 +381,8 @@ function ownShelves(data: Table, path: string): OwnShelf[] {
     const folder = requiredString(entry, "folder", path, prefix);
     const problem = folderProblem(folder, shelves.map((shelf) => shelf.folder));
     if (problem) throw new AvanzelError(`${path}: \`${prefix}folder\` is "${folder}". ${problem}`);
-    const name = requiredString(entry, "name", path, prefix);
+    // Trimmed before they are measured: a name or a definition that is only spaces is none.
+    const name = requiredString(entry, "name", path, prefix).trim();
     const nameLength = shelfTextLength(name);
     if (nameLength < 1 || nameLength > MAX_SHELF_NAME) {
       throw new AvanzelError(`${path}: \`${prefix}name\` must be 1 to ${MAX_SHELF_NAME} characters, and it has ${nameLength}`);
@@ -389,7 +390,7 @@ function ownShelves(data: Table, path: string): OwnShelf[] {
     if (nameBreaksRules(name)) {
       throw new AvanzelError(`${path}: \`${prefix}name\` can't hold | or a line break. Remove them, then try again.`);
     }
-    const definition = requiredString(entry, "definition", path, prefix);
+    const definition = requiredString(entry, "definition", path, prefix).trim();
     const definitionLength = shelfTextLength(definition);
     if (definitionLength < 1 || definitionLength > MAX_SHELF_DEFINITION) {
       throw new AvanzelError(

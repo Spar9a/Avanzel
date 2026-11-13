@@ -138,7 +138,7 @@ describe.skipIf(!git.available())("shelf operations", () => {
     write(vault.root, "projects/acme.md", "# Hand-made acme\n");
     const result = await librarian.makeShelf(PROJECTS, ["ideas/acme.md"]);
     expect(result.moved).toEqual([]);
-    expect(result.notMoved).toEqual(["ideas/acme.md"]);
+    expect(result.notMoved).toEqual([{ path: "ideas/acme.md", reason: "taken" }]);
     expect(read(join(vault.root, "projects/acme.md"))).toBe("# Hand-made acme\n");
     expect(existsSync(join(vault.root, "ideas/acme.md"))).toBe(true);
     expect(loadSettings(vault.root).shelves).toHaveLength(1);
@@ -165,7 +165,27 @@ describe.skipIf(!git.available())("shelf operations", () => {
     expect(read(join(vault.root, "projects/b.md"))).toBe("---\nshelf: projects\n---\n# B\n");
   });
 
-  it("does not move a page that is not a shelf page, is missing, or is a link", async () => {
+  it("sets shelf: in CRLF, BOM and LF pages, with or without one, keeping every other byte and never adding a second block", async () => {
+    const BOM = "﻿";
+    const pages: Record<string, [string, string]> = {
+      "lf-none": ["---\ntitle: A\n---\n# A\n", "---\ntitle: A\nshelf: projects\n---\n# A\n"],
+      "lf-has": ["---\ntitle: A\nshelf: ideas\nstatus: seed\n---\n# A\n", "---\ntitle: A\nshelf: projects\nstatus: seed\n---\n# A\n"],
+      "crlf-none": ["---\r\ntitle: A\r\n---\r\n# A\r\nBody.\r\n", "---\r\ntitle: A\r\nshelf: projects\r\n---\r\n# A\r\nBody.\r\n"],
+      "crlf-has": ["---\r\nshelf: ideas\r\ntitle: A\r\n---\r\n# A\r\n", "---\r\nshelf: projects\r\ntitle: A\r\n---\r\n# A\r\n"],
+      "bom-none": [`${BOM}---\ntitle: A\n---\n# A\n`, `${BOM}---\ntitle: A\nshelf: projects\n---\n# A\n`],
+      "bom-has": [`${BOM}---\nshelf: ideas\n---\n# A\n`, `${BOM}---\nshelf: projects\n---\n# A\n`],
+      "bom-crlf-has": [`${BOM}---\r\ntitle: A\r\nshelf: ideas\r\n---\r\n# A\r\n`, `${BOM}---\r\ntitle: A\r\nshelf: projects\r\n---\r\n# A\r\n`],
+      "crlf-no-block": ["# B\r\nBody.\r\n", "---\r\nshelf: projects\r\n---\r\n# B\r\nBody.\r\n"],
+      "bom-no-block": [`${BOM}# B\n`, `${BOM}---\nshelf: projects\n---\n# B\n`],
+      "empty-block": ["---\n---\n# C\n", "---\nshelf: projects\n---\n# C\n"],
+    };
+    for (const [name, [text]] of Object.entries(pages)) write(vault.root, `ideas/${name}.md`, text);
+    const result = await librarian.makeShelf(PROJECTS, Object.keys(pages).map((name) => `ideas/${name}.md`));
+    expect(result.notMoved).toEqual([]);
+    for (const [name, [, expected]] of Object.entries(pages)) expect(read(join(vault.root, `projects/${name}.md`)), name).toBe(expected);
+  });
+
+  it("does not move a page that is not a shelf page, is missing, or is a link, and says why", async () => {
     write(vault.root, "inbox/capture.md", "words\n");
     write(vault.root, "outside.md", "x\n");
     symlinkSync(join(tmp(), "elsewhere.md"), join(vault.root, "ideas/link.md"));
@@ -173,8 +193,30 @@ describe.skipIf(!git.available())("shelf operations", () => {
     const pages = ["inbox/capture.md", "ideas/missing.md", "ideas/link.md", "../escape.md", "outside.md"];
     const result = await librarian.makeShelf(PROJECTS, pages);
     expect(result.moved).toEqual([]);
-    expect(result.notMoved).toEqual(pages);
+    expect(result.notMoved).toEqual(pages.map((path) => ({ path, reason: "missing" })));
     expect(read(join(vault.root, "inbox/capture.md"))).toBe("words\n");
+  });
+
+  it("makes a shelf of a folder the agent made: its page stays where it is, takes the shelf and its index line, and counts as moved", async () => {
+    write(vault.root, "errands/buy-milk.md", "---\ntitle: Buy milk\nshelf: topics\n---\n# Buy milk\n");
+    const index = read(vault.indexPath);
+    write(vault.root, "index.md", index.replace("## Topics\n", "## Topics\n\n- [[buy-milk]] — Buy milk\n"));
+    const result = await librarian.makeShelf({ folder: "errands", name: "Errands", definition: "Small jobs." }, ["errands/buy-milk.md"]);
+    expect(result.moved).toEqual(["errands/buy-milk.md"]);
+    expect(result.notMoved).toEqual([]);
+    expect(read(join(vault.root, "errands/buy-milk.md"))).toBe("---\ntitle: Buy milk\nshelf: errands\n---\n# Buy milk\n");
+    expect(readdirSync(join(vault.root, "errands"))).toEqual(["buy-milk.md"]);
+    const after = read(vault.indexPath);
+    expect(after.slice(after.indexOf("## Errands"))).toContain("- [[buy-milk]] — Buy milk");
+    expect(after.slice(0, after.indexOf("## Errands"))).not.toContain("[[buy-milk]]");
+  });
+
+  it("takes a made shelf off the shelves the owner turned down", async () => {
+    await librarian.declineShelf("projects");
+    expect(loadSettings(vault.root).declinedShelves).toEqual(["projects"]);
+    await librarian.makeShelf(PROJECTS);
+    expect(loadSettings(vault.root).declinedShelves).toEqual([]);
+    expect(librarian.settings.declinedShelves).toEqual([]);
   });
 
   it("waits for the library lock", async () => {
@@ -261,6 +303,28 @@ describe.skipIf(!git.available())("shelf operations", () => {
       expect(loadSettings(vault.root).shelves).toEqual([]);
     });
 
+    it.each([["trips/.draft.md"], ["trips/.x.md.icloud"]])(
+      "keeps a folder that holds a hidden file (%s), removes the entry and the heading, and says the folder was kept",
+      async (hidden) => {
+        await librarian.makeShelf({ folder: "trips", name: "Trips", definition: "Journeys." });
+        write(vault.root, hidden, "kept\n");
+        const result = await librarian.removeShelf("trips");
+        expect(result.folderKept).toBe(true);
+        expect(read(join(vault.root, hidden))).toBe("kept\n");
+        expect(loadSettings(vault.root).shelves).toEqual([]);
+        expect(read(vault.indexPath)).not.toContain("## Trips");
+      },
+    );
+
+    it("removes a folder that holds only .DS_Store and .localized, and says it was not kept", async () => {
+      await librarian.makeShelf(PROJECTS);
+      write(vault.root, "projects/.DS_Store", "x");
+      write(vault.root, "projects/.localized", "");
+      const result = await librarian.removeShelf("projects");
+      expect(result.folderKept).toBe(false);
+      expect(existsSync(join(vault.root, "projects"))).toBe(false);
+    });
+
     it("refuses a folder that is not one of the owner's shelves", async () => {
       expect((await rejection(librarian.removeShelf("ideas"))).name).toBe("AvanzelError");
       expect(existsSync(join(vault.root, "ideas"))).toBe(true);
@@ -292,11 +356,21 @@ describe.skipIf(!git.available())("shelf operations", () => {
       expect(readdirSync(join(vault.root, "side-quests"))).toEqual(["mine.md"]);
     });
 
+    it.each([["trips/.draft.md"], ["trips/.x.md.icloud"]])("keeps a folder that still holds a hidden file (%s)", async (hidden) => {
+      write(vault.root, "trips/x.md", "# X\n");
+      write(vault.root, hidden, "kept\n");
+      const result = await librarian.declineShelf("trips", ["trips/x.md"]);
+      expect(result.moved).toEqual(["trips/x.md"]);
+      expect(result.folderKept).toBe(true);
+      expect(readdirSync(join(vault.root, "trips"))).toEqual([hidden.slice("trips/".length)]);
+      expect(read(join(vault.root, hidden))).toBe("kept\n");
+    });
+
     it("leaves a page in place when topics/ already has one of that name", async () => {
       write(vault.root, "side-quests/x.md", "# X\n");
       write(vault.root, "topics/x.md", "# Other\n");
       const result = await librarian.declineShelf("side-quests", ["side-quests/x.md"]);
-      expect(result.notMoved).toEqual(["side-quests/x.md"]);
+      expect(result.notMoved).toEqual([{ path: "side-quests/x.md", reason: "taken" }]);
       expect(read(join(vault.root, "side-quests/x.md"))).toBe("# X\n");
       expect(read(join(vault.root, "topics/x.md"))).toBe("# Other\n");
     });
@@ -332,7 +406,7 @@ describe("shelf operations without git", () => {
     const vault = await Vault.init(join(tmp(), "plain"), { git: false });
     const librarian = new Librarian(vault, fakeSettings(), { clock: () => NOW });
     const made: ShelfResult = await librarian.makeShelf(PROJECTS);
-    expect(made).toEqual({ commit: null, moved: [], notMoved: [] });
+    expect(made).toEqual({ commit: null, moved: [], notMoved: [], folderKept: false });
     await librarian.editShelf("projects", { name: "Work" });
     await librarian.removeShelf("projects");
     expect(readFileSync(vault.indexPath, "utf8")).not.toContain("## Work");
@@ -432,6 +506,29 @@ describe("filing and suggesting a shelf", () => {
       pages: [`ideas/idea-${capture.id}.md`],
       agentMade: false,
     });
+  });
+
+  it("does not join a pending suggestion that is now an own shelf on disk, made after this librarian read its settings", async () => {
+    const pendingShelves = [{ folder: "projects", name: "Projects", definition: "Work with a goal." }];
+    const other = new Librarian(vault, fakeSettings(), { clock: () => NOW });
+    await other.makeShelf({ folder: "work", name: "Projects", definition: "Work with a goal." });
+    expect(librarian.settings.shelves).toEqual([]); // this one hasn't seen it
+    suggest(SUGGEST);
+    librarian.captureText("One");
+    expect((await fileOne({ pendingShelves })).suggestion).toBeNull(); // the reply's line
+    vi.stubEnv("FAKE_AGENT_SUGGEST", "");
+    mode("make-folder");
+    vi.stubEnv("FAKE_AGENT_FOLDER", "project");
+    librarian.captureText("Two");
+    expect((await fileOne({ pendingShelves })).suggestion).toBeNull(); // an agent-made folder
+  });
+
+  it("does not suggest a shelf turned down on disk after this librarian read its settings", async () => {
+    await new Librarian(vault, fakeSettings(), { clock: () => NOW }).declineShelf("projects");
+    expect(librarian.settings.declinedShelves).toEqual([]); // this one hasn't seen it
+    suggest(SUGGEST);
+    librarian.captureText("One");
+    expect((await fileOne()).suggestion).toBeNull();
   });
 
   it("gives a folder that was there before the run no suggestion, though the run added a page to it", async () => {

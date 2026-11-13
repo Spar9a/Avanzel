@@ -433,6 +433,15 @@ describe("own shelves in config.toml", () => {
     expect(thrownBy(() => load("shelves = [1]\n")).message).toContain("shelves[0]");
   });
 
+  it("refuses a name or a definition that is only spaces, and loads one with spaces around it trimmed", () => {
+    const messageFor = (rest: string) => thrownBy(() => load(shelf("projects", rest))).message;
+    expect(messageFor('name = "   "\ndefinition = "x"\n')).toContain("shelves[0].name");
+    expect(messageFor('name = "P"\ndefinition = "  \t "\n')).toContain("shelves[0].definition");
+    expect(load(shelf("projects", 'name = "  Projects "\ndefinition = " Work. "\n')).shelves).toEqual([
+      { folder: "projects", name: "Projects", definition: "Work." },
+    ]);
+  });
+
   it("counts characters a person sees, not UTF-16 units: 300 emoji and a 40-emoji name load back as saved", () => {
     const settings = defaultSettings();
     settings.shelves = [{ folder: "projects", name: "😀".repeat(40), definition: cleanDefinition("😀".repeat(400)) }];

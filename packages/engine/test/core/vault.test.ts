@@ -55,6 +55,20 @@ describe("Vault.init", () => {
     expect(isDir(join(vault.root, "projects"))).toBe(true);
   });
 
+  it("opens even when a file is named like an own shelf's folder, and still makes the other shelves' folders", () => {
+    saveSettings(vault.root, {
+      ...defaultSettings(),
+      shelves: [
+        { folder: "projects", name: "Projects", definition: "Work with a goal." },
+        { folder: "trips", name: "Trips", definition: "Journeys." },
+      ],
+    });
+    writeFileSync(join(vault.root, "projects"), "a file, not a folder");
+    expect(() => vault.ensureFolders()).not.toThrow();
+    expect(read(join(vault.root, "projects"))).toBe("a file, not a folder");
+    expect(isDir(join(vault.root, "trips"))).toBe(true);
+  });
+
   it("opens even when config.toml is broken", () => {
     writeFileSync(join(vault.root, ".avanzel", "config.toml"), "this is = = not toml [[");
     expect(() => vault.ensureFolders()).not.toThrow();

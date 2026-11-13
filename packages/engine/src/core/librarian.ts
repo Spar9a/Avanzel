@@ -40,6 +40,7 @@ import {
   checkedSuggestion,
   cleanDefinition,
   folderProblem,
+  isEmptyShelfFolder,
   nameBreaksRules,
   parseSuggestion,
   sameShelf,
@@ -209,11 +210,25 @@ interface WithBefore {
   steps?: ((step: FilingStep) => void) | undefined;
 }
 
-/** What a shelf operation did: its commit (null with no git or auto-commit off) and the pages (library-relative, as they were) moved or kept. */
+/**
+ * What a shelf operation did: its commit (null with no git or auto-commit off), the pages (library-relative, as they were) moved, and
+ * those kept where they were, each with why (`ShelfPageKept`); and, for a remove or a decline, whether the folder was kept because
+ * something other than pages was still in it.
+ */
 export interface ShelfResult {
   commit: string | null;
   moved: string[];
-  notMoved: string[];
+  notMoved: ShelfPageKept[];
+  folderKept: boolean;
+}
+
+/**
+ * A page a shelf operation didn't move. `taken`: a page of its name, or something else, is in its way in the new folder. `missing`: it is
+ * no longer where it was filed (gone, a link, or no page of a shelf).
+ */
+export interface ShelfPageKept {
+  path: string;
+  reason: "taken" | "missing";
 }
 
 /** What one agent run gives: its result, and what the guard put back after it. */
@@ -390,17 +405,17 @@ export class Librarian {
       if (there && !there.isDirectory()) {
         throw new AvanzelError(`A file or link called ${folder} is already in the library, so no shelf was made. Choose another folder name.`);
       }
-      const next = { ...current, shelves: [...current.shelves, { folder, name, definition }] };
+      // A shelf that is made is no longer one the owner turned down.
+      const declinedShelves = current.declinedShelves.filter((declined) => declined !== folder);
+      const next = { ...current, shelves: [...current.shelves, { folder, name, definition }], declinedShelves };
       return {
         next,
         apply: () => {
           realFoldersTo(root, `${folder}/page`, true);
           this.#editIndex((index) => withIndexHeading(index, name));
-          const moved: string[] = [];
-          const notMoved: string[] = [];
-          for (const rel of new Set(pages)) (this.#movePage(rel, folder, name) ? moved : notMoved).push(rel);
+          const { moved, notMoved } = this.#movePages(pages, folder, name);
           this.vault.appendLog("shelf", moved.length ? `${folder} → ${moved.map(wikilink).join(", ")}` : folder, this.clock());
-          return { moved, notMoved };
+          return { moved, notMoved, folderKept: false };
         },
       };
     });
@@ -420,7 +435,7 @@ export class Librarian {
         next,
         apply: () => {
           if (name !== shelf.name) this.#editIndex((index) => withIndexHeadingRenamed(index, shelf.name, name));
-          return { moved: [], notMoved: [] };
+          return { moved: [], notMoved: [], folderKept: false };
         },
       };
     });
@@ -428,7 +443,8 @@ export class Librarian {
 
   /**
    * Remove one of the owner's shelves that holds no pages: its entry, its empty index heading and its row in `AGENTS.md`, and its
-   * folder (unless something that isn't a page is in it, which stays).
+   * folder, unless something besides .DS_Store and .localized is in it (a draft, an iCloud placeholder): that stays, and so does the
+   * folder, which `ShelfResult.folderKept` says.
    */
   async removeShelf(folder: string): Promise<ShelfResult> {
     const root = this.vault.root;
@@ -441,9 +457,9 @@ export class Librarian {
       return {
         next,
         apply: () => {
-          if (lstatOrNull(join(root, folder))?.isDirectory() && isEmptyFolder(join(root, folder))) removeInside(root, folder);
+          const folderKept = !removeEmptyFolder(root, folder);
           this.#editIndex((index) => withoutEmptyIndexHeading(index, shelf.name));
-          return { moved: [], notMoved: [] };
+          return { moved: [], notMoved: [], folderKept };
         },
       };
     });
@@ -451,7 +467,7 @@ export class Librarian {
 
   /**
    * Turn down a shelf the librarian suggested: remember its folder so it is not suggested again, move the pages the agent made
-   * there (`agentMadePages`) to `topics/`, and remove the folder when nothing is left in it.
+   * there (`agentMadePages`) to `topics/`, and remove the folder once nothing besides .DS_Store and .localized is left in it.
    */
   async declineShelf(folder: string, agentMadePages: readonly string[] = []): Promise<ShelfResult> {
     const root = this.vault.root;
@@ -472,13 +488,11 @@ export class Librarian {
       return {
         next: { ...current, declinedShelves },
         apply: () => {
-          const moved: string[] = [];
-          const notMoved: string[] = [];
-          for (const rel of new Set(agentMadePages)) {
-            (rel.startsWith(`${folder}/`) && this.#movePage(rel, "topics", "Topics") ? moved : notMoved).push(rel);
-          }
-          if (lstatOrNull(join(root, folder))?.isDirectory() && isEmptyFolder(join(root, folder))) removeInside(root, folder);
-          return { moved, notMoved };
+          const theirs = agentMadePages.filter((rel) => rel.startsWith(`${folder}/`));
+          const { moved, notMoved } = this.#movePages(theirs, "topics", "Topics");
+          for (const rel of new Set(agentMadePages)) if (!theirs.includes(rel)) notMoved.push({ path: rel, reason: "missing" });
+          const folderKept = !removeEmptyFolder(root, folder);
+          return { moved, notMoved, folderKept };
         },
       };
     });
@@ -491,7 +505,7 @@ export class Librarian {
    */
   async #shelfOperation(
     what: string,
-    plan: (current: Settings) => { next: Settings; apply: () => Pick<ShelfResult, "moved" | "notMoved"> },
+    plan: (current: Settings) => { next: Settings; apply: () => Omit<ShelfResult, "commit"> },
   ): Promise<ShelfResult> {
     const root = this.vault.root;
     return this.vault.withLock(async () => {
@@ -501,27 +515,42 @@ export class Librarian {
       saveSettings(root, next);
       this.#settings = { ...this.#settings, shelves: next.shelves, declinedShelves: next.declinedShelves };
       if (JSON.stringify(next.shelves) !== JSON.stringify(current.shelves)) writeShelfSection(root, next.shelves);
-      const { moved, notMoved } = apply();
+      const done = apply();
       const commit = await this.#commit(`avanzel: ${what}`);
-      return { commit, moved, notMoved };
+      return { commit, ...done };
     });
   }
 
+  /** Each of `pages` moved into `folder` (`#movePage`), once: those moved, and those kept where they were, with why. */
+  #movePages(pages: readonly string[], folder: string, heading: string): Pick<ShelfResult, "moved" | "notMoved"> {
+    const moved: string[] = [];
+    const notMoved: ShelfPageKept[] = [];
+    for (const rel of new Set(pages)) {
+      const kept = this.#movePage(rel, folder, heading);
+      if (kept === null) moved.push(rel);
+      else notMoved.push({ path: rel, reason: kept });
+    }
+    return { moved, notMoved };
+  }
+
   /**
-   * Move the page `rel` (library-relative) into `folder`: set its `shelf:` to the folder and its `index.md` line under the
-   * heading `heading`. False, with the page where it was, when it isn't a page of a shelf, a link, or something is in its way.
+   * Move the page `rel` (library-relative) into `folder`: set its `shelf:` to the folder and its `index.md` line under the heading
+   * `heading`. A page in that folder already (one the agent made there) stays where it is and is given the rest. Null when it moved,
+   * else why it is where it was: `missing` when it isn't a page of a shelf or is a link, `taken` when something is in its way.
    */
-  #movePage(rel: string, folder: string, heading: string): boolean {
+  #movePage(rel: string, folder: string, heading: string): ShelfPageKept["reason"] | null {
     const root = this.vault.root;
     const parts = rel.split("/");
-    if (!isShelfPage(rel) || rel.includes("\\") || parts.some((part) => part === "" || part.startsWith("."))) return false;
-    if (!lstatOrNull(join(root, rel))?.isFile() || !realFoldersTo(root, rel, false)) return false;
+    if (!isShelfPage(rel) || rel.includes("\\") || parts.some((part) => part === "" || part.startsWith("."))) return "missing";
+    if (!lstatOrNull(join(root, rel))?.isFile() || !realFoldersTo(root, rel, false)) return "missing";
     const target = `${folder}/${basename(rel)}`;
-    if (lstatOrNull(join(root, target)) || !realFoldersTo(root, target, true)) return false;
-    renameSync(join(root, rel), join(root, target));
+    if (target !== rel) {
+      if (lstatOrNull(join(root, target)) || !realFoldersTo(root, target, true)) return "taken";
+      renameSync(join(root, rel), join(root, target));
+    }
     replaceInside(root, target, withShelfField(readFileSync(join(root, target), "utf8"), folder));
     this.#editIndex((index) => withIndexLineMoved(index, stem(rel), heading));
-    return true;
+    return null;
   }
 
   /** Rewrite `index.md` as `change` says (not at all when it changes nothing). */
@@ -673,10 +702,11 @@ export class Librarian {
    * The shelf a successful filing suggests, or null. A top-level folder the run made on the agent's own (one that was not there
    * before it, `foldersBefore`) comes first, whatever its reply says; else the last well-formed `New shelf:` line of the reply,
    * when it passes `checkedSuggestion`. A made folder that is the same shelf as a built-in, own or turned-down one is left as a
-   * hand-made folder is; one that is the same shelf as a pending suggestion joins it.
+   * hand-made folder is; one that is the same shelf as a pending suggestion joins it. The own and turned-down shelves are read from
+   * disk as well (`#shelvesNow`): one made or turned down while this filing waited on the lock, by another librarian, counts.
    */
   #suggestion(changes: Changes, reply: string, pending: readonly PendingShelf[], foldersBefore: readonly string[]): ShelfSuggestion | null {
-    const { shelves, declinedShelves } = this.settings;
+    const { shelves, declinedShelves } = this.#shelvesNow();
     const known = [...BUILT_IN_SHELVES, ...shelves.map((shelf) => shelf.folder), ...SPECIAL_DIRS, ...foldersBefore];
     const turnedDown = (folder: string) => declinedShelves.some((declined) => sameShelf(declined, folder));
     const keptShelf = (folder: string) =>
@@ -695,6 +725,23 @@ export class Librarian {
       pending,
       onDisk: this.#topLevelFolders(),
     });
+  }
+
+  /**
+   * The own shelves and the turned-down ones as they are now: this librarian's, and those config.toml has on disk (read under the lock
+   * the caller holds), both. A config that can't be read leaves this librarian's; it is reported where settings are read.
+   */
+  #shelvesNow(): Pick<Settings, "shelves" | "declinedShelves"> {
+    const { shelves, declinedShelves } = this.settings;
+    try {
+      const saved = loadSettings(this.vault.root);
+      return {
+        shelves: [...saved.shelves, ...shelves.filter((shelf) => !saved.shelves.some((other) => other.folder === shelf.folder))],
+        declinedShelves: [...new Set([...saved.declinedShelves, ...declinedShelves])],
+      };
+    } catch {
+      return { shelves, declinedShelves };
+    }
   }
 
   /** The folders at the top of the library now, hidden ones left out. */
@@ -1094,22 +1141,44 @@ function checkedDefinition(text: string): string {
   return definition;
 }
 
-/** Whether the folder holds nothing but hidden files such as .DS_Store. */
-function isEmptyFolder(path: string): boolean {
-  return readdirSync(path).every((name) => name.startsWith("."));
+/**
+ * Remove the library's folder `folder` when it holds nothing besides what Finder leaves (`isEmptyShelfFolder`); whether it is gone now
+ * (true for one that was never there). A folder with anything else in it, a draft or an iCloud placeholder (`.name.md.icloud`), stays.
+ */
+function removeEmptyFolder(root: string, folder: string): boolean {
+  const at = lstatOrNull(join(root, folder));
+  if (!at) return true;
+  if (!at.isDirectory() || !isEmptyShelfFolder(join(root, folder))) return false;
+  removeInside(root, folder);
+  return true;
 }
 
-/** `text` (a page) with `shelf: <folder>` in its front matter: replaced if there, added if not, a block made if there is none. */
+/**
+ * `text` (a page) with `shelf: <folder>` in its front matter: replaced if there, added if not, a block made if there is none. The page's
+ * own line ending (LF or CRLF) and byte order mark are kept, and every other byte with them. A block that opens and never closes is left
+ * as it is: it never gets a second block before it.
+ */
 function withShelfField(text: string, folder: string): string {
   const line = `shelf: ${folder}`;
-  if (!text.startsWith("---\n") || text.indexOf("\n---\n", 3) === -1) return `---\n${line}\n---\n${text}`;
-  const [block, body] = splitFrontmatter(text);
-  const lines = block === "" ? [] : block.split("\n");
-  const at = lines.findIndex((each) => /^shelf:/.test(each));
-  const carriage = (lines[at === -1 ? lines.length - 1 : at] ?? "").endsWith("\r") ? "\r" : "";
-  if (at === -1) lines.push(`${line}${carriage}`);
-  else lines[at] = `${line}${carriage}`;
-  return `---\n${lines.join("\n")}\n---\n${body}`;
+  const opener = /^(﻿?)---(\r?\n)/.exec(text);
+  if (!opener) {
+    const bom = text.startsWith("﻿") ? "﻿" : "";
+    const eol = text.includes("\r\n") ? "\r\n" : "\n";
+    return `${bom}---${eol}${line}${eol}---${eol}${text.slice(bom.length)}`;
+  }
+  const eol = opener[2] ?? "\n";
+  const blockStart = opener[0].length;
+  const breakAt = blockStart - eol.length; // the opener's own line break, which an empty block's closer starts with
+  const closer = /\r?\n---(?:\r?\n|$)/.exec(text.slice(breakAt));
+  if (!closer) return text;
+  const blockEnd = breakAt + closer.index;
+  if (blockEnd <= blockStart) return `${text.slice(0, blockStart)}${line}${text.slice(blockEnd)}`;
+  // The block's lines are at the even places, each line break as the file has it at the odd ones.
+  const parts = text.slice(blockStart, blockEnd).split(/(\r?\n)/);
+  const at = parts.findIndex((part, index) => index % 2 === 0 && /^shelf:/.test(part));
+  if (at === -1) parts.push(eol, line);
+  else parts[at] = line;
+  return `${text.slice(0, blockStart)}${parts.join("")}${text.slice(blockEnd)}`;
 }
 
 function stem(path: string): string {

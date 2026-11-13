@@ -159,14 +159,21 @@ export class Vault {
   ensureFolders(): void {
     for (const folder of ["inbox", "raw", "reviews", ...SHELVES]) mkdirSync(join(this.root, folder), { recursive: true });
     mkdirSync(this.logsDir, { recursive: true });
-    // The owner's own shelves too; a config that can't be read must never stop the library from opening.
+    // The owner's own shelves too. A config that can't be read, or a file named like a shelf's folder, must never stop the library
+    // from opening: that folder is left as it is, and the others are made.
     let own: readonly { folder: string }[] = [];
     try {
       own = loadSettings(this.root).shelves;
     } catch {
       /* a broken config.toml is reported where settings are read */
     }
-    for (const { folder } of own) mkdirSync(join(this.root, folder), { recursive: true });
+    for (const { folder } of own) {
+      try {
+        mkdirSync(join(this.root, folder), { recursive: true });
+      } catch {
+        /* something else is in the folder's place: Make shelf and the filing say so where it matters */
+      }
+    }
   }
 
   // --- captures -----------------------------------------------------------------------------

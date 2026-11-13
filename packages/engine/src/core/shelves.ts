@@ -3,7 +3,7 @@
 // The shelf list and the shelves the owner turned down live in `.avanzel/config.toml` (see config.ts); this file holds the rules both
 // the settings reader and the app's shelf form check against.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { lstatOrNull, replaceInside } from "./inside.ts";
 import { slugify } from "./vault.ts";
@@ -81,6 +81,22 @@ export function cleanDefinition(text: string): string {
 
 function shelfKey(text: string): string {
   return text.trim().toLowerCase().replace(/s$/, "");
+}
+
+/** What Finder leaves in a folder on its own, which a folder may hold and still count as empty. */
+const FINDER_FILES: readonly string[] = [".DS_Store", ".localized"];
+
+/**
+ * Whether the folder at `path` is empty as a shelf's folder goes: it holds nothing besides .DS_Store and .localized. Any other file,
+ * hidden or not (a `.draft.md`, an iCloud placeholder `.name.md.icloud`), is the owner's, and keeps it. A folder that isn't there is empty.
+ */
+export function isEmptyShelfFolder(path: string): boolean {
+  try {
+    return readdirSync(path).every((name) => FINDER_FILES.includes(name));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    return false;
+  }
 }
 
 /** Two shelves are the same when their folders or names match, ignoring case and one trailing "s". */
