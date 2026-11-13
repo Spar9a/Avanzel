@@ -319,11 +319,35 @@ export function speechModelLine(voice: SettingsSnapshot["voice"]): string {
 
 /**
  * What Privacy says leaves this Mac: the voice stays unless the library's own settings hand it to a command, which can send it
- * anywhere, and then the pane says where it goes. The words, and any screen captured with a comment, go to the agent.
+ * anywhere, and then the pane says where it goes. The words, and any screen captured with a comment, go to the agent. While the
+ * owner's other agents are let in (`agentAccess`), it says they can read the library and that what they read goes to their providers.
  */
-export function leavesThisMacLine(voice: SettingsSnapshot["voice"]): string {
+export function leavesThisMacLine(voice: SettingsSnapshot["voice"], agentAccess = false): string {
   const where = voice.backend === "command" ? "Your voice goes to the command in this library's settings." : "Your voice never leaves this Mac.";
-  return `${where} Your words, and any screen you capture with a comment, go only to the agent you chose, the same way your code already does.`;
+  const line = `${where} Your words, and any screen you capture with a comment, go only to the agent you chose, the same way your code already does.`;
+  return agentAccess
+    ? `${line} The agents you connect under Agents can read your library, unfiled captures and call notes included, and what they read goes to their providers.`
+    : line;
+}
+
+/** Settings → Agents' "Your other agents": what letting them in does. */
+export const OTHER_AGENTS_NOTE = "Claude Code, Codex, Cursor and others can look things up in your library and leave notes for the librarian.";
+
+/** Under the switch "Let your other agents use this library": what they can do, and what they can't. */
+export const OTHER_AGENTS_SWITCH =
+  "They can read your library the way Ask does, and leave notes in your inbox for the librarian to file. They can't change or delete anything.";
+
+/** The Notice when Add to Claude Code failed. */
+export const CLAUDE_CODE_NOT_ADDED = "Avanzel couldn't be added to Claude Code.";
+
+/** Under CLAUDE_CODE_NOT_ADDED: why (`detail`, a sentence), and what is safe. Copy setup is its fix. */
+export function claudeCodeNotAddedBody(detail: string): string {
+  return `${detail} Nothing in your library changed.`;
+}
+
+/** What a client's row says: where its setup goes. */
+export function mcpClientDescription(where: string): string {
+  return `Paste this into ${where}.`;
 }
 
 /** The days a weekly review runs on, from Sunday: as a schedule writes each one ("sun"), and by its name. */

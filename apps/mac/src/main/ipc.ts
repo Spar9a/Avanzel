@@ -85,6 +85,9 @@ export function registerIpc(controller: Controller): void {
   // settings
   handle("settings:get", () => controller.snapshot());
   handle("settings:set-app", (_e, patch: Partial<AppSettings>) => controller.setApp(patch));
+  // What the page sends is checked where it is used: only a client Settings lists gets a snippet.
+  on("settings:copy-mcp-setup", (_e, client: unknown) => controller.copyMcpSetup(client));
+  handle("settings:add-to-claude-code", () => controller.addToClaudeCode());
   on("settings:recording-shortcut", (e, recording: unknown) => controller.shortcutRecording(e.sender, recording));
   handle("settings:set-cursor-dictation", (_e, patch: Partial<AppSettings["cursorDictation"]>) => controller.setCursorDictation(patch));
   handle("settings:cursor-permissions", () => controller.cursorPermissions());

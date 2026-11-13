@@ -2,7 +2,8 @@
 // agent the one that files and answers, and an agent this Mac doesn't have offers its install command, where it has one. The last row
 // hands the choice back to Avanzel, one Check agents asks all of them again, and the agent in use names its model: picked from a list for
 // an agent that lists its models (Codex, OpenCode) or whose aliases Avanzel knows (Claude Code), typed for any other. Each control applies at once. The pane needs a library: without one the shell
-// draws NoLibrary in its place.
+// draws NoLibrary in its place. Under them, "Your other agents" lets the owner's other agents (Claude Code in their projects, Cursor,
+// Codex…) use the library through Avanzel's MCP server, and sets each one up: a button for Claude Code, a snippet to copy for the rest.
 import { Actions, Button, ChoiceRow, Group, GroupReveal, GroupRow, Notice, Progress, Row, Stack, Switch, Text, TextField } from "@avanzel/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { harnessName } from "../../../main/jobs.ts";
@@ -16,12 +17,21 @@ import {
   type HarnessInfo,
   type HostedModelInfo,
   type LibraryInfo,
+  type McpClient,
   type PickOption,
   type PrivateInfo,
   type SettingsSnapshot,
 } from "../../../shared/ipc.ts";
 import { agentLine, megabytes, ownLine } from "../../setup/copy.ts";
-import { agentNotChecked, AGENTS_NOT_CHECKED } from "../copy.ts";
+import {
+  agentNotChecked,
+  AGENTS_NOT_CHECKED,
+  CLAUDE_CODE_NOT_ADDED,
+  claudeCodeNotAddedBody,
+  mcpClientDescription,
+  OTHER_AGENTS_NOTE,
+  OTHER_AGENTS_SWITCH,
+} from "../copy.ts";
 import { attemptChange, PickButton, type PaneProps } from "../parts.tsx";
 
 const api = window.avanzel.settings;
@@ -394,7 +404,82 @@ function PrivateGroup({ lib, inUse, harnesses, hosted, onChange, attempt }: Priv
   );
 }
 
-/** The Agents pane: each agent with its check, the choice of which one files, its model or a private model to run it against. */
+/**
+ * "Your other agents": the switch that lets the owner's other agents read the library and leave notes in its inbox (`agentAccess`), and,
+ * while it is on, a row per client. Claude Code's Add runs `claude mcp add` in main and says "Added" once it has; the others' Copy setup
+ * has main put the snippet their config takes on the clipboard, and says "Copied" for COPIED_MS. An Add that failed says why in a
+ * Notice under the group, with Copy setup for Claude Code's command, to run in Terminal.
+ */
+function OtherAgentsGroup({ snap, onChange, attempt }: Pick<PaneProps, "snap" | "onChange" | "attempt">): ReactNode {
+  const on = snap.app.agentAccess;
+  const setup = snap.claudeCodeSetup;
+  // Add to Claude Code is running.
+  const [adding, setAdding] = useState(false);
+  // The client whose setup was copied, for COPIED_MS.
+  const [copied, setCopied] = useState<McpClient | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  // Main copies the snippet it makes for the client named: the page never says what goes on the clipboard.
+  const copy = (client: McpClient) => {
+    api.copyMcpSetup(client);
+    setCopied(client);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(null), COPIED_MS);
+  };
+  const add = async () => {
+    setAdding(true);
+    try {
+      await attemptChange({ onChange, attempt }, () => api.addToClaudeCode(), CLAUDE_CODE_NOT_ADDED);
+    } finally {
+      setAdding(false);
+    }
+  };
+  return (
+    <>
+      <Group label="Your other agents" note={OTHER_AGENTS_NOTE}>
+        <Switch
+          label="Let your other agents use this library"
+          description={OTHER_AGENTS_SWITCH}
+          checked={on}
+          onChange={(agentAccess) => void attemptChange({ onChange, attempt }, () => api.setApp({ agentAccess }))}
+        />
+        <GroupReveal open={on}>
+          <GroupRow label="Claude Code" description="Adds Avanzel to Claude Code for every project.">
+            {/* Busy rather than disabled while it runs, so it keeps the focus. */}
+            <Button size="small" variant="secondary" busy={adding} onClick={() => void add()}>
+              {setup.kind === "added" ? "Added" : "Add to Claude Code"}
+            </Button>
+          </GroupRow>
+          {snap.mcpClients
+            .filter((info) => info.client !== "claude-code")
+            .map((info) => (
+              <GroupRow key={info.client} label={info.label} description={mcpClientDescription(info.where)}>
+                <Button size="small" variant="secondary" onClick={() => copy(info.client)}>{copied === info.client ? "Copied" : "Copy setup"}</Button>
+              </GroupRow>
+            ))}
+        </GroupReveal>
+      </Group>
+      {on && setup.kind === "failed" && (
+        <Notice
+          tone="error"
+          title={CLAUDE_CODE_NOT_ADDED}
+          actions={
+            <Actions align="start">
+              <Button size="small" variant="primary" onClick={() => copy("claude-code")}>{copied === "claude-code" ? "Copied" : "Copy setup"}</Button>
+            </Actions>
+          }
+        >
+          {claudeCodeNotAddedBody(setup.detail)}
+        </Notice>
+      )}
+    </>
+  );
+}
+
+/**
+ * The Agents pane: each agent with its check, the choice of which one files, its model or a private model to run it against, and the
+ * owner's other agents.
+ */
 export function Agents(props: PaneProps): ReactNode {
   const { snap, onChange, attempt } = props;
   const lib = snap.library;
@@ -472,6 +557,7 @@ export function Agents(props: PaneProps): ReactNode {
           attempt={attempt}
         />
       )}
+      <OtherAgentsGroup snap={snap} onChange={onChange} attempt={attempt} />
     </Stack>
   );
 }

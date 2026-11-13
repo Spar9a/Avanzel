@@ -25,6 +25,7 @@ import {
   noAgents,
   onlyAgentsIn,
   openSettings,
+  paneOf,
   settingsRow,
   SIGNED_OUT_CLAUDE,
   snap,
@@ -37,6 +38,12 @@ import { sentToCapsule, watchCapsule } from "./setup-helpers.ts";
 
 /** The one button that checks every installed agent. */
 const checkAgents = (settings: Page) => settings.getByRole("button", { name: "Check agents", exact: true });
+
+/**
+ * The group of agents that file, "Who files your thoughts", whole. "Your other agents" below it has rows named Claude Code, Codex and
+ * OpenCode too, in the page while folded away.
+ */
+const whoFiles = (settings: Page) => settings.locator("section", { has: settings.getByRole("heading", { name: "Who files your thoughts", exact: true }) });
 
 /** What the agent's last check found, as the controller keeps it (null: not checked, or the check couldn't tell). */
 const statusOf = async (app: ElectronApplication, name: string) =>
@@ -405,7 +412,7 @@ test("an agent's name stays on one line beside its controls, with its status und
   expect(await settings.evaluate(() => document.documentElement.scrollHeight - window.innerHeight), "the page doesn't scroll").toBeLessThanOrEqual(0);
   // Every name is on one line, as short Codex's is: not wrapped at its space, and not broken letter by letter.
   const height = async (name: string) => {
-    const box = await settings.getByText(name, { exact: true }).boundingBox();
+    const box = await whoFiles(settings).getByText(name, { exact: true }).boundingBox();
     expect(box, `${name}'s row is on the page`).not.toBeNull();
     return box!.height;
   };
@@ -424,7 +431,7 @@ test("with no agent installed, every row says so, and Claude Code and Codex offe
   const emptyBin = mkdtempSync(path.join(tmpdir(), "avz-e2e-bin-"));
   const app = await launch({ AVANZEL_LIBRARY: library, AVANZEL_EXACT_PATH: "1", PATH: `${emptyBin}:/usr/bin:/bin:/usr/sbin:/sbin` });
   const settings = await openSettings(app, "Agents");
-  const row = (name: string) => settingsRow(settings, name);
+  const row = (name: string) => whoFiles(settings).locator(".av-group-row", { has: settings.getByText(name, { exact: true }) });
   for (const name of ["Claude Code", "Codex", "OpenCode", "Cursor Agent", "Gemini CLI"]) {
     await expect(row(name).getByText(/^(Experimental\. )?Not installed$/)).toBeVisible();
     await expect(row(name).getByRole("button", { name: /^Use/ })).toHaveCount(0); // nothing to use
@@ -696,5 +703,88 @@ test("a microphone that didn't start says why and that nothing was recorded, and
   await expect(toolbarItem(settings, "Voice")).toHaveAttribute("aria-selected", "true");
   // The old way out, System Settings, is not what the card opens any more.
   expect(await call(app, "openedForTests")).toEqual([]);
+  await app.close();
+});
+
+/** Settings → Agents' "Your other agents", whole: the switch and the rows it reveals. */
+const otherAgents = (settings: Page) => settings.locator("section", { has: settings.getByRole("heading", { name: "Your other agents", exact: true }) });
+
+/** A row of "Your other agents", by its client's name. */
+const clientRow = (settings: Page, name: string) => otherAgents(settings).locator(".av-group-row", { has: settings.getByText(name, { exact: true }) });
+
+/** What the app keeps in its settings file. */
+const appSettings = async (app: ElectronApplication) =>
+  JSON.parse(readFileSync(path.join((await app.evaluate(() => process.env.AVANZEL_USER_DATA)) ?? "", "settings.json"), "utf8")) as Record<string, unknown>;
+
+const CLIENTS = ["Claude Code", "Claude Desktop", "Cursor", "Codex", "OpenCode", "Gemini CLI"];
+
+test("Your other agents: the switch lets them in, Copy setup gives Cursor its snippet, and Add to Claude Code adds Avanzel", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
+  const settings = await openSettings(app, "Agents");
+  const toggle = settings.getByRole("switch", { name: "Let your other agents use this library" });
+  await expect(toggle).not.toBeChecked();
+  // Off: the clients' rows are folded away, out of reach, with nothing to press.
+  const reveal = otherAgents(settings).locator(".av-group-reveal");
+  await expect(reveal).toHaveAttribute("inert", "");
+  await expect(otherAgents(settings).getByRole("button").and(settings.locator(":not([inert] *)"))).toHaveCount(0);
+
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await expect(reveal).not.toHaveAttribute("inert", "");
+  for (const name of CLIENTS) await expect(clientRow(settings, name)).toBeVisible();
+  await expect(clientRow(settings, "Cursor").getByText("Paste this into ~/.cursor/mcp.json.", { exact: true })).toBeVisible();
+  await expect.poll(async () => (await appSettings(app)).agentAccess).toBe(true);
+  // Main copies the snippet it makes for Cursor: the dev app's launch, with --mcp. The button says so for 2 s.
+  await clientRow(settings, "Cursor").getByRole("button", { name: "Copy setup" }).click();
+  await expect(clientRow(settings, "Cursor").getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect.poll(() => call(app, "copiedForTests")).toHaveLength(1);
+  const [snippet] = (await call(app, "copiedForTests")) as string[];
+  const server = (JSON.parse(snippet!) as { mcpServers: { avanzel: { type: string; args: string[] } } }).mcpServers.avanzel;
+  expect(server.type).toBe("stdio");
+  expect(server.args.at(-1)).toBe("--mcp");
+
+  // The stand-in claude takes `mcp add` and says it added the server.
+  await clientRow(settings, "Claude Code").getByRole("button", { name: "Add to Claude Code" }).click();
+  await expect(clientRow(settings, "Claude Code").getByRole("button", { name: "Added" })).toBeVisible();
+  expect((await agentCalls(app)).filter((line) => line.startsWith("claude mcp add"))).toEqual([
+    expect.stringMatching(/^claude mcp add avanzel --scope user -- \S+ .*--mcp$/),
+  ]);
+  await expect(settings.getByText("Avanzel couldn't be added to Claude Code.")).toHaveCount(0);
+
+  // Privacy says what connected agents can read, and where it goes.
+  await toolbarItem(settings, "Privacy").click();
+  await expect(paneOf(settings, "Privacy").getByText(/unfiled captures and call notes included, and what they read goes to their providers\.$/)).toBeVisible();
+  await toolbarItem(settings, "Agents").click();
+
+  // Off again: the rows fold away, and the file says so.
+  await toggle.click();
+  await expect(toggle).not.toBeChecked();
+  await expect(reveal).toHaveAttribute("inert", "");
+  await expect.poll(async () => (await appSettings(app)).agentAccess).toBe(false);
+  await app.close();
+});
+
+test("Add to Claude Code that fails says why, that the library is safe, and offers the command to copy", async () => {
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CLAUDE_MCP_FAIL: "1" });
+  const settings = await openSettings(app, "Agents");
+  await settings.getByRole("switch", { name: "Let your other agents use this library" }).click();
+  await clientRow(settings, "Claude Code").getByRole("button", { name: "Add to Claude Code" }).click();
+  const notice = settings.getByRole("group", { name: "Avanzel couldn't be added to Claude Code." });
+  await expect(settings.getByText("Avanzel couldn't be added to Claude Code.", { exact: true })).toBeVisible();
+  await expect(settings.getByText("Config file is not writable. Nothing in your library changed.", { exact: true })).toBeVisible();
+  await expect(clientRow(settings, "Claude Code").getByRole("button", { name: "Add to Claude Code" })).toBeVisible(); // not added
+  await notice.getByRole("button", { name: "Copy setup" }).click();
+  await expect(notice.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect.poll(() => call(app, "copiedForTests")).toEqual([expect.stringMatching(/^claude mcp add avanzel --scope user -- \S+ .*--mcp$/)]);
+  await app.close();
+});
+
+test("Add to Claude Code on a Mac without Claude Code says it isn't installed", async () => {
+  const bin = mkdtempSync(path.join(tmpdir(), "avz-e2e-bin-"));
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), ...onlyAgentsIn(bin) });
+  const settings = await openSettings(app, "Agents");
+  await settings.getByRole("switch", { name: "Let your other agents use this library" }).click();
+  await clientRow(settings, "Claude Code").getByRole("button", { name: "Add to Claude Code" }).click();
+  await expect(settings.getByText("Claude Code isn't installed on this Mac. Nothing in your library changed.", { exact: true })).toBeVisible();
   await app.close();
 });

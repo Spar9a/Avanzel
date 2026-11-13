@@ -1,5 +1,6 @@
 // The contract between the main process and the renderers (capsule, settings, quick-type, ask, setup).
 import type { CursorPermissionState } from "../main/cursor-helper.ts";
+import type { McpClient, McpClientInfo } from "../main/mcp-setup.ts";
 import type { CursorKey } from "../main/tap-detector.ts";
 import type { AgentFailure, PartialEdits, TooBroad } from "./problems.ts";
 
@@ -690,6 +691,11 @@ export type SpeechModelSwitch =
   | { id: string; kind: "downloading"; receivedBytes: number; totalBytes: number }
   | { id: string; kind: "failed"; message: string; resumable: boolean };
 
+export type { McpClient, McpClientInfo };
+
+/** What Add to Claude Code came to in this app run: not pressed yet, added (or there already), or why it failed (a sentence). */
+export type ClaudeCodeSetup = { kind: "idle" } | { kind: "added" } | { kind: "failed"; detail: string };
+
 /** Everything the settings window shows, in one snapshot. */
 export interface SettingsSnapshot {
   app: AppSettings;
@@ -727,6 +733,10 @@ export interface SettingsSnapshot {
    * none. It stays until the form takes it (`settings.dropShelfDraft`) or a `make` from it lands.
    */
   shelfDraft: ShelfAsk | null;
+  /** The other agents Settings → Agents sets up to use the library (`Avanzel --mcp`), Claude Code first. */
+  mcpClients: McpClientInfo[];
+  /** What Add to Claude Code came to. */
+  claudeCodeSetup: ClaudeCodeSetup;
 }
 
 /** One choice of a native pop-up menu, as Settings' pop-up buttons offer it. */
@@ -1186,6 +1196,10 @@ export interface AvanzelBridge {
     /** Settings is open and something else (an error card's Open Settings) asks for another pane. */
     onShowPane(callback: (pane: SettingsPane) => void): () => void;
     setApp(patch: Partial<AppSettings>): Promise<SettingsSnapshot>;
+    /** Copy setup, on a client's row in Agents: main puts the snippet that client's config takes on the clipboard. */
+    copyMcpSetup(client: McpClient): void;
+    /** Add to Claude Code, in Agents: runs `claude mcp add` for Avanzel's server; what it came to is `claudeCodeSetup`. */
+    addToClaudeCode(): Promise<SettingsSnapshot>;
     /** Shortcuts records a new one: Avanzel's own let go meanwhile, so the keys reach the page; registered again when it ends. */
     recordingShortcut(recording: boolean): void;
     /** Turns dictating into any app on or off, or chooses its key; what isn't in `patch` stays. The helper starts, stops or watches the new key at once. */

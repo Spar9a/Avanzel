@@ -36,7 +36,12 @@ Avanzel enforces a few guarantees no matter how the agent behaves:
   dot-folders) are put back after every run, so text in a capture can't plant instructions or
   commands for later runs; edit those files yourself while no agent run is active, or in
   `avanzel chat`;
-- if the library is a git repo, each run is a commit you can inspect or revert (git hooks never run).
+- if the library is a git repo, each run is a commit you can inspect or revert (git hooks never run);
+- while "Let your other agents use this library" is on (Settings → Agents), the agents you connect can
+  read the library, unfiled captures and call notes included, and what they read goes to their
+  providers. They can't change anything: a note they leave is a capture in `inbox/` marked
+  `source: agent`, with the `agent` that wrote it, and the librarian files it as theirs, never as
+  yours. See [Your other agents and the library](agents-and-mcp.md).
 
 ## Your own shelves
 

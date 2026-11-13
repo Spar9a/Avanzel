@@ -139,7 +139,7 @@ export function Privacy({ snap, onChange, attempt, drafts }: PaneProps & { draft
       <Group label="What leaves this Mac">
         {/* Not a row: a paragraph, in a box of the window's own, padded as a row is. */}
         <div className="settings-words">
-          <Text variant="callout">{leavesThisMacLine(snap.voice)}</Text>
+          <Text variant="callout">{leavesThisMacLine(snap.voice, snap.app.agentAccess)}</Text>
         </div>
       </Group>
     </Stack>

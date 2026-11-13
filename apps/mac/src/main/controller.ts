@@ -223,7 +223,9 @@ import {
 } from "./windows.ts";
 import { libraryPages, pagePrompt, sourcesOnlyOf, withoutItem } from "./library-pages.ts";
 import { heardTrigger, withoutStopWord } from "../shared/trigger.ts";
-import type { AddingKind, FileMode, PanelPage, PanelSnapshot, PanelTab, ShelfAsk, ShelfGoing, UpdateWait } from "../shared/ipc.ts";
+import type { AddingKind, ClaudeCodeSetup, FileMode, PanelPage, PanelSnapshot, PanelTab, ShelfAsk, ShelfGoing, UpdateWait } from "../shared/ipc.ts";
+import { mcpLaunch } from "./mcp-mode.ts";
+import { addToClaudeCode, execIn, isMcpClient, MCP_CLIENTS, setupSnippet } from "./mcp-setup.ts";
 
 /** What the panel may ask for (`panel:act`): the menu's own actions, and a page to open by its path. */
 const PANEL_ACTIONS = new Set([
@@ -719,6 +721,8 @@ export class Controller {
   private relaunched = 0;
   /** Avanzel's own update (updater.ts): Settings → General shows it, and the panel's foot an update that is ready. */
   private readonly updates: Updater;
+  /** What Add to Claude Code came to in this app run, for Settings → Agents. */
+  private claudeCodeSetup: ClaudeCodeSetup = { kind: "idle" };
 
   constructor(userData: string) {
     this.store = new SettingsStore(path.join(userData, "settings.json"));
@@ -6073,7 +6077,37 @@ export class Controller {
       opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
       update: this.updates.snapshot(),
       shelfDraft: this.shelfDraft,
+      mcpClients: [...MCP_CLIENTS],
+      claudeCodeSetup: this.claudeCodeSetup,
     };
+  }
+
+  /** How the owner's other agents start Avanzel's server: the packaged binary, or in development Electron with the app's folder. */
+  private mcpLaunch(): { command: string; args: string[] } {
+    return mcpLaunch(app.isPackaged, process.execPath, app.getAppPath());
+  }
+
+  /**
+   * Copy setup, on a client's row in Settings → Agents: the snippet `client`'s config takes (`setupSnippet`) goes on the clipboard, so
+   * only a client Settings lists ever gets one; anything else is ignored. With AVANZEL_TEST=1 the clipboard is left be, and
+   * copiedForTests says what.
+   */
+  copyMcpSetup(client: unknown): void {
+    if (!isMcpClient(client)) return;
+    const snippet = setupSnippet(client, this.mcpLaunch());
+    if (process.env.AVANZEL_TEST === "1") this.copied.push(snippet);
+    else clipboard.writeText(snippet);
+  }
+
+  /**
+   * Add to Claude Code, in Settings → Agents: runs `claude mcp add` for Avanzel's server, for every project of this user, from the home
+   * folder with the PATH main widened at start. What it came to stays in the snapshot (`claudeCodeSetup`) for the pane to show.
+   */
+  async addToClaudeCode(): Promise<SettingsSnapshot> {
+    const result = await addToClaudeCode(this.mcpLaunch(), execIn(homedir()));
+    this.claudeCodeSetup = result.ok ? { kind: "added" } : { kind: "failed", detail: result.detail };
+    this.broadcast();
+    return this.snapshot();
   }
 
   /**

@@ -82,9 +82,13 @@ export function screenshotFixture({ blank = false }: { blank?: boolean } = {}): 
   return file;
 }
 
-/** How the stand-ins for Claude Code and Codex answer, by binary: signed in, and a short reply to anything else. */
+/**
+ * How the stand-ins for Claude Code and Codex answer, by binary: signed in, and a short reply to anything else. Claude Code's
+ * `mcp add` (Settings → Agents' Add to Claude Code) says it added the server, or, with AVANZEL_FAKE_CLAUDE_MCP_FAIL=1, fails as
+ * Claude Code does, with its usage and then an error on stderr.
+ */
 export const SIGNED_IN: Readonly<Record<string, string>> = {
-  claude: `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; else echo ready; fi`,
+  claude: `if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn": true}'; elif [ "$1 $2" = "mcp add" ]; then if [ "$AVANZEL_FAKE_CLAUDE_MCP_FAIL" = "1" ]; then echo "Usage: claude mcp add [options] <name> <commandOrUrl> [args...]" >&2; echo "error: config file is not writable" >&2; exit 1; fi; echo "Added stdio MCP server $3 to user config"; else echo ready; fi`,
   codex: `if [ "$1 $2" = "login status" ]; then echo "Logged in using ChatGPT" >&2; else echo ready; fi`, // Codex answers on stderr
 };
 

@@ -56,6 +56,8 @@ const bridge: AvanzelBridge = {
     onChanged: (callback) => listen<SettingsSnapshot>("settings:changed", callback),
     onShowPane: (callback) => listen<SettingsPane>("settings:show-pane", callback),
     setApp: (patch) => ipcRenderer.invoke("settings:set-app", patch),
+    copyMcpSetup: (client) => ipcRenderer.send("settings:copy-mcp-setup", client),
+    addToClaudeCode: () => ipcRenderer.invoke("settings:add-to-claude-code"),
     recordingShortcut: (recording) => ipcRenderer.send("settings:recording-shortcut", recording === true),
     setCursorDictation: (patch) => ipcRenderer.invoke("settings:set-cursor-dictation", patch),
     cursorPermissions: () => ipcRenderer.invoke("settings:cursor-permissions"),

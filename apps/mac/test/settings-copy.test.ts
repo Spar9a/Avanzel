@@ -15,6 +15,8 @@ import {
   AGENTS_NOT_CHECKED,
   asSentence,
   CHANGE_NOT_SAVED,
+  CLAUDE_CODE_NOT_ADDED,
+  claudeCodeNotAddedBody,
   CURSOR_DICTATION_DESCRIPTION,
   cursorKeyName,
   cursorKeyOptions,
@@ -48,6 +50,9 @@ import {
   lastRunLine,
   leavesThisMacLine,
   libraryLine,
+  mcpClientDescription,
+  OTHER_AGENTS_NOTE,
+  OTHER_AGENTS_SWITCH,
   ADD_DEFINITION,
   canRemoveShelf,
   definitionLine,
@@ -309,6 +314,25 @@ describe("settings copy", () => {
     // A command is the library's own, and can send the voice anywhere: Privacy says where it goes, and doesn't promise it stays.
     expect(leavesThisMacLine({ backend: "command", model: "" })).toBe(`Your voice goes to the command in this library's settings. ${words}`);
     expect(leavesThisMacLine({ backend: "command", model: "" })).not.toMatch(/never leaves/);
+  });
+
+  it("leavesThisMacLine says what connected agents can read, and where it goes, only while they are let in", () => {
+    const voice = { backend: "onnx-asr", model: "nemo-parakeet-tdt-0.6b-v3" } as const;
+    expect(leavesThisMacLine(voice, true)).toBe(
+      `${leavesThisMacLine(voice, false)} The agents you connect under Agents can read your library, unfiled captures and call notes included, and what they read goes to their providers.`,
+    );
+    expect(leavesThisMacLine(voice, true)).toContain("unfiled captures and call notes");
+    expect(leavesThisMacLine(voice, false)).not.toContain("unfiled captures and call notes");
+  });
+
+  it("Your other agents says what they can do, and what they can't", () => {
+    expect(OTHER_AGENTS_NOTE).toBe("Claude Code, Codex, Cursor and others can look things up in your library and leave notes for the librarian.");
+    expect(OTHER_AGENTS_SWITCH).toBe(
+      "They can read your library the way Ask does, and leave notes in your inbox for the librarian to file. They can't change or delete anything.",
+    );
+    expect(CLAUDE_CODE_NOT_ADDED).toBe("Avanzel couldn't be added to Claude Code.");
+    expect(claudeCodeNotAddedBody("Claude Code isn't installed on this Mac.")).toBe("Claude Code isn't installed on this Mac. Nothing in your library changed.");
+    expect(mcpClientDescription("~/.cursor/mcp.json")).toBe("Paste this into ~/.cursor/mcp.json.");
   });
 
   it("a change main refused is told as what happened, why, and what the setting keeps, without Electron's prefix", () => {
