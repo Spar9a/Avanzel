@@ -13,11 +13,14 @@ import { AvanzelError, type VoiceOptions } from "../types.ts";
 import { MAX_DICTIONARY_ENTRIES, plainLine } from "./dictionary.ts";
 import { defaultPrivateModel, PRIVATE_APIS, PRIVATE_SOURCES, type PrivateApi, type PrivateModel, type PrivateSource } from "./private-model.ts";
 import {
+  definitionBreaksRules,
   folderProblem,
   MAX_OWN_SHELVES,
   MAX_SHELF_DEFINITION,
   MAX_SHELF_NAME,
+  nameBreaksRules,
   type OwnShelf,
+  shelfTextLength,
 } from "./shelves.ts";
 import { render } from "./templates.ts";
 
@@ -379,13 +382,23 @@ function ownShelves(data: Table, path: string): OwnShelf[] {
     const problem = folderProblem(folder, shelves.map((shelf) => shelf.folder));
     if (problem) throw new AvanzelError(`${path}: \`${prefix}folder\` is "${folder}". ${problem}`);
     const name = requiredString(entry, "name", path, prefix);
-    if (name.length < 1 || name.length > MAX_SHELF_NAME) {
-      throw new AvanzelError(`${path}: \`${prefix}name\` must be 1 to ${MAX_SHELF_NAME} characters, and it has ${name.length}`);
+    const nameLength = shelfTextLength(name);
+    if (nameLength < 1 || nameLength > MAX_SHELF_NAME) {
+      throw new AvanzelError(`${path}: \`${prefix}name\` must be 1 to ${MAX_SHELF_NAME} characters, and it has ${nameLength}`);
+    }
+    if (nameBreaksRules(name)) {
+      throw new AvanzelError(`${path}: \`${prefix}name\` can't hold | or a line break. Remove them, then try again.`);
     }
     const definition = requiredString(entry, "definition", path, prefix);
-    if (definition.length < 1 || definition.length > MAX_SHELF_DEFINITION) {
+    const definitionLength = shelfTextLength(definition);
+    if (definitionLength < 1 || definitionLength > MAX_SHELF_DEFINITION) {
       throw new AvanzelError(
-        `${path}: \`${prefix}definition\` must be 1 to ${MAX_SHELF_DEFINITION} characters, and it has ${definition.length}`,
+        `${path}: \`${prefix}definition\` must be 1 to ${MAX_SHELF_DEFINITION} characters, and it has ${definitionLength}`,
+      );
+    }
+    if (definitionBreaksRules(definition)) {
+      throw new AvanzelError(
+        `${path}: \`${prefix}definition\` can't hold | \` < > [[ avanzel:shelves or a line break. Remove them, then try again.`,
       );
     }
     shelves.push({ folder, name, definition });

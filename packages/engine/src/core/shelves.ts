@@ -44,13 +44,33 @@ export function folderProblem(folder: string, taken: readonly string[]): string 
   return null;
 }
 
+/** What a definition can't hold: it goes in a Markdown table in `AGENTS.md`, between markers. */
+const FORBIDDEN_IN_DEFINITION = /[|`<>]|\[\[|avanzel:shelves/;
+const LINE_BREAK = /[\r\n\u2028\u2029]/;
+
+/** Whether `definition` holds a character or string, or a line break, that a shelf's definition can't. */
+export function definitionBreaksRules(definition: string): boolean {
+  return FORBIDDEN_IN_DEFINITION.test(definition) || LINE_BREAK.test(definition);
+}
+
+/** Whether `name` holds a line break or the table separator `|`. */
+export function nameBreaksRules(name: string): boolean {
+  return name.includes("|") || LINE_BREAK.test(name);
+}
+
+/** How long `text` is as a shelf rule counts it: in characters a person sees as one each, not UTF-16 units. */
+export function shelfTextLength(text: string): number {
+  return [...text].length;
+}
+
 /** A definition as one safe line: whitespace collapsed, the characters and strings the AGENTS.md table can't hold removed, cut to length. */
 export function cleanDefinition(text: string): string {
   // Removing one piece can join its neighbours into another (`av|anzel:shelves`), so repeat until nothing is left to remove.
+  const forbidden = new RegExp(`${FORBIDDEN_IN_DEFINITION.source}|\\]\\]`, "g");
   let kept = text;
   for (let before = ""; before !== kept; ) {
     before = kept;
-    kept = kept.replace(/[|`<>]|\[\[|\]\]|avanzel:shelves/g, "");
+    kept = kept.replace(forbidden, "");
   }
   const line = kept.replace(/\s+/g, " ").trim();
   return [...line].slice(0, MAX_SHELF_DEFINITION).join("").trim();

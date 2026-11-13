@@ -11,6 +11,7 @@ import {
   userConfigPath,
   type Settings,
 } from "../../src/core/config.ts";
+import { cleanDefinition } from "../../src/core/shelves.ts";
 import { AvanzelError } from "../../src/types.ts";
 import { thrownBy, useTmp, write } from "./helpers.ts";
 
@@ -430,6 +431,40 @@ describe("own shelves in config.toml", () => {
     expect(messageFor('name = "P"\ndefinition = ""\n')).toContain("shelves[0].definition");
     expect(messageFor(`name = "P"\ndefinition = "${"d".repeat(301)}"\n`)).toContain("shelves[0].definition");
     expect(thrownBy(() => load("shelves = [1]\n")).message).toContain("shelves[0]");
+  });
+
+  it("counts characters a person sees, not UTF-16 units: 300 emoji and a 40-emoji name load back as saved", () => {
+    const settings = defaultSettings();
+    settings.shelves = [{ folder: "projects", name: "😀".repeat(40), definition: cleanDefinition("😀".repeat(400)) }];
+    expect([...settings.shelves[0]!.definition]).toHaveLength(300);
+    saveSettings(tmp(), settings);
+    expect(loadSettings(tmp())).toEqual(settings);
+    const tooLong = defaultSettings();
+    tooLong.shelves = [{ folder: "projects", name: "😀".repeat(41), definition: "x" }];
+    expect(() => saveSettings(tmp(), tooLong)).toThrow(AvanzelError);
+  });
+
+  it.each([["|"], ["`"], ["<"], [">"], ["[["], ["avanzel:shelves"], ["\n"], ["\r"], ["\u2028"]])(
+    "refuses a definition holding %j, naming the key",
+    (bad) => {
+      const error = thrownBy(() => load(shelf("projects", `name = "P"\ndefinition = ${JSON.stringify(`a ${bad} b`)}\n`)));
+      expect(error).toBeInstanceOf(AvanzelError);
+      expect(error.message).toContain("shelves[0].definition");
+      expect(error.message).toContain("Remove them");
+    },
+  );
+
+  it.each([["|"], ["\n"], ["\r"], ["\u2028"]])("refuses a name holding %j, naming the key", (bad) => {
+    const error = thrownBy(() => load(shelf("projects", `name = ${JSON.stringify(`a ${bad} b`)}\ndefinition = "x"\n`)));
+    expect(error).toBeInstanceOf(AvanzelError);
+    expect(error.message).toContain("shelves[0].name");
+    expect(error.message).toContain("Remove them");
+  });
+
+  it("refuses saving a shelf whose definition would not load back", () => {
+    const settings = defaultSettings();
+    settings.shelves = [{ folder: "projects", name: "Projects", definition: "Work | goals" }];
+    expect(() => saveSettings(tmp(), settings)).toThrow(AvanzelError);
   });
 
   it("refuses 21 shelves and accepts 20", () => {
