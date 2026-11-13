@@ -136,6 +136,13 @@
       "$value": "{palette.system.grey}"
     }
   },
+  "shelf-own": {
+    "$type": "color",
+    "$description": "The one colour every shelf the owner makes shares. Kept out of shelf, whose keys are the six built-in shelves. Always shown with the shelf's glyph and name, never alone.",
+    "default": {
+      "$value": "{palette.system.brown}"
+    }
+  },
   "zel": {
     "$type": "color",
     "$description": "Zel's own colours. Only the Zel component uses them.",

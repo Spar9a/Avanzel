@@ -135,6 +135,7 @@ export const TOKEN_NAMES = [
   "--av-shelf-memories",
   "--av-shelf-people",
   "--av-shelf-topics",
+  "--av-shelf-own",
   "--av-zel-knob",
   "--av-zel-neck",
   "--av-zel-base",

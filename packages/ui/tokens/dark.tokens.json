@@ -111,6 +111,12 @@
       "$value": "{palette.system.grey-dark}"
     }
   },
+  "shelf-own": {
+    "$type": "color",
+    "default": {
+      "$value": "{palette.system.brown-dark}"
+    }
+  },
   "zel": {
     "$type": "color",
     "knob": {

@@ -186,6 +186,12 @@
       "grey-dark": {
         "$value": "#98989D"
       },
+      "brown": {
+        "$value": "#A2845E"
+      },
+      "brown-dark": {
+        "$value": "#AC8E68"
+      },
       "red-text": {
         "$value": "#D70015"
       },
