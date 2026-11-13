@@ -69,6 +69,8 @@ const LOOKING = "Looking through your library…";
 
 export interface FileOutcome {
   captureId: string;
+  /** The agent that left the capture, as it named itself, when it is a note from one of the owner's other agents; else null. */
+  agent: string | null;
   ok: boolean;
   changes: Changes;
   /** The agent's reply. */
@@ -650,9 +652,10 @@ export class Librarian {
     const before = snapshot(root);
     const foldersBefore = this.#topLevelFolders();
     const call = this.#isCall(original.toString("utf8"));
+    const agent = this.#agentOf(original.toString("utf8"));
     const continues = this.#continues(original.toString("utf8"));
     const files = original.toString("utf8").includes("raw/attachments/");
-    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, continues, files, names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term), instructions, shelves: this.#shelfNotes(pending) });
+    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, agent, continues, files, names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term), instructions, shelves: this.#shelfNotes(pending) });
     // Only a caller that asked for the steps is told them: Claude Code's come from its own events, and other agents'
     // from the folder. The changes below are read from `after`, the library as the run left it, whether or not they are.
     const { result, guarded, after } = await this.#run(prompt, { write: true, images: attachments, signal, before, steps });
@@ -662,7 +665,7 @@ export class Librarian {
     // capture is in inbox/ or raw/, and the guard lists what it put back.
     const changes = diff(before, after).without([...SOURCES, ...guarded]);
     const refused = result.refused.map((refusedPath) => insideLibrary(root, refusedPath) ?? refusedPath);
-    const ran = { changes, message: result.output, restored: restoral === "restored", savedOriginal, guarded, refused };
+    const ran = { agent, changes, message: result.output, restored: restoral === "restored", savedOriginal, guarded, refused };
     const error = this.#notFiled(result, restoral, changes, captureId, archiveRel);
     if (error !== null) {
       // What the run left behind (it failed, timed out, was cancelled or filed nothing) is its own
@@ -790,6 +793,13 @@ export class Librarian {
   #isCall(captureText: string): boolean {
     const [frontmatter] = splitFrontmatter(captureText);
     return frontmatterFields(frontmatter).get("source") === "call";
+  }
+
+  /** Which of the owner's agents left the capture (its `agent:` field), or null when its `source` is not `agent`. */
+  #agentOf(captureText: string): string | null {
+    const [frontmatter] = splitFrontmatter(captureText);
+    const fields = frontmatterFields(frontmatter);
+    return fields.get("source") === "agent" ? fields.get("agent")?.trim() || "an agent" : null;
   }
 
   /**
@@ -1001,6 +1011,7 @@ export class Librarian {
 function outcome(captureId: string, fields: Partial<Omit<FileOutcome, "captureId">>): FileOutcome {
   return {
     captureId,
+    agent: null,
     ok: false,
     changes: new Changes([], [], []),
     message: "",
@@ -1051,6 +1062,13 @@ function digest(outcomes: readonly FileOutcome[], now: Date): string {
   const failed = outcomes.filter((outcome) => !outcome.ok);
   const total = outcomes.length;
   const lines = [`# Evening review ${localDate(now)}`, "", `Filed ${filed.length} of ${total} capture${total === 1 ? "" : "s"}.`];
+  const agents = new Map<string, number>();
+  for (const { agent } of filed) if (agent) agents.set(agent, (agents.get(agent) ?? 0) + 1);
+  if (agents.size) {
+    const counts = [...agents].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0));
+    const total = counts.reduce((sum, [, count]) => sum + count, 0);
+    lines.push("", `From your other agents: ${total} (${counts.map(([agent, count]) => `${agent} ${count}`).join(", ")}).`);
+  }
   if (filed.length) {
     lines.push("", "## What went where", "");
     for (const { captureId, message, changes, restored, guarded } of filed) {

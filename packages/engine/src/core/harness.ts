@@ -431,7 +431,8 @@ export async function runHeadless(harness: Harness, prompt: string, vault: strin
     // Claude Code prints a JSON event per line. Reading them as they arrive hands over each step while the agent works,
     // and its reply is the result event's text: what comes back as `output` is plain text, as for every other agent.
     const stream = harness.streams ? new ClaudeStream(onStep ?? (() => {})) : null;
-    const env = { ...childEnv(process.env), ...route?.env };
+    // Marks the run as Avanzel's own: the MCP server refuses to leave notes for an agent that has it in its environment.
+    const env = { ...childEnv(process.env), ...route?.env, AVANZEL_AGENT_RUN: "1" };
     const run = await collect(
       argv,
       vault,

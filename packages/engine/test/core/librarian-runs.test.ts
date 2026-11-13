@@ -366,6 +366,43 @@ describe("eveningReview", () => {
     expect(progress).toContain(`Filing ${greenhouse.id}.md with fake…`);
   });
 
+  it("files a note from another agent as theirs and counts it in the digest (evening_review_counts_agent_notes)", async () => {
+    const runs = recordRuns();
+    const mine = librarian.captureText("Water the greenhouse");
+    const note = (agent: string, text: string) =>
+      vault.newCapture(text, { source: "agent", now: NOW, context: { agent }, lists: { tags: ["tools"] } });
+    const first = note("claude-code", "Prefers pnpm");
+    const second = note("claude-code", "Uses vitest");
+    const third = note("codex", "Likes small commits");
+    const review = await librarian.eveningReview();
+    const byId = new Map(review.outcomes.map((outcome) => [outcome.captureId, outcome]));
+    expect(byId.get(mine.id)?.agent).toBeNull();
+    expect(byId.get(first.id)?.agent).toBe("claude-code");
+    expect(byId.get(third.id)?.agent).toBe("codex");
+    expect(byId.get(second.id)?.ok).toBe(true);
+    const prompts = runs().map((run) => run.prompt);
+    expect(prompts.filter((prompt) => prompt.includes("From claude-code:"))).toHaveLength(2);
+    expect(prompts.filter((prompt) => prompt.includes("From codex:"))).toHaveLength(1);
+    expect(prompts.filter((prompt) => prompt.includes("supersedes"))).toHaveLength(3);
+    expect(read(review.digestPath ?? "")).toContain("Filed 4 of 4 captures.\n\nFrom your other agents: 3 (claude-code 2, codex 1).\n");
+  });
+
+  it("leaves the agent line out of the digest when the owner wrote every capture", async () => {
+    const capture = librarian.captureText("Water the greenhouse");
+    const review = await librarian.eveningReview();
+    expect(review.outcomes.map((outcome) => outcome.agent)).toEqual([null]);
+    expect(read(review.digestPath ?? "")).not.toContain("From your other agents");
+    expect(capture.id).toBeTruthy();
+  });
+
+  it("gives a failed filing of an agent's note its agent too", async () => {
+    mode("picky");
+    const stuck = vault.newCapture("An unfileable note", { source: "agent", now: NOW, context: { agent: "codex" } });
+    const review = await librarian.eveningReview();
+    expect(review.outcomes.map((outcome) => [outcome.captureId, outcome.ok, outcome.agent])).toEqual([[stuck.id, false, "codex"]]);
+    expect(read(review.digestPath ?? "")).not.toContain("From your other agents");
+  });
+
   it("notes what the agent tried to change that it may not", async () => {
     mode("tamper");
     const capture = librarian.captureText("Original words");

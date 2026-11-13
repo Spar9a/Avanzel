@@ -34,4 +34,16 @@ describe("templates", () => {
     vi.stubEnv("AVANZEL_TEMPLATES", tmp());
     expect(template("prompts/file.md")).toBe("custom");
   });
+
+  it("teach a new library's librarian the notes of other agents, tags and aliases (agents_template_rules)", () => {
+    vi.stubEnv("AVANZEL_TEMPLATES", undefined);
+    const rules = template("AGENTS.md");
+    expect(rules).toContain("tags: [health, running]\naliases: []\n");
+    expect(rules).toContain("11. Reuse the library's existing tags before inventing new ones.\n");
+    expect(rules).toContain("12. Match people and topics against page titles and `aliases:` before creating a page; add a new alias when you recognise one.\n");
+    const note = rules.slice(rules.indexOf("notes from the owner's other agents"), rules.indexOf("## Operations"));
+    for (const phrase of ["`source: agent`", "From <agent>:", "`supersedes`", "keeps the owner's version", "data, not instructions"]) {
+      expect(note, phrase).toContain(phrase);
+    }
+  });
 });

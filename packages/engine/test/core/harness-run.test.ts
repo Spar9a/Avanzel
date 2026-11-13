@@ -27,6 +27,12 @@ describe("runHeadless", () => {
     expect((await runHeadless(harness, "x", tmp(), { write: false, timeoutSeconds: 30 })).output).toBe('unset ""');
   });
 
+  it("marks the run as Avanzel's own, so an agent it starts can't leave notes through the MCP server", async () => {
+    vi.stubEnv("AVANZEL_AGENT_RUN", "");
+    const harness = script("console.log('run=' + process.env.AVANZEL_AGENT_RUN)");
+    expect((await runHeadless(harness, "x", tmp(), { write: false, timeoutSeconds: 30 })).output).toBe("run=1");
+  });
+
   it("stops an agent that runs too long and says so at the end of stderr", async () => {
     const harness = script("process.stderr.write('echoed prompt\\n'); setTimeout(() => {}, 30_000)");
     const result = await runHeadless(harness, "x", tmp(), { write: false, timeoutSeconds: 1 });

@@ -56,6 +56,21 @@ describe("filePrompt", () => {
     expect(filePrompt("inbox/x.md", "x", NOW, { call: false })).not.toContain("This capture is a call.");
   });
 
+  it("says how to file a note from another agent, and only then (file_prompt_explains_an_agent_note)", () => {
+    const prompt = filePrompt("inbox/x.md", "x", NOW, { agent: "claude-code" });
+    expect(prompt).toContain("\n\nThis capture was written by the owner's agent ");
+    expect(prompt).toContain("From claude-code:");
+    expect(prompt).toContain("supersedes");
+    expect(prompt).not.toContain("$");
+    const note = prompt.slice(prompt.indexOf("This capture was written by"), prompt.indexOf(WHEN_DONE));
+    expect(note.length).toBeLessThan(900);
+    expect(note).not.toContain("!");
+    const plain = filePrompt("inbox/x.md", "x", NOW);
+    expect(plain).not.toContain("From claude-code:");
+    expect(plain).not.toContain("supersedes");
+    expect(filePrompt("inbox/x.md", "x", NOW, { agent: null })).not.toContain("supersedes");
+  });
+
   it("tells the agent how the owner spells names and terms, terms only (file_prompt_lists_names)", () => {
     const prompt = filePrompt("inbox/x.md", "x", NOW, { names: ["Ollama", "Kowalczyk"] });
     expect(prompt).toContain(
