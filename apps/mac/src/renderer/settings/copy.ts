@@ -610,6 +610,26 @@ export const FOLDER_LATIN_HINT = "Type a folder name in Latin letters, such as p
 /** A folder's most characters, as the engine holds it (MAX_SHELF_FOLDER in shelves.ts); the renderer can't import the engine, so a test pins this to it. The name's and the definition's limits are the engine's to enforce, in its own words. */
 export const MAX_SHELF_FOLDER = 40;
 
+/** The form's and the rows' buttons. */
+export const SHELF_CANCEL = "Cancel";
+export const SHELF_EDIT = "Edit";
+export const SHELF_REMOVE = "Remove";
+/** Under the Name row of a form opened from a suggestion (Edit first): what Save does. */
+export const SUGGESTED_SAVE_LINE = "Saving makes the shelf and moves the page it was suggested for onto it.";
+/** Under the definition's field while a name is typed and it is empty. */
+export const SAY_WHAT_BELONGS = "Say what belongs on it to save the shelf.";
+/** Under the Folder row of a folder made by hand whose name the folder rule refuses: it can't be given a definition until it is renamed. */
+export const HAND_MADE_FOLDER_PROBLEM =
+  "This folder's name can't be a shelf's. Rename it in Finder with lowercase Latin letters, digits and dashes, then add a definition.";
+
+/**
+ * Whether a row's Remove is offered: for a shelf of the owner's (it has a definition) that holds no page. A folder made by hand is no
+ * shelf yet, and the engine has none to remove.
+ */
+export function canRemoveShelf(shelf: { definition: string; pages: number }): boolean {
+  return shelf.definition !== "" && shelf.pages === 0;
+}
+
 /** The remove question, over the Remove button of a shelf with no pages. */
 export const removeShelfQuestion = (name: string): string => `Remove the ${name} shelf? Its folder is empty, so nothing else changes.`;
 
@@ -646,6 +666,16 @@ export function folderProblemText(folder: string, taken: readonly string[]): str
 
 const BUILT_IN_FOLDERS: readonly string[] = [...SHELVES, "meetings"];
 const SPECIAL_FOLDERS: readonly string[] = ["inbox", "raw", "reviews", "tasks"];
+
+/** `HAND_MADE_FOLDER_PROBLEM` when a folder made by hand has a name the folder rule refuses (so the engine would refuse its shelf), else null. */
+export function handMadeFolderProblem(folder: string): string | null {
+  return folderProblemText(folder, []) === null ? null : HAND_MADE_FOLDER_PROBLEM;
+}
+
+/** The line under the definition's field: it says what is missing once a name is typed, and says nothing before that. */
+export function definitionLine(name: string, definition: string): string | undefined {
+  return name.trim() !== "" && definition.trim() === "" ? SAY_WHAT_BELONGS : undefined;
+}
 
 /**
  * The line under the Folder field: the hint when the name has no Latin letters and no folder is typed, the folder's problem when

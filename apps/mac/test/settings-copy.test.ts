@@ -48,6 +48,15 @@ import {
   leavesThisMacLine,
   libraryLine,
   ADD_DEFINITION,
+  canRemoveShelf,
+  definitionLine,
+  handMadeFolderProblem,
+  HAND_MADE_FOLDER_PROBLEM,
+  SAY_WHAT_BELONGS,
+  SHELF_CANCEL,
+  SHELF_EDIT,
+  SHELF_REMOVE,
+  SUGGESTED_SAVE_LINE,
   ADD_SHELF,
   MAX_SHELF_FOLDER as APP_MAX_SHELF_FOLDER,
   NO_DEFINITION,
@@ -802,6 +811,44 @@ describe("Settings → Your shelves", () => {
     expect(NO_DEFINITION).toBe("No definition yet");
     expect(ADD_DEFINITION).toBe("Add definition");
     expect(removeShelfQuestion("Projects")).toBe("Remove the Projects shelf? Its folder is empty, so nothing else changes.");
+  });
+
+  it("offers Remove only on an own shelf with no pages, as the engine only removes those", () => {
+    expect(canRemoveShelf({ definition: "Work with a goal.", pages: 0 })).toBe(true);
+    expect(canRemoveShelf({ definition: "Work with a goal.", pages: 3 })).toBe(false);
+    // A folder made by hand has no definition: it is no shelf of the owner's yet, and the engine has none to remove.
+    expect(canRemoveShelf({ definition: "", pages: 0 })).toBe(false);
+    expect(canRemoveShelf({ definition: "", pages: 2 })).toBe(false);
+  });
+
+  it("says why a hand-made folder whose name breaks the folder rule can't be given a definition", () => {
+    expect(HAND_MADE_FOLDER_PROBLEM).toBe(
+      "This folder's name can't be a shelf's. Rename it in Finder with lowercase Latin letters, digits and dashes, then add a definition.",
+    );
+    for (const folder of ["Projects", "my projects", "проекты", "a--b", ".hidden", "a".repeat(41), "x_y"]) {
+      expect(handMadeFolderProblem(folder)).toBe(HAND_MADE_FOLDER_PROBLEM);
+      expect(folderProblem(folder, [])).not.toBeNull();
+    }
+    for (const folder of ["projects", "side-quests-2", "a".repeat(40)]) {
+      expect(handMadeFolderProblem(folder)).toBeNull();
+      expect(folderProblem(folder, [])).toBeNull();
+    }
+  });
+
+  it("says what Save does when the form was opened from a suggestion", () => {
+    expect(SUGGESTED_SAVE_LINE).toBe("Saving makes the shelf and moves the page it was suggested for onto it.");
+  });
+
+  it("asks for the definition once a name is typed, and not before", () => {
+    expect(SAY_WHAT_BELONGS).toBe("Say what belongs on it to save the shelf.");
+    expect(definitionLine("Projects", "")).toBe(SAY_WHAT_BELONGS);
+    expect(definitionLine("Projects", "   ")).toBe(SAY_WHAT_BELONGS);
+    expect(definitionLine("", "")).toBeUndefined();
+    expect(definitionLine("Projects", "Work with a goal.")).toBeUndefined();
+  });
+
+  it("keeps the form's button words", () => {
+    expect([SHELF_CANCEL, SHELF_EDIT, SHELF_REMOVE]).toEqual(["Cancel", "Edit", "Remove"]);
   });
 
   it("describes a shelf by its definition and its pages", () => {
