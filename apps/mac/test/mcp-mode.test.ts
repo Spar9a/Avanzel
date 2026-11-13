@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { isMcpMode, mcpLaunch } from "../src/main/mcp-mode.ts";
+import { isMcpMode, mcpLaunch, startedByAvanzel } from "../src/main/mcp-mode.ts";
 
 const read = (relative: string) => readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
 
@@ -33,6 +33,25 @@ describe("MCP mode", () => {
     expect(at).toBeLessThan(main.indexOf("widenedPath("));
     expect(at).toBeLessThan(main.indexOf("requestSingleInstanceLock"));
     expect(at).toBeLessThan(main.indexOf("new Controller("));
+  });
+
+  it("counts a process table it can't read as started by Avanzel, so remember fails closed", () => {
+    const unreadable = () => {
+      throw new Error("spawn /bin/ps ENOENT");
+    };
+    expect(startedByAvanzel("/A/Avanzel", 50, {}, unreadable)).toBe(true);
+    const outside = (pid: number) => (pid === 50 ? { ppid: 40, path: "/A/Avanzel" } : pid === 40 ? { ppid: 1, path: "/bin/zsh" } : null);
+    expect(startedByAvanzel("/A/Avanzel", 50, {}, outside)).toBe(false);
+    expect(startedByAvanzel("/A/Avanzel", 50, { AVANZEL_AGENT_RUN: "1" }, outside)).toBe(true);
+    const inside = (pid: number) => (pid === 50 ? { ppid: 40, path: "/bin/zsh" } : pid === 40 ? { ppid: 1, path: "/A/Avanzel" } : null);
+    expect(startedByAvanzel("/A/Avanzel", 50, {}, inside)).toBe(true);
+  });
+
+  it("starts no GPU process: hardware acceleration is off before it serves", () => {
+    const mode = read("../src/main/mcp-mode.ts");
+    const at = mode.indexOf("app.disableHardwareAcceleration()");
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(mode.indexOf("await serveStdio("));
   });
 
   it("has an npm script that builds and starts the dev app in MCP mode", () => {

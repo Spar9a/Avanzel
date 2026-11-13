@@ -4,7 +4,7 @@
 // call by call, whether the library is open to it.
 import { app } from "electron";
 import path from "node:path";
-import { launchedBy, serveStdio, type AgentAccess } from "@avanzel/engine";
+import { launchedBy, serveStdio, type AgentAccess, type ParentOf } from "@avanzel/engine";
 import { SettingsStore } from "./store.ts";
 
 /** Whether Avanzel was started as the MCP server rather than as the app. */
@@ -18,6 +18,14 @@ export function mcpLaunch(packaged: boolean, execPath: string, appPath: string):
 }
 
 /**
+ * Whether one of Avanzel's own runs started this server, so it may read but not remember. A process table that can't be read
+ * counts as yes: a note refused by mistake costs less than the librarian filing its own words.
+ */
+export function startedByAvanzel(execPath: string, pid: number, env: NodeJS.ProcessEnv, parentOf?: ParentOf): boolean {
+  return launchedBy(execPath, pid, parentOf) !== false || env.AVANZEL_AGENT_RUN === "1";
+}
+
+/**
  * Serves one agent until it closes stdin, then quits. Settings are read from the file on every call, so turning access on or off,
  * or choosing another library, counts at once. Remembering is refused when one of Avanzel's own runs started this server.
  */
@@ -25,6 +33,8 @@ export async function runMcpMode(): Promise<never> {
   // The protocol owns stdout: anything else logged goes to stderr, which MCP clients keep as the server's log.
   console.log = console.info = console.debug = (...args: unknown[]) => console.error(...args);
   app.dock?.hide();
+  // A server on stdin and stdout draws nothing, so it starts no GPU process (this has to be said before `ready`).
+  app.disableHardwareAcceleration();
   const userData = app.getPath("userData");
   const file = path.join(userData, "settings.json");
   // Chromium's own state (Local State, GPU caches) goes to a folder of its own, still before `ready`: its caches aren't made for two
@@ -34,7 +44,7 @@ export async function runMcpMode(): Promise<never> {
   const access: AgentAccess = {
     root: () => settings().libraryPath || null,
     enabled: () => settings().agentAccess,
-    fromAvanzel: () => launchedBy(process.execPath, process.pid) || process.env.AVANZEL_AGENT_RUN === "1",
+    fromAvanzel: () => startedByAvanzel(process.execPath, process.pid, process.env),
   };
   try {
     await serveStdio(access, app.getVersion());
