@@ -47,6 +47,8 @@ const bridge: AvanzelBridge = {
     retryDownload: () => ipcRenderer.send("capsule:retry-download"),
     typeInstead: () => ipcRenderer.send("capsule:type-instead"),
     useShortcut: (key, accelerator) => ipcRenderer.send("capsule:use-shortcut", key, accelerator),
+    makeShelf: () => ipcRenderer.send("capsule:shelf-make"),
+    shelfLater: () => ipcRenderer.send("capsule:shelf-later"),
   },
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),
@@ -62,6 +64,9 @@ const bridge: AvanzelBridge = {
     deleteDictation: (id) => ipcRenderer.invoke("settings:delete-dictation", id),
     onDictationsChanged: (callback) => listen<void>("settings:dictations-changed", callback),
     setLibrary: (patch) => ipcRenderer.invoke("settings:set-library", patch),
+    shelves: (op) => ipcRenderer.invoke("settings:shelves", op),
+    openShelfDraft: (ask) => ipcRenderer.send("settings:open-shelf-draft", ask),
+    dropShelfDraft: () => ipcRenderer.send("settings:drop-shelf-draft"),
     downloadHosted: (id: string) => ipcRenderer.invoke("settings:download-hosted", id),
     cancelHostedDownload: (id: string) => ipcRenderer.invoke("settings:cancel-hosted-download", id),
     cancelSpeechModelDownload: () => ipcRenderer.invoke("settings:cancel-speech-model-download"),

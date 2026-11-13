@@ -333,6 +333,16 @@ export const undoRefused: Problem = {
   body: HISTORY_KEEPS_BOTH,
 };
 
+/**
+ * Make shelf or No, on the filed card or in the panel, was refused or failed (`reason`: the engine's own words, which say what to do,
+ * as for `screenCaptureProblem`). The library is as it was: the pages stay where the librarian put them, and the suggestion still waits.
+ */
+export function shelfProblem(what: "make" | "decline", reason: string, lineMax?: number): Problem {
+  return what === "make"
+    ? { title: "The shelf wasn't made.", body: sentences(shortReason(reason, lineMax), "Your pages are where they were.") }
+    : { title: "The suggestion wasn't turned down.", body: sentences(shortReason(reason, lineMax), "It still waits in Library.") };
+}
+
 /** The same refusal when it is the agent's first try that Edit couldn't take back, before the corrected words were filed. */
 export const takeBackRefused: Problem = {
   title: "The agent's first try can't be taken back automatically.",

@@ -34,6 +34,10 @@ export function registerIpc(controller: Controller): void {
   on("capsule:pause", (e) => controller.barAction(e.sender, "pause")); // only the capsule's own page switches its capture's mode
   on("capsule:stop-transcribing", (e) => void controller.stopTranscribing(e.sender)); // only the capsule's own page stops its transcription
   on("capsule:undo", () => void controller.undo());
+  // The filed card's shelf question: not the capsule's page alone, as the panel's Processing tab shows the same card. Each acts on the
+  // suggestion of the card the capsule shows, never on one the page names.
+  on("capsule:shelf-make", () => void controller.makeShelfFromCard());
+  on("capsule:shelf-later", () => controller.shelfLater());
   on("capsule:open", () => controller.openFiled());
   // What the page sends is checked where it is used: only the capsule's own page is heard, and only for a page its filing wrote.
   on("capsule:open-page", (e, rel: unknown) => controller.openFiledPage(e.sender, rel));
@@ -91,6 +95,10 @@ export function registerIpc(controller: Controller): void {
   handle("settings:delete-dictation", (e, id: unknown) =>
     controller.isSettingsPage(e.sender) && typeof id === "string" ? controller.deleteDictation(id) : { ok: false, message: "Only Settings can delete a dictation." });
   handle("settings:set-library", (_e, patch: LibraryPatch) => controller.setLibrarySettings(patch));
+  // What the page sends is checked where it is used (`parseShelfOp`, `parseShelfAsk`).
+  handle("settings:shelves", (_e, op: unknown) => controller.changeShelves(op));
+  on("settings:open-shelf-draft", (_e, ask: unknown) => controller.openShelfDraft(ask));
+  on("settings:drop-shelf-draft", () => controller.dropShelfDraft());
   handle("settings:download-hosted", (_e, id: unknown) => controller.downloadHosted(String(id)));
   handle("settings:cancel-hosted-download", (_e, id: unknown) => controller.cancelHostedDownload(String(id)));
   handle("settings:cancel-speech-model-download", () => controller.cancelSpeechModelDownload());

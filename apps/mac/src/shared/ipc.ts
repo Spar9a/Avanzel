@@ -150,6 +150,34 @@ export type CapsuleCommand =
   /** The voice trigger listens (`on`), with the chosen microphone, or stops: what it hears is sent in short spans (`sendTriggerAudio`). */
   | { kind: "trigger"; on: boolean; microphoneId: string | null };
 
+/**
+ * A shelf the librarian suggested, as the filed card, the panel and Settings ask about it: the main process's pending suggestion
+ * (`PendingShelf`) without its pages. `agentMade`: the agent made the folder itself, and `definition` is then empty: the owner writes it
+ * (Edit first) before the shelf is made.
+ */
+export interface ShelfAsk {
+  folder: string;
+  name: string;
+  definition: string;
+  agentMade: boolean;
+}
+
+/** A shelf of the owner's own, as Settings sends it: the engine's `OwnShelf`. */
+export interface OwnShelfInput {
+  folder: string;
+  name: string;
+  definition: string;
+}
+
+/**
+ * What Settings → Your shelves asks of the library (`settings.shelves`), each one commit. `make` with `fromSuggestion`, the folder of a
+ * pending suggestion, also moves that suggestion's pages onto the new shelf and takes it out of the pending ones (Edit first's Save).
+ */
+export type ShelfOp =
+  | { op: "make"; shelf: OwnShelfInput; fromSuggestion?: string }
+  | { op: "edit"; folder: string; name?: string; definition?: string }
+  | { op: "remove"; folder: string };
+
 export type CapsuleState =
   | { kind: "hidden" }
   | {
@@ -253,7 +281,17 @@ export type CapsuleState =
        * no sound. Absent on the card a filing puts up.
        */
       reprint?: { filedAt: number };
+      /**
+       * A new shelf the filing suggests, while it is pending: the card asks Make shelf or Not now (`capsule.makeShelf`, `capsule.shelfLater`),
+       * and stays twice as long. Absent when there is none.
+       */
+      suggestion?: ShelfAsk;
     }
+  /**
+   * Make shelf made `name`'s shelf: `moved` pages went onto it, and `notMoved` stayed where they were (one with that name was in its
+   * folder already). A bar that hides by itself.
+   */
+  | { kind: "shelf-made"; name: string; moved: number; notMoved: number }
   /** Stop ended a filing, and its note is in the inbox. The controller's `cancelFiling` tells the rest. */
   | {
       kind: "cancelled";
@@ -528,6 +566,14 @@ export interface LibraryInfo {
   dictationSkipApps: string[];
   /** `[dictation] skip_sites`: websites (hosts) whose dictations are pasted but kept nowhere. */
   dictationSkipSites: string[];
+  /**
+   * The owner's own shelves, in config.toml's order, each with how many pages it holds; then, with `definition` "", each top-level folder
+   * that is neither one of Avanzel's own shelves nor one of these (one made by hand), named by its folder: Settings offers Add definition
+   * for it, a `make` of that folder.
+   */
+  ownShelves: { folder: string; name: string; definition: string; pages: number }[];
+  /** config.toml's `declined_shelves`: the folders the owner turned down, which the librarian doesn't suggest again. */
+  declinedShelves: string[];
 }
 
 /** The library's `[private]` settings: the same as the engine's PrivateModel. */
@@ -654,6 +700,11 @@ export interface SettingsSnapshot {
   opensInObsidian: boolean;
   /** Avanzel's version and its update, for General's Updates group. */
   update: UpdateSnapshot;
+  /**
+   * A suggested shelf to open Settings → General's shelf form on, filled in (Edit first: `settings.openShelfDraft`); null when there is
+   * none. It stays until the form takes it (`settings.dropShelfDraft`) or a `make` from it lands.
+   */
+  shelfDraft: ShelfAsk | null;
 }
 
 /** One choice of a native pop-up menu, as Settings' pop-up buttons offer it. */
@@ -1094,6 +1145,13 @@ export interface AvanzelBridge {
     typeInstead(): void;
     /** Use, on the notice of a taken shortcut: `accelerator` becomes `key`'s shortcut. */
     useShortcut(key: keyof Shortcuts, accelerator: string): void;
+    /**
+     * Make shelf, on the filed card (the capsule's, or the same card in the panel's Processing): the card's own suggestion is made, its
+     * pages moved onto it, and a bar says how that went (`shelf-made`). One the agent made with no definition opens the shelf form instead.
+     */
+    makeShelf(): void;
+    /** Not now, on the filed card: the card goes, and its suggestion stays pending in the panel. */
+    shelfLater(): void;
   };
   settings: {
     get(): Promise<SettingsSnapshot>;
@@ -1127,6 +1185,15 @@ export interface AvanzelBridge {
     /** The history changed (a dictation finished, or one was forgotten, here or from the panel's Capture): the pane lists it again. */
     onDictationsChanged(callback: () => void): () => void;
     setLibrary(patch: LibraryPatch): Promise<SettingsSnapshot>;
+    /**
+     * Your shelves: make, edit or remove one (`ShelfOp`), as one commit, in turn with the library's other runs. A refusal (a folder or a
+     * name that is taken, a shelf with pages to remove) rejects with what to do, for the window's refusal Notice (`attemptChange`).
+     */
+    shelves(op: ShelfOp): Promise<SettingsSnapshot>;
+    /** Edit first: Settings → General comes up with the shelf form filled in from `ask` (`SettingsSnapshot.shelfDraft`). */
+    openShelfDraft(ask: ShelfAsk): void;
+    /** The shelf form took the draft, or let it go: `SettingsSnapshot.shelfDraft` is null again. */
+    dropShelfDraft(): void;
     /** The private model's key, which the app keeps in the Keychain and never hands to a window: a new one. */
     /** Starts downloading a hosted model, which goes on in the background; the answer is the snapshot as it is then. */
     downloadHosted(id: string): Promise<SettingsSnapshot>;
@@ -1489,6 +1556,11 @@ export interface PanelSnapshot {
   opensInObsidian: boolean;
   /** Avanzel's update: the foot offers Restart to update while one is ready (`act("restart-to-update")`). */
   update: UpdateSnapshot;
+  /**
+   * The open library's pending shelf suggestions, oldest first: Library asks about each (`act("shelf-make:<folder>")`,
+   * `"shelf-edit:<folder>"`, `"shelf-decline:<folder>"`). Empty without a library.
+   */
+  shelfSuggestions: ShelfAsk[];
 }
 
 /** A file or screenshot added to a recording, as its Add list shows it: its name and when it was added (Date.now()). */

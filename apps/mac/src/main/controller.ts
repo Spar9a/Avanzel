@@ -67,6 +67,7 @@ import {
   type FileOutcome,
   type FilingStep,
   type Harness,
+  type OwnShelf,
   type RunFailure,
   type PrivateModel,
   type Settings,
@@ -91,6 +92,7 @@ import {
   ownLine,
   recordingLost,
   screenCaptureProblem,
+  shelfProblem,
   stopFailedProblem,
   stopRefused,
   stoppedNotice,
@@ -195,7 +197,9 @@ import {
 import { captureDisplay, captureRegion, looksBlank, previewOf } from "./screenshot.ts";
 import { Setup, type SetupHost } from "./setup.ts";
 import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, unrecordedEdits } from "./setup-model.ts";
-import { ShelfSuggestions } from "./shelf-suggestions.ts";
+import { ShelfSuggestions, type PendingShelf } from "./shelf-suggestions.ts";
+import { askOf, ownShelvesInfo, parseShelfAsk, parseShelfOp } from "./shelf-asks.ts";
+import { shelfMadeLine, shelfUndoneNote } from "../shared/shelves.ts";
 import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
@@ -217,7 +221,7 @@ import {
 } from "./windows.ts";
 import { libraryPages, pagePrompt, sourcesOnlyOf, withoutItem } from "./library-pages.ts";
 import { heardTrigger, withoutStopWord } from "../shared/trigger.ts";
-import type { AddingKind, FileMode, PanelPage, PanelSnapshot, PanelTab, UpdateWait } from "../shared/ipc.ts";
+import type { AddingKind, FileMode, PanelPage, PanelSnapshot, PanelTab, ShelfAsk, UpdateWait } from "../shared/ipc.ts";
 
 /** What the panel may ask for (`panel:act`): the menu's own actions, and a page to open by its path. */
 const PANEL_ACTIONS = new Set([
@@ -261,6 +265,8 @@ const PICKED_SHOW_MS = 3_000;
 const NOTHING_TO_UNDO_MS = 3_000;
 // How long the capsule shows a filed card by itself, a reprint of it (`showLastReceipt`) too; hovering over it keeps it longer.
 const FILED_SHOW_MS = 8_000;
+// How long the bar that says Make shelf made a shelf stays by itself.
+const SHELF_MADE_SHOW_MS = 5_000;
 /**
  * The capsule shows nothing, or a card that is finished: a result or a notice that has nothing more to say, and no one's work in it. "Show
  * the last receipt" is offered over these alone, and replaces them (`showLastReceipt`), as does the bar that says there is no filing to
@@ -268,7 +274,7 @@ const FILED_SHOW_MS = 8_000;
  * fix away. Ask `showsFinishedCard`, not the set: a Stopped card and a Saved card are in it by their kind, but are not finished when the
  * Stopped card says that the stopped run's edits stay, or the Saved card has a line about what became of its recording.
  */
-const FINISHED_CARDS: ReadonlySet<CapsuleState["kind"]> = new Set<CapsuleState["kind"]>(["hidden", "filed", "saved", "cancelled", "recorded", "shortcut-picked", "nothing-to-undo"]);
+const FINISHED_CARDS: ReadonlySet<CapsuleState["kind"]> = new Set<CapsuleState["kind"]>(["hidden", "filed", "saved", "cancelled", "recorded", "shortcut-picked", "nothing-to-undo", "shelf-made"]);
 // How long the capsule says that a filing or a transcription is stopped (hovering over it keeps it longer, as it does any card that
 // hides itself).
 const STOPPED_SHOW_MS = 6_000;
@@ -586,6 +592,17 @@ export class Controller {
   private readonly undoRecords: UndoRecordStore;
   /** The shelves the librarian suggested that the owner hasn't answered, for each library on this Mac (`<userData>/shelf-suggestions.json`). */
   private readonly shelfSuggestions: ShelfSuggestions;
+  /**
+   * The shelves Make shelf made in this app run, by their commit: the library, the shelf's name, and the suggestion it answered (null for
+   * one Settings made from nothing), which an Undo of that commit puts back as pending (`afterUndo`).
+   */
+  private readonly madeShelves = new Map<string, { library: string; name: string; pending: PendingShelf | null }>();
+  /** The capture each filing's commit filed, in this app run (a filing's, or one of an evening review's): its Undo takes the capture's pages off any suggestion. */
+  private readonly filedCaptures = new Map<string, string>();
+  /** The folders whose Make shelf or No is waiting or running: a second press of either does nothing meanwhile. */
+  private readonly shelvesGoing = new Set<string>();
+  /** Edit first's suggestion, for Settings → General's shelf form (`SettingsSnapshot.shelfDraft`), until the form takes it. */
+  private shelfDraft: ShelfAsk | null = null;
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
   /** The notice of each shortcut another app holds, with its free alternatives, in the order they register. */
   private takenShortcuts: TakenShortcut[] = [];
@@ -3057,7 +3074,8 @@ export class Controller {
     const steps = job.background || !library ? null : (step: FilingStep) => this.filingStep(job, step, library.root, tell);
     try {
       [outcome] = await this.withRun(
-        async (signal) => (await this.librarian(job.harness)).file([job.capturePath], { signal, progress, ...(steps ? { steps } : {}) }),
+        async (signal) =>
+          (await this.librarian(job.harness)).file([job.capturePath], { signal, progress, pendingShelves: this.pendingShelvesOf(library?.root), ...(steps ? { steps } : {}) }),
         job.abort,
       );
     } catch (error) {
@@ -3089,6 +3107,8 @@ export class Controller {
     // takes them only while that library is the open one: not once it has closed, or another has opened.
     const pages = filedPages(library.root, outcome.changes);
     job.pages = pages;
+    // The shelf it suggests waits for the owner, joined to a pending one of the same shelf: the card and the receipt ask about it as kept.
+    const suggestion = this.keepSuggestion(library.root, outcome);
     // What the person is told of this filing, kept to be told again (`showLastReceipt`). A job in the background has no words of its own
     // (`fileInBackground`): they are those of the capture the engine archived. Setup's first thought has none, as it has an Undo of its own.
     const receipt: FilingReceipt | null = job.setup
@@ -3102,6 +3122,7 @@ export class Controller {
           noted: pages.length === 0,
           restored: outcome.restored,
           filedAt: Date.now(),
+          suggestion,
         };
     if (this.vault?.root === library.root) {
       this.recent = [...pages, ...this.recent.filter((p) => !pages.some((q) => q.path === p.path))].slice(0, 3);
@@ -3137,8 +3158,10 @@ export class Controller {
           noted: job.pages.length === 0,
           // The agent changed the capture and the engine put the person's words back: the card says they are kept. Absent when it didn't.
           ...(outcome.restored ? { restored: true as const } : {}),
+          ...(suggestion ? { suggestion } : {}),
         },
-        job.pages.length === 0 ? NO_NOTE_SHOW_MS : FILED_SHOW_MS,
+        // A card that asks about a shelf stays twice as long; when it goes, Library still asks.
+        suggestion ? FILED_SHOW_MS * 2 : job.pages.length === 0 ? NO_NOTE_SHOW_MS : FILED_SHOW_MS,
       );
     } else {
       const first = job.pages[0];
@@ -3842,6 +3865,7 @@ export class Controller {
       why = errorMessage(error);
     }
     if (why !== null) console.warn("take back", why);
+    else this.afterUndo(this.requireVault().root, [commit]); // the filing's pages are gone: they leave any suggestion (Edit refiles the note)
     // The menu's view of the log is read again. A take-back that git refused leaves the filing standing, in the log, and the run that
     // Stop or Edit cut short returned before it counted it (`runFiling`).
     this.readLog();
@@ -3898,7 +3922,9 @@ export class Controller {
     this.forgetFiling(commit, library.root); // before the first await: the menu doesn't offer a commit that is being taken back
     this.reverting.add(commit); // from before it waits in the queue until it lands: a reprint's Undo of this commit does nothing meanwhile
     try {
-      return (await this.enqueue(async () => (await this.librarianFor(library)).undo([commit]))) === 1;
+      const undone = (await this.enqueue(async () => (await this.librarianFor(library)).undo([commit]))) === 1;
+      if (undone) this.afterUndo(library.root, [commit]);
+      return undone;
     } finally {
       this.reverting.delete(commit);
       this.readLog();
@@ -3969,6 +3995,265 @@ export class Controller {
     this.tellUndone(undone, last.commit);
   }
 
+  // ---------------------------------------------------------------- shelves
+
+  /** The pending suggestions of the library at `root` as a filing's prompt lists them (`FileOptions.pendingShelves`); none without one. */
+  private pendingShelvesOf(root: string | undefined): { folder: string; name: string; definition: string }[] {
+    if (root === undefined) return [];
+    return this.shelfSuggestions.list(root).map(({ folder, name, definition }) => ({ folder, name, definition }));
+  }
+
+  /**
+   * What a filing that ended (a capsule's, a background one, or one of an evening review's) leaves for the shelf question: its commit's
+   * capture is remembered, for an Undo to take that capture's pages off a suggestion (`afterUndo`), and the shelf it suggests is kept as
+   * pending, joined to a pending one of the same shelf. Returns that suggestion as kept, or null for none. A suggestion that can't be kept
+   * (its file can't be written) is logged and dropped: the filing stands, and the card asks nothing.
+   */
+  private keepSuggestion(root: string, outcome: FileOutcome): ShelfAsk | null {
+    if (!outcome.ok) return null;
+    if (outcome.commit) this.filedCaptures.set(outcome.commit, outcome.captureId);
+    if (!outcome.suggestion) return null;
+    try {
+      return askOf(this.shelfSuggestions.add(root, outcome.suggestion, outcome.captureId));
+    } catch (error) {
+      console.error("shelf suggestions", error);
+      return null;
+    }
+  }
+
+  /**
+   * An Undo of `commits` landed in the library at `root`. A shelf Make shelf made is gone: the suggestion it answered waits again. A
+   * filing is gone: its capture's pages leave any suggestion, and one left with no page goes. After a relaunch the captures of older
+   * commits aren't known, so a pending page that is no page any more takes its capture off as well. Library and Settings are told.
+   */
+  private afterUndo(root: string, commits: readonly string[]): void {
+    try {
+      for (const commit of commits) {
+        const made = this.madeShelves.get(commit);
+        if (made?.pending) this.shelfSuggestions.restore(made.library, made.pending);
+        const capture = this.filedCaptures.get(commit);
+        this.filedCaptures.delete(commit);
+        if (capture !== undefined) this.shelfSuggestions.forgetCapture(root, capture);
+      }
+      const gone = new Set(
+        this.shelfSuggestions.list(root).flatMap((shelf) => shelf.pages.filter((page) => pageAt(root, page.path) !== "page").map((page) => page.captureId)),
+      );
+      for (const capture of gone) this.shelfSuggestions.forgetCapture(root, capture);
+    } catch (error) {
+      console.error("shelf suggestions", error);
+    }
+    this.shelvesChanged();
+  }
+
+  /** The shelves or their suggestions changed: Library lists the pages and asks again, Settings shows the shelves, and Ask reads again. */
+  private shelvesChanged(): void {
+    this.pagesVersion += 1;
+    this.refreshPanel();
+    this.broadcast();
+    this.askChanged();
+  }
+
+  /**
+   * Make shelf: `ask`'s shelf is made, as `edited` says when the owner changed it first (Settings' form), and the pages of its pending
+   * suggestion move onto it. All of it is one commit, in turn with the library's other runs (`enqueue`), and the engine takes the
+   * library's lock. The commit is the library's latest Undo (`lastFiled`, `undoRecords`), and its Undo puts the suggestion back as pending
+   * (`afterUndo`). A bar says how it went (`shelf-made`), or a notification when the capsule is busy. A suggestion the agent made with no
+   * definition is not made: Settings' shelf form opens on it, for the owner to say what belongs on it. A refusal (a name that is taken, a
+   * file in the folder's way) is told as a failed Undo is: on the card that asked, else by notification. A second press while the first
+   * waits or runs does nothing, and so does one for a suggestion no longer pending (answered meanwhile, or its filing undone).
+   */
+  async makeShelf(ask: ShelfAsk, edited?: OwnShelf): Promise<void> {
+    const vault = this.vault;
+    if (!vault || this.quitting || this.shelvesGoing.has(ask.folder)) return;
+    if (!edited && ask.definition.trim() === "") return this.openShelfDraft(ask);
+    const shelf = edited ?? { folder: ask.folder, name: ask.name, definition: ask.definition };
+    try {
+      await this.madeShelf(vault, shelf, ask.folder, { needsPending: !edited, tell: true });
+    } catch (error) {
+      this.tellShelfProblem("make", ask.folder, error);
+    }
+  }
+
+  /**
+   * Makes `shelf` in `vault` (`makeShelf`, Settings' `make`), with the pages of the pending suggestion for `fromSuggestion` when there is
+   * one. `needsPending`: make nothing when that suggestion is no longer pending, and return false. `tell`: say how it went in the capsule.
+   * Throws what the engine refused, with nothing changed.
+   */
+  private async madeShelf(
+    vault: Vault,
+    shelf: OwnShelf,
+    fromSuggestion: string | undefined,
+    { needsPending, tell }: { needsPending: boolean; tell: boolean },
+  ): Promise<boolean> {
+    const root = vault.root;
+    const key = fromSuggestion ?? shelf.folder;
+    this.shelvesGoing.add(key);
+    try {
+      const made = await this.enqueue(async () => {
+        const pending = fromSuggestion === undefined ? null : (this.shelfSuggestions.list(root).find((other) => other.folder === fromSuggestion) ?? null);
+        if (needsPending && pending === null) return null;
+        const result = await (await this.librarianFor(vault)).makeShelf(shelf, pending?.pages.map((page) => page.path) ?? []);
+        let removed: PendingShelf | null = null;
+        try {
+          if (pending) removed = this.shelfSuggestions.remove(root, pending.folder);
+        } catch (error) {
+          console.error("shelf suggestions", error); // the shelf is made all the same; its question would be refused as taken
+        }
+        return { result, removed };
+      });
+      if (made === null) {
+        this.dropCardSuggestion(key); // a card still asking about it would wait on its button for ever
+        return false;
+      }
+      const { result, removed } = made;
+      if (result.commit) {
+        this.madeShelves.set(result.commit, { library: root, name: shelf.name, pending: removed });
+        this.undoRecords.patch(root, { filing: result.commit, receipt: null });
+        if (this.vault?.root === root) {
+          this.lastFiled = { commit: result.commit, library: root };
+          this.lastReceipt = null; // its pages moved: the receipt of the filing before would print them where they no longer are
+        }
+      }
+      if (this.shelfDraft?.folder === key) this.shelfDraft = null;
+      if (tell) this.tellShelfMade(shelf.name, result.moved.length, result.notMoved.length);
+      this.shelvesChanged();
+      return true;
+    } finally {
+      this.shelvesGoing.delete(key);
+    }
+  }
+
+  /** Make shelf made `name`'s shelf: a bar says so over a finished card or none; over a capture, an editor or a problem, a notification. */
+  private tellShelfMade(name: string, moved: number, notMoved: number): void {
+    if (!this.quitting && !this.capturing() && this.showsFinishedCard()) {
+      this.setCapsule({ kind: "shelf-made", name, moved, notMoved }, SHELF_MADE_SHOW_MS);
+    } else {
+      this.notify("Shelf made", shelfMadeLine(name, moved, notMoved));
+    }
+  }
+
+  /**
+   * A shelf operation from the card or the panel was refused or failed: its problem (`shelfProblem`), told as a failed Undo is, on the
+   * filed card that asked about `folder` while the capsule shows it, else by notification. Nothing changed.
+   */
+  private tellShelfProblem(what: "make" | "decline", folder: string, error: unknown): void {
+    console.warn(`shelf ${what}`, error);
+    const problem = shelfProblem(what, errorMessage(error), reasonMax(error));
+    const card = this.capsuleState;
+    if (card.kind === "filed" && card.suggestion?.folder === folder) this.fail(problem);
+    else this.notify(problem.title, problem.body);
+  }
+
+  /** The filed card the capsule shows asks about `folder`, which has been answered: it goes, as Not now puts it away. */
+  private dropCardSuggestion(folder: string): void {
+    const card = this.capsuleState;
+    if (card.kind === "filed" && card.suggestion?.folder === folder) this.setCapsule({ kind: "hidden" });
+  }
+
+  /**
+   * Make shelf, on the filed card (`capsule.makeShelf`): the card's own suggestion (a filing's, or a reprint's), as it is pending now.
+   * The panel's Processing tab shows the same card, so any window may ask; nothing happens unless the capsule shows a card that asks.
+   */
+  async makeShelfFromCard(): Promise<void> {
+    const card = this.capsuleState;
+    if (card.kind !== "filed" || !card.suggestion) return;
+    const pending = this.vault ? this.shelfSuggestions.list(this.vault.root).find((shelf) => shelf.folder === card.suggestion?.folder) : undefined;
+    if (!pending) return this.dropCardSuggestion(card.suggestion.folder); // answered meanwhile: nothing to make
+    return this.makeShelf(askOf(pending));
+  }
+
+  /** Not now, on the filed card (`capsule.shelfLater`): the card goes, and its suggestion stays pending for Library to ask. */
+  shelfLater(): void {
+    const card = this.capsuleState;
+    if (card.kind === "filed" && card.suggestion) this.setCapsule({ kind: "hidden" });
+  }
+
+  /** Library's Make shelf (`shelf-make:<folder>`): the pending suggestion for `folder`, if there is one. */
+  private async makePendingShelf(folder: string): Promise<void> {
+    const pending = this.vault ? this.shelfSuggestions.list(this.vault.root).find((shelf) => shelf.folder === folder) : undefined;
+    if (pending) await this.makeShelf(askOf(pending));
+  }
+
+  /** Library's Edit first (`shelf-edit:<folder>`): Settings' shelf form opens on the pending suggestion for `folder`. */
+  private editPendingShelf(folder: string): void {
+    const pending = this.vault ? this.shelfSuggestions.list(this.vault.root).find((shelf) => shelf.folder === folder) : undefined;
+    if (pending) this.openShelfDraft(askOf(pending));
+  }
+
+  /**
+   * No, in Library (`shelf-decline:<folder>`): the folder goes into the library's `declined_shelves`, so the librarian doesn't suggest it
+   * again, and the suggestion goes. Pages stay where the librarian put them, but for a folder the agent made itself: its pages move to
+   * topics, and the empty folder goes. One commit, in turn with the library's runs. A refusal is told as Make shelf's is.
+   */
+  async declineShelf(folder: string): Promise<void> {
+    const vault = this.vault;
+    if (!vault || this.quitting || this.shelvesGoing.has(folder)) return;
+    const root = vault.root;
+    this.shelvesGoing.add(folder);
+    try {
+      const declined = await this.enqueue(async () => {
+        const pending = this.shelfSuggestions.list(root).find((shelf) => shelf.folder === folder);
+        if (!pending) return false;
+        await (await this.librarianFor(vault)).declineShelf(folder, pending.agentMade ? pending.pages.map((page) => page.path) : []);
+        try {
+          this.shelfSuggestions.remove(root, folder);
+        } catch (error) {
+          console.error("shelf suggestions", error); // declined all the same: the librarian won't suggest it again
+        }
+        return true;
+      });
+      if (!declined) return;
+      this.dropCardSuggestion(folder);
+      if (this.shelfDraft?.folder === folder) this.shelfDraft = null;
+      this.shelvesChanged();
+    } catch (error) {
+      this.tellShelfProblem("decline", folder, error);
+    } finally {
+      this.shelvesGoing.delete(folder);
+    }
+  }
+
+  /**
+   * Edit first: Settings → General comes up in the panel with the shelf form filled in from `raw` (a suggestion, as the windows send it:
+   * `settings.openShelfDraft`, or Library's `shelf-edit:`). The draft rides on the settings snapshot (`shelfDraft`) until the form takes it.
+   */
+  openShelfDraft(raw: unknown): void {
+    const ask = parseShelfAsk(raw);
+    if (!ask || !this.vault) return;
+    this.shelfDraft = ask;
+    this.showSettings("general"); // sends the snapshot, with the draft, once the panel is up
+  }
+
+  /** The shelf form took the draft, or let it go (`settings.dropShelfDraft`). */
+  dropShelfDraft(): void {
+    this.shelfDraft = null;
+  }
+
+  /**
+   * Settings → Your shelves (`settings.shelves`): make, edit or remove a shelf, each one commit, in turn with the library's other runs, as
+   * `setLibrarySettings` saves. A `make` from a suggestion (Edit first's Save) does what Make shelf does: it moves that suggestion's pages,
+   * takes it out of the pending ones, and says so in the capsule. What the engine refuses rejects, in its words, for Settings' refusal Notice.
+   */
+  async changeShelves(raw: unknown): Promise<SettingsSnapshot> {
+    const op = parseShelfOp(raw);
+    if (!op) throw new AvanzelError("Avanzel didn't understand that change to your shelves, so nothing changed. Try again.");
+    const vault = this.requireVault();
+    if (op.op === "make") {
+      await this.madeShelf(vault, op.shelf, op.fromSuggestion, { needsPending: false, tell: op.fromSuggestion !== undefined });
+    } else {
+      await this.enqueue(async () => {
+        const librarian = await this.librarianFor(vault);
+        if (op.op === "edit") {
+          await librarian.editShelf(op.folder, { ...(op.name !== undefined ? { name: op.name } : {}), ...(op.definition !== undefined ? { definition: op.definition } : {}) });
+        } else {
+          await librarian.removeShelf(op.folder);
+        }
+      });
+      this.shelvesChanged();
+    }
+    return this.snapshot();
+  }
+
   /**
    * The Undo shortcut is pressed, in any app. It does nothing in three cases:
    * - Setup's window is open: the first thought it shows has an Undo of its own on screen, and a bar over that window would contradict it.
@@ -4004,6 +4289,14 @@ export class Controller {
    * card does that by itself (`setCapsule`), a notification not.
    */
   private tellUndone(undone: boolean, commit: string): void {
+    // A shelf that Make shelf made: no filed card is of it, and no words went back to the inbox.
+    const shelf = this.madeShelves.get(commit);
+    if (shelf) {
+      this.madeShelves.delete(commit);
+      if (undone) this.notify("Undone", shelfUndoneNote(shelf.name, shelf.pending !== null));
+      else this.notify(undoRefused.title, undoRefused.body);
+      return this.refreshMenu();
+    }
     // The filed card the capsule shows: the reprint when one does, else the newest filing's. It is this filing's when its commit is `commit`,
     // and `shown` is then its words.
     const reprint = this.reprint;
@@ -4064,6 +4357,9 @@ export class Controller {
     const vault = this.vault;
     if (receipt === null || vault === null || !this.receiptShowable()) return;
     const pages = receipt.pages.filter((page) => pageAt(vault.root, page.path) === "page");
+    // Its shelf question only while that suggestion still waits, as it is now (a later filing may have joined it).
+    const pending = receipt.suggestion && this.shelfSuggestions.list(vault.root).find((shelf) => shelf.folder === receipt.suggestion?.folder);
+    const suggestion = pending ? askOf(pending) : null;
     this.setCapsule(
       {
         kind: "filed",
@@ -4075,8 +4371,9 @@ export class Controller {
         noted: receipt.noted,
         ...(receipt.restored ? { restored: true as const } : {}),
         reprint: { filedAt: receipt.filedAt },
+        ...(suggestion ? { suggestion } : {}),
       },
-      FILED_SHOW_MS,
+      suggestion ? FILED_SHOW_MS * 2 : FILED_SHOW_MS,
     );
     this.reprint = { ...receipt, pages }; // after `setCapsule`, which clears it for every card; Open and the titles read these pages (`shownPages`)
   }
@@ -4845,6 +5142,10 @@ export class Controller {
     }
     // A page deleted in Library: it goes to the Trash (where it can be put back), and the lines of index.md that link to it go too.
     if (action.startsWith("delete-page:")) return void this.deletePage(action.slice(12));
+    // Library's question about a pending shelf: Make shelf, Edit first (Settings → General's shelf form, filled in) and No. The panel stays.
+    if (action.startsWith("shelf-make:")) return void this.makePendingShelf(action.slice(11));
+    if (action.startsWith("shelf-edit:")) return this.editPendingShelf(action.slice(11));
+    if (action.startsWith("shelf-decline:")) return void this.declineShelf(action.slice(14));
     // A file a page names (a video, a screenshot), opened in the app the Mac opens it with. The panel keeps where it was, for the return.
     if (action.startsWith("open-file:")) return this.openLibraryFile(action.slice(10));
     // A file taken off a page ("remove-file:<page>\n<file>"): it goes to the Trash, and the page no longer names it.
@@ -5509,6 +5810,7 @@ export class Controller {
       undoableReview: input.undoableReview,
       opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
       update: this.updates.snapshot(),
+      shelfSuggestions: vault ? this.shelfSuggestions.list(vault.root).map(askOf) : [],
     };
   }
 
@@ -5620,6 +5922,8 @@ export class Controller {
             timeoutSeconds: settings?.timeoutSeconds ?? 900,
             dictionary: settings?.voice.dictionary ?? [],
             ...dictationInfo(settings),
+            ownShelves: exists ? ownShelvesInfo(settings?.shelves ?? [], vault.shelfCounts()) : [],
+            declinedShelves: settings?.declinedShelves ?? [],
           }
         : kept
           ? {
@@ -5638,6 +5942,8 @@ export class Controller {
               timeoutSeconds: 900,
               dictionary: [],
               ...dictationInfo(null),
+              ownShelves: [],
+              declinedShelves: [],
             }
           : null,
       hosted: this.hosted.info(),
@@ -5663,6 +5969,7 @@ export class Controller {
       obsidian: this.obsidianInstalled(),
       opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
       update: this.updates.snapshot(),
+      shelfDraft: this.shelfDraft,
     };
   }
 
@@ -6526,7 +6833,12 @@ export class Controller {
           const result = await this.withRun(async (signal) => {
             const librarian = await this.librarian(task.agent);
             // The count's total is read here, as the review begins.
-            return librarian.eveningReview({ instructions: task.instructions, signal, leave: this.countReview(task.id, left) });
+            return librarian.eveningReview({
+              instructions: task.instructions,
+              signal,
+              leave: this.countReview(task.id, left),
+              pendingShelves: this.pendingShelvesOf(library.root),
+            });
           });
           ranToItsEnd = true;
           filedNothing = !result.outcomes.length;
@@ -6535,6 +6847,8 @@ export class Controller {
             notify(task.name, nothingFiled(left.size));
             return;
           }
+          for (const outcome of result.outcomes) this.keepSuggestion(library.root, outcome); // as a filing's (`runFiling`), oldest first
+          this.refreshPanel(); // Library asks about what the review suggested
           const filedIds = new Set(result.outcomes.filter((o) => o.ok).map((o) => o.captureId));
           this.noteFiled((capture) => filedIds.has(path.basename(capture, path.extname(capture)))); // as a filing does (`runFiling`)
           this.undoRecords.patch(library.root, { evening: result.commits });
@@ -6593,6 +6907,7 @@ export class Controller {
       return null;
     });
     this.readLog();
+    if (undone !== null && undone > 0) this.afterUndo(library.root, commits);
     if (undone === null) this.notify(undoRefused.title, undoRefused.body);
     else this.notify("Evening review undone", undone === commits.length ? "Everything it filed is back in the inbox." : `${undone} of ${commits.length} changes were undone; see the library's history.`);
     this.refreshMenu();

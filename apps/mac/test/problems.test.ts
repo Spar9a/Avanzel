@@ -20,6 +20,7 @@ import {
   resetPhrase,
   saveProblem,
   screenCaptureProblem,
+  shelfProblem,
   stopFailedProblem,
   stopRefused,
   stoppedLine,
@@ -1295,5 +1296,24 @@ describe("the cursor dictation's copy prompt, for words that couldn't go in at t
 
   it("refuses a dictation while something else records in one calm line", () => {
     expect(DICTATION_REFUSED_LINE).toBe("Something else is recording. Try again when it stops.");
+  });
+});
+
+describe("shelfProblem, for Make shelf or No that was refused", () => {
+  it("says what didn't happen, the engine's own words, and that the pages are where they were", () => {
+    expect(shelfProblem("make", "A shelf called Projects already exists. Choose another name.")).toEqual({
+      title: "The shelf wasn't made.",
+      body: "A shelf called Projects already exists. Choose another name. Your pages are where they were.",
+    });
+    expect(shelfProblem("decline", "projects is not a suggested shelf, so nothing was turned down. Choose a suggestion.")).toEqual({
+      title: "The suggestion wasn't turned down.",
+      body: "Projects is not a suggested shelf, so nothing was turned down. Choose a suggestion. It still waits in Library.",
+    });
+  });
+
+  it("keeps a system error's line short for the card, and says it calmly", () => {
+    const problem = shelfProblem("make", `EACCES: permission denied, open '/Users/someone/${"a".repeat(200)}/AGENTS.md'`, 100);
+    expect(problem.body.endsWith(" Your pages are where they were.")).toBe(true);
+    for (const text of [problem.title, problem.body]) expect(text).not.toMatch(/!|oops/i);
   });
 });

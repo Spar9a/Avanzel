@@ -6,6 +6,7 @@ import { ACTION_NAMES, prettyAccelerator, takenMessage } from "../../main/shortc
 import type { AddingKind, AttachedItem, CapsuleState } from "../../shared/ipc.ts";
 import { addChoices, attachedItems } from "../common/attached.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
+import { shelfMadeLine } from "../../shared/shelves.ts";
 import { CALL_RUNNING_LINE, DICTATION_REFUSED_LINE } from "../../shared/transcribing.ts";
 import { api, type StateOf } from "./api.ts";
 import { stillInMenuLine } from "./copy.ts";
@@ -94,6 +95,11 @@ function dictationRefusedScene(): Scene {
   return { bar: { mood: "filed", line: DICTATION_REFUSED_LINE } };
 }
 
+/** Make shelf made a shelf: a bar says how many pages moved onto it, drawn as Undo's is, and goes by itself. */
+function shelfMadeScene(state: StateOf<"shelf-made">): Scene {
+  return { bar: { mood: "filed", line: shelfMadeLine(state.name, state.moved, state.notMoved) } };
+}
+
 /**
  * What each stacked state draws, from the top of its stack: its card and its bar. Every kind of state is here: a kind added
  * without a scene is a type error, not a blank panel, as `cancelled` and `recorded` were for two tasks.
@@ -124,6 +130,8 @@ function sceneOf(state: Stacked, levels: readonly number[], onAdd?: () => void):
       return callRunningScene();
     case "dictation-refused":
       return dictationRefusedScene();
+    case "shelf-made":
+      return shelfMadeScene(state);
     default: {
       const unhandled: never = state;
       return unhandled;

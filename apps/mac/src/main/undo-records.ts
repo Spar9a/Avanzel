@@ -6,7 +6,8 @@
 // `normalizeUndoRecord`, so anything that isn't a commit is dropped on the way in, and a receipt that isn't whole is none.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { FiledPage } from "../shared/ipc.ts";
+import type { FiledPage, ShelfAsk } from "../shared/ipc.ts";
+import { parseShelfAsk } from "./shelf-asks.ts";
 import { writeJsonAtomic } from "./store.ts";
 
 /** What a filing that ended well told the person, kept so that the card can be printed again (`Controller.showLastReceipt`). */
@@ -22,6 +23,8 @@ export interface FilingReceipt {
   restored: boolean;
   /** Date.now() as the filing ended: the reprint's stamp prints that day. */
   filedAt: number;
+  /** The shelf the filing suggested, as it was pending then; null for none. The reprint asks only while it is still pending. */
+  suggestion: ShelfAsk | null;
 }
 
 export interface UndoRecord {
@@ -50,7 +53,11 @@ function normalizePage(raw: unknown): FiledPage | null {
   return typeof raw.created === "boolean" ? { title: raw.title, shelf: raw.shelf, path: raw.path, created: raw.created } : null;
 }
 
-/** A receipt from whatever was read: kept only when it is whole, otherwise none. A copy, in one order of fields, as `patch` compares them. */
+/**
+ * A receipt from whatever was read: kept only when it is whole, otherwise none. A copy, in one order of fields, as `patch` compares them.
+ * Its suggestion is the one part that may be missing (a receipt from before suggestions) or broken: either reads as none, and the
+ * receipt stays.
+ */
 function normalizeReceipt(raw: unknown): FilingReceipt | null {
   if (!isObject(raw)) return null;
   const { commit, text, agent, seconds, noted, restored, filedAt } = raw;
@@ -58,7 +65,7 @@ function normalizeReceipt(raw: unknown): FilingReceipt | null {
   if (!isCount(seconds) || !isCount(filedAt) || typeof noted !== "boolean" || typeof restored !== "boolean" || !Array.isArray(raw.pages)) return null;
   const pages = raw.pages.map(normalizePage);
   if (!pages.every((page): page is FiledPage => page !== null)) return null;
-  return { commit, text, agent, seconds, pages, noted, restored, filedAt };
+  return { commit, text, agent, seconds, pages, noted, restored, filedAt, suggestion: parseShelfAsk(raw.suggestion) };
 }
 
 /** A record from whatever was read: a `filing` that is no commit is none, `evening` is kept only when every item is a commit, and a receipt only when whole. */

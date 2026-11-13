@@ -27,7 +27,11 @@ const RECEIPT: FilingReceipt = {
   noted: false,
   restored: true,
   filedAt: 1_792_000_000_000,
+  suggestion: null,
 };
+
+/** A shelf the filing suggested, as the card asks about it. */
+const ASK = { folder: "projects-x", name: "Projects X", definition: "Work with a goal and a deadline.", agentMade: false };
 
 const onDisk = (file: string): Record<string, unknown> => JSON.parse(readFileSync(file, "utf8"));
 
@@ -238,5 +242,26 @@ describe("normalizeUndoRecord", () => {
     expect(normalizeUndoRecord({ receipt: { ...RECEIPT, filedAt: -1 } }).receipt).toBeNull();
     expect(normalizeUndoRecord({ receipt: null }).receipt).toBeNull();
     expect(normalizeUndoRecord({ filing: A }).receipt).toBeNull(); // a record from before receipts had none
+  });
+
+  it("reads a receipt's shelf suggestion: none when it is missing, kept when whole, dropped (not the receipt) when broken", () => {
+    const { suggestion: _, ...before } = RECEIPT;
+    expect(normalizeUndoRecord({ receipt: before }).receipt).toEqual({ ...RECEIPT, suggestion: null }); // a receipt from before suggestions
+    expect(normalizeUndoRecord({ receipt: { ...RECEIPT, suggestion: ASK } }).receipt).toEqual({ ...RECEIPT, suggestion: ASK });
+    expect(normalizeUndoRecord({ receipt: { ...RECEIPT, suggestion: { ...ASK, surprise: 1 } } }).receipt).toEqual({ ...RECEIPT, suggestion: ASK });
+    const agentMade = { ...ASK, definition: "", agentMade: true };
+    expect(normalizeUndoRecord({ receipt: { ...RECEIPT, suggestion: agentMade } }).receipt).toEqual({ ...RECEIPT, suggestion: agentMade });
+    const broken: [string, unknown][] = [
+      ["no folder", { name: ASK.name, definition: ASK.definition, agentMade: false }],
+      ["a folder that is no string", { ...ASK, folder: 3 }],
+      ["no name", { ...ASK, name: undefined }],
+      ["a definition that is no string", { ...ASK, definition: null }],
+      ["agentMade that is no boolean", { ...ASK, agentMade: "no" }],
+      ["a string", "projects"],
+      ["a list", [ASK]],
+    ];
+    for (const [what, suggestion] of broken) {
+      expect(normalizeUndoRecord({ filing: A, receipt: { ...RECEIPT, suggestion } }), what).toEqual({ filing: A, evening: [], receipt: { ...RECEIPT, suggestion: null } });
+    }
   });
 });
