@@ -587,3 +587,71 @@ export const RESTART_NOT_STARTED = "Avanzel didn't restart.";
 
 /** The title of the Notice for a Not now that didn't call off the restart that waits. */
 export const RESTART_NOT_CALLED_OFF = "The restart wasn't called off.";
+
+// ---------------------------------------------------------------- Your shelves (General)
+
+/** The group's heading, and the sentence under it. */
+export const SHELVES_LABEL = "Your shelves";
+export const SHELVES_NOTE = "Shelves you add here are in your library's AGENTS.md, and the librarian files onto them.";
+/** The row that stands in for the list while the owner has no shelf of their own. */
+export const SHELVES_EMPTY = "None yet.";
+export const ADD_SHELF = "Add shelf";
+export const SAVE_SHELF = "Save shelf";
+/** A shelf's row without a definition (a folder made by hand), and what adds one. */
+export const NO_DEFINITION = "No definition yet";
+export const ADD_DEFINITION = "Add definition";
+/** The form's fields. */
+export const SHELF_NAME_LABEL = "Name";
+export const SHELF_FOLDER_LABEL = "Folder";
+export const SHELF_DEFINITION_LABEL = "What belongs on it";
+/** What the Folder field says while the name gives no folder to suggest (it has no Latin letters or digits), and none is typed. */
+export const FOLDER_LATIN_HINT = "Type a folder name in Latin letters, such as projects.";
+
+/** A folder's most characters, as the engine holds it (MAX_SHELF_FOLDER in shelves.ts); the renderer can't import the engine, so a test pins this to it. The name's and the definition's limits are the engine's to enforce, in its own words. */
+export const MAX_SHELF_FOLDER = 40;
+
+/** The remove question, over the Remove button of a shelf with no pages. */
+export const removeShelfQuestion = (name: string): string => `Remove the ${name} shelf? Its folder is empty, so nothing else changes.`;
+
+/** A shelf's row: what belongs on it (or that nothing is said), and how many pages it holds. */
+export function shelfRowLine(definition: string, pages: number): string {
+  return `${definition === "" ? NO_DEFINITION : definition} · ${pages} ${pages === 1 ? "page" : "pages"}`;
+}
+
+/** The folder to suggest for a shelf name, as the engine's `suggestFolder` makes it: up to five words of its Latin letters and digits, joined by dashes. Empty when it has none. */
+export function folderHint(name: string): string {
+  const ascii = name.normalize("NFKD").replace(/[^\x00-\x7f]/g, "");
+  const words = (ascii.toLowerCase().match(/[a-z0-9]+/g) ?? []).slice(0, 5);
+  return words.join("-").slice(0, MAX_SHELF_FOLDER).replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Why `folder` can't be a new shelf's folder, as the engine's `folderProblem` says it (null when it can); `taken` is the folders of the
+ * owner's shelves. A test holds this equal to the engine's.
+ */
+export function folderProblemText(folder: string, taken: readonly string[]): string | null {
+  if (folder === "") return "A shelf needs a folder name. Type one in lowercase letters, digits and dashes.";
+  if (folder.startsWith(".")) return "A folder name can't start with a dot. Choose another folder name.";
+  if (folder.length > MAX_SHELF_FOLDER) {
+    return `A folder name can be at most ${MAX_SHELF_FOLDER} characters, and this one has ${folder.length}. Choose a shorter folder name.`;
+  }
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(folder)) {
+    return "A folder name uses lowercase letters a to z, digits and single dashes, with no spaces. Choose another folder name.";
+  }
+  if (BUILT_IN_FOLDERS.includes(folder)) return `${folder} is one of Avanzel's own shelves. Choose another folder name.`;
+  if (SPECIAL_FOLDERS.includes(folder)) return `${folder} is a folder Avanzel keeps for itself. Choose another folder name.`;
+  if (taken.includes(folder)) return `A shelf called ${folder} already exists. Choose another folder name.`;
+  return null;
+}
+
+const BUILT_IN_FOLDERS: readonly string[] = [...SHELVES, "meetings"];
+const SPECIAL_FOLDERS: readonly string[] = ["inbox", "raw", "reviews", "tasks"];
+
+/**
+ * The line under the Folder field: the hint when the name has no Latin letters and no folder is typed, the folder's problem when
+ * it has one, else none. Nothing is said before a name or a folder is typed.
+ */
+export function folderLine(name: string, folder: string, taken: readonly string[]): string | undefined {
+  if (folder === "") return name.trim() === "" ? undefined : FOLDER_LATIN_HINT;
+  return folderProblemText(folder, taken) ?? undefined;
+}

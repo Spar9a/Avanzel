@@ -1,4 +1,12 @@
-import { modelBytes, MODELS, SPEECH_MODELS, VAD_MODEL } from "@avanzel/engine";
+import {
+  folderProblem,
+  MAX_SHELF_FOLDER,
+  modelBytes,
+  MODELS,
+  SPEECH_MODELS,
+  suggestFolder,
+  VAD_MODEL,
+} from "@avanzel/engine";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SKIP_APPS } from "../src/main/cursor-policy.ts";
 import {
@@ -31,10 +39,24 @@ import {
   DOWNLOAD_NOT_STARTED,
   failedSaveLine,
   fileModeLine,
+  FOLDER_LATIN_HINT,
+  folderHint,
+  folderLine,
+  folderProblemText,
   kindLine,
   lastRunLine,
   leavesThisMacLine,
   libraryLine,
+  ADD_DEFINITION,
+  ADD_SHELF,
+  MAX_SHELF_FOLDER as APP_MAX_SHELF_FOLDER,
+  NO_DEFINITION,
+  removeShelfQuestion,
+  SAVE_SHELF,
+  shelfRowLine,
+  SHELVES_EMPTY,
+  SHELVES_LABEL,
+  SHELVES_NOTE,
   microphoneName,
   microphoneOptions,
   notSavedLine,
@@ -730,5 +752,61 @@ describe("what the Updates group says of Avanzel's own update", () => {
       expect(line).not.toContain("...");
       expect(line).not.toMatch(/\b[A-Z]{2,}\b|Oops|Sorry|successfully/);
     }
+  });
+});
+
+describe("Settings → Your shelves", () => {
+  // The renderer can't import the engine, so it keeps its own copy of the folder rule. These hold the copy equal to the engine's.
+  const FOLDERS = [
+    "projects", "side-quests-2", "a".repeat(40), "Projects", "-a", "a--b", "a-", "a".repeat(41), "", "my projects", "проекты",
+    "goals", "ideas", "problems", "memories", "people", "topics", "meetings", "inbox", "raw", "reviews", "tasks", ".x", "x_y",
+  ];
+  const TAKEN: readonly (readonly string[])[] = [[], ["projects"], ["other", "side-quests-2"]];
+
+  it("makes the folder to suggest as the engine does", () => {
+    for (const name of ["My Projects", "Проекты", "", "  Side   quests, 2! ", "Café à Paris", "a b c d e f g h", "x".repeat(60), "Ideas 💡"]) {
+      expect(folderHint(name)).toBe(suggestFolder(name));
+    }
+    expect(folderHint("My Projects")).toBe("my-projects");
+  });
+
+  it("asks for a folder typed in Latin letters when the name has none, and nothing crashes", () => {
+    expect(folderHint("Проекты")).toBe("");
+    expect(FOLDER_LATIN_HINT).toBe("Type a folder name in Latin letters, such as projects.");
+    // The hint shows for a name with no folder to suggest, and for no name at all it stays quiet.
+    expect(folderLine("Проекты", "", [])).toBe(FOLDER_LATIN_HINT);
+    expect(folderLine("", "", [])).toBeUndefined();
+    expect(folderLine("My Projects", "my-projects", [])).toBeUndefined();
+  });
+
+  it("tells a folder's problem in the engine's words", () => {
+    for (const taken of TAKEN) {
+      for (const folder of FOLDERS) {
+        expect(folderProblemText(folder, taken)).toBe(folderProblem(folder, taken));
+      }
+    }
+    expect(folderLine("Projects", "ideas", [])).toBe(folderProblem("ideas", []));
+    expect(folderLine("Projects", "projects", ["projects"])).toContain("already exists");
+  });
+
+  it("holds the folder limit the engine holds", () => {
+    expect(APP_MAX_SHELF_FOLDER).toBe(MAX_SHELF_FOLDER);
+  });
+
+  it("has the group's words", () => {
+    expect(SHELVES_LABEL).toBe("Your shelves");
+    expect(SHELVES_NOTE).toBe("Shelves you add here are in your library's AGENTS.md, and the librarian files onto them.");
+    expect(SHELVES_EMPTY).toBe("None yet.");
+    expect(ADD_SHELF).toBe("Add shelf");
+    expect(SAVE_SHELF).toBe("Save shelf");
+    expect(NO_DEFINITION).toBe("No definition yet");
+    expect(ADD_DEFINITION).toBe("Add definition");
+    expect(removeShelfQuestion("Projects")).toBe("Remove the Projects shelf? Its folder is empty, so nothing else changes.");
+  });
+
+  it("describes a shelf by its definition and its pages", () => {
+    expect(shelfRowLine("Work with a goal.", 0)).toBe("Work with a goal. · 0 pages");
+    expect(shelfRowLine("Work with a goal.", 1)).toBe("Work with a goal. · 1 page");
+    expect(shelfRowLine("", 12)).toBe("No definition yet · 12 pages");
   });
 });

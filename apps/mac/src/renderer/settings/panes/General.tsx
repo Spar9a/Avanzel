@@ -1,4 +1,4 @@
-// Settings → General: the library, where it is and what it holds, with its six shelves under it; when a thought is
+// Settings → General: the library, where it is and what it holds, with its shelves under it, and the shelves of your own (panes/Shelves.tsx); when a thought is
 // filed; Avanzel's version and its updates; and opening at login. Without a library, the Notice that says why stands where
 // the library would be, and the other groups follow as usual. Each control applies at once. The shortcuts have a pane of their own.
 import { Actions, Button, Group, GroupRow, Notice, Progress, Row, Segmented, ShelfDrawer, Stack, Switch, Text, type SegmentedOption } from "@avanzel/ui";
@@ -7,6 +7,7 @@ import type { FileMode, UpdateStatus } from "../../../shared/ipc.ts";
 import { fileModeLine, libraryLine, RESTART_NOT_CALLED_OFF, RESTART_NOT_STARTED, UPDATE_CHECK_NOT_STARTED, UPDATE_NOT_NOW, updateLine, versionLabel } from "../copy.ts";
 import { attemptChange, NoLibrary, type PaneProps } from "../parts.tsx";
 import type { ReviewEdits } from "./Reviews.tsx";
+import { Shelves } from "./Shelves.tsx";
 
 const api = window.avanzel.settings;
 
@@ -117,12 +118,13 @@ export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
           {/* The shelves, in the library's panel under its row: a row holds a label and a control, not a line of tabs, so
               they sit in a box of their own. Each tab carries its total, read as "3 notes". */}
           <div className="settings-shelves">
-            <ShelfDrawer total align="start" counts={lib.shelves} />
+            <ShelfDrawer total align="start" counts={lib.shelves} own={lib.ownShelves.map((shelf) => ({ own: shelf.folder, name: shelf.name, count: shelf.pages }))} />
           </div>
         </Group>
       ) : (
         <NoLibrary snap={snap} onChange={onChange} attempt={attempt} />
       )}
+      {lib?.exists && <Shelves {...props} shelves={lib.ownShelves} />}
       <Group label="After you speak">
         <GroupRow label="File each thought" description={fileModeLine(evening)}>
           <Segmented label="When to file" options={FILE_MODES} value={snap.app.fileMode} onChange={(fileMode) => attemptChange(props, () => api.setApp({ fileMode }))} />
