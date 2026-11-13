@@ -47,6 +47,23 @@ describe("settings store", () => {
     expect(normalizeSettings({ callConsent: 1 }).callConsent).toBe(false);
   });
 
+  it("keeps the library closed to other agents until the person opens it, and takes anything but true for closed", () => {
+    expect(DEFAULT_SETTINGS.agentAccess).toBe(false);
+    expect(normalizeSettings({}).agentAccess).toBe(false);
+    expect(normalizeSettings({ agentAccess: true }).agentAccess).toBe(true);
+    expect(normalizeSettings({ agentAccess: "yes" }).agentAccess).toBe(false);
+    expect(normalizeSettings({ agentAccess: 1 }).agentAccess).toBe(false);
+    const file = path.join(tmp(), "settings.json");
+    new SettingsStore(file).update({ agentAccess: true });
+    expect(new SettingsStore(file).get().agentAccess).toBe(true);
+  });
+
+  it("only reads a missing settings file, never writes it", () => {
+    const file = path.join(tmp(), "settings.json");
+    new SettingsStore(file).get();
+    expect(existsSync(file)).toBe(false);
+  });
+
   it("keeps the call consent across an update", () => {
     const file = path.join(tmp(), "settings.json");
     new SettingsStore(file).update({ callConsent: true });

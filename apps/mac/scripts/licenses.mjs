@@ -14,13 +14,14 @@ const mac = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const repo = path.resolve(mac, "..", "..");
 
 /**
- * The npm packages esbuild bundles into dist: React in the windows; smol-toml, and electron-updater with what it needs, in the
- * main process.
+ * The npm packages esbuild bundles into dist: React in the windows; smol-toml, electron-updater with what it needs, and the MCP
+ * SDK with what it needs (Avanzel --mcp), in the main process.
  */
 const BUNDLED = [
   "react", "react-dom", "scheduler", "smol-toml",
   "electron-updater", "builder-util-runtime", "lazy-val", "debug", "ms", "has-flag", "supports-color", "fs-extra", "graceful-fs",
   "jsonfile", "universalify", "js-yaml", "lodash.escaperegexp", "lodash.isequal", "sax", "semver",
+  "@modelcontextprotocol/sdk", "zod", "zod-to-json-schema", "ajv", "ajv-formats", "fast-deep-equal", "fast-uri", "json-schema-traverse",
 ];
 /** Bundled packages that carry no licence file of their own. Their texts are in apps/mac/licenses. */
 const BUNDLED_TEXTS = { "lazy-val": "lazy-val-LICENSE.txt" };

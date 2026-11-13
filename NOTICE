@@ -41,6 +41,12 @@ electron-updater and builder-util-runtime
   jsonfile, universalify, js-yaml, lodash.escaperegexp, lodash.isequal, sax and
   semver) are under the MIT, ISC or Blue Oak Model 1.0.0 licences, and their
   licence texts ship inside the app.
+MCP TypeScript SDK: @modelcontextprotocol/sdk
+  (https://github.com/modelcontextprotocol/typescript-sdk)
+  Copyright (c) 2024 Anthropic, PBC. MIT License. The packages bundled with it
+  (zod, zod-to-json-schema, ajv, ajv-formats, fast-deep-equal, fast-uri and
+  json-schema-traverse) are under the MIT, ISC or BSD 3-Clause licences, and
+  their licence texts ship inside the app.
 ONNX Runtime: onnxruntime-node and onnxruntime-common
   (https://github.com/microsoft/onnxruntime)
   Copyright (c) Microsoft Corporation. MIT License. The notices for the

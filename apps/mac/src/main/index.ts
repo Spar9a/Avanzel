@@ -6,15 +6,15 @@ import { fileURLToPath } from "node:url";
 import { Controller } from "./controller.ts";
 import { debugSwitch } from "./debug-switches.ts";
 import { registerIpc } from "./ipc.ts";
+import { isMcpMode, runMcpMode } from "./mcp-mode.ts";
 import { loginShellPath, widenedPath } from "./shell-path.ts";
 
 /** True in a release's bundle (scripts/build.mjs, with AVANZEL_RELEASE_BUILD=1 from scripts/release.mjs), and false otherwise. */
 declare const __AVANZEL_RELEASE__: boolean | undefined;
 
 // A release won't start with a debugger's port open, since through it any program could use Avanzel's microphone (debug-switches.ts).
-if (typeof __AVANZEL_RELEASE__ !== "undefined" && __AVANZEL_RELEASE__ && debugSwitch((name) => app.commandLine.hasSwitch(name))) {
-  app.exit(1);
-}
+const refused = typeof __AVANZEL_RELEASE__ !== "undefined" && __AVANZEL_RELEASE__ && debugSwitch((name) => app.commandLine.hasSwitch(name)) !== null;
+if (refused) app.exit(1);
 
 const DIST = path.dirname(fileURLToPath(import.meta.url));
 process.env.AVANZEL_TEMPLATES ??= path.join(DIST, "templates");
@@ -22,13 +22,20 @@ process.env.AVANZEL_ASSETS ??= path.join(DIST, "engine-assets");
 // Nothing the app starts runs as Node (the packaged app can't: its runAsNode fuse is off). A shell that set this, as
 // some terminals do, doesn't pass it on to the agents either.
 delete process.env.ELECTRON_RUN_AS_NODE;
-// The tests' first runs keep PATH exactly as given (AVANZEL_EXACT_PATH), so no agent CLI of this Mac's own is found.
-if (!(process.env.AVANZEL_TEST === "1" && process.env.AVANZEL_EXACT_PATH === "1")) {
+if (process.env.AVANZEL_USER_DATA) app.setPath("userData", process.env.AVANZEL_USER_DATA);
+// Started by another agent's MCP client (`Avanzel --mcp`), Avanzel only serves the library on stdin and stdout (mcp-mode.ts): no
+// login shell, lock, controller, window or tray, and nothing else on stdout.
+const mcp = !refused && isMcpMode(process.argv);
+if (mcp) {
+  void runMcpMode();
+} else if (!(process.env.AVANZEL_TEST === "1" && process.env.AVANZEL_EXACT_PATH === "1")) {
+  // The tests' first runs keep PATH exactly as given (AVANZEL_EXACT_PATH), so no agent CLI of this Mac's own is found.
   process.env.PATH = widenedPath(process.env.PATH ?? "", process.env.AVANZEL_TEST === "1" ? null : loginShellPath());
 }
-if (process.env.AVANZEL_USER_DATA) app.setPath("userData", process.env.AVANZEL_USER_DATA);
 
-if (!app.requestSingleInstanceLock()) {
+if (mcp || refused) {
+  // Serving another agent, or a refused release already exiting.
+} else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   let controller: Controller | null = null;

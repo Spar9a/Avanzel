@@ -11,6 +11,7 @@
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs && env -u ELECTRON_RUN_AS_NODE electron .",
     "dev:watch": "node scripts/dev.mjs",
+    "mcp": "node scripts/build.mjs && env -u ELECTRON_RUN_AS_NODE electron . --mcp",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "e2e": "node scripts/build.mjs && playwright test --project quiet",

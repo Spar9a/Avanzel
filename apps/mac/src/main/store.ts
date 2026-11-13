@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
   cursorDictation: Object.freeze({ enabled: false, key: "right-option" }),
   voiceTrigger: Object.freeze({ enabled: false, word: TRIGGER_WORD, stopWord: STOP_WORD }),
   checkForUpdates: true,
+  agentAccess: false,
 }) as AppSettings;
 
 const CURSOR_KEYS: readonly CursorKey[] = ["right-option", "left-option", "right-command", "right-control"];
@@ -87,6 +88,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
     voiceTrigger: voiceTriggerOf(r.voiceTrigger),
     // On unless the person turned it off: a settings file from before the setting has it on.
     checkForUpdates: r.checkForUpdates !== false,
+    agentAccess: r.agentAccess === true,
   };
 }
 

@@ -429,6 +429,11 @@ export interface AppSettings {
   voiceTrigger: { enabled: boolean; word: string; stopWord: string };
   /** Avanzel looks for its own updates by itself (main/updater.ts): 30 s after it starts, then every 6 hours. On until the person turns it off; Check now works either way. */
   checkForUpdates: boolean;
+  /**
+   * "Let your other agents use this library": while on, `Avanzel --mcp` (main/mcp-mode.ts) lets the owner's other agents read the
+   * library and leave notes in its inbox. Off until the person turns it on; the server reads it on every call.
+   */
+  agentAccess: boolean;
 }
 
 /**
