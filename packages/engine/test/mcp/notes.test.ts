@@ -108,6 +108,14 @@ describe("remember", () => {
     expectRefused({ tags: ["a", "a"] }, /“a”.*twice/);
   });
 
+  it("refuses a tag with a Hangul filler letter, which shows as nothing", () => {
+    for (const filler of ["\u3164", "\u115F", "\u1160", "\uFFA0"]) {
+      expectRefused({ tags: [`work${filler}`] }, /isn't allowed/);
+      expectRefused({ tags: [filler] }, /isn't allowed/);
+    }
+    expect(run({ tags: ["한국어"] }).ok).toBe(true);
+  });
+
   it("accepts a nested Russian tag and a 40-character tag", () => {
     const result = run({ tags: ["работа/avanzel", "ё-тест", "a".repeat(40), "2026/q4"] });
     if (!result.ok) throw new Error(result.error);
@@ -135,7 +143,8 @@ describe("remember", () => {
   });
 
   it("checks the context keys and values", () => {
-    for (const key of ["title", "agent", "shelf", "tags", "related", "supersedes", "id", "type", "source", "created", "Title"]) {
+    const keys = ["title", "agent", "shelf", "tags", "related", "supersedes", "id", "type", "source", "created", "Title"];
+    for (const key of [...keys, "continues", "Continues", "status", "updated", "aliases"]) {
       expectRefused({ context: { [key]: "x" } }, new RegExp(`“${key}”`));
     }
     expectRefused({ context: { "bad key": "x" } }, /context key/i);
@@ -235,6 +244,24 @@ describe("remember", () => {
     const result = run({});
     if (!result.ok) throw new Error(result.error);
     expect(result.similar).toEqual([{ path: "memories/pnpm.md", title: "Package manager" }]);
+  });
+
+  it("ranks the page about the thing above a long page of common words", () => {
+    const common = "The owner said that this is the plan for the race, and that they have to train with care. ";
+    write(tmp(), "goals/marathon.md", `---\ntitle: Run a marathon\n---\n\n${common.repeat(40)}\n`);
+    write(tmp(), "memories/package-manager.md", "---\ntitle: Package manager\n---\n\nUses pnpm, never npm, in JavaScript.\n");
+    for (const n of [1, 2, 3]) write(tmp(), `ideas/idea-${n}.md`, `---\ntitle: Idea ${n}\n---\n\nThe owner has a plan for this.\n`);
+    const result = run({ text: "The owner prefers pnpm over npm in JavaScript projects, and that is the plan for every one of them." });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.similar[0]).toEqual({ path: "memories/package-manager.md", title: "Package manager" });
+    expect(result.similar.length).toBeLessThanOrEqual(3);
+  });
+
+  it("finds no similar page from common words alone", () => {
+    write(tmp(), "goals/marathon.md", "---\ntitle: Run a marathon\n---\n\nThe owner and they were with this, for that.\n");
+    const result = run({ text: "The owner and they were with this, for that." });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.similar).toEqual([]);
   });
 
   it("gives two notes with the same text and time two different ids", () => {

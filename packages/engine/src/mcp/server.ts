@@ -134,10 +134,18 @@ export function createAgentServer(access: AgentAccess, version: string): McpServ
     ({ query, limit, offset, tag, shelf, include_captures }) =>
       withLibrary(access, (root) => {
         const found = searchLibrary(root, query, { limit, offset, tag, shelf, includeCaptures: include_captures });
-        // A capture's words are someone's, not instructions: its matching line and log bullet come fenced.
-        const hits = found.hits.map((hit) =>
-          hit.capture === null ? hit : { ...hit, line: fenced(hit.line), log: hit.log && { ...hit.log, text: fenced(hit.log.text) } },
-        );
+        // A capture's words are someone's, not instructions: its title, matching line and log bullet come fenced. Keys go out in
+        // snake_case, as every tool's do.
+        const hits = found.hits.map(({ log, ...hit }) => {
+          const entry = log && { date: log.date, text: log.text, capture_id: log.captureId };
+          if (hit.capture === null) return { ...hit, log: entry };
+          return {
+            ...hit,
+            title: hit.title === null ? null : fenced(hit.title),
+            line: fenced(hit.line),
+            log: entry && { ...entry, text: fenced(entry.text) },
+          };
+        });
         return say(JSON.stringify({ ...found, hits }));
       }),
   );
@@ -161,7 +169,7 @@ export function createAgentServer(access: AgentAccess, version: string): McpServ
       withLibrary(access, (root) => {
         const kind = readableKind(root, path);
         if (kind === null) return fail(`No page at ${path.slice(0, PATH_SHOWN)}. Use search to find it.`);
-        const part = bound(readFileSync(join(root, path), "utf8"), { section, from, count, maxChars: max_chars });
+        const part = bound(readFileSync(join(root, path), "utf8"), { section, from, count, maxChars: max_chars, capture: kind === "capture" });
         if ("error" in part) return fail(part.error);
         const text = kind === "capture" ? fenced(part.text) : part.text;
         if (part.continueFrom === null) return say(text);
@@ -190,9 +198,9 @@ export function createAgentServer(access: AgentAccess, version: string): McpServ
           JSON.stringify({
             shelves: new Vault(root).shelfCounts(),
             tags: tags.slice(0, TOP_TAGS),
-            moreTags: Math.max(0, tags.length - TOP_TAGS),
+            more_tags: Math.max(0, tags.length - TOP_TAGS),
             index,
-            ...(index === text ? {} : { indexCut: true }),
+            ...(index === text ? {} : { index_cut: true }),
           }),
         );
       }),

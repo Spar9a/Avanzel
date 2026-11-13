@@ -72,9 +72,10 @@ const CALL =
 // Self-contained: libraries made before agents could leave notes keep their old AGENTS.md.
 const MAX_AGENT_NAME = 60;
 function agentNote(agent: string): string {
-  const name = plainLine(agent).replaceAll("$", "").replaceAll("`", "'").slice(0, MAX_AGENT_NAME);
+  // The name is the agent's own, so it goes in quotes and can't close them: it reads as a name, never as a sentence of the prompt.
+  const name = plainLine(agent).replaceAll("$", "").replace(/[`"“”„«»]/g, "'").slice(0, MAX_AGENT_NAME);
   return (
-    `This capture was written by the owner's agent ${name}, not by the owner. File it as that agent's: the log line reads ` +
+    `This capture was written by the owner's agent “${name}”, not by the owner. File it as that agent's: the log line reads ` +
     `"From ${name}: ...", and a page that says what the note said gives it as the agent's, never as the owner's words. Put the ` +
     "note's `tags` on every page you file it onto, merged with the page's own; a tag that means the same as one the library " +
     "already uses is written as the existing one. Where the note disagrees with the owner, the page keeps the owner's version " +

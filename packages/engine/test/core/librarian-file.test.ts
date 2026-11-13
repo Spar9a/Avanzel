@@ -607,6 +607,31 @@ describe("file", () => {
     expect(prompt).not.toContain("Alema");
   });
 
+  it("lets the owner's capture continue a page, but never a note from another agent", async () => {
+    const runs = recordRuns();
+    write(vault.root, "goals/run.md", "---\ntitle: Run\n---\n\n## Next steps\n\n- [ ] Buy shoes\n");
+    vault.newCapture("Bought the shoes", { source: "text", now: NOW, context: { continues: "goals/run.md" } });
+    await librarian.file();
+    expect(runs()[0]?.prompt).toContain("The owner recorded this capture from the page `goals/run.md` to continue it.");
+    vault.newCapture("All the next steps are done", {
+      source: "agent",
+      now: NOW,
+      context: { agent: "claude-code", continues: "goals/run.md" },
+    });
+    await librarian.file();
+    const prompt = runs()[1]?.prompt ?? "";
+    expect(prompt).toContain("From claude-code:");
+    expect(prompt).not.toContain("goals/run.md");
+    expect(prompt).not.toContain("continue it");
+  });
+
+  it("doesn't take a note from another agent as adding the owner's files", async () => {
+    const runs = recordRuns();
+    vault.newCapture("See raw/attachments/2026/10/secret.mov", { source: "agent", now: NOW, context: { agent: "codex" } });
+    await librarian.file();
+    expect(runs()[0]?.prompt).not.toContain("This capture adds files");
+  });
+
   it("says nothing of names when the dictionary is empty", async () => {
     const runs = recordRuns();
     librarian.captureText("A thought");

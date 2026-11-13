@@ -1,11 +1,10 @@
 // What an outside agent's note goes through on its way into the inbox: checked, cleaned, capped and written
 // as a capture the librarian files later. Nothing here touches a page; the only thing written is one capture.
 import { readFileSync } from "node:fs";
-import { extname } from "node:path";
+import { extname, join } from "node:path";
 import { loadSettings } from "../core/config.ts";
-import { pageMeta, tagCounts } from "../core/pages.ts";
-import { searchLibrary } from "../core/search.ts";
-import { BUILT_IN_SHELVES } from "../core/shelves.ts";
+import { fold, markdownFiles, pageMeta, tagCounts } from "../core/pages.ts";
+import { BUILT_IN_SHELVES, SPECIAL_DIRS } from "../core/shelves.ts";
 import type { Vault } from "../core/vault.ts";
 
 /** At most this many agent notes wait in the inbox at once, because each costs one filing run. */
@@ -22,10 +21,13 @@ const MAX_CONTEXT_VALUE = 300;
 const MAX_AGENT = 60;
 const SIMILAR_TEXT = 900;
 const SIMILAR_LIMIT = 3;
+const SIMILAR_TERMS = 12;
+const SIMILAR_CANDIDATES = 40;
 
 const TAG = /^[\p{Ll}\p{Lo}\p{N}][\p{Ll}\p{Lo}\p{N}/-]*$/u;
 const CONTEXT_KEY = /^[A-Za-z][\w-]*$/;
-// Written by the capture or by this module, so a note's own context can't set them (compared without case).
+// Written by the capture or by this module, or read by the librarian and search as the owner's (`continues` points a filing
+// at a page to update; `status`, `updated` and `aliases` are a page's own), so a note's context can't set them (compared without case).
 const RESERVED_KEYS = new Set([
   "id",
   "type",
@@ -40,7 +42,13 @@ const RESERVED_KEYS = new Set([
   "tags",
   "related",
   "supersedes",
+  "continues",
+  "status",
+  "updated",
+  "aliases",
 ]);
+// Hangul filler letters: \p{Lo} lets them through, and they show as nothing, so a tag made of them looks empty or like another.
+const TAG_FILLERS = /[\u115F\u1160\u3164\uFFA0]/u;
 // Characters a reader can't see: soft hyphen, Arabic letter mark, Mongolian vowel separator, zero-width and bidi controls
 // (U+200B-200F, U+202A-202E, U+2060-2069 with the isolates), the byte order mark, and the Unicode tag block, the usual way
 // to hide instructions in text. HTML comments are the other way, so they go too.
@@ -137,7 +145,7 @@ export function remember(
   if (tags.length > MAX_TAGS) return refuse(`Too many tags: ${MAX_TAGS} tags is the most.`);
   for (const [index, tag] of tags.entries()) {
     if (tag === "") return refuse("A tag can't be empty: leave it out, or write 1 to 40 characters.");
-    if (typeof tag !== "string" || tag.length > MAX_TAG || !TAG.test(tag)) {
+    if (typeof tag !== "string" || tag.length > MAX_TAG || !TAG.test(tag) || TAG_FILLERS.test(tag)) {
       return refuse(`Tag “${String(tag)}” isn't allowed: use lowercase letters, digits, - and /, up to ${MAX_TAG} characters.`);
     }
     if (tags.indexOf(tag) !== index) return refuse(`Tag “${tag}” is given twice: list each tag once.`);
@@ -196,8 +204,7 @@ export function remember(
 
   const used = new Set(tagCounts(vault.root).map((entry) => entry.tag));
   const newTags = tags.filter((tag) => !used.has(tag));
-  const similar = searchLibrary(vault.root, [title, text.slice(0, SIMILAR_TEXT)].filter(Boolean).join(" "), { limit: SIMILAR_LIMIT })
-    .hits.map(({ path, title: pageTitle }) => ({ path, title: pageTitle }));
+  const similar = similarPages(vault.root, title ?? "", text.slice(0, SIMILAR_TEXT));
 
   const capture = vault.newCapture(text, {
     source: "agent",
@@ -212,4 +219,71 @@ export function remember(
     lists: { tags, related: relatedNames.map((name) => `[[${name}]]`) },
   });
   return { ok: true, id: capture.id, newTags, similar, stripped, when };
+}
+
+// Words too common to say what a note is about, in English and Russian (folded, ё as е). Words under three letters go anyway.
+const STOPWORDS = new Set(
+  (
+    "the and that with for this from have has had was were are not but you your they them their there then than what when " +
+    "where which who will would can could should about into over also just more most some such only other its our out all any " +
+    "been being does did one very owner " +
+    "они это что как для или его она был все так уже еще его ему ее она оно мне меня нас вас они них при про над под без " +
+    "через когда если чтобы тоже также только было были будет есть нет этот эта эти тот там тут где кто чем вот себя свой " +
+    "очень можно нужно владелец"
+  )
+    .split(" ")
+    .map(fold),
+);
+
+/** The distinct words of `text` worth matching on: folded, three letters or more, and not a common word. */
+function keywords(text: string): string[] {
+  const words = fold(text).match(/[\p{L}\p{N}_]+/gu) ?? [];
+  return [...new Set(words.filter((word) => [...word].length >= 3 && !STOPWORDS.has(word)))];
+}
+
+/**
+ * Up to three shelf pages that look like the same thing as a note. The note's own words are cut to its 12 most telling: the
+ * title's first, then those fewest pages use, longer ones before shorter. A page scores one for each of them it contains (a word
+ * of the page starting with it) and two more for each in its title, aliases or file name, so a long page full of common words
+ * doesn't outrank the one page about the thing.
+ */
+function similarPages(root: string, title: string, text: string): Array<{ path: string; title: string | null }> {
+  const titleTerms = keywords(title);
+  const textTerms = keywords(text)
+    .filter((term) => !titleTerms.includes(term))
+    .sort((a, b) => b.length - a.length);
+  const candidates = [...titleTerms, ...textTerms].slice(0, SIMILAR_CANDIDATES);
+  if (candidates.length === 0) return [];
+  const pages: Array<{ path: string; title: string | null; body: string; names: string }> = [];
+  for (const rel of markdownFiles(root)) {
+    if (SPECIAL_DIRS.includes(rel.split("/")[0] ?? "")) continue;
+    let content: string;
+    try {
+      content = readFileSync(join(root, rel), "utf8");
+    } catch {
+      continue;
+    }
+    const meta = pageMeta(content);
+    const stem = (rel.split("/").at(-1) ?? "").slice(0, -".md".length);
+    pages.push({ path: rel, title: meta.title, body: fold(content), names: fold([meta.title ?? "", ...meta.aliases, stem].join(" ")) });
+  }
+  const startsWord = new Map(candidates.map((term) => [term, new RegExp(`(?<![\\p{L}\\p{N}_])${term}`, "u")]));
+  const used = new Map(candidates.map((term) => [term, pages.filter((page) => startsWord.get(term)?.test(page.body)).length]));
+  const rank = (a: string, b: string) => (used.get(a) ?? 0) - (used.get(b) ?? 0) || b.length - a.length;
+  const terms = [
+    ...titleTerms.filter((term) => (used.get(term) ?? 0) > 0).sort(rank),
+    ...textTerms.filter((term) => (used.get(term) ?? 0) > 0).sort(rank),
+  ].slice(0, SIMILAR_TERMS);
+  const scored = pages
+    .map((page) => ({
+      page,
+      score: terms.reduce((sum, term) => {
+        const pattern = startsWord.get(term);
+        if (!pattern) return sum;
+        return sum + (pattern.test(page.body) ? 1 : 0) + (pattern.test(page.names) ? 2 : 0);
+      }, 0),
+    }))
+    .filter((entry) => entry.score > 0);
+  scored.sort((a, b) => b.score - a.score || (a.page.path < b.page.path ? -1 : a.page.path > b.page.path ? 1 : 0));
+  return scored.slice(0, SIMILAR_LIMIT).map(({ page }) => ({ path: page.path, title: page.title }));
 }

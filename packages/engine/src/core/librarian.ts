@@ -653,8 +653,10 @@ export class Librarian {
     const foldersBefore = this.#topLevelFolders();
     const call = this.#isCall(original.toString("utf8"));
     const agent = this.#agentOf(original.toString("utf8"));
-    const continues = this.#continues(original.toString("utf8"));
-    const files = original.toString("utf8").includes("raw/attachments/");
+    // An agent's note speaks with the agent's voice only: what the owner's own captures can ask of a filing (a page to
+    // continue, files they added) is not read from it.
+    const continues = agent === null ? this.#continues(original.toString("utf8")) : null;
+    const files = agent === null && original.toString("utf8").includes("raw/attachments/");
     const prompt = filePrompt(captureRel, captureId, now, { attachments, call, agent, continues, files, names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term), instructions, shelves: this.#shelfNotes(pending) });
     // Only a caller that asked for the steps is told them: Claude Code's come from its own events, and other agents'
     // from the folder. The changes below are read from `after`, the library as the run left it, whether or not they are.
@@ -804,11 +806,14 @@ export class Librarian {
 
   /**
    * The page the capture continues (its `continues:` field, set when the owner recorded it from that page): library-relative, a
-   * Markdown page on a shelf that is there now. Null for anything else, so a field can never point the agent outside the library.
+   * Markdown page on a shelf that is there now. Null for anything else, so a field can never point the agent outside the library,
+   * and null for a note from another agent (`source: agent`): only the owner's own captures continue a page.
    */
   #continues(captureText: string): string | null {
     const [frontmatter] = splitFrontmatter(captureText);
-    const rel = frontmatterFields(frontmatter).get("continues")?.replace(/^["']|["']$/g, "").trim();
+    const fields = frontmatterFields(frontmatter);
+    if (fields.get("source") === "agent") return null;
+    const rel = fields.get("continues")?.replace(/^["']|["']$/g, "").trim();
     if (!rel || isAbsolute(rel) || !rel.endsWith(".md") || rel.split(/[\\/]/).some((part) => part === ".." || part === "")) return null;
     if (SOURCES.some((source) => rel.startsWith(source))) return null; // a page, never a capture or a recording
     return isRegularFile(join(this.vault.root, rel)) ? rel : null;

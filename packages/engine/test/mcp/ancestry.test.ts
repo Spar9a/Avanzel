@@ -64,6 +64,22 @@ describe("launchedBy", () => {
     expect(launchedBy("/A/Avanzel", 50, parentOf)).toBe(false);
   });
 
+  it("is unknown, not false, when the process table can't be read", () => {
+    const broken: ParentOf = () => {
+      throw new Error("spawn /bin/ps ENOENT");
+    };
+    expect(launchedBy("/A/Avanzel", 50, broken)).toBe("unknown");
+    const { parentOf } = table({});
+    expect(launchedBy("/A/Avanzel", 50, parentOf)).toBe("unknown"); // the process itself isn't found
+    let calls = 0;
+    const failsLater: ParentOf = (pid) => {
+      calls += 1;
+      if (calls > 1) throw new Error("ps timed out");
+      return { ppid: pid - 10, path: "/usr/local/bin/claude" };
+    };
+    expect(launchedBy("/A/Avanzel", 50, failsLater)).toBe("unknown");
+  });
+
   it("walks at most 64 steps", () => {
     let asked = 0;
     const endless: ParentOf = (pid) => {
@@ -84,6 +100,20 @@ describe("psParentOf", () => {
 
   it("is null for a pid that runs nothing", () => {
     expect(psParentOf(999_999)).toBeNull();
+  });
+
+  it("throws when ps can't be run, rather than saying no such process", () => {
+    expect(() => psParentOf(process.pid, "/no/such/ps")).toThrow();
+  });
+
+  it("runs /bin/ps, whatever PATH says", () => {
+    const path = process.env.PATH;
+    process.env.PATH = "/nonexistent";
+    try {
+      expect(psParentOf(process.pid)?.ppid).toBe(process.ppid);
+    } finally {
+      process.env.PATH = path;
+    }
   });
 
   it("finds the test runner among this process's ancestors only when it is one", () => {
