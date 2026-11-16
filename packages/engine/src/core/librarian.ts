@@ -806,7 +806,7 @@ export class Librarian {
     const refused = result.refused.map((refusedPath) => insideLibrary(root, refusedPath) ?? refusedPath);
     const restored = restoral === "restored";
     const ran = { agent, changes, message: result.output, restored, savedOriginal, guarded, refused, keptOld, newFolders };
-    const error = this.#notFiled(result, restoral, changes, captureId, archiveRel);
+    const error = this.#notFiled(result, restoral, changes, captureId, archiveRel, keptOld);
     if (error !== null) {
       // What the run left behind (it failed, timed out, was cancelled or filed nothing) is its own
       // commit, handed out with the outcome so Undo covers it; a run that changed nothing makes none.
@@ -845,7 +845,7 @@ export class Librarian {
 
   /**
    * Every shelf as the filing prompt lists it: the built-in ones, the owner's own, the pending suggestions and the ones turned down. An
-   * own shelf's map goes with it only when one of the `found` notes is on it.
+   * own shelf's map goes with it when one of the `found` notes is on it, or, when nothing was found, when it is a learned shelf.
    */
   #shelfNotes(pending: readonly PendingShelf[], found: readonly FoundNote[] = []): ShelfNote[] {
     const { shelves, declinedShelves } = this.settings;
@@ -858,11 +858,13 @@ export class Librarian {
     }));
     return [
       ...built,
-      ...shelves.map(({ folder, name, definition, map }) => ({
+      ...shelves.map(({ folder, name, definition, map, learnedAt }) => ({
         folder,
         name,
         definition,
-        ...(map && foundOn.has(folderKey(folder)) ? { map } : {}),
+        // With notes found, only the maps of their shelves; with none, every learned shelf's, to choose a subfolder by.
+        ...(map && (found.length ? foundOn.has(folderKey(folder)) : Boolean(learnedAt)) ? { map } : {}),
+        ...(learnedAt ? { learned: true } : {}),
         kind: "own" as const,
       })),
       ...pending.map((shelf) => ({ ...shelf, kind: "pending" as const })),
@@ -932,9 +934,16 @@ export class Librarian {
    * a person knows it: a card keeps only about the first 100 characters of a line, and a capture's id is long, while the card
    * and the evening review's digest already say which note it is.
    */
-  #notFiled(result: RunResult, restoral: Restoral, changes: Changes, captureId: string, archiveRel: string): string | null {
+  #notFiled(result: RunResult, restoral: Restoral, changes: Changes, captureId: string, archiveRel: string, keptOld: readonly string[]): string | null {
     if (!result.ok) return (result.stderr || result.output).trim().slice(-800);
     if (restoral === "blocked") return "A symlink in inbox/ kept Avanzel from putting back the words the agent changed.";
+    if (keptOld.length && !changes.pages.length) {
+      // Its log line may name a page, but everything it wrote was put back (`restoreKept`): the thought is on no shelf.
+      return (
+        `${agentName(this.harness.name)} only changed notes it may not rewrite, so they were put back as they were. ` +
+        "The thought stays in the inbox for the next filing."
+      );
+    }
     if (!changes.pages.length && !this.vault.logMentions(captureId)) {
       // Exit 0 but nothing written: a denied tool, a refusal or a question back. Not filed.
       const reply = collapse(result.output) || "(no reply)";
@@ -1024,8 +1033,10 @@ export class Librarian {
       if (save) await this.#commitOwnerChanges("saving an answer");
       const before = snapshot(this.vault.root);
       const prompt = askPrompt(question, { save, now, answer, history, shelves: this.settings.shelves });
+      const kept = save ? this.#keptNotes(before) : null; // a read-only run has no write tools
       const { result, guarded } = await this.#run(prompt, { write: save, signal });
-      const changes = diff(before, snapshot(this.vault.root)).without(guarded);
+      const ran = diff(before, snapshot(this.vault.root)).without(guarded);
+      const changes = kept ? ran.without(restoreKept(this.vault.root, kept, ran)) : ran;
       let commit: string | null = null;
       const saved = changes.pages.filter(isShelfPage);
       if (save && result.ok && saved.length) {

@@ -55,6 +55,8 @@ export interface ShelfNote {
   kind: "built-in" | "own" | "pending" | "declined";
   /** How an own shelf's subfolders are used, as a study learned it; shown under the shelf's line. */
   map?: string;
+  /** An own shelf a study learned from the library (`OwnShelf.learnedAt`): its notes are the owner's, and not all in index.md. */
+  learned?: boolean;
 }
 
 const KIND_TAGS: Readonly<Record<ShelfNote["kind"], string>> = { "built-in": "", own: "", pending: " (pending)", declined: " (turned down)" };
@@ -134,6 +136,18 @@ const FILE_FOUND_RULE =
   "If the thought belongs in one of these notes, add it there, written the way that note's entries are written, where its entries go. " +
   "A note that was the owner's before may only be added to: never change, move or delete a line that is already in it. " +
   "Otherwise make a new page, in the subfolder its shelf's map points to; make a subfolder there when the map's pattern calls for one.";
+
+const ADDED_TO_ONLY = "A note that was the owner's before may only be added to: never change, move or delete a line that is already in it.";
+
+/** Where the learned shelves' notes are to be looked for, found or not; "" when no shelf was learned. */
+function learnedShelvesNote(shelves: readonly ShelfNote[]): string {
+  const learned = shelves.filter((shelf) => shelf.kind === "own" && shelf.learned).map((shelf) => `${fenceSafe(shelf.folder)}/`);
+  if (learned.length === 0) return "";
+  return (
+    `These shelves were learned from the library: ${learned.join(", ")}. Their notes are not all in index.md: search them by name ` +
+    `and text before you create a page. ${ADDED_TO_ONLY}`
+  );
+}
 
 /** The house style inside its fence, no longer than settings allow; "" when there is none. */
 function styleNote(style: string): string {
@@ -250,6 +264,8 @@ export function filePrompt(
   const spelled = boundedNames(names);
   if (spelled.length > 0) notes.push(`The owner uses these names and terms. Spell them exactly this way: ${spelled.join(", ")}.`);
   if (shelves.length > 0) notes.push(`${FILE_SHELVES_INTRO}<shelves>\n${shelfLines(shelves)}</shelves>\n${FILE_SHELVES_RULE}`);
+  const searchLearned = learnedShelvesNote(shelves);
+  if (searchLearned) notes.push(searchLearned);
   const styled = styleNote(style);
   if (styled) notes.push(styled);
   const foundNotes = foundNote(found);
@@ -318,7 +334,9 @@ export function askPrompt(
   const chars = Array.from(oneLine);
   if (chars.length > 80) oneLine = `${chars.slice(0, 79).join("").trimEnd()}…`;
   const shownAnswer = save ? (answer?.trim() ?? "") : "";
-  const mode = save ? substitute(shownAnswer ? SAVE_SHOWN : SAVE, { question_line: oneLine, ...times(now) }) : READONLY;
+  const saving = save ? substitute(shownAnswer ? SAVE_SHOWN : SAVE, { question_line: oneLine, ...times(now) }) : READONLY;
+  // A save links the answer from the pages it draws on, which on a learned shelf may be the owner's older notes.
+  const mode = save && shelves.some((shelf) => shelf.learnedAt) ? `${saving}\n   ${ADDED_TO_ONLY}` : saving;
   const answerBlock = shownAnswer ? substitute(SHOWN, { answer: keepInsideFence(shownAnswer, "shown-answer") }) : "";
   const shelvesNote = readOnlyShelvesNote(shelves);
   const shown = shelvesNote ? `${answerBlock}\n${shelvesNote}\n` : answerBlock;

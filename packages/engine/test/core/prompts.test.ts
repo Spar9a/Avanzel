@@ -406,6 +406,26 @@ describe("the shelves in a prompt", () => {
     expect(filePrompt("inbox/x.md", "x", NOW, { shelves: [own] })).not.toContain("map:");
   });
 
+  it("names the learned shelves to search, found notes or not, and says their older notes may only be added to", () => {
+    const prompt = filePrompt("inbox/x.md", "x", NOW, { shelves: [built, { ...own, learned: true }, { ...own, folder: "Diary", learned: true }] });
+    expect(prompt).toContain(
+      "These shelves were learned from the library: projects/, Diary/. Their notes are not all in index.md: search them by name and text " +
+        "before you create a page. A note that was the owner's before may only be added to: never change, move or delete a line that is " +
+        "already in it.\n\n",
+    );
+    expect(prompt.indexOf("</shelves>")).toBeLessThan(prompt.indexOf("These shelves were learned"));
+    expect(filePrompt("inbox/x.md", "x", NOW, { shelves: [built, own] })).not.toContain("learned from the library");
+  });
+
+  it("tells a saving ask, and only a saving one, that a learned shelf's older notes may only be added to", () => {
+    const learned = [{ folder: "Philosophy", name: "Philosophy", definition: "Thinkers.", learnedAt: "2026-10-20" }];
+    const sentence = "A note that was the owner's before may only be added to";
+    expect(askPrompt("Q?", { save: true, now: NOW, shelves: learned })).toContain(`→ [[page-name]]\n   ${sentence}`);
+    expect(askPrompt("Q?", { save: true, now: NOW, answer: "A.", shelves: learned })).toContain(sentence);
+    expect(askPrompt("Q?", { save: false, now: NOW, shelves: learned })).not.toContain(sentence);
+    expect(askPrompt("Q?", { save: true, now: NOW, shelves: [{ folder: "Philosophy", name: "Philosophy", definition: "Thinkers." }] })).not.toContain(sentence);
+  });
+
   it("tells the review to leave the owner's older notes alone on a learned shelf", () => {
     const learned = [{ folder: "Philosophy", name: "Philosophy", definition: "Thinkers.", map: "Stoicism/", learnedAt: "2026-10-20" }];
     const review = reviewPrompt("reviews/r.md", NOW, learned);

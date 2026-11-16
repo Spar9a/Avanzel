@@ -24,7 +24,7 @@
 // study-garbled (a study-folder run for a folder named in $FAKE_AGENT_FOLDER, comma-separated, replies "not json"; a study-combine run too when the list names "combine") |
 // add-to-found (a filing appends "\n## <today's entry start>\n<words>\n" to the first `path:` of the prompt's <found-notes>, instead of
 // writing an idea page) | rewrite-found (a filing replaces that note's text with "<words>\n") | new-subfolder (a filing writes its page as
-// $FAKE_AGENT_FOLDER/idea-<id>.md, a nested path, making the folders) | rewrite-note (a review replaces the text of $FAKE_AGENT_PAGE).
+// $FAKE_AGENT_FOLDER/idea-<id>.md, a nested path, making the folders) | rewrite-note (a review, or an ask that saves, replaces the text of $FAKE_AGENT_PAGE).
 // The study tasks (study-folder, study-combine) answer with a fenced json block built from the prompt, in every other mode.
 // The agent check's prompt, "Reply with the single word: ready.", gets "ready".
 // FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt, pid}.
@@ -516,7 +516,10 @@ if (task === "file") {
   const earlier = [...chat.matchAll(/^Owner: (.*)$/gm)].map((m) => m[1]);
   const follows = earlier.length ? `\nEarlier: ${earlier.length} (first: ${earlier[0]})` : "";
   await reply(`Q: ${question}\nPages: ${pages.join(", ") || "none"}${follows}`);
-  if (prompt.includes("save the answer")) writeFileSync(join(root, "topics", "answer.md"), "# Answer\n");
+  if (prompt.includes("save the answer")) {
+    writeFileSync(join(root, "topics", "answer.md"), "# Answer\n");
+    if (mode === "rewrite-note") writeFileSync(join(root, process.env.FAKE_AGENT_PAGE), "Rewritten by a saved answer.\n");
+  }
 } else if (task === "review") {
   const report = join(root, /write the report to `([^`]+)`/.exec(prompt)[1]);
   if (mode === "link-report") {
