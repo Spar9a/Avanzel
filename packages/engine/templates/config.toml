@@ -12,6 +12,10 @@ auto_commit = ${auto_commit}
 
 # Shelves the librarian suggested and you turned down. It won't suggest them again.
 ${declined_shelves}
+# Folders of your own notes that studying your library leaves alone, as they are named on disk.
+${excluded_folders}
+# How your library is written, in your words. It is also kept in AGENTS.md, so every agent writes the same way.
+${house_style}
 # Optional model per harness, to keep filing quick and cheap on your subscription,
 # e.g. claude = "sonnet", codex = "<model name>", opencode = "<provider>/<model>".
 [models]

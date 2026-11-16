@@ -34,7 +34,6 @@ import { askPrompt, filePrompt, reviewPrompt, type AskTurn, type ShelfNote } fro
 import {
   BUILT_IN_DEFINITIONS,
   BUILT_IN_SHELVES,
-  MAX_OWN_SHELVES,
   MAX_SHELF_NAME,
   agentMadeFolders,
   checkedSuggestion,
@@ -398,9 +397,6 @@ export class Librarian {
       const clash = current.shelves.find((other) => sameShelf(other.folder, folder) || sameShelf(other.name, name));
       if (clash) throw new AvanzelError(`A shelf called ${clash.name} already exists. Choose another name.`);
       refuseBuiltInName(name);
-      if (current.shelves.length >= MAX_OWN_SHELVES) {
-        throw new AvanzelError(`You have ${MAX_OWN_SHELVES} shelves of your own, and that is the most. Remove one you don't use, then try again.`);
-      }
       const problem = folderProblem(folder, current.shelves.map((other) => other.folder));
       if (problem) throw new AvanzelError(problem);
       const there = lstatOrNull(join(root, folder));

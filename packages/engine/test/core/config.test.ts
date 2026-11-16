@@ -78,6 +78,8 @@ describe("loadSettings", () => {
       autoCommit: true,
       shelves: [],
       declinedShelves: [],
+      houseStyle: "",
+      excludedFolders: [],
       models: {},
       harnesses: {},
       voice: {
@@ -315,9 +317,11 @@ describe("saveSettings", () => {
       autoCommit: false,
       shelves: [
         { folder: "projects", name: "Projects", definition: "Work with a goal." },
-        { folder: "side-quests", name: 'Side "quests" \\ дом', definition: "Small jobs, one at a time: they end in a day." },
+        { folder: "side-quests", name: 'Side "quests" \\ дом', definition: "Small jobs, one at a time: they end in a day.", map: 'Done/: "finished"\nNow/: \\ дом', learnedAt: "2026-11-16" },
       ],
       declinedShelves: ["recipes", "trips"],
+      houseStyle: 'Dates as 16.11.2026.\n"Quoted" \\ дом',
+      excludedFolders: ["Архив", 'odd "name"'],
       models: { claude: "sonnet", "cursor-agent": "gpt-5", "my agent": 'model "x" \\ дом' },
       harnesses: {
         fake: { name: "fake", headless: ["node", "/tmp/agent \"x\".mjs", "--dir={vault}", "{prompt}"], interactive: [] },
@@ -476,11 +480,35 @@ describe("own shelves in config.toml", () => {
     expect(() => saveSettings(tmp(), settings)).toThrow(AvanzelError);
   });
 
-  it("refuses 21 shelves and accepts 20", () => {
-    const many = (count: number) => Array.from({ length: count }, (_, i) => shelf(`shelf-${i}`)).join("\n");
-    const error = thrownBy(() => load(many(21)));
-    expect(error).toBeInstanceOf(AvanzelError);
-    expect(error.message).toContain("20");
-    expect(load(many(20)).shelves).toHaveLength(20);
+  it("takes more than twenty own shelves", () => {
+    const shelves = Array.from({ length: 45 }, (_, i) => ({ folder: `f${i}`, name: `F${i}`, definition: "x" }));
+    saveSettings(tmp(), { ...defaultSettings(), shelves });
+    expect(loadSettings(tmp()).shelves).toHaveLength(45);
+  });
+
+  it("keeps a shelf's map and learned date, the house style and the excluded folders", () => {
+    const settings = {
+      ...defaultSettings(),
+      houseStyle: "Notes start with a summary.\nDates as 16.11.2026.",
+      excludedFolders: ["Архив"],
+      shelves: [
+        { folder: "Philosophy", name: "Philosophy", definition: "Ideas of thinkers.", map: "Stoicism/: one folder per thinker\nLogic/: notes", learnedAt: "2026-11-16" },
+      ],
+    };
+    saveSettings(tmp(), settings);
+    expect(loadSettings(tmp())).toMatchObject({ houseStyle: settings.houseStyle, excludedFolders: ["Архив"], shelves: settings.shelves });
+  });
+
+  it("reads a library from before learning with no style, no exclusions and shelves without maps", () => {
+    const settings = load(shelf("projects", 'name = "Projects"\ndefinition = "x"\n'));
+    expect(settings).toMatchObject({ houseStyle: "", excludedFolders: [] });
+    expect(settings.shelves.every((one) => !("map" in one) && !("learnedAt" in one))).toBe(true);
+  });
+
+  it("refuses a map over 1,200 characters and a house style over 4,000, naming the key", () => {
+    expect(thrownBy(() => load(shelf("p", `name = "P"\ndefinition = "x"\nmap = "${"m".repeat(1201)}"\n`))).message).toContain("shelves[0].map");
+    expect(load(shelf("p", `name = "P"\ndefinition = "x"\nmap = "${"m".repeat(1200)}"\n`)).shelves[0]!.map).toHaveLength(1200);
+    expect(thrownBy(() => load(`house_style = "${"s".repeat(4001)}"\n`)).message).toContain("house_style");
+    expect(load(`house_style = "${"s".repeat(4000)}"\n`).houseStyle).toHaveLength(4000);
   });
 });

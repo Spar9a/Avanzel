@@ -8,18 +8,20 @@ import {
   checkedSuggestion,
   cleanDefinition,
   folderProblem,
-  MAX_OWN_SHELVES,
   parseSuggestion,
   sameShelf,
   SHELF_SECTION_END,
   SHELF_SECTION_START,
+  STYLE_SECTION_START,
   suggestFolder,
   withIndexHeading,
   withIndexHeadingRenamed,
   withIndexLineMoved,
   withoutEmptyIndexHeading,
   withShelfSection,
+  withStyleSection,
   writeShelfSection,
+  writeStyleSection,
   type OwnShelf,
 } from "../../src/core/shelves.ts";
 import { template } from "../../src/core/templates.ts";
@@ -88,7 +90,6 @@ describe("folderProblem", () => {
 describe("BUILT_IN_SHELVES", () => {
   it("is the six shelves and meetings", () => {
     expect(BUILT_IN_SHELVES).toEqual(["goals", "ideas", "problems", "memories", "people", "topics", "meetings"]);
-    expect(MAX_OWN_SHELVES).toBe(20);
   });
 });
 
@@ -262,6 +263,50 @@ describe("index headings", () => {
     expect(withoutEmptyIndexHeading(withEmpty, "Projects")).toBe(`${index}\n## People\n\n- [[ann]] — Ann\n`);
     expect(withoutEmptyIndexHeading(withEmpty, "People")).toBe(withEmpty);
     expect(withoutEmptyIndexHeading(withEmpty, "Ideas")).toBe(withEmpty);
+  });
+});
+
+describe("withStyleSection", () => {
+  const agentsMd = template("AGENTS.md");
+
+  it("puts the style right after the shelves section, and rewrites it in place", () => {
+    const once = withStyleSection(agentsMd, "Dates as 16.11.2026.");
+    expect(once.indexOf(STYLE_SECTION_START)).toBeGreaterThan(once.indexOf(SHELF_SECTION_END));
+    expect(once).toContain("## How this library is written\n\nDates as 16.11.2026.");
+    expect(withStyleSection(once, "New style.").split(STYLE_SECTION_START)).toHaveLength(2);
+    expect(withStyleSection(once, "New style.")).not.toContain("16.11.2026");
+  });
+
+  it("removes the section for an empty style, leaving the rest byte for byte", () => {
+    expect(withStyleSection(withStyleSection(agentsMd, "x"), "")).toBe(agentsMd);
+  });
+
+  it("goes at the end of an AGENTS.md of the owner's own without shelf markers", () => {
+    expect(withStyleSection("# Mine\n", "x")).toMatch(/^# Mine\n\n<!-- avanzel:style -->/);
+  });
+
+  it("changes nothing when there is no style and no section", () => {
+    expect(withStyleSection("# Mine\n", "")).toBe("# Mine\n");
+  });
+});
+
+describe("writeStyleSection", () => {
+  const tmp = useTmp();
+
+  it("writes the style into AGENTS.md and keeps the rest", () => {
+    writeFileSync(join(tmp(), "AGENTS.md"), "# Mine\n");
+    writeStyleSection(tmp(), "Dates as 16.11.2026.");
+    expect(readFileSync(join(tmp(), "AGENTS.md"), "utf8")).toBe(withStyleSection("# Mine\n", "Dates as 16.11.2026."));
+  });
+
+  it("replaces a symlink instead of following it", () => {
+    const outside = join(tmp(), "outside.md");
+    writeFileSync(outside, "outside text");
+    mkdirSync(join(tmp(), "lib"));
+    symlinkSync(outside, join(tmp(), "lib", "AGENTS.md"));
+    writeStyleSection(join(tmp(), "lib"), "x");
+    expect(readFileSync(outside, "utf8")).toBe("outside text");
+    expect(readFileSync(join(tmp(), "lib", "AGENTS.md"), "utf8")).toBe(withStyleSection("", "x"));
   });
 });
 

@@ -17,12 +17,15 @@ export interface OwnShelf {
   folder: string;
   name: string;
   definition: string;
+  /** The shelf's subfolder outline (at most 1,200 characters, may hold line breaks), set when a study made the shelf. */
+  map?: string;
+  /** The day (YYYY-MM-DD) a study's Apply made the shelf. */
+  learnedAt?: string;
 }
 
 /** The shelves Avanzel itself keeps: the six, and meetings (whose definition comes from Avanzel). */
 export const BUILT_IN_SHELVES: readonly string[] = [...SHELVES, "meetings"];
 
-export const MAX_OWN_SHELVES = 20;
 export const MAX_SHELF_NAME = 40;
 export const MAX_SHELF_DEFINITION = 300;
 export const MAX_SHELF_FOLDER = 40;
@@ -327,6 +330,74 @@ export function writeShelfSection(root: string, shelves: readonly OwnShelf[]): v
   const path = join(root, "AGENTS.md");
   const current = lstatOrNull(path)?.isFile() ? readFileSync(path, "utf8") : "";
   replaceInside(root, "AGENTS.md", withShelfSection(current, shelves));
+}
+
+export const STYLE_SECTION_START = "<!-- avanzel:style -->";
+export const STYLE_SECTION_END = "<!-- /avanzel:style -->";
+
+const STYLE_PAIR = new RegExp(
+  `${escapeRegExp(STYLE_SECTION_START)}(?:(?!${escapeRegExp(STYLE_SECTION_START)})[\\s\\S])*?${escapeRegExp(STYLE_SECTION_END)}`,
+  "g",
+);
+
+/** The style text with every marker of Avanzel's own sections taken out, so it can't close or open a section early. */
+function styleText(style: string): string {
+  return style.replace(/<!--\s*\/?avanzel:(?:style|shelves)\s*-->/g, "").trim();
+}
+
+function styleSection(style: string): string {
+  return [STYLE_SECTION_START, "## How this library is written", "", styleText(style), "", STYLE_SECTION_END].join("\n");
+}
+
+/** `agentsMd` without the text of the style pair at `at`, and without the blank line it was set apart by. */
+function withoutPair(agentsMd: string, at: number, length: number): string {
+  const before = agentsMd.slice(0, at);
+  const rest = agentsMd.slice(at + length).replace(/^\n{1,2}/, "");
+  if (rest !== "") return before + rest;
+  const kept = before.replace(/\n+$/, "");
+  return kept === "" ? "" : `${kept}\n`;
+}
+
+/**
+ * `agentsMd` with the library's house style in its own marked section: the first style pair is rewritten in place and later pairs
+ * are dropped. With no pair the section goes right after the shelves section (else at the end), set apart by a blank line. An empty
+ * `style` removes the section. Every other byte stays as it was.
+ */
+export function withStyleSection(agentsMd: string, style: string): string {
+  const pairs = [...agentsMd.matchAll(STYLE_PAIR)];
+  if (styleText(style) === "") {
+    let out = agentsMd;
+    for (const pair of pairs.reverse()) out = withoutPair(out, pair.index, pair[0].length);
+    return out;
+  }
+  const section = styleSection(style);
+  if (pairs.length > 0) {
+    let out = "";
+    let at = 0;
+    pairs.forEach((pair, index) => {
+      out += agentsMd.slice(at, pair.index);
+      let end = pair.index + pair[0].length;
+      if (index === 0) out += section;
+      else end += /^\n{1,2}/.exec(agentsMd.slice(end))?.[0].length ?? 0;
+      at = end;
+    });
+    return out + agentsMd.slice(at);
+  }
+  const shelves = [...agentsMd.matchAll(SECTION_PAIR)][0];
+  if (shelves) {
+    const end = shelves.index + shelves[0].length;
+    return `${agentsMd.slice(0, end)}\n\n${section}${agentsMd.slice(end)}`;
+  }
+  if (agentsMd === "") return `${section}\n`;
+  const gap = agentsMd.endsWith("\n\n") ? "" : agentsMd.endsWith("\n") ? "\n" : "\n\n";
+  return `${agentsMd}${gap}${section}\n`;
+}
+
+/** Put the library's house style into `AGENTS.md` in the library at `root`. A symlink or other non-file there is replaced, never followed. */
+export function writeStyleSection(root: string, style: string): void {
+  const path = join(root, "AGENTS.md");
+  const current = lstatOrNull(path)?.isFile() ? readFileSync(path, "utf8") : "";
+  replaceInside(root, "AGENTS.md", withStyleSection(current, style));
 }
 
 // --- index.md headings ---------------------------------------------------------------------------------------------------------

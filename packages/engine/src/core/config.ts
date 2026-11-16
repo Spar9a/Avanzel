@@ -15,7 +15,6 @@ import { defaultPrivateModel, PRIVATE_APIS, PRIVATE_SOURCES, type PrivateApi, ty
 import {
   definitionBreaksRules,
   folderProblem,
-  MAX_OWN_SHELVES,
   MAX_SHELF_DEFINITION,
   MAX_SHELF_NAME,
   nameBreaksRules,
@@ -26,6 +25,9 @@ import { render } from "./templates.ts";
 
 export const VAULT_MARKER = ".avanzel";
 export const CONFIG_NAME = "config.toml";
+
+export const MAX_HOUSE_STYLE = 4000;
+export const MAX_SHELF_MAP = 1200;
 
 export type Env = Readonly<Record<string, string | undefined>>;
 
@@ -87,6 +89,10 @@ export interface Settings {
   shelves: OwnShelf[];
   /** Folders of the shelves the librarian suggested and the owner turned down, in the order declined. */
   declinedShelves: string[];
+  /** How the library is written, in the owner's words, kept in AGENTS.md too (at most MAX_HOUSE_STYLE characters). */
+  houseStyle: string;
+  /** Folders of the owner's notes that studying the library leaves alone, as named on disk. */
+  excludedFolders: string[];
   models: Record<string, string>;
   harnesses: Record<string, CustomHarness>;
   voice: VoiceSettings;
@@ -101,6 +107,8 @@ export function defaultSettings(): Settings {
     autoCommit: true,
     shelves: [],
     declinedShelves: [],
+    houseStyle: "",
+    excludedFolders: [],
     models: {},
     harnesses: {},
     voice: {
@@ -181,6 +189,8 @@ function renderConfig(settings: Settings): string {
     timeout_seconds: String(settings.timeoutSeconds),
     auto_commit: String(settings.autoCommit),
     declined_shelves: tomlLines("declined_shelves", settings.declinedShelves),
+    excluded_folders: tomlLines("excluded_folders", settings.excludedFolders),
+    house_style: `house_style = ${tomlString(settings.houseStyle)}\n`,
     models: Object.entries(settings.models)
       .map(([name, model]) => `${tomlKey(name)} = ${tomlString(model)}\n`)
       .join(""),
@@ -199,7 +209,7 @@ function renderConfig(settings: Settings): string {
     shelves: settings.shelves
       .map(
         (shelf) =>
-          `\n[[shelves]]\nfolder = ${tomlString(shelf.folder)}\nname = ${tomlString(shelf.name)}\ndefinition = ${tomlString(shelf.definition)}\n`,
+          `\n[[shelves]]\nfolder = ${tomlString(shelf.folder)}\nname = ${tomlString(shelf.name)}\ndefinition = ${tomlString(shelf.definition)}\n${shelf.map ? `map = ${tomlString(shelf.map)}\n` : ""}${shelf.learnedAt ? `learned_at = ${tomlString(shelf.learnedAt)}\n` : ""}`,
       )
       .join(""),
     harnesses: Object.entries(settings.harnesses)
@@ -318,6 +328,8 @@ function parseSettings(data: Table, path: string): Settings {
     autoCommit: booleanValue(data, "auto_commit", defaults.autoCommit, path),
     shelves: ownShelves(data, path),
     declinedShelves: stringList(data, "declined_shelves", path),
+    houseStyle: houseStyle(data, path),
+    excludedFolders: stringList(data, "excluded_folders", path),
     models,
     harnesses,
     voice,
@@ -369,11 +381,6 @@ function stringList(data: Table, key: string, path: string, prefix = ""): string
 function ownShelves(data: Table, path: string): OwnShelf[] {
   const value = Object.hasOwn(data, "shelves") ? data.shelves : [];
   if (!Array.isArray(value)) throw new AvanzelError(`${path}: \`shelves\` must be a list of [[shelves]] tables`);
-  if (value.length > MAX_OWN_SHELVES) {
-    throw new AvanzelError(
-      `${path}: \`shelves\` has ${value.length} shelves, and ${MAX_OWN_SHELVES} is the most. Remove the ones you use least.`,
-    );
-  }
   const shelves: OwnShelf[] = [];
   value.forEach((entry: unknown, index) => {
     const prefix = `shelves[${index}].`;
@@ -402,9 +409,25 @@ function ownShelves(data: Table, path: string): OwnShelf[] {
         `${path}: \`${prefix}definition\` can't hold | \` < > [[ avanzel:shelves or a line break. Remove them, then try again.`,
       );
     }
-    shelves.push({ folder, name, definition });
+    const map = stringValue(entry, "map", "", path, prefix).trim();
+    const mapLength = shelfTextLength(map);
+    if (mapLength > MAX_SHELF_MAP) {
+      throw new AvanzelError(`${path}: \`${prefix}map\` can be at most ${MAX_SHELF_MAP} characters, and it has ${mapLength}. Shorten it.`);
+    }
+    const learnedAt = stringValue(entry, "learned_at", "", path, prefix);
+    shelves.push({ folder, name, definition, ...(map ? { map } : {}), ...(learnedAt ? { learnedAt } : {}) });
   });
   return shelves;
+}
+
+/** The `house_style` text, refused when it is longer than AGENTS.md should carry. */
+function houseStyle(data: Table, path: string): string {
+  const style = stringValue(data, "house_style", "", path).trim();
+  const length = shelfTextLength(style);
+  if (length > MAX_HOUSE_STYLE) {
+    throw new AvanzelError(`${path}: \`house_style\` can be at most ${MAX_HOUSE_STYLE} characters, and it has ${length}. Shorten it.`);
+  }
+  return style;
 }
 
 function requiredString(data: Table, key: string, path: string, prefix: string): string {

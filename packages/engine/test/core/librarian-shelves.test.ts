@@ -73,6 +73,12 @@ describe.skipIf(!git.available())("shelf operations", () => {
     expect(read(vault.indexPath)).toContain("## Projects");
   });
 
+  it("makes a twenty-first shelf of the owner's own", async () => {
+    for (let i = 0; i < 20; i++) await librarian.makeShelf({ folder: `shelf-${i}`, name: `Shelf ${i}`, definition: "x" });
+    await librarian.makeShelf({ folder: "shelf-20", name: "Shelf 20", definition: "x" });
+    expect(loadSettings(vault.root).shelves).toHaveLength(21);
+  });
+
   it("is undone as a whole by Undo", async () => {
     filePage();
     const before = {
