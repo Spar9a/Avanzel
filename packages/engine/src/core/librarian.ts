@@ -1031,19 +1031,17 @@ export class Librarian {
 
   /**
    * One question to the agent, read-only, under the lock for its own run only. A reply `parse` can't read is asked once more; a second
-   * miss is null. A stop rejects. So does a run that failed for a reason that would fail every step (a usage limit, a missing sign-in),
-   * with the step not saved, so that the study goes on from it when the owner has fixed that.
+   * miss is null. A stop rejects. So does a run that failed (no reply at all: a usage limit, a missing sign-in, a timeout, a lost
+   * connection, a crash): at once for a limit or a sign-in, which would fail every step, else once the retry has failed too. The step is
+   * then not saved, so the study goes on from it, and a failed run is never taken for a folder with nothing to learn.
    */
   async #askStudy<T>(prompt: string, parse: (reply: string) => T | null, signal: AbortSignal | undefined): Promise<T | null> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const { result } = await this.vault.withLock(() => this.#run(prompt, { write: false, signal }));
       if (signal?.aborted && !result.ok) throw new AvanzelError(STUDY_STOPPED);
       if (!result.ok) {
-        const failure = classifyFailure(result);
-        if (failure.kind === "limit" || failure.kind === "signin") {
-          const why = failure.kind === "limit" ? "The agent has reached its usage limit" : "The agent is not signed in";
-          throw new AvanzelError(`${why}, so the study paused. What it learned so far is kept, and Learn this library goes on from there once that is fixed.`);
-        }
+        const { kind } = classifyFailure(result);
+        if (kind === "limit" || kind === "signin" || attempt === 1) throw new AvanzelError(studyPaused(kind));
         continue;
       }
       const parsed = parse(result.output);
@@ -1411,6 +1409,19 @@ function capitalised(folder: string): string {
 
 function collapse(text: string): string {
   return text.trim().split(/\s+/).filter(Boolean).join(" ");
+}
+
+/** Why a study paused because the agent's run failed: what happened, that what it learned is kept, and that it goes on from there. */
+function studyPaused(kind: RunFailure["kind"]): string {
+  const what =
+    kind === "limit"
+      ? "the agent has reached its usage limit"
+      : kind === "signin"
+        ? "the agent is not signed in"
+        : kind === "timeout"
+          ? "the agent took longer than the time allowed"
+          : "the agent stopped before it answered";
+  return `The study paused because ${what}. What it learned so far is kept, and Learn this library goes on from there.`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

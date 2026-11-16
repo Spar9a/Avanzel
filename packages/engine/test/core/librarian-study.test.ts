@@ -105,6 +105,65 @@ describe.skipIf(!git.available())("studying the library", () => {
     expect(runs().filter((r) => r.prompt.includes('Path: "Рецепты"'))).toHaveLength(2);
   });
 
+  const reason = async (pending: Promise<unknown>) =>
+    pending.then(
+      () => "",
+      (e: unknown) => (e instanceof AvanzelError ? e.message : `not an AvanzelError: ${String(e)}`),
+    );
+  const savedStep = (n: number) => existsSync(join(vault.root, ".avanzel", "study", "steps", `${n}.json`));
+
+  it("pauses when a run fails, saves nothing for that step, and runs it again next time", async () => {
+    mode("fail-noisy");
+    const runs = recordRuns();
+    expect(await reason(librarian.study())).toBe(
+      "The study paused because the agent stopped before it answered. What it learned so far is kept, and Learn this library goes on from there.",
+    );
+    expect(runs()).toHaveLength(2); // asked again once
+    expect(savedStep(0)).toBe(false);
+    expect(librarian.studyResumable()).toBe(true);
+    expect(librarian.studyProposal()).toBeNull();
+
+    mode("ok");
+    const proposal = await librarian.study();
+    expect(runs().filter((r) => r.prompt.includes('Path: "Philosophy"'))).toHaveLength(3); // twice failed, then studied
+    expect(proposal.shelves.every((s) => s.studied)).toBe(true);
+  });
+
+  it("pauses when the combine run fails, and saves no proposal from it", async () => {
+    const seen: number[] = [];
+    const pending = librarian.study({
+      progress: (p) => {
+        seen.push(p.done);
+        if (p.done === 3) mode("fail-noisy"); // the combine step
+      },
+    });
+    expect(await reason(pending)).toContain("The study paused because");
+    expect([0, 1, 2].map(savedStep)).toEqual([true, true, true]);
+    expect(librarian.studyProposal()).toBeNull();
+    expect(librarian.studyResumable()).toBe(true);
+
+    mode("ok");
+    const runs = recordRuns();
+    const proposal = await librarian.study();
+    expect(studied(runs())).toHaveLength(0); // only the combine step is asked again
+    expect(runs().filter((r) => r.prompt.startsWith("Avanzel task: study-combine"))).toHaveLength(1);
+    expect(proposal.style).toBe("Dates as dd.mm.yyyy.");
+  });
+
+  it.each([
+    ["limit", "the agent has reached its usage limit"],
+    ["fail-signin", "the agent is not signed in"],
+  ])("pauses at once on %s, without saving the step", async (agentMode, why) => {
+    mode(agentMode);
+    const runs = recordRuns();
+    expect(await reason(librarian.study())).toBe(
+      `The study paused because ${why}. What it learned so far is kept, and Learn this library goes on from there.`,
+    );
+    expect(runs()).toHaveLength(1); // it would fail every step: not asked again
+    expect(savedStep(0)).toBe(false);
+    expect(librarian.studyResumable()).toBe(true);
+  });
+
   it("builds the proposal from each folder's purpose when the combine reply can't be read twice", async () => {
     vi.stubEnv("FAKE_AGENT_FOLDER", "combine");
     mode("study-garbled");
