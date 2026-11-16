@@ -1,12 +1,13 @@
 // Learn this library's states, end to end: what is refused while a study runs, the offer put away for good, Undo of an Apply, a study
-// that goes on after Avanzel quit or after a failed run, another library opened mid-study, and the house style's Edit and Remove.
+// that goes on after Avanzel quit or after a failed run, another library opened mid-study, the house style's Edit and Remove, and a
+// folder left out at Apply that comes back as a shelf.
 import { expect, test, type ElectronApplication } from "@playwright/test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { Librarian, loadSettings, Vault } from "../../../packages/engine/src/index.ts";
 import type { StudyState } from "../src/shared/ipc.ts";
 import { agentMode, launchOn, notified, obsidianLibrary, panelOn, panelSnapshot, recordFile, studiedFolders, studyIs, studyOf } from "./capsule-helpers.ts";
-import { call, gitOut, openSettings, paneOf, settingsRow } from "./helpers.ts";
+import { call, filesUnder, gitOut, openSettings, paneOf, settingsRow } from "./helpers.ts";
 
 const OFFER_TITLE = "This library has folders of its own.";
 const STILL_RUNNING = "The study is still running, so nothing changed. Stop it first, then try again.";
@@ -108,6 +109,43 @@ test("Undo of an Apply says what went, and the offer is back", async () => {
   await expect.poll(async () => (await panelSnapshot(app)).studyOffer).toBe(true);
   const settings = await openSettings(app);
   await expect(paneOf(settings, "General").getByRole("status").filter({ hasText: OFFER_TITLE })).toBeVisible();
+  await app.close();
+});
+
+test("a folder left out at Apply comes back as a shelf from Settings' Add definition, and a thought is filed into it", async () => {
+  const library = await obsidianLibrary();
+  const { app } = await launchOn(library, { AVANZEL_FAKE_TRANSCRIPT: "Суп из свёклы" });
+  await call(app, "startStudy", true);
+  await studyIs(app, "ready");
+  const chosen = applyAll(await studyOf(app));
+  chosen.shelves = chosen.shelves.map((shelf) => ({ ...shelf, fileHere: shelf.folder === "Philosophy" }));
+  await call(app, "applyStudy", chosen);
+  expect(loadSettings(library).excludedFolders).toEqual(["Рецепты"]);
+
+  // Settings still lists the folder as one of the owner's own, with Add definition, which makes it a shelf and brings it back.
+  const settings = await openSettings(app);
+  const row = settingsRow(settings, "Рецепты");
+  await row.getByRole("button", { name: "Add definition", exact: true }).click();
+  const general = paneOf(settings, "General");
+  await general.getByRole("textbox", { name: "What belongs on it", exact: true }).fill("Dishes to cook.");
+  await general.getByRole("button", { name: "Save shelf", exact: true }).click();
+  await expect.poll(() => loadSettings(library).excludedFolders).toEqual([]);
+  expect(loadSettings(library).shelves.map((shelf) => shelf.folder).sort()).toEqual(["Philosophy", "Рецепты"]);
+
+  // A thought filed into it now stays there: no longer a folder left out, nothing is put back.
+  await app.evaluate(() => {
+    process.env.FAKE_AGENT_MODE = "new-subfolder";
+    process.env.FAKE_AGENT_FOLDER = "Рецепты";
+  });
+  const before = JSON.stringify(await call(app, "capsuleStateForTests"));
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+  await expect.poll(async () => {
+    const state = (await call(app, "capsuleStateForTests")) as { kind: string };
+    return JSON.stringify(state) !== before && (state.kind === "filed" || state.kind === "error") ? state.kind : "";
+  }, { timeout: 60_000 }).toBe("filed");
+  expect(filesUnder(library, "Рецепты").filter((name) => name.startsWith("idea-"))).toHaveLength(1);
+  expect(readFileSync(path.join(library, "Рецепты", "борщ.md"), "utf8")).toBe("# Борщ\n\nСвёкла, капуста, картофель.\n");
   await app.close();
 });
 
