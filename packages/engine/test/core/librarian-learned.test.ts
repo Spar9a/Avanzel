@@ -60,6 +60,32 @@ describe.skipIf(!git.available())("filing in a learned library", () => {
       expect(prompt).toContain(HINT);
     });
 
+    it("gives the map that a later study gave a hand-made shelf in every filing, notes found or not", async () => {
+      await librarian.makeShelf({ folder: "projects", name: "Projects", definition: "Work." });
+      await librarian.applyStudy({
+        style: "Dates as dd.mm.yyyy.",
+        shelves: [{ folder: "projects", name: "Projects", definition: "Work.", map: "one folder per client", fileHere: true }],
+      });
+      expect(librarian.settings.shelves.find((shelf) => shelf.folder === "projects")).toEqual({
+        folder: "projects",
+        name: "Projects",
+        definition: "Work.",
+        map: "one folder per client",
+      });
+      mode("add-to-found");
+      const runs = recordRuns();
+      capture();
+      await librarian.file();
+      capture("Купить хлеба");
+      mode("ok");
+      await librarian.file();
+      const [found, nothing] = runs().map((run) => run.prompt);
+      for (const prompt of [found!, nothing!]) expect(prompt).toContain("- projects/: Work.\n  map: one folder per client\n");
+      expect(found).toContain("<found-notes>");
+      expect(found).toContain("- Diary/: Days.\n- projects/"); // a learned shelf with no note found still gets no map
+      expect(nothing).not.toContain("<found-notes>");
+    });
+
     it("tells the agent to search the learned shelves and gives their maps when no note was found", async () => {
       const runs = recordRuns();
       capture("Купить хлеба");
@@ -175,8 +201,7 @@ describe.skipIf(!git.available())("filing in a learned library", () => {
     const prompt = runs()[0]!.prompt;
     expect(prompt).not.toContain("<found-notes>");
     expect(prompt).not.toContain("<house-style>");
-    expect(prompt).not.toContain("map:");
     expect(prompt).not.toContain("learned from the library");
-    expect(prompt).toContain("- Philosophy/: Thinkers.\n");
+    expect(prompt).toContain("- Philosophy/: Thinkers.\n  map: Stoicism/\n"); // a shelf's map is given whether or not it was learned
   });
 });

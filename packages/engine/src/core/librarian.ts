@@ -845,7 +845,8 @@ export class Librarian {
 
   /**
    * Every shelf as the filing prompt lists it: the built-in ones, the owner's own, the pending suggestions and the ones turned down. An
-   * own shelf's map goes with it when one of the `found` notes is on it, or, when nothing was found, when it is a learned shelf.
+   * own shelf's map goes with it when the shelf was not learned (a hand-made shelf a later study gave a map: it is never searched), and a
+   * learned shelf's when one of the `found` notes is on it or nothing was found at all.
    */
   #shelfNotes(pending: readonly PendingShelf[], found: readonly FoundNote[] = []): ShelfNote[] {
     const { shelves, declinedShelves } = this.settings;
@@ -862,8 +863,9 @@ export class Librarian {
         folder,
         name,
         definition,
-        // With notes found, only the maps of their shelves; with none, every learned shelf's, to choose a subfolder by.
-        ...(map && (found.length ? foundOn.has(folderKey(folder)) : Boolean(learnedAt)) ? { map } : {}),
+        // A shelf that was not learned is never searched, so its map always goes. Of the learned shelves: with notes found, only the
+        // maps of their shelves; with none, every one's, to choose a subfolder by.
+        ...(map && (!learnedAt || !found.length || foundOn.has(folderKey(folder))) ? { map } : {}),
         ...(learnedAt ? { learned: true } : {}),
         kind: "own" as const,
       })),
