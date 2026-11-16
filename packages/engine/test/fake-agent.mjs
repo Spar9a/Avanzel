@@ -23,13 +23,14 @@
 // usual, then makes the page it wrote a link to $FAKE_AGENT_OUTSIDE, a file outside the library) |
 // study-garbled (a study-folder run for a folder named in $FAKE_AGENT_FOLDER, comma-separated, replies "not json"; a study-combine run too when the list names "combine") |
 // add-to-found (a filing appends "\n## <today's entry start>\n<words>\n" to the first `path:` of the prompt's <found-notes>, instead of
-// writing an idea page) | rewrite-found (a filing replaces that note's text with "<words>\n") | new-subfolder (a filing writes its page as
+// writing an idea page) | rewrite-found (a filing replaces that note's text with "<words>\n") | rewrite-found-page (as rewrite-found,
+// then files an idea page as usual) | new-subfolder (a filing writes its page as
 // $FAKE_AGENT_FOLDER/idea-<id>.md, a nested path, making the folders) | rewrite-note (a review, or an ask that saves, replaces the text of $FAKE_AGENT_PAGE).
 // The study tasks (study-folder, study-combine) answer with a fenced json block built from the prompt, in every other mode.
 // The agent check's prompt, "Reply with the single word: ready.", gets "ready".
 // FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt, pid}.
 // FAKE_AGENT_DELAY_MS=<ms> waits that long before anything else (an agent that takes a moment);
-// with FAKE_AGENT_DELAY_TASK=<task> (file, ask or review), only runs of that task wait.
+// with FAKE_AGENT_DELAY_TASK=<task> (file, ask, review, study-folder or study-combine), only runs of that task wait.
 // FAKE_AGENT_STREAM=claude prints what `claude -p --output-format stream-json --verbose` prints, in the shapes of
 // test/fixtures/claude-filing.jsonl: an init line, then each tool call of a filing with its answer (a Read of the
 // capture and of index.md, a Write of the idea page, an Edit of index.md and, when the agent logs, of log.md), then a
@@ -443,6 +444,11 @@ if (task === "file") {
     await editStep("log.md", `- ${logStamp()} | file | [[${captureId}]] → [[${foundStem}]]\n`);
     await reply(`Filed into [[${foundStem}]].`);
     process.exit(0);
+  }
+  if (mode === "rewrite-found-page") {
+    // rewrites the first note the prompt found, then goes on to write a page of its own
+    const found = /<found-notes>\n- path: (.*)\n/.exec(prompt)?.[1];
+    if (found) await writeStep(found, `${words}\n`);
   }
   const pageStem = mode === "make-folder" ? `p-${captureId}` : `idea-${captureId}`;
   const madeFolder = process.env.FAKE_AGENT_FOLDER || "projects";

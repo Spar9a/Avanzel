@@ -3,11 +3,11 @@
 // a library that Claude Code's stand-in files, dictating to it, the wrappers that watch what the app sends and takes back, and the queue
 // held for a test.
 import { expect, type ElectronApplication, type Locator, type Page } from "@playwright/test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, Vault } from "../../../packages/engine/src/index.ts";
-import type { PanelSnapshot } from "../src/shared/ipc.ts";
+import type { PanelSnapshot, StudyState } from "../src/shared/ipc.ts";
 import { agentStubs, call, capsuleKind, filesUnder, gitOut, launch, makeLibrary, onlyAgentsIn, shown, speechWav, windowFor } from "./helpers.ts";
 import { zel } from "./setup-helpers.ts";
 
@@ -476,3 +476,49 @@ export const askIsKey = (app: ElectronApplication, key: boolean) =>
     if (!win) throw new Error("There is no Ask window.");
     win.isFocused = () => isKey;
   }, key);
+
+// ---- Learn this library: shared by learn-library.spec.ts and learn-library-states.spec.ts ----
+
+/** Learn this library as the windows are told it now. */
+export const studyOf = (app: ElectronApplication) => call(app, "studyStateForTests") as Promise<StudyState>;
+
+/** Waits until the study is of `kind`, for up to a minute. */
+export const studyIs = (app: ElectronApplication, kind: StudyState["kind"]) =>
+  expect.poll(async () => (await studyOf(app)).kind, { timeout: 60_000 }).toBe(kind);
+
+/** Where Seneca's note is in `obsidianLibrary`, and what it says: two entries under dated headings. */
+export const SENECA = "Philosophy/Stoicism/Seneca.md";
+export const SENECA_TEXT = "# Сенека\n\n## 01.11.2026\nПисьма к Луцилию: о времени.\n\n## 05.11.2026\nЕщё одно письмо: о чтении.\n";
+
+/**
+ * A library with git as an Obsidian vault has it, besides Avanzel's own: Philosophy/Stoicism/Seneca.md (dated entries), Рецепты/борщ.md,
+ * a folder of attachments with no notes, and .obsidian's settings. All committed, so the library starts clean. A study plans two folders.
+ */
+export async function obsidianLibrary(): Promise<string> {
+  const library = await makeLibrary({ git: true });
+  const put = (rel: string, text: string) => {
+    mkdirSync(path.dirname(path.join(library, rel)), { recursive: true });
+    writeFileSync(path.join(library, rel), text);
+  };
+  put(SENECA, SENECA_TEXT);
+  put("Рецепты/борщ.md", "# Борщ\n\nСвёкла, капуста, картофель.\n");
+  put("Attachments/a.png", "not really a picture");
+  put(".obsidian/app.json", "{}\n");
+  gitOut(library, "add", "-A");
+  gitOut(library, "commit", "-qm", "the owner's notes");
+  return library;
+}
+
+/** A new file for FAKE_AGENT_RECORD, in a folder of its own. */
+export const recordFile = () => path.join(mkdtempSync(path.join(tmpdir(), "avz-e2e-record-")), "runs.jsonl");
+
+/** The folders that the study-folder runs the fake agent recorded in `record` studied, in the order they ran (a run cut short too). */
+export function studiedFolders(record: string): string[] {
+  if (!existsSync(record)) return [];
+  return readFileSync(record, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => (JSON.parse(line) as { prompt: string }).prompt)
+    .filter((prompt) => prompt.startsWith("Avanzel task: study-folder"))
+    .map((prompt) => JSON.parse(/^Path: (".*")$/m.exec(prompt)?.[1] ?? '""') as string);
+}
