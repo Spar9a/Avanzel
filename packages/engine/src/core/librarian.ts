@@ -1226,9 +1226,9 @@ export class Librarian {
     return this.#studyPlan() !== null && this.studyProposal() === null;
   }
 
-  /** Forget a study: its plan, what it learned and its proposal. */
+  /** Forget a study: its plan, what it learned and its proposal. Under the lock, as every write to `.avanzel/study/` is (`#saveStudy`). */
   async discardStudy(): Promise<void> {
-    removeInside(this.vault.root, STUDY_DIR);
+    await this.vault.withLock(() => removeInside(this.vault.root, STUDY_DIR));
   }
 
   /**
@@ -1250,9 +1250,8 @@ export class Librarian {
       const saved = this.studyProposal();
       if (saved) return saved;
     } else {
-      removeInside(root, STUDY_DIR);
       plan = planStudy(root, this.settings, this.clock());
-      this.#saveStudy("plan.json", plan);
+      await this.#saveStudy("plan.json", plan, true);
     }
     const steps = plan.steps;
     const stopped = () => new AvanzelError(STUDY_STOPPED);
@@ -1269,7 +1268,7 @@ export class Librarian {
       if (signal?.aborted) throw stopped();
       const began = Date.now();
       const summary = await this.#studyStep(plan, step, learned, signal);
-      this.#saveStudy(`steps/${index}.json`, { id: step.id, summary });
+      await this.#saveStudy(`steps/${index}.json`, { id: step.id, summary });
       learned.set(step.id, summary);
       if (Date.now() - began >= STEP_PAUSE_AFTER_MS) await pause(STEP_PAUSE_MS);
     }
@@ -1291,7 +1290,7 @@ export class Librarian {
       style: this.settings.houseStyle,
       styleInAgents: styleGoesInAgents(root),
     });
-    this.#saveStudy("proposal.json", proposal);
+    await this.#saveStudy("proposal.json", proposal);
     return proposal;
   }
 
@@ -1391,11 +1390,18 @@ export class Librarian {
     return isRecord(data.summary) && typeof data.summary.path === "string" ? (data.summary as unknown as FolderSummary) : undefined;
   }
 
-  /** Save a study's file. A `.gitignore` inside keeps the folder out of git, so that no commit carries it. */
-  #saveStudy(rel: string, data: unknown): void {
+  /**
+   * Save a study's file (after removing what an earlier study saved, given `fresh`). A `.gitignore` inside keeps the folder out of git, so
+   * that no commit carries it. Under the lock: `.avanzel/study/` is guarded, so a write made while another run holds the library would be
+   * taken back by that run's guard.
+   */
+  async #saveStudy(rel: string, data: unknown, fresh = false): Promise<void> {
     const root = this.vault.root;
-    createInside(root, `${STUDY_DIR}/.gitignore`, "*\n");
-    writeInside(root, `${STUDY_DIR}/${rel}`, `${JSON.stringify(data, null, 2)}\n`);
+    await this.vault.withLock(() => {
+      if (fresh) removeInside(root, STUDY_DIR);
+      createInside(root, `${STUDY_DIR}/.gitignore`, "*\n");
+      writeInside(root, `${STUDY_DIR}/${rel}`, `${JSON.stringify(data, null, 2)}\n`);
+    });
   }
 
   // --- plumbing -----------------------------------------------------------------------------

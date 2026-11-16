@@ -197,6 +197,19 @@ describe.skipIf(!git.available())("studying the library", () => {
     expect(studied(runs())).toHaveLength(3);
   });
 
+  it("writes and removes its files only under the lock, so another run's guard never takes them back", async () => {
+    await librarian.study();
+    let release = () => {};
+    const held = vault.withLock(() => new Promise<void>((done) => (release = done)));
+    const discarding = librarian.discardStudy();
+    await new Promise((done) => setTimeout(done, 400));
+    expect(existsSync(join(vault.root, ".avanzel", "study", "proposal.json"))).toBe(true); // waits while another run holds the library
+    release();
+    await held;
+    await discarding;
+    expect(existsSync(join(vault.root, ".avanzel", "study"))).toBe(false);
+  });
+
   it("discards what it saved", async () => {
     await librarian.study();
     await librarian.discardStudy();
