@@ -30,7 +30,7 @@ import {
 } from "./harness.ts";
 import { createInside, lstatOrNull, realFoldersTo, removeInside, replaceInside, writeInside } from "./inside.ts";
 import { parseDictionary } from "./dictionary.ts";
-import { askPrompt, filePrompt, reviewPrompt, type ShelfNote } from "./prompts.ts";
+import { askPrompt, filePrompt, reviewPrompt, type AskTurn, type ShelfNote } from "./prompts.ts";
 import {
   BUILT_IN_DEFINITIONS,
   BUILT_IN_SHELVES,
@@ -835,7 +835,7 @@ export class Librarian {
    * that ran alongside a filing could put back a change the filing's guard had just undone. When it
    * has to wait for the lock, `progress` hears `WAITING` once, then `LOOKING` once the lock is held,
    * before the agent starts; when the library is free, it hears nothing. A save given `answer`, the one
-   * the owner was shown, keeps its words as the page. A save is `saved` only by a page on the shelves: the thoughts caught while
+   * the owner was shown, keeps its words as the page; `history`, the chat a follow-up comes in, goes with the question. A save is `saved` only by a page on the shelves: the thoughts caught while
    * it runs (a capture takes no lock) land in inbox/, and its own folders hold no answer (`isShelfPage`), so a run that wrote no
    * page commits as leftovers and logs no Ask line, however much else it finds changed.
    */
@@ -844,9 +844,10 @@ export class Librarian {
     {
       save = false,
       answer,
+      history,
       signal,
       progress = quiet,
-    }: { save?: boolean; answer?: string; signal?: AbortSignal; progress?: (message: string) => void } = {},
+    }: { save?: boolean; answer?: string; history?: readonly AskTurn[]; signal?: AbortSignal; progress?: (message: string) => void } = {},
   ): Promise<AgentOutcome> {
     if (!question.trim()) throw new AvanzelError('Ask a question, e.g. "what are my goals this year?"');
     const now = this.clock();
@@ -855,7 +856,7 @@ export class Librarian {
       if (waited) progress(LOOKING);
       if (save) await this.#commitOwnerChanges("saving an answer");
       const before = snapshot(this.vault.root);
-      const prompt = askPrompt(question, { save, now, answer, shelves: this.settings.shelves });
+      const prompt = askPrompt(question, { save, now, answer, history, shelves: this.settings.shelves });
       const { result, guarded } = await this.#run(prompt, { write: save, signal });
       const changes = diff(before, snapshot(this.vault.root)).without(guarded);
       let commit: string | null = null;

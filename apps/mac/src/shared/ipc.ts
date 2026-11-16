@@ -1056,6 +1056,29 @@ export interface AskSnapshot {
   shortcut: string | null;
 }
 
+/** One exchange of a chat with the library: the owner's question and the answer they were shown. */
+export interface ChatTurn {
+  question: string;
+  answer: string;
+}
+
+/** How many of a chat's turns main takes with a follow-up at most (the engine sends fewer still), and how long each may be. */
+export const CHAT_TURNS_TAKEN = 50;
+export const CHAT_TURN_CHARACTERS = 20_000;
+
+/**
+ * A chat's turns as a page handed them, made safe to use: anything but a list gives none, and so does a turn that isn't a
+ * question and an answer of text; only the newest CHAT_TURNS_TAKEN are kept, each cut to CHAT_TURN_CHARACTERS.
+ */
+export function chatTurns(value: unknown): ChatTurn[] {
+  if (!Array.isArray(value)) return [];
+  const cut = (text: string) => text.slice(0, CHAT_TURN_CHARACTERS);
+  return value
+    .filter((turn): turn is ChatTurn => !!turn && typeof turn === "object" && typeof turn.question === "string" && typeof turn.answer === "string")
+    .slice(-CHAT_TURNS_TAKEN)
+    .map((turn) => ({ question: cut(turn.question), answer: cut(turn.answer) }));
+}
+
 export interface AskResult {
   ok: boolean;
   /**
@@ -1479,8 +1502,11 @@ export interface AvanzelBridge {
     copyPrompt(rel: string): Promise<boolean>;
     /** Main asks Capture to open Take notes on a call…'s list (the call was asked for from somewhere else). */
     onPickCall(callback: () => void): () => void;
-    /** Ask your library, in Library: answered as the Ask window's questions are. */
-    ask(question: string): Promise<AskResult>;
+    /**
+     * Ask your library, in Library or Chat: answered as the Ask window's questions are. `history`, Chat's earlier turns, oldest
+     * first, goes with a follow-up, so it is read in their light (and still answered from the library).
+     */
+    ask(question: string, history?: readonly ChatTurn[]): Promise<AskResult>;
     /** What the question being answered is doing now. */
     onAskProgress(callback: (message: string) => void): () => void;
     /** Stop: the question being answered is given up. */
@@ -1497,7 +1523,7 @@ export interface AvanzelBridge {
 }
 
 /** The menu bar panel's places, in the order of its tabs. */
-export const PANEL_TABS = ["capture", "processing", "library", "settings"] as const;
+export const PANEL_TABS = ["capture", "processing", "library", "chat", "settings"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
 
 /** How many pages the panel's Library lists at most. */

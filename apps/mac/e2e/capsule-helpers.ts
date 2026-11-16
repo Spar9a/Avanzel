@@ -352,7 +352,7 @@ export const receiptOffer = async (app: ElectronApplication) => ((await panelSna
 export const reviewOffer = async (app: ElectronApplication) => ((await panelSnapshot(app)).undoableReview ? REVIEW_OFFER : undefined);
 
 /** Brings the panel up on `tab` and gives its page once it has drawn what main sent it as it came up. */
-export async function panelOn(app: ElectronApplication, tab: "capture" | "library" = "capture"): Promise<Page> {
+export async function panelOn(app: ElectronApplication, tab: "capture" | "library" | "chat" = "capture"): Promise<Page> {
   await call(app, "showPanel", tab);
   const panel = await windowFor(app, "panel");
   await expect.poll(() => shown(app, "panel")).toBe(true);

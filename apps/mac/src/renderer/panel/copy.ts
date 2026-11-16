@@ -66,6 +66,15 @@ export function inboxLine(inbox: number): string {
 /** How Library's tab counts the library's pages, which the panel calls notes: "1 note", "12 notes". */
 export const notesLabel = (count: number) => `${count} ${count === 1 ? "note" : "notes"}`;
 
+/** Chat's words: the line before the first question, its field's name and hints, New chat, and Library's way into it. */
+export const CHAT_EMPTY = "Ask your library a question, then keep asking about the answer. Answers come only from your notes, unless you ask for more.";
+export const CHAT_FIELD = "Chat with your library";
+export const CHAT_FIRST = "Ask a question";
+export const CHAT_FOLLOW_UP = "Ask a follow-up";
+export const NEW_CHAT = "New chat";
+export const CHAT_CLEARED = "Chat cleared";
+export const CONTINUE_IN_CHAT = "Continue in chat";
+
 /** The orders Library can list its pages in. */
 export const SORTS = ["changed", "made", "title", "shelf"] as const;
 export type PageSort = (typeof SORTS)[number];

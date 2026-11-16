@@ -459,7 +459,11 @@ if (task === "file") {
     .sort();
   const asked = prompt.slice(prompt.indexOf("The owner asks:\n") + "The owner asks:\n".length);
   const question = asked.slice(0, asked.indexOf("\n\nAnswer from the library only"));
-  await reply(`Q: ${question}\nPages: ${pages.join(", ") || "none"}`);
+  // A follow-up in a chat says how many earlier turns came with it, and the first of them: a lone question says nothing more.
+  const chat = /<conversation>\n([\s\S]*?)<\/conversation>/.exec(prompt)?.[1] ?? "";
+  const earlier = [...chat.matchAll(/^Owner: (.*)$/gm)].map((m) => m[1]);
+  const follows = earlier.length ? `\nEarlier: ${earlier.length} (first: ${earlier[0]})` : "";
+  await reply(`Q: ${question}\nPages: ${pages.join(", ") || "none"}${follows}`);
   if (prompt.includes("save the answer")) writeFileSync(join(root, "topics", "answer.md"), "# Answer\n");
 } else if (task === "review") {
   const report = join(root, /write the report to `([^`]+)`/.exec(prompt)[1]);

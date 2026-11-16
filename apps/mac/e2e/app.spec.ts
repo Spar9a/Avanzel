@@ -443,6 +443,63 @@ test("asking shows the agent's answer", async () => {
   await app.close();
 });
 
+test("Chat goes on asking: a follow-up carries the turns before it, and New chat starts again", async () => {
+  const library = await makeLibrary();
+  writeFileSync(path.join(library, "goals", "run.md"), "# Run a marathon\n");
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const panel = await panelOn(app, "chat");
+  const chat = panel.getByRole("tabpanel", { name: "Chat", exact: true });
+  await expect(chat.getByText(/^Ask your library a question, then keep asking about the answer\./)).toBeVisible();
+  const field = chat.getByRole("textbox", { name: "Chat with your library", exact: true });
+  await field.fill("What are my goals?");
+  await field.press("Enter");
+  await expect(chat.getByText("Q: What are my goals?", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(chat.getByText(/^Earlier:/)).toHaveCount(0); // the first question goes on its own
+  // The follow-up is asked with the turn before it (the fake agent says how many it was given, and the first), under it.
+  await field.fill("When is the race?");
+  await chat.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(chat.getByText("Q: When is the race?", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(chat.getByText("Earlier: 1 (first: What are my goals?)", { exact: true })).toBeVisible();
+  await expect(chat.getByText("What are my goals?", { exact: true })).toBeVisible(); // the first turn stays, its question over it
+  await snap(panel, "panel-chat");
+  // New chat: the turns go, and Undo brings them back for a few seconds.
+  await chat.getByRole("button", { name: "New chat", exact: true }).click();
+  await expect(chat.getByText("What are my goals?", { exact: true })).toHaveCount(0);
+  await panel.getByRole("button", { name: "Undo", exact: true }).click(); // at the foot of the panel, outside the tab
+  await expect(chat.getByText("Earlier: 1 (first: What are my goals?)", { exact: true })).toBeVisible();
+  // Put away again, the next question is on its own.
+  await chat.getByRole("button", { name: "New chat", exact: true }).click();
+  await expect(chat.getByText("What are my goals?", { exact: true })).toHaveCount(0);
+  await field.fill("What are my ideas?");
+  await field.press("Enter");
+  await expect(chat.getByText("Q: What are my ideas?", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(chat.getByText(/^Earlier:/)).toHaveCount(0);
+  await app.close();
+});
+
+test("an answer in Library continues in Chat, where a follow-up is asked with it", async () => {
+  const library = await makeLibrary();
+  writeFileSync(path.join(library, "goals", "run.md"), "# Run a marathon\n");
+  const app = await launch({ AVANZEL_LIBRARY: library });
+  const panel = await panelOn(app, "library");
+  const search = panel.getByRole("searchbox", { name: "Search or ask your library", exact: true });
+  await search.fill("What are my goals?");
+  await search.press("Enter");
+  const shelf = panel.getByRole("tabpanel", { name: /^Library/ });
+  await expect(shelf.getByText("Q: What are my goals?", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await shelf.getByRole("button", { name: "Continue in chat", exact: true }).click();
+  await expect(panel.getByRole("tablist", { name: "Sections" }).getByRole("tab", { name: "Chat", exact: true })).toHaveAttribute("aria-selected", "true");
+  const chat = panel.getByRole("tabpanel", { name: "Chat", exact: true });
+  await expect(chat.getByText("Q: What are my goals?", { exact: true })).toBeVisible();
+  const field = chat.getByRole("textbox", { name: "Chat with your library", exact: true });
+  await expect(field).toBeFocused();
+  await field.fill("And the next step?");
+  await field.press("Enter");
+  await expect(chat.getByText("Earlier: 1 (first: What are my goals?)", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(shelf.getByText("Q: What are my goals?", { exact: true })).toHaveCount(0); // Library's answer went over
+  await app.close();
+});
+
 test("Ask on a library with no pages says to say something first, and gives the usual line back once a page is there", async () => {
   const library = await makeLibrary();
   const app = await launch({ AVANZEL_LIBRARY: library });

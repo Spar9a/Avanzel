@@ -223,7 +223,7 @@ import {
 } from "./windows.ts";
 import { libraryPages, pagePrompt, sourcesOnlyOf, withoutItem } from "./library-pages.ts";
 import { heardTrigger, withoutStopWord } from "../shared/trigger.ts";
-import type { AddingKind, ClaudeCodeSetup, FileMode, PanelPage, PanelSnapshot, PanelTab, ShelfAsk, ShelfGoing, UpdateWait } from "../shared/ipc.ts";
+import type { AddingKind, ChatTurn, ClaudeCodeSetup, FileMode, PanelPage, PanelSnapshot, PanelTab, ShelfAsk, ShelfGoing, UpdateWait } from "../shared/ipc.ts";
 import { mcpLaunch } from "./mcp-mode.ts";
 import { addToClaudeCode, execIn, isMcpClient, MCP_CLIENTS, setupSnippet } from "./mcp-setup.ts";
 
@@ -4818,16 +4818,19 @@ export class Controller {
     }
   }
 
-  /** A question asked in the panel's Library: answered as Ask's are, its progress told to the panel. Only the panel's own page asks. */
-  async askFromPanel(sender: WebContents, question: string): Promise<AskResult> {
+  /**
+   * A question asked in the panel's Library or Chat: answered as Ask's are, its progress told to the panel. `history` is Chat's earlier
+   * turns, which go with a follow-up. Only the panel's own page asks.
+   */
+  async askFromPanel(sender: WebContents, question: string, history: readonly ChatTurn[] = []): Promise<AskResult> {
     if (!this.isPanelPage(sender)) throw new Error("Only the panel asks from the panel.");
-    return this.ask(question, this.panelWindow);
+    return this.ask(question, this.panelWindow, history);
   }
 
-  async ask(question: string, win: BrowserWindow | null = this.askWindow): Promise<AskResult> {
+  async ask(question: string, win: BrowserWindow | null = this.askWindow, history: readonly ChatTurn[] = []): Promise<AskResult> {
     const library = this.vault?.root ?? null; // the library the question is asked in, which Save hands back
     return this.inAskSlot(async (abort, progress) => {
-      const { ok, ran, text, agent, seconds, changedFiles, failure } = await this.answerQuestion(question, abort, progress);
+      const { ok, ran, text, agent, seconds, changedFiles, failure } = await this.answerQuestion(question, abort, progress, history);
       // A run that failed says whose it was; a message thrown before any run comes back as it is. An answer comes with its
       // lines and the pages its links name; anything else has none. Either says how many files the run changed in the library,
       // and a question that failed says why (`failure`) when an agent can be told of it.
@@ -4940,13 +4943,18 @@ export class Controller {
    * for an agent that isn't there as `gone` (the library's own) or `missing` (none installed); it is null for an answer, and
    * for anything else that threw, since no agent failed then.
    */
-  private async answerQuestion(question: string, abort: AbortController, progress: (message: string) => void): Promise<Answered> {
+  private async answerQuestion(
+    question: string,
+    abort: AbortController,
+    progress: (message: string) => void,
+    history: readonly ChatTurn[] = [],
+  ): Promise<Answered> {
     const agent = this.agentName();
     const harness = this.selectedHarness(); // the agent the question goes to, named before it is asked
     const started = performance.now();
     const seconds = () => (performance.now() - started) / 1000;
     try {
-      const { result, changes } = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, signal, progress }), abort);
+      const { result, changes } = await this.withRun(async (signal) => (await this.librarian()).ask(question, { save: false, history, signal, progress }), abort);
       const changedFiles = changes.created.length + changes.modified.length + changes.deleted.length;
       if (result.ok) return { ok: true, ran: true, text: result.output, agent, seconds: seconds(), changedFiles, failure: null };
       const text = lastLines(result.stderr || result.output);

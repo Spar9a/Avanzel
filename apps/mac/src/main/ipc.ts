@@ -1,6 +1,7 @@
 // Wires the preload bridge's channels to the controller.
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import type { AppSettings, LibraryPatch, SetupStep, Shortcuts, TaskInfo } from "../shared/ipc.ts";
+import { chatTurns } from "../shared/ipc.ts";
 import type { Controller } from "./controller.ts";
 
 type Handler = (event: IpcMainInvokeEvent, ...args: never[]) => unknown;
@@ -65,7 +66,9 @@ export function registerIpc(controller: Controller): void {
   handle("panel:hear-trigger-word", (e, samples: unknown) => controller.hearTriggerWord(e.sender, samples));
   on("panel:hearing-trigger-word", (e, on: unknown) => controller.hearingTriggerWord(e.sender, on));
   handle("panel:copy-prompt", (e, rel: unknown) => controller.copyPagePrompt(e.sender, rel));
-  handle("panel:ask", (e, question: unknown) => (typeof question === "string" ? controller.askFromPanel(e.sender, question) : Promise.reject(new Error("No question."))));
+  handle("panel:ask", (e, question: unknown, history: unknown) =>
+    typeof question === "string" ? controller.askFromPanel(e.sender, question, chatTurns(history)) : Promise.reject(new Error("No question.")),
+  );
   on("panel:cancel-ask", (e) => controller.cancelAsk(e.sender));
   on("panel:attach-page", (e, rel: unknown, files: unknown) => controller.attachToPage(e.sender, rel, files));
   on("panel:attach-recording", (e, files: unknown) => controller.attachToRecording(e.sender, files));

@@ -1,9 +1,9 @@
-// The panel under the menu bar icon: three tabs, side by side, that slide along as the tab changes. Capture starts something new
+// The panel under the menu bar icon: its tabs, side by side, slide along as the tab changes. Capture starts something new
 // over a quiet moving aura, Library runs the reviews and lists the library's pages (sorted and filtered as the person picks), each
-// folding open in place, and Settings is Settings. It arranges @avanzel/ui's parts and paints nothing of its own.
+// folding open in place, Chat goes on asking the library about its answers, and Settings is Settings. It arranges @avanzel/ui's parts and paints nothing of its own.
 import "@avanzel/ui/base.css";
 import { ActionTile, Actions, Aura, Button, Confirm, Disclosure, Dust, Expiring, Group, GroupRow, GroupReveal, SpokenField, Switch, FileLink, FilePreview, Items, More, UndoBar, Notice, PageRow, Progress, RecordingStage, Row, Select, ShelfTag, shelfName, SHELVES, Spinner, Stack, TabPanel, Tabs, Text, TextField, type AnyShelf, type Item } from "@avanzel/ui";
-import { answeredLine, ASKING_LINES, failedAnswer, waitingLine } from "../ask/copy.ts";
+import { answeredLine, ASKING_LINES, emptyLine, failedAnswer, waitingLine } from "../ask/copy.ts";
 import { problemBody } from "../common/problem.tsx";
 import { sourceTitle } from "../setup/copy.ts";
 import { addChoices, addLabel, attachedItems } from "../common/attached.ts";
@@ -17,12 +17,12 @@ import { ListeningControls } from "../common/listening-controls.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { prettyAccelerator } from "../../main/shortcuts.ts";
-import { isSettingsPane, PANEL_TABS, type AskResult, type AvanzelBridge, type PanelFiling, type PanelPage, type PanelReview, type PanelSnapshot, type PanelTab, type SettingsPane, type SettingsSnapshot, type LibraryShelfAsk, type Shortcuts } from "../../shared/ipc.ts";
+import { isSettingsPane, PANEL_TABS, type AskResult, type AvanzelBridge, type ChatTurn, type PanelFiling, type PanelPage, type PanelReview, type PanelSnapshot, type PanelTab, type SettingsPane, type SettingsSnapshot, type LibraryShelfAsk, type Shortcuts } from "../../shared/ipc.ts";
 import { AGENT_SHELF_ASK, agentShelfTitle, EDIT_FIRST, MAKE_SHELF, SAY_NO } from "../capsule/copy.ts";
 import { anyShelfOf } from "../common/shelf.ts";
 import { SettingsApp } from "../settings/SettingsApp.tsx";
 import { UPDATE_NOT_NOW, updateReadyState } from "../settings/copy.ts";
-import { inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, shelfMakesLine, shelfQuestion, SORTS, sortLabel, sortPages, type PageFilter, type PageSort } from "./copy.ts";
+import { CHAT_CLEARED, CHAT_EMPTY, CHAT_FIELD, CHAT_FIRST, CHAT_FOLLOW_UP, CONTINUE_IN_CHAT, NEW_CHAT, inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, shelfMakesLine, shelfQuestion, SORTS, sortLabel, sortPages, type PageFilter, type PageSort } from "./copy.ts";
 import { shelfBusy, type ShelfPress } from "./shelf-busy.ts";
 import "./styles.css";
 
@@ -938,10 +938,11 @@ function ShelfQuestion({ ask, snap }: { ask: LibraryShelfAsk; snap: PanelSnapsho
 }
 
 /**
- * The question asked in Library and its answer, over the pages: while the agent looks, a spinner, the waiting line and Stop; then the
- * answer's lines, the pages it used (each opens), and who answered; or what went wrong, with Ask again.
+ * A question asked in Library, or a turn of Chat, and its answer: while the agent looks, a spinner, the waiting line and Stop; then the
+ * answer's lines, the pages it used (each opens), and who answered, with Continue in chat when it can go on there (`onContinue`); or
+ * what went wrong, with Ask again when it can be asked again (`onAgain`). Close puts it away when there is `onClose`.
  */
-function AskReply({ ask, own, onStop, onAgain, onClose }: { ask: PanelAsk; own: OwnShelves; onStop(): void; onAgain(): void; onClose(): void }) {
+function AskReply({ ask, own, onStop, onAgain, onClose, onContinue }: { ask: PanelAsk; own: OwnShelves; onStop(): void; onAgain?(): void; onClose?(): void; onContinue?(): void }) {
   const running = ask.outcome === null;
   const now = useClock(250, running);
   const { line } = waitingLine(ask.progress, (now - ask.since) / 1000, ASKING_LINES);
@@ -950,7 +951,7 @@ function AskReply({ ask, own, onStop, onAgain, onClose }: { ask: PanelAsk; own: 
     <Stack gap={12}>
       <Row gap={8} justify="between">
         <Text variant="headline">{ask.question}</Text>
-        {!running && <Button size="small" variant="quiet" onClick={onClose}>Close</Button>}
+        {!running && onClose && <Button size="small" variant="quiet" onClick={onClose}>Close</Button>}
       </Row>
       {running && (
         <Row gap={8}>
@@ -963,7 +964,7 @@ function AskReply({ ask, own, onStop, onAgain, onClose }: { ask: PanelAsk; own: 
       {outcome !== null && outcome !== "stopped" && !outcome.ok && (() => {
         const problem = failedAnswer(outcome, new Date());
         return (
-          <Notice tone="error" title={problem.title} actions={<Button size="small" variant="primary" onClick={onAgain}>Ask again</Button>}>
+          <Notice tone="error" title={problem.title} actions={onAgain && <Button size="small" variant="primary" onClick={onAgain}>Ask again</Button>}>
             {problemBody(problem)}
           </Notice>
         );
@@ -985,9 +986,171 @@ function AskReply({ ask, own, onStop, onAgain, onClose }: { ask: PanelAsk; own: 
             </Stack>
           )}
           <Text variant="footnote" tone="secondary" numeric>{answeredLine(outcome.agent, outcome.seconds)}</Text>
+          {onContinue && (
+            <Row gap={8}>
+              <Button size="small" variant="secondary" onClick={onContinue}>{CONTINUE_IN_CHAT}</Button>
+            </Row>
+          )}
         </Stack>
       )}
     </Stack>
+  );
+}
+
+/** A turn of Chat: a question, as Library's are (`PanelAsk`), told apart from the others by its `id`. */
+interface ChatEntry extends PanelAsk {
+  id: number;
+}
+
+let chatIds = 0;
+
+/** What Chat holds and does. The panel keeps it, so Library can hand it an answer to go on from (`adopt`). */
+interface PanelChat {
+  turns: readonly ChatEntry[];
+  /** A turn is being answered. */
+  asking: boolean;
+  /**
+   * Asks `question` as the chat's next turn, with the turns answered before it. A turn that failed or was stopped goes, so no problem
+   * is left without its fix above the new question.
+   */
+  send(question: string): void;
+  stop(): void;
+  /** The last turn, which failed or was stopped, asked again. */
+  again(): void;
+  /** A new chat: the turns go, and Undo brings them back for a few seconds (`cleared`). Not while one is answered. */
+  clear(): void;
+  /** Library's answered question, as the first turn of a new chat; a chat that was open goes as New chat's does. */
+  adopt(ask: PanelAsk): void;
+  /** The turns of the chat just put away, while Undo can bring them back. */
+  cleared: readonly ChatEntry[] | null;
+  undoClear(): void;
+  letClearStand(): void;
+}
+
+/** The turns answered before a follow-up, as main is handed them: only answers, never one that failed or was stopped. */
+function chatHistory(turns: readonly ChatEntry[]): ChatTurn[] {
+  return turns.flatMap((turn) => (turn.outcome && turn.outcome !== "stopped" && turn.outcome.ok ? [{ question: turn.question, answer: turn.outcome.answer }] : []));
+}
+
+function answered(turn: ChatEntry): boolean {
+  return !!turn.outcome && turn.outcome !== "stopped" && turn.outcome.ok;
+}
+
+function useChat(): PanelChat {
+  const [turns, setTurns] = useState<readonly ChatEntry[]>([]);
+  const [cleared, setCleared] = useState<readonly ChatEntry[] | null>(null);
+  const asking = turns.some((turn) => turn.outcome === null);
+  const putAway = (next: readonly ChatEntry[]) => {
+    if (turns.length > 0) setCleared(turns);
+    setTurns(next);
+  };
+  useEffect(
+    () => api.onAskProgress((message) => setTurns((now) => now.map((turn) => (turn.outcome === null ? { ...turn, progress: message, since: Date.now() } : turn)))),
+    [],
+  );
+  const settle = (id: number, outcome: AskResult) => setTurns((now) => now.map((turn) => (turn.id === id && turn.outcome === null ? { ...turn, outcome } : turn)));
+  const run = (question: string, before: readonly ChatEntry[]) => {
+    const id = ++chatIds;
+    setTurns([...before, { id, question, outcome: null, progress: null, since: Date.now() }]);
+    api.ask(question, chatHistory(before)).then(
+      (result) => settle(id, result),
+      (error: unknown) =>
+        settle(id, { ok: false, answer: error instanceof Error ? error.message : String(error), agent: "", seconds: 0, paragraphs: [], sources: [], changedFiles: 0, failure: null, library: null }),
+    );
+  };
+  return {
+    turns,
+    asking,
+    send: (question) => {
+      const words = question.trim();
+      if (!words || asking) return;
+      setCleared(null); // a new turn: the chat put away stays away
+      run(words, turns.filter(answered));
+    },
+    stop: () => {
+      api.cancelAsk();
+      setTurns((now) => now.map((turn) => (turn.outcome === null ? { ...turn, outcome: "stopped" } : turn)));
+    },
+    again: () => {
+      const last = turns.at(-1);
+      if (last && !asking) run(last.question, turns.slice(0, -1));
+    },
+    clear: () => {
+      if (!asking) putAway([]);
+    },
+    adopt: (ask) => {
+      if (!asking) putAway([{ ...ask, id: ++chatIds }]);
+    },
+    cleared,
+    undoClear: () => {
+      if (!cleared || asking) return;
+      setTurns(cleared);
+      setCleared(null);
+    },
+    letClearStand: () => setCleared(null),
+  };
+}
+
+/** Moves the newest turn into sight: at once with Reduce Motion, else gliding. */
+function scrollToEnd(end: HTMLElement | null): void {
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  end?.scrollIntoView({ block: "end", behavior: still ? "auto" : "smooth" });
+}
+
+/**
+ * Chat: questions to the library, one after another, each answered with the ones before it in mind (and still from the library alone,
+ * unless the person asks for more). The turns read down, with the field under the last; New chat starts again, with Undo for a few
+ * seconds. The newest turn comes into sight as it is asked and as it is answered. One question is answered at a time, so while
+ * Library's is (`elsewhere`), Ask waits. With no notes in the library, the line before the first question says to say something first.
+ */
+function Chat({ chat, own, focus, elsewhere, pages }: { chat: PanelChat; own: OwnShelves; focus: number; elsewhere: boolean; pages: number }) {
+  const [draft, setDraft] = useState("");
+  const field = useRef<HTMLInputElement>(null);
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focus > 0) field.current?.focus({ preventScroll: true });
+  }, [focus]);
+  const count = chat.turns.length;
+  useEffect(() => {
+    if (count > 0) scrollToEnd(end.current);
+  }, [count, chat.asking]);
+  const busy = chat.asking || elsewhere;
+  const send = () => {
+    if (!draft.trim() || busy) return;
+    chat.send(draft);
+    setDraft("");
+  };
+  // The last turn's Ask again is the moment's one primary button; the field's Ask steps back beside it.
+  const last = chat.turns.at(-1);
+  const failed = !!last && last.outcome !== null && !answered(last);
+  return (
+    <div className="panel-pad">
+      <Stack gap={24}>
+        {count === 0 && <Text tone="secondary">{pages === 0 ? emptyLine(0) : CHAT_EMPTY}</Text>}
+        {chat.turns.map((turn, i) => (
+          <AskReply key={turn.id} ask={turn} own={own} onStop={chat.stop} onAgain={i === count - 1 && !elsewhere ? chat.again : undefined} />
+        ))}
+        <Stack gap={8}>
+          <TextField
+            ref={field}
+            label={CHAT_FIELD}
+            labelHidden
+            placeholder={count === 0 ? CHAT_FIRST : CHAT_FOLLOW_UP}
+            value={draft}
+            onChange={setDraft}
+            onEnter={send}
+            onEscape={draft ? () => setDraft("") : undefined}
+            action={<Button size="small" variant={failed ? "secondary" : "primary"} disabled={!draft.trim() || busy} onClick={send}>Ask</Button>}
+          />
+          {count > 0 && (
+            <Row gap={8}>
+              <Button size="small" variant="quiet" icon="plus" disabled={chat.asking} onClick={chat.clear}>{NEW_CHAT}</Button>
+            </Row>
+          )}
+        </Stack>
+      </Stack>
+      <div ref={end} />
+    </div>
   );
 }
 
@@ -997,7 +1160,26 @@ function AskReply({ ask, own, onStop, onAgain, onClose }: { ask: PanelAsk; own: 
  * the pages. Ask your library… in Capture brings the field forward (`focusAsk`). A page on a shelf the owner made, or on meetings, is
  * tagged and filtered by it in the own-shelf look, by the name Settings knows it by (`own`).
  */
-function Library({ snap, pages, own, focusAsk }: { snap: PanelSnapshot; pages: PanelPage[]; own: OwnShelves; focusAsk: number }) {
+function Library({
+  snap,
+  pages,
+  own,
+  focusAsk,
+  onContinue,
+  elsewhere,
+  onAsking,
+}: {
+  snap: PanelSnapshot;
+  pages: PanelPage[];
+  own: OwnShelves;
+  focusAsk: number;
+  /** Continue in chat: the answer goes on in Chat. */
+  onContinue(ask: PanelAsk): void;
+  /** Chat's question is being answered: one is answered at a time, so Library's waits. */
+  elsewhere: boolean;
+  /** Whether Library's own question is being answered, for Chat to wait on it. */
+  onAsking(asking: boolean): void;
+}) {
   // The open page is remembered, so the panel comes back to it as it was: after a file it opened, a restart, or a reload.
   const [open, setOpen] = useRemembered<string | null>("panel.open", null, (value): value is string | null => value === null || typeof value === "string");
   // Deleting a page: its bin asks first (Move to the Trash? Cancel, Delete), then the row turns to dust, and only then is it sent to the
@@ -1059,9 +1241,10 @@ function Library({ snap, pages, own, focusAsk }: { snap: PanelSnapshot; pages: P
   );
   useEffect(() => api.onAskProgress((message) => setAsk((now) => (now && now.outcome === null ? { ...now, progress: message, since: Date.now() } : now))), []);
   const asking = ask !== null && ask.outcome === null;
+  useEffect(() => onAsking(asking), [asking, onAsking]);
   const askNow = (question: string) => {
     const words = question.trim();
-    if (!words || asking) return;
+    if (!words || asking || elsewhere) return;
     setAsk({ question: words, outcome: null, progress: null, since: Date.now() });
     api.ask(words).then(
       (result) => setAsk((now) => (now && now.question === words ? { ...now, outcome: result } : now)),
@@ -1113,7 +1296,23 @@ function Library({ snap, pages, own, focusAsk }: { snap: PanelSnapshot; pages: P
             )}
           </Stack>
         )}
-        {ask && <AskReply ask={ask} own={own} onStop={stopAsk} onAgain={() => askNow(ask.question)} onClose={() => setAsk(null)} />}
+        {ask && (
+          <AskReply
+            ask={ask}
+            own={own}
+            onStop={stopAsk}
+            onAgain={elsewhere ? undefined : () => askNow(ask.question)}
+            onClose={() => setAsk(null)}
+            onContinue={
+              elsewhere
+                ? undefined
+                : () => {
+                    onContinue(ask);
+                    setAsk(null);
+                  }
+            }
+          />
+        )}
         <Stack gap={8}>
           <Row gap={6}>
             <div className="panel-grow">
@@ -1272,6 +1471,17 @@ function App() {
     setTab("library");
     setFocusAsk((n) => n + 1);
   }, []);
+  // Chat is kept here, over its tab, so an answer in Library can go on in it: Continue in chat hands it over and brings Chat forward.
+  const chat = useChat();
+  const adopt = chat.adopt;
+  const [focusChat, setFocusChat] = useState(0);
+  const continueInChat = useCallback((ask: PanelAsk) => {
+    adopt(ask);
+    setTab("chat");
+    setFocusChat((n) => n + 1);
+  }, [adopt]);
+  // One question is answered at a time: while Library's is, Chat's Ask waits, and the other way round.
+  const [libraryAsking, setLibraryAsking] = useState(false);
   // The pane Settings opens on when something asked for one before its tab showed.
   const [pane, setPane] = useState<SettingsPane | undefined>(undefined);
   const readPages = useCallback(() => void api.pages().then(setPages), []);
@@ -1326,6 +1536,7 @@ function App() {
               ? [{ value: "processing" as const, label: "Processing", ...(snap.filings.length > 0 ? { count: snap.filings.length, countLabel: thoughtsLabel(snap.filings.length) } : {}) }]
               : []),
             { value: "library", label: "Library", count: pages.length, countLabel: notesLabel(pages.length) },
+            { value: "chat", label: "Chat" },
             { value: "settings", label: "Settings" },
           ]}
           value={tab}
@@ -1340,11 +1551,32 @@ function App() {
           pages={[
             { value: "capture", content: <Capture snap={snap} onAsk={toAsk} /> },
             ...(processing ? [{ value: "processing" as const, content: <Processing snap={snap} leaving={leaving} onLeft={() => setLeaving(null)} /> }] : []),
-            { value: "library", content: <Library snap={snap} pages={pages} own={own} focusAsk={focusAsk} /> },
+            {
+              value: "library",
+              content: (
+                <Library
+                  snap={snap}
+                  pages={pages}
+                  own={own}
+                  focusAsk={focusAsk}
+                  onContinue={continueInChat}
+                  elsewhere={chat.asking}
+                  onAsking={setLibraryAsking}
+                />
+              ),
+            },
+            { value: "chat", content: <Chat chat={chat} own={own} focus={focusChat} elsewhere={libraryAsking} pages={pages.length} /> },
             { value: "settings", content: <SettingsApp startPane={pane} /> },
           ]}
         />
       </div>
+      {/* The chat just put away waits, at the foot of the panel, for Undo, its × or the end of its time. It is outside the tabs' pages,
+          which slide along, so it stays in sight. */}
+      {chat.cleared && (
+        <div className="panel-undo">
+          <UndoBar key={chat.cleared[0]?.id ?? 0} message={CHAT_CLEARED} seconds={UNDO_SECONDS} onUndo={chat.undoClear} onDone={chat.letClearStand} />
+        </div>
+      )}
       <footer className="panel-foot">
         <Stack gap={6}>
           {tab !== "settings" && <UpdateReady update={snap.update} />}
