@@ -263,6 +263,8 @@ describe("parseCombineAnswer", () => {
       plan,
     )!;
     expect(got.shelves).toEqual([{ folder: "Philosophy", name: "P", definition: "d", map: "" }]);
+    const named = parseCombineAnswer(answer([{ folder: "Philosophy", name: "A | B\nC", definition: "d", map: "" }]), plan)!;
+    expect(named.shelves[0]?.name).toBe("A B C");
     expect(parseCombineAnswer("nothing", plan)).toBeNull();
     expect(parseCombineAnswer(answer("no"), plan)).toBeNull();
     expect(parseCombineAnswer(answer([{ folder: 1 }]), plan)).toBeNull();

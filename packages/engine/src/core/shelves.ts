@@ -200,7 +200,7 @@ function onAShelf(page: string, own: readonly OwnShelf[]): boolean {
 }
 
 /** A name as one line, with no `|` or line break: whitespace collapsed, cut to length. */
-function cleanName(text: string): string {
+export function cleanShelfName(text: string): string {
   const line = text.replace(/\|/g, " ").replace(/\s+/g, " ").trim(); // \s takes line breaks, U+2028 and U+2029 too
   return [...line].slice(0, MAX_SHELF_NAME).join("").trim();
 }
@@ -230,7 +230,7 @@ export function checkedSuggestion(
 ): ShelfSuggestion | null {
   if (parsed === null) return null;
   const folder = parsed.folder.trim();
-  const name = cleanName(parsed.name);
+  const name = cleanShelfName(parsed.name);
   const definition = cleanDefinition(parsed.definition);
   const page = parsed.page.trim();
   if (folder === "" || name === "" || definition === "") return null;

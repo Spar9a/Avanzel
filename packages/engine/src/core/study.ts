@@ -8,7 +8,7 @@ import { isoLocal } from "./dates.ts";
 import { frontmatterFields, splitFrontmatter } from "./frontmatter.ts";
 import { visibleFiles } from "./changes.ts";
 import { keepInsideFence } from "./prompts.ts";
-import { BUILT_IN_SHELVES, cleanDefinition, folderKey, MAX_SHELF_NAME, SPECIAL_DIRS } from "./shelves.ts";
+import { BUILT_IN_SHELVES, cleanDefinition, cleanShelfName, folderKey, SPECIAL_DIRS } from "./shelves.ts";
 import { render } from "./templates.ts";
 
 /** Notes an agent reads for one step. */
@@ -385,11 +385,6 @@ function text(value: unknown, fallback = ""): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/** A name as one line of at most 40 characters. */
-function cleanName(name: string): string {
-  return cut(name.replace(/\s+/g, " ").trim(), MAX_SHELF_NAME).trim();
-}
-
 /** What the agent said about the folder at `path`, from the last json block of its reply; null when it isn't there or has the wrong shape. */
 export function parseFolderAnswer(reply: string, path: string): FolderSummary | null {
   const data = lastJsonBlock(reply);
@@ -404,7 +399,7 @@ export function parseFolderAnswer(reply: string, path: string): FolderSummary | 
   if (confidence !== "high" && confidence !== "low") return null;
   return {
     path,
-    name: cleanName(name) || cleanName(path.slice(path.lastIndexOf("/") + 1)),
+    name: cleanShelfName(name) || cleanShelfName(path.slice(path.lastIndexOf("/") + 1)),
     purpose: cut(purpose.trim(), MAX_PURPOSE),
     conventions: cut(conventions.trim(), MAX_CONVENTIONS),
     map: cut(map.trim(), MAX_MAP),
@@ -441,7 +436,7 @@ export function parseCombineAnswer(
     const clean = cleanDefinition(definition);
     if (own === undefined || seen.has(key) || clean === "") continue;
     seen.add(key);
-    shelves.push({ folder: own, name: cleanName(name) || cleanName(own), definition: clean, map: cut(map.trim(), MAX_MAP) });
+    shelves.push({ folder: own, name: cleanShelfName(name) || cleanShelfName(own), definition: clean, map: cut(map.trim(), MAX_MAP) });
   }
   return { shelves, style: cut(style.trim(), MAX_STYLE).trim() };
 }
