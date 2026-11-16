@@ -5,6 +5,10 @@ import {
   agentShelfTitle,
   EDIT_FIRST,
   filedLine,
+  keptOldLine,
+  keptOldLines,
+  newFolderLine,
+  newFolderLines,
   MAKE_SHELF,
   moreLine,
   notedLine,
@@ -256,5 +260,32 @@ describe("the result cards' words are written as the design rules ask", () => {
 
   it("speak of the person as they and them, never as he or she", () => {
     for (const line of [...sentences, ...captions]) expect(line, line).not.toMatch(/\b(he|she|him|his|her|hers)\b/i);
+  });
+});
+
+describe("the filed card's lines on what a filing did in the owner's own folders", () => {
+  it("names a new folder by its last part", () => {
+    expect(newFolderLine("Acme")).toBe("New folder: Acme");
+    expect(newFolderLines(["Projects/Clients/Acme", "Projects/Beta"])).toEqual(["New folder: Acme", "New folder: Beta"]);
+    expect(newFolderLines(undefined)).toEqual([]);
+  });
+
+  it("names an old note that was kept as it was by its file's name, without .md", () => {
+    expect(keptOldLine("Plan 2024")).toBe("Plan 2024 was kept as it was: old notes are only added to.");
+    expect(keptOldLines(["Projects/Plan 2024.md", "Work/Notes.MD", "Archive/old"])).toEqual([
+      "Plan 2024 was kept as it was: old notes are only added to.",
+      "Notes was kept as it was: old notes are only added to.",
+      "old was kept as it was: old notes are only added to.",
+    ]);
+    expect(keptOldLines(undefined)).toEqual([]);
+  });
+
+  it("keep to the copy rules: no “!”, no three dots, no “I”", () => {
+    for (const line of [newFolderLine("Acme"), keptOldLine("Plan")]) {
+      expect(line, line).toMatch(/^\p{Lu}/u);
+      expect(line, line).not.toContain("!");
+      expect(line, line).not.toContain("...");
+      expect(line, line).not.toMatch(/(^|[^\p{L}'’])I(?=$|[^\p{L}'’])/u);
+    }
   });
 });

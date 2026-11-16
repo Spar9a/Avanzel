@@ -13,6 +13,7 @@ import {
   type SettingsPane,
   type SettingsSnapshot,
   type SpeechModelInfo,
+  type StudyPreview,
   type TaskInfo,
   type UpdateSnapshot,
   type UpdateStatus,
@@ -789,3 +790,46 @@ export function folderLine(name: string, folder: string, taken: readonly string[
   if (folder === "") return name.trim() === "" ? undefined : FOLDER_HINT;
   return folderProblemText(folder, taken) ?? undefined;
 }
+
+// ---------------------------------------------------------------- Learn this library (General → Your shelves)
+
+/** The button under the shelves, and the offer's action: it shows what a study costs first. */
+export const LEARN_LIBRARY = "Learn this library…";
+/** The offer above the shelves, while the library has folders of the owner's own that no study learned. The panel's card says it too. */
+export const STUDY_OFFER_TITLE = "This library has folders of its own.";
+export const STUDY_OFFER_BODY = "Avanzel can study them and file the way you do. Nothing changes until you approve.";
+/** The confirm's line: what a study reads, before it starts. */
+export const studyCostLine = (p: StudyPreview): string =>
+  `Avanzel's agent reads up to ${p.notes} ${p.notes === 1 ? "note" : "notes"} in ${p.folders} ${p.folders === 1 ? "folder" : "folders"}, one folder at a time, and proposes how to file into them. Nothing changes until you approve.`;
+export const START_STUDY = "Start study";
+/** Start study, for a study that stopped part way or paused on a failed run: it goes on from where it was. */
+export const RESUME_STUDY = "Go on with the study";
+/**
+ * How far a running study is: the folder it studies, or the last step, which puts the proposal together. Before its first step it
+ * has no steps yet, and is getting ready.
+ */
+export const studyRunningLine = (s: { done: number; steps: number; current: string }): string =>
+  s.steps === 0 ? "Getting the study ready…" : s.current ? `Studying ${s.current}, ${s.done + 1} of ${s.steps}.` : `Putting it together, ${s.done + 1} of ${s.steps}.`;
+/** The running row's bar, for VoiceOver, and its Stop. */
+export const STUDY_PROGRESS_LABEL = "Studying the library";
+export const STUDY_STOP = "Stop";
+/** What a refused preview or start says it didn't do (the window's Notice tells why). */
+export const STUDY_NOT_STARTED = "The study didn't start.";
+/** The panel's card once a study is ready for review. */
+export const STUDY_READY_TITLE = "The study is ready.";
+/** The review screen: what it is for, each folder's parts, the house style, and its two buttons. */
+export const STUDY_REVIEW_NOTE = "Check what Avanzel learned. Turn off a folder to leave it alone. Nothing changes until you apply.";
+export const FILE_HERE = "File here";
+export const STUDY_MAP_LABEL = "Map";
+export const NOT_STUDIED = "Not studied. Its notes couldn't be read this time.";
+export const LOW_CONFIDENCE = "Avanzel isn't sure about this folder.";
+export const HOUSE_STYLE_LABEL = "How this library is written";
+export const CURRENT_STYLE_LABEL = "The style in use now";
+export const APPLY_STUDY = "Apply";
+export const DISCARD_STUDY = "Discard";
+/** The house style's editor under the shelves, once there is one: Save (Edit and Remove are the shelves' own words). */
+export const HOUSE_STYLE_SAVE = "Save";
+/** A study that paused on a failed run: its Notice's body, under the engine's words, with Go on with the study. */
+export const STUDY_FAILED_SAFE = "Nothing in your library changed. What was studied so far is kept.";
+/** A folder of the owner's that holds notes under the name of one of Avanzel's own shelves (`StudyProposal.clashes`). */
+export const clashLine = (folder: string): string => `Your ${folder} folder has the name Avanzel uses for its own ${folder}.`;

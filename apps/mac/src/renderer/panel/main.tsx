@@ -21,8 +21,8 @@ import { isSettingsPane, PANEL_TABS, type AskResult, type AvanzelBridge, type Ch
 import { AGENT_SHELF_ASK, agentShelfTitle, EDIT_FIRST, MAKE_SHELF, SAY_NO } from "../capsule/copy.ts";
 import { anyShelfOf } from "../common/shelf.ts";
 import { SettingsApp } from "../settings/SettingsApp.tsx";
-import { UPDATE_NOT_NOW, updateReadyState } from "../settings/copy.ts";
-import { CHAT_CLEARED, CHAT_EMPTY, CHAT_FIELD, CHAT_FIRST, CHAT_FOLLOW_UP, CONTINUE_IN_CHAT, NEW_CHAT, inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, shelfMakesLine, shelfQuestion, SORTS, sortLabel, sortPages, type PageFilter, type PageSort } from "./copy.ts";
+import { LEARN_LIBRARY, STUDY_OFFER_BODY, STUDY_OFFER_TITLE, STUDY_READY_TITLE, STUDY_STOP, studyRunningLine, UPDATE_NOT_NOW, updateReadyState } from "../settings/copy.ts";
+import { CHAT_CLEARED, CHAT_EMPTY, CHAT_FIELD, CHAT_FIRST, CHAT_FOLLOW_UP, CONTINUE_IN_CHAT, NEW_CHAT, inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, REVIEW_STUDY, shelfMakesLine, shelfQuestion, SORTS, sortLabel, sortPages, STUDY_OFFER_LATER, type PageFilter, type PageSort } from "./copy.ts";
 import { shelfBusy, type ShelfPress } from "./shelf-busy.ts";
 import "./styles.css";
 
@@ -938,6 +938,54 @@ function ShelfQuestion({ ask, snap }: { ask: LibraryShelfAsk; snap: PanelSnapsho
 }
 
 /**
+ * Learn this library's card at the top of Library: while a study runs, how far it is, with Stop (busy once pressed, until the step in
+ * flight ends); once one is ready, Review, which opens Settings → General on its review screen; else, while the library has folders of the
+ * owner's own to learn and the card wasn't put away, the offer, with Not now and Learn this library… (Settings, where the cost is shown
+ * before anything starts). Nothing for a study that paused on a failed run: Settings says why and goes on with it.
+ */
+function StudyCard({ snap }: { snap: PanelSnapshot }) {
+  const study = snap.study;
+  if (study.kind === "running") {
+    return (
+      <Notice
+        title={studyRunningLine(study)}
+        actions={
+          <Actions align="start">
+            <Button size="small" variant="secondary" icon="stop" busy={study.stopping} onClick={() => act("study-stop")}>{STUDY_STOP}</Button>
+          </Actions>
+        }
+      />
+    );
+  }
+  if (study.kind === "ready") {
+    return (
+      <Notice
+        title={STUDY_READY_TITLE}
+        actions={
+          <Actions align="start">
+            <Button size="small" variant="primary" onClick={() => act("study-review")}>{REVIEW_STUDY}</Button>
+          </Actions>
+        }
+      />
+    );
+  }
+  if (!snap.studyOffer) return null;
+  return (
+    <Notice
+      title={STUDY_OFFER_TITLE}
+      actions={
+        <Actions align="start">
+          <Button size="small" variant="quiet" onClick={() => act("study-offer-later")}>{STUDY_OFFER_LATER}</Button>
+          <Button size="small" variant="primary" onClick={() => act("study-review")}>{LEARN_LIBRARY}</Button>
+        </Actions>
+      }
+    >
+      {STUDY_OFFER_BODY}
+    </Notice>
+  );
+}
+
+/**
  * A question asked in Library, or a turn of Chat, and its answer: while the agent looks, a spinner, the waiting line and Stop; then the
  * answer's lines, the pages it used (each opens), and who answered, with Continue in chat when it can go on there (`onContinue`); or
  * what went wrong, with Ask again when it can be asked again (`onAgain`). Close puts it away when there is `onClose`.
@@ -1287,6 +1335,7 @@ function Library({
   return (
     <div className="panel-pad panel-library">
       <Stack gap={16}>
+        <StudyCard snap={snap} />
         {snap.shelfSuggestions.map((ask) => <ShelfQuestion key={ask.folder} ask={ask} snap={snap} />)}
         {snap.reviews.length > 0 && (
           <Stack gap={12}>

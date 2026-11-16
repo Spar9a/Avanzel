@@ -120,3 +120,7 @@ export function sortPages(pages: readonly PanelPage[], sort: PageSort): PanelPag
   const other = (a: PanelPage, b: PanelPage) => (rank(a) === SHELF_ORDER.length ? (a.shelf ?? "").localeCompare(b.shelf ?? "") : 0);
   return list.sort((a, b) => rank(a) - rank(b) || other(a, b) || byChange(a, b));
 }
+
+/** Learn this library's cards in Library: Later on the offer (it isn't offered here again), and Review on a study that is ready. */
+export const STUDY_OFFER_LATER = "Not now";
+export const REVIEW_STUDY = "Review";

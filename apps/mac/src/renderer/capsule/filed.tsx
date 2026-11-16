@@ -1,13 +1,14 @@
 // The capsule once a filing ends well: one card of paper with the person's words, stamped, and in its foot who filed them and how long
-// it took, with Undo and Open at its right and Hide in its corner; and, when the librarian suggests a new shelf, the question under the
-// pages. The panel's Processing tab draws the same card. Nothing here ticks.
+// it took, with Undo and Open at its right and Hide in its corner; under the pages, a line for each folder the filing made inside one of the
+// owner's shelves and each old note of theirs that was kept as it was; and, when the librarian suggests a new shelf, the question under
+// them. The panel's Processing tab draws the same card. Nothing here ticks.
 import { Actions, Button, Card, Stack, Text } from "@avanzel/ui";
 import { useState } from "react";
 import type { ShelfAsk } from "../../shared/ipc.ts";
 import { stampDate } from "../common/stamp.ts";
 import { useStampDate } from "../common/use-stamp-date.ts";
 import { api, type StateOf } from "./api.ts";
-import { agentShelfLine, EDIT_FIRST, filedLine, MAKE_SHELF, NOT_NOW, notedLine, SAY_NO, shelfAskLine } from "./copy.ts";
+import { agentShelfLine, EDIT_FIRST, filedLine, keptOldLines, MAKE_SHELF, newFolderLines, NOT_NOW, notedLine, SAY_NO, shelfAskLine } from "./copy.ts";
 import { Pages } from "./pages.tsx";
 import type { Scene } from "./scene.tsx";
 import { Words } from "./words.tsx";
@@ -64,6 +65,9 @@ function FiledCard({ state }: { state: StateOf<"filed"> }) {
             </Text>
           </span>
           {receipt && <Pages pages={state.pages} />}
+          {[...newFolderLines(state.newFolders), ...keptOldLines(state.keptOld)].map((line, i) => (
+            <Text key={i} variant="footnote" tone="secondary">{line}</Text>
+          ))}
           {state.suggestion && <ShelfQuestion ask={state.suggestion} opens={receipt} />}
         </Stack>
       }

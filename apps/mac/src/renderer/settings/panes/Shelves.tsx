@@ -2,9 +2,15 @@
 // edits one or gives a folder made by hand its definition. Remove is there only for a shelf with no pages, and asks first. Each change is one
 // call to main (`settings.shelves`), whose refusal is told by the window's Notice (`attemptChange`). Edit first, on a suggested shelf, opens the
 // form filled in from `snap.shelfDraft`; Save then makes the shelf from that suggestion, which moves its pages onto it.
-import { Actions, Button, Confirm, Group, GroupRow, Row, TextArea, TextField } from "@avanzel/ui";
+//
+// Learn this library lives here too: an offer above the group while the library has folders of the owner's own that no study learned, and
+// Learn this library… beside Add shelf, which shows what a study costs before it starts; while one runs, how far it is and Stop; a study that
+// paused on a failed run, in a Notice that goes on with it; and a study that is ready, its review screen in place of the group
+// (StudyReview.tsx). Once a study has given the library a house style, its row has Edit and Remove (`settings.setHouseStyle`).
+import { Actions, Button, Confirm, Group, GroupRow, Notice, Progress, Row, Stack, Text, TextArea, TextField } from "@avanzel/ui";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import type { LibraryInfo, ShelfAsk, ShelfOp } from "../../../shared/ipc.ts";
+import type { LibraryInfo, ShelfAsk, ShelfOp, StudyPreview } from "../../../shared/ipc.ts";
+import { shortened } from "../../../shared/clip.ts";
 import {
   ADD_DEFINITION,
   ADD_SHELF,
@@ -14,7 +20,11 @@ import {
   folderLine,
   folderProblemText,
   handMadeFolderProblem,
+  HOUSE_STYLE_LABEL,
+  HOUSE_STYLE_SAVE,
+  LEARN_LIBRARY,
   removeShelfQuestion,
+  RESUME_STUDY,
   SAVE_SHELF,
   SHELF_CANCEL,
   SHELF_DEFINITION_LABEL,
@@ -26,9 +36,19 @@ import {
   SHELVES_EMPTY,
   SHELVES_LABEL,
   SHELVES_NOTE,
+  START_STUDY,
+  STUDY_FAILED_SAFE,
+  STUDY_NOT_STARTED,
+  STUDY_OFFER_BODY,
+  STUDY_OFFER_TITLE,
+  STUDY_PROGRESS_LABEL,
+  STUDY_STOP,
+  studyCostLine,
+  studyRunningLine,
   SUGGESTED_SAVE_LINE,
 } from "../copy.ts";
-import type { PaneProps } from "../parts.tsx";
+import { attemptChange, type PaneProps } from "../parts.tsx";
+import { StudyReview } from "./StudyReview.tsx";
 
 const api = window.avanzel.settings;
 
@@ -161,6 +181,12 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
   const buttons = useRef<Record<string, HTMLElement | null>>({});
   const addBox = useRef<HTMLDivElement>(null);
   const taken = shelves.filter((shelf) => shelf.definition !== "").map((shelf) => shelf.folder);
+  // Learn this library's confirm (what a study costs, once Learn this library… was pressed) and the house style's editor. The confirm, the
+  // shelf form and the editor each have a primary button, so one opens at a time.
+  const [preview, setPreview] = useState<StudyPreview | null>(null);
+  const [studying, setStudying] = useState<"preview" | "start" | null>(null);
+  const [styleDraft, setStyleDraft] = useState<string | null>(null);
+  const [styleSaving, setStyleSaving] = useState<"save" | "remove" | null>(null);
 
   useEffect(() => {
     if (focus === null) return;
@@ -176,6 +202,8 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
   useEffect(() => {
     if (!draft || typed) return;
     setForm(formOfDraft(draft));
+    setPreview(null);
+    setStyleDraft(null);
     setRemoving(null);
     api.dropShelfDraft();
     void api.get().then(onChange);
@@ -212,7 +240,91 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
   const editing = (shelf: OwnShelves[number]) => form !== null && form.mode !== "add" && form.folder === shelf.folder;
   const formRows = form && <FormRows form={form} taken={taken} saving={saving} onForm={changeForm} onSave={() => void save()} onCancel={cancel} />;
 
-  return (
+  const study = snap.study;
+  const unlearned = snap.library?.unlearnedFolders ?? [];
+  const houseStyle = snap.library?.houseStyle ?? "";
+  const openForm = (next: Form) => {
+    setForm(next);
+    setPreview(null);
+    setStyleDraft(null);
+  };
+  const learn = async () => {
+    if (studying) return;
+    setStudying("preview");
+    try {
+      const cost = await attempt(() => api.previewStudy(), STUDY_NOT_STARTED);
+      if (cost) {
+        setPreview(cost);
+        setForm(null);
+        setStyleDraft(null);
+      }
+    } finally {
+      setStudying(null);
+    }
+  };
+  // Start study begins afresh; Go on with the study picks up where a stopped or paused one was.
+  const start = async (fresh: boolean) => {
+    if (studying) return;
+    setStudying("start");
+    try {
+      const next = await attempt(() => api.startStudy(fresh), STUDY_NOT_STARTED);
+      if (next) {
+        onChange(next);
+        setPreview(null);
+      }
+    } finally {
+      setStudying(null);
+    }
+  };
+  const saveStyle = async (style: string, how: "save" | "remove") => {
+    if (styleSaving) return;
+    setStyleSaving(how);
+    try {
+      const next = await attempt(() => api.setHouseStyle(style));
+      if (next) {
+        onChange(next);
+        setStyleDraft(null);
+      }
+    } finally {
+      setStyleSaving(null);
+    }
+  };
+
+  // A study that is ready: its review stands in place of the group until it is applied or discarded.
+  if (study.kind === "ready") return <StudyReview {...props} proposal={study.proposal} />;
+
+  const idle = study.kind === "idle";
+  const confirming = idle && preview !== null;
+  const resumable = idle && study.resumable;
+
+  // The offer, above the group, while there are folders to learn and no study is going or being confirmed; and a study that paused on a
+  // failed run, which goes on from where it was. Their buttons are secondaries: the pane's primary belongs to what is open in the group.
+  const offer = idle && !confirming && unlearned.length > 0 && (
+    <Notice
+      title={STUDY_OFFER_TITLE}
+      actions={
+        <Actions align="start">
+          <Button size="small" variant="secondary" busy={studying === "preview"} onClick={() => void learn()}>{LEARN_LIBRARY}</Button>
+        </Actions>
+      }
+    >
+      {STUDY_OFFER_BODY}
+    </Notice>
+  );
+  const failed = study.kind === "failed" && (
+    <Notice
+      tone="error"
+      title={study.message}
+      actions={
+        <Actions align="start">
+          <Button size="small" variant="secondary" busy={studying === "start"} onClick={() => void start(false)}>{RESUME_STUDY}</Button>
+        </Actions>
+      }
+    >
+      {STUDY_FAILED_SAFE}
+    </Notice>
+  );
+  const group = (
     <Group label={SHELVES_LABEL} note={SHELVES_NOTE}>
       {shelves.length === 0 && <GroupRow label={SHELVES_EMPTY} />}
       {shelves.map((shelf) => (
@@ -221,7 +333,7 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
             {!editing(shelf) && (
               <div ref={(box) => void (buttons.current[shelf.folder] = box)}>
                 <Row gap={8}>
-                  <Button size="small" variant="secondary" onClick={() => setForm(formOfShelf(shelf))}>
+                  <Button size="small" variant="secondary" onClick={() => openForm(formOfShelf(shelf))}>
                     {shelf.definition === "" ? ADD_DEFINITION : SHELF_EDIT}
                   </Button>
                   {canRemoveShelf(shelf) && (
@@ -247,15 +359,79 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
           {editing(shelf) && formRows}
         </Fragment>
       ))}
+      {houseStyle !== "" && (
+        <GroupRow label={HOUSE_STYLE_LABEL} description={shortened(houseStyle.replace(/\s+/g, " ").trim(), 160)}>
+          {styleDraft === null && (
+            <Row gap={8}>
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={styleSaving !== null}
+                onClick={() => {
+                  setStyleDraft(houseStyle);
+                  setForm(null);
+                  setPreview(null);
+                }}
+              >
+                {SHELF_EDIT}
+              </Button>
+              <Button size="small" variant="secondary" busy={styleSaving === "remove"} onClick={() => void saveStyle("", "remove")}>{SHELF_REMOVE}</Button>
+            </Row>
+          )}
+        </GroupRow>
+      )}
+      {styleDraft !== null && (
+        <div className="settings-editor">
+          <Stack gap={10}>
+            <TextArea label={HOUSE_STYLE_LABEL} labelHidden rows={6} value={styleDraft} autoFocus onChange={setStyleDraft} onEscape={() => setStyleDraft(null)} />
+            <Actions>
+              <Button variant="quiet" onClick={() => setStyleDraft(null)}>{SHELF_CANCEL}</Button>
+              <Button variant="primary" busy={styleSaving === "save"} onClick={() => void saveStyle(styleDraft.trim(), "save")}>{HOUSE_STYLE_SAVE}</Button>
+            </Actions>
+          </Stack>
+        </div>
+      )}
+      {study.kind === "running" && (
+        <GroupRow label={STUDY_PROGRESS_LABEL} description={studyRunningLine(study)} live>
+          <Row gap={8}>
+            <div className="settings-meter">
+              <Progress label={STUDY_PROGRESS_LABEL} {...(study.steps > 0 ? { value: study.done / study.steps } : {})} />
+            </div>
+            <Button size="small" variant="secondary" icon="stop" busy={study.stopping} onClick={() => api.stopStudy()}>{STUDY_STOP}</Button>
+          </Row>
+        </GroupRow>
+      )}
+      {confirming && (
+        <div className="settings-editor">
+          <Stack gap={10}>
+            <Text variant="callout">{studyCostLine(preview)}</Text>
+            <Actions>
+              <Button variant="quiet" disabled={studying === "start"} onClick={() => setPreview(null)}>{SHELF_CANCEL}</Button>
+              <Button variant="primary" busy={studying === "start"} onClick={() => void start(!resumable)}>{resumable ? RESUME_STUDY : START_STUDY}</Button>
+            </Actions>
+          </Stack>
+        </div>
+      )}
       {form?.mode === "add" ? (
         formRows
       ) : (
         <div ref={addBox} className="settings-editor">
           <Actions align="start">
-            <Button size="small" variant="secondary" onClick={() => setForm(blankForm)}>{ADD_SHELF}</Button>
+            <Button size="small" variant="secondary" onClick={() => openForm(blankForm)}>{ADD_SHELF}</Button>
+            {idle && !confirming && (
+              <Button size="small" variant="secondary" busy={studying === "preview"} onClick={() => void learn()}>{LEARN_LIBRARY}</Button>
+            )}
           </Actions>
         </div>
       )}
     </Group>
+  );
+
+  return (
+    <>
+      {offer}
+      {failed}
+      {group}
+    </>
   );
 }

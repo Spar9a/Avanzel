@@ -133,3 +133,21 @@ export const MAKE_SHELF = "Make shelf";
 export const NOT_NOW = "Not now";
 export const EDIT_FIRST = "Edit first";
 export const SAY_NO = "No";
+
+/** The filed card's line for a folder the filing made inside one of the owner's shelves, by its last part. */
+export const newFolderLine = (name: string): string => `New folder: ${name}`;
+/** The filed card's line for an old note of the owner's that the filing rewrote and Avanzel put back, by its title. */
+export const keptOldLine = (title: string): string => `${title} was kept as it was: old notes are only added to.`;
+
+/** The last part of a library-relative path. */
+const lastPart = (rel: string): string => rel.split("/").filter(Boolean).pop() ?? rel;
+
+/** The filed card's lines for the folders a filing made (`newFolders`, library-relative): one each, by its last part. */
+export function newFolderLines(folders: readonly string[] | undefined): string[] {
+  return (folders ?? []).map((folder) => newFolderLine(lastPart(folder)));
+}
+
+/** The filed card's lines for what was put back (`keptOld`, library-relative): one each, by its file's name without .md. */
+export function keptOldLines(paths: readonly string[] | undefined): string[] {
+  return (paths ?? []).map((rel) => keptOldLine(lastPart(rel).replace(/\.md$/i, "")));
+}

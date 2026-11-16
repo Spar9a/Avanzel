@@ -110,6 +110,31 @@ import {
   versionLabel,
   whenLine,
 } from "../src/renderer/settings/copy.ts";
+import {
+  APPLY_STUDY,
+  clashLine,
+  CURRENT_STYLE_LABEL,
+  DISCARD_STUDY,
+  FILE_HERE,
+  HOUSE_STYLE_LABEL,
+  HOUSE_STYLE_SAVE,
+  LEARN_LIBRARY,
+  LOW_CONFIDENCE,
+  NOT_STUDIED,
+  RESUME_STUDY,
+  START_STUDY,
+  STUDY_FAILED_SAFE,
+  STUDY_MAP_LABEL,
+  STUDY_NOT_STARTED,
+  STUDY_OFFER_BODY,
+  STUDY_OFFER_TITLE,
+  STUDY_PROGRESS_LABEL,
+  STUDY_READY_TITLE,
+  STUDY_REVIEW_NOTE,
+  STUDY_STOP,
+  studyCostLine,
+  studyRunningLine,
+} from "../src/renderer/settings/copy.ts";
 import { noSuchReview, SETTINGS_PANES, type UpdateSnapshot, type UpdateStatus, type UpdateWait } from "../src/shared/ipc.ts";
 import { NO_GIT_LINE } from "../src/shared/problems.ts";
 
@@ -964,5 +989,76 @@ describe("shortcutRefusedLine", () => {
   it("says why ⌘ and ⇧ alone aren't taken, and offers the same keys with ⌥", () => {
     expect(shortcutRefusedLine("Alt+Shift+R")).toBe("A shortcut needs ⌃ or ⌥, as apps use ⌘ and ⇧ for their own. Try ⌥⇧R.");
     expect(shortcutRefusedLine("Alt+K")).toBe("A shortcut needs ⌃ or ⌥, as apps use ⌘ and ⇧ for their own. Try ⌥K.");
+  });
+});
+
+describe("Learn this library's words in Settings", () => {
+  it("keeps the fixed words of the offer, the confirm, the review and the house style", () => {
+    expect(LEARN_LIBRARY).toBe("Learn this library…");
+    expect(STUDY_OFFER_TITLE).toBe("This library has folders of its own.");
+    expect(STUDY_OFFER_BODY).toBe("Avanzel can study them and file the way you do. Nothing changes until you approve.");
+    expect(START_STUDY).toBe("Start study");
+    expect(RESUME_STUDY).toBe("Go on with the study");
+    expect(STUDY_READY_TITLE).toBe("The study is ready.");
+    expect(STUDY_REVIEW_NOTE).toBe("Check what Avanzel learned. Turn off a folder to leave it alone. Nothing changes until you apply.");
+    expect(FILE_HERE).toBe("File here");
+    expect(NOT_STUDIED).toBe("Not studied. Its notes couldn't be read this time.");
+    expect(LOW_CONFIDENCE).toBe("Avanzel isn't sure about this folder.");
+    expect(HOUSE_STYLE_LABEL).toBe("How this library is written");
+    expect(CURRENT_STYLE_LABEL).toBe("The style in use now");
+    expect(APPLY_STUDY).toBe("Apply");
+    expect(DISCARD_STUDY).toBe("Discard");
+    expect(STUDY_FAILED_SAFE).toBe("Nothing in your library changed. What was studied so far is kept.");
+    expect(STUDY_NOT_STARTED).toBe("The study didn't start.");
+    expect([STUDY_MAP_LABEL, STUDY_STOP, HOUSE_STYLE_SAVE]).toEqual(["Map", "Stop", "Save"]);
+    expect(STUDY_PROGRESS_LABEL).toBe("Studying the library");
+  });
+
+  it("says what a study costs, in notes and folders, one or many", () => {
+    expect(studyCostLine({ folders: 3, notes: 120, steps: 4 })).toBe(
+      "Avanzel's agent reads up to 120 notes in 3 folders, one folder at a time, and proposes how to file into them. Nothing changes until you approve.",
+    );
+    expect(studyCostLine({ folders: 1, notes: 1, steps: 2 })).toBe(
+      "Avanzel's agent reads up to 1 note in 1 folder, one folder at a time, and proposes how to file into them. Nothing changes until you approve.",
+    );
+  });
+
+  it("says how far a running study is: the folder it studies, then putting it together, and getting ready before it has steps", () => {
+    expect(studyRunningLine({ done: 0, steps: 4, current: "Projects" })).toBe("Studying Projects, 1 of 4.");
+    expect(studyRunningLine({ done: 3, steps: 4, current: "" })).toBe("Putting it together, 4 of 4.");
+    expect(studyRunningLine({ done: 0, steps: 0, current: "" })).toBe("Getting the study ready…");
+  });
+
+  it("names a folder of the owner's that has the name of one of Avanzel's", () => {
+    expect(clashLine("ideas")).toBe("Your ideas folder has the name Avanzel uses for its own ideas.");
+  });
+
+  it("keeps to the copy rules: sentence case, a full stop or an ellipsis on sentences, no exclamation mark, no shouting", () => {
+    const sentences = [
+      STUDY_OFFER_TITLE,
+      STUDY_OFFER_BODY,
+      studyCostLine({ folders: 2, notes: 30, steps: 3 }),
+      studyRunningLine({ done: 1, steps: 3, current: "Work" }),
+      studyRunningLine({ done: 2, steps: 3, current: "" }),
+      studyRunningLine({ done: 0, steps: 0, current: "" }),
+      STUDY_READY_TITLE,
+      STUDY_REVIEW_NOTE,
+      NOT_STUDIED,
+      LOW_CONFIDENCE,
+      STUDY_FAILED_SAFE,
+      STUDY_NOT_STARTED,
+      clashLine("people"),
+    ];
+    const labels = [LEARN_LIBRARY, START_STUDY, RESUME_STUDY, FILE_HERE, HOUSE_STYLE_LABEL, CURRENT_STYLE_LABEL, APPLY_STUDY, DISCARD_STUDY, STUDY_MAP_LABEL, STUDY_STOP, HOUSE_STYLE_SAVE, STUDY_PROGRESS_LABEL];
+    for (const line of sentences) expect(line, line).toMatch(/^\p{Lu}[^!]*[.…]$/u);
+    for (const label of labels) {
+      expect(label, label).toMatch(/^\p{Lu}[^!.]*…?$/u);
+      // Sentence case: no capital after the first word.
+      expect(label.slice(1), label).not.toMatch(/\b\p{Lu}/u);
+    }
+    for (const line of [...sentences, ...labels]) {
+      expect(line, line).not.toContain("...");
+      expect(line, line).not.toMatch(/\b[A-Z]{2,}\b|Oops|Sorry|successfully/);
+    }
   });
 });
