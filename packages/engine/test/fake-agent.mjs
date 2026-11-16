@@ -21,7 +21,7 @@
 // folder-at-archive (a capture whose words contain "blocked-archive" gets a folder where its
 // archived copy goes, raw/<yyyy>/<mm>/<id>.md, besides the usual filing; other captures file normally) | link-page (files as
 // usual, then makes the page it wrote a link to $FAKE_AGENT_OUTSIDE, a file outside the library) |
-// study-garbled (a study-folder run for a folder named in $FAKE_AGENT_FOLDER, comma-separated, replies "not json").
+// study-garbled (a study-folder run for a folder named in $FAKE_AGENT_FOLDER, comma-separated, replies "not json"; a study-combine run too when the list names "combine").
 // The study tasks (study-folder, study-combine) answer with a fenced json block built from the prompt, in every other mode.
 // The agent check's prompt, "Reply with the single word: ready.", gets "ready".
 // FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt, pid}.
@@ -473,6 +473,8 @@ if (task === "file") {
     };
     await reply(`Studied.\n\n\`\`\`json\n${JSON.stringify(answer)}\n\`\`\``);
   }
+} else if (task === "study-combine" && mode === "study-garbled" && (process.env.FAKE_AGENT_FOLDER ?? "").split(",").includes("combine")) {
+  await reply("not json"); // $FAKE_AGENT_FOLDER names "combine"
 } else if (task === "study-combine") {
   // One shelf for each summary given (`<summary folder="…">` and its JSON); a "not studied" one gets none.
   const shelves = [...prompt.matchAll(/<summary folder=("(?:[^"\\]|\\.)*")>\n(\{[\s\S]*?\})\n<\/summary>/g)].map((match) => {

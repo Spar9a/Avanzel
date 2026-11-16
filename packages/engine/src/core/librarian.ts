@@ -54,6 +54,22 @@ import {
   type ShelfSuggestion,
 } from "./shelves.ts";
 import { insideLibrary, stepPath, type FilingStep } from "./steps.ts";
+import {
+  buildProposal,
+  combinePrompt,
+  folderPrompt,
+  parseCombineAnswer,
+  parseFolderAnswer,
+  planStudy,
+  previewOf,
+  studyInstructions,
+  styleForPrompt,
+  type FolderSummary,
+  type StudyPlan,
+  type StudyPreview,
+  type StudyProposal,
+  type StudyStep,
+} from "./study.ts";
 import { AUDIO_EXTS, IMAGE_EXTS, SPECIAL_DIRS, TEXT_EXTS, type Capture, type Vault } from "./vault.ts";
 import { watchWrites } from "./watch.ts";
 
@@ -126,6 +142,19 @@ export interface AgentOutcome {
    */
   commit: string | null;
 }
+
+/** How far a study has got: `current` is the folder path being studied, or "" for a step that has none (loose notes, the final step). */
+export interface StudyProgress {
+  done: number;
+  steps: number;
+  current: string;
+}
+
+const STUDY_DIR = ".avanzel/study";
+const STUDY_STOPPED = "The study was stopped. What it learned so far is kept, and Learn this library goes on from there.";
+/** A step that took at least this long is followed by a pause, so that a filing waiting for the library's lock can take it. */
+const STEP_PAUSE_AFTER_MS = 300;
+const STEP_PAUSE_MS = 250; // longer than the lock's poll, which is 200
 
 export interface EveningReviewResult {
   outcomes: FileOutcome[];
@@ -900,6 +929,160 @@ export class Librarian {
     });
   }
 
+  // --- learn this library -------------------------------------------------------------------
+
+  /** What a study would do, in numbers: planned afresh, nothing written. */
+  async previewStudy(): Promise<StudyPreview> {
+    return previewOf(planStudy(this.vault.root, this.settings, this.clock()));
+  }
+
+  /** The proposal of a study that finished and was neither applied nor discarded. */
+  studyProposal(): StudyProposal | null {
+    const data = this.#readStudy("proposal.json");
+    return isRecord(data) && Array.isArray(data.shelves) && typeof data.style === "string" ? (data as unknown as StudyProposal) : null;
+  }
+
+  /** A study was started and has not finished: `study()` goes on from where it stopped. */
+  studyResumable(): boolean {
+    return this.#studyPlan() !== null && this.studyProposal() === null;
+  }
+
+  /** Forget a study: its plan, what it learned and its proposal. */
+  async discardStudy(): Promise<void> {
+    removeInside(this.vault.root, STUDY_DIR);
+  }
+
+  /**
+   * Go through the library one folder at a time with the filing agent, reading only, and propose a shelf for each folder and a house
+   * style. Every step's answer is saved under `.avanzel/study/` as it comes, so a stopped study goes on from the next step. The lock is
+   * taken for one step at a time, so a filing can take it between steps. `fresh` throws away what an earlier study saved and begins again;
+   * without it, a finished study's proposal is returned as it is. Nothing is committed and nothing is written outside `.avanzel/study/`.
+   * Stopping through `signal` rejects with an `AvanzelError`, once the step in flight has ended.
+   */
+  async study({
+    signal,
+    progress,
+    fresh = false,
+  }: { signal?: AbortSignal; progress?: (progress: StudyProgress) => void; fresh?: boolean } = {}): Promise<StudyProposal> {
+    const root = this.vault.root;
+    let plan = fresh ? null : this.#studyPlan();
+    if (plan) {
+      const saved = this.studyProposal();
+      if (saved) return saved;
+    } else {
+      removeInside(root, STUDY_DIR);
+      plan = planStudy(root, this.settings, this.clock());
+      this.#saveStudy("plan.json", plan);
+    }
+    const steps = plan.steps;
+    const stopped = () => new AvanzelError(STUDY_STOPPED);
+
+    const learned = new Map<string, FolderSummary | null>(); // by step id
+    for (const [index, step] of steps.entries()) {
+      if (step.kind === "combine") continue;
+      const saved = this.#savedStudyStep(index, step.id);
+      if (saved !== undefined) {
+        learned.set(step.id, saved);
+        continue;
+      }
+      progress?.({ done: index, steps: steps.length, current: step.path });
+      if (signal?.aborted) throw stopped();
+      const began = Date.now();
+      const summary = await this.#studyStep(plan, step, learned, signal);
+      this.#saveStudy(`steps/${index}.json`, { id: step.id, summary });
+      learned.set(step.id, summary);
+      if (Date.now() - began >= STEP_PAUSE_AFTER_MS) await pause(STEP_PAUSE_MS);
+    }
+
+    progress?.({ done: Math.max(steps.length - 1, 0), steps: steps.length, current: "" });
+    if (signal?.aborted) throw stopped();
+    const summaries: Record<string, FolderSummary | null> = Object.create(null);
+    for (const step of steps) {
+      if (step.kind === "top") summaries[""] = learned.get(step.id) ?? null;
+      else if ((step.kind === "folder" || step.kind === "join") && step.path === step.folder) summaries[step.folder] = learned.get(step.id) ?? null;
+    }
+    const prompt = combinePrompt(summaries, plan, {
+      currentStyle: styleForPrompt(this.settings.houseStyle),
+      instructions: studyInstructions(root),
+    });
+    const combined = await this.#askStudy(prompt, (reply) => parseCombineAnswer(reply, plan), signal);
+    const proposal = buildProposal(plan, summaries, combined, { shelves: this.settings.shelves, style: this.settings.houseStyle });
+    this.#saveStudy("proposal.json", proposal);
+    return proposal;
+  }
+
+  /** What the agent learns from one step; null when the folder is gone, nothing of it could be read, or the answer was twice unreadable. */
+  async #studyStep(
+    plan: StudyPlan,
+    step: StudyStep,
+    learned: ReadonlyMap<string, FolderSummary | null>,
+    signal: AbortSignal | undefined,
+  ): Promise<FolderSummary | null> {
+    const root = this.vault.root;
+    if (step.path !== "" && !existsSync(join(root, step.path))) return null; // deleted since the plan was made
+    let parts: FolderSummary[] = [];
+    if (step.kind === "join") {
+      parts = step.parts.flatMap((id) => learned.get(id) ?? []);
+      if (parts.length === 0) return null; // nothing to join
+    }
+    const prompt = folderPrompt(root, step, plan, parts);
+    return this.#askStudy(prompt, (reply) => parseFolderAnswer(reply, step.path), signal);
+  }
+
+  /**
+   * One question to the agent, read-only, under the lock for its own run only. A reply `parse` can't read is asked once more; a second
+   * miss is null. A stop rejects. So does a run that failed for a reason that would fail every step (a usage limit, a missing sign-in),
+   * with the step not saved, so that the study goes on from it when the owner has fixed that.
+   */
+  async #askStudy<T>(prompt: string, parse: (reply: string) => T | null, signal: AbortSignal | undefined): Promise<T | null> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { result } = await this.vault.withLock(() => this.#run(prompt, { write: false, signal }));
+      if (signal?.aborted && !result.ok) throw new AvanzelError(STUDY_STOPPED);
+      if (!result.ok) {
+        const failure = classifyFailure(result);
+        if (failure.kind === "limit" || failure.kind === "signin") {
+          const why = failure.kind === "limit" ? "The agent has reached its usage limit" : "The agent is not signed in";
+          throw new AvanzelError(`${why}, so the study paused. What it learned so far is kept, and Learn this library goes on from there once that is fixed.`);
+        }
+        continue;
+      }
+      const parsed = parse(result.output);
+      if (parsed !== null) return parsed;
+      if (signal?.aborted) throw new AvanzelError(STUDY_STOPPED);
+    }
+    return null;
+  }
+
+  #readStudy(rel: string): unknown {
+    const path = join(this.vault.root, STUDY_DIR, rel);
+    if (!lstatOrNull(path)?.isFile()) return undefined;
+    try {
+      return JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      return undefined;
+    }
+  }
+
+  #studyPlan(): StudyPlan | null {
+    const data = this.#readStudy("plan.json");
+    return isRecord(data) && data.version === 1 && Array.isArray(data.steps) && Array.isArray(data.folders) ? (data as unknown as StudyPlan) : null;
+  }
+
+  /** What a finished step learned: a summary, or null when it learned nothing; undefined when the step has no saved answer. */
+  #savedStudyStep(index: number, id: string): FolderSummary | null | undefined {
+    const data = this.#readStudy(`steps/${index}.json`);
+    if (!isRecord(data) || data.id !== id) return undefined;
+    if (data.summary === null) return null;
+    return isRecord(data.summary) && typeof data.summary.path === "string" ? (data.summary as unknown as FolderSummary) : undefined;
+  }
+
+  /** Save a study's file. A `.gitignore` inside keeps the folder out of git, so that no commit carries it. */
+  #saveStudy(rel: string, data: unknown): void {
+    const root = this.vault.root;
+    createInside(root, `${STUDY_DIR}/.gitignore`, "*\n");
+    writeInside(root, `${STUDY_DIR}/${rel}`, `${JSON.stringify(data, null, 2)}\n`);
+  }
+
   // --- plumbing -----------------------------------------------------------------------------
 
   /**
@@ -1228,6 +1411,14 @@ function capitalised(folder: string): string {
 
 function collapse(text: string): string {
   return text.trim().split(/\s+/).filter(Boolean).join(" ");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function codePoints(text: string, count: number): string {

@@ -7,9 +7,19 @@ import type { Settings } from "./config.ts";
 import { isoLocal } from "./dates.ts";
 import { frontmatterFields, splitFrontmatter } from "./frontmatter.ts";
 import { visibleFiles } from "./changes.ts";
+import { lstatOrNull } from "./inside.ts";
 import { keepInsideFence } from "./prompts.ts";
-import { BUILT_IN_SHELVES, cleanDefinition, cleanShelfName, folderKey, SPECIAL_DIRS } from "./shelves.ts";
-import { render } from "./templates.ts";
+import {
+  BUILT_IN_SHELVES,
+  cleanDefinition,
+  cleanShelfName,
+  folderKey,
+  SHELF_SECTION_START,
+  SPECIAL_DIRS,
+  STYLE_SECTION_START,
+  type OwnShelf,
+} from "./shelves.ts";
+import { render, template } from "./templates.ts";
 
 /** Notes an agent reads for one step. */
 export const NOTES_PER_STEP = 12;
@@ -439,4 +449,76 @@ export function parseCombineAnswer(
     shelves.push({ folder: own, name: cleanShelfName(name) || cleanShelfName(own), definition: clean, map: cut(map.trim(), MAX_MAP) });
   }
   return { shelves, style: cut(style.trim(), MAX_STYLE).trim() };
+}
+
+// --- What the combine step is told, and the proposal it makes ---------------------------------------------------------------
+
+/** The most characters of the owner's instructions, and of the current house style, that the combine step is told. */
+export const MAX_CONTEXT = 4000;
+
+function fileText(root: string, rel: string): string {
+  if (!lstatOrNull(join(root, rel))?.isFile()) return "";
+  try {
+    return readFileSync(join(root, rel), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** An AGENTS.md's own text: what stands above the first section Avanzel keeps (all of it when there is none). */
+function aboveSections(agentsMd: string): string {
+  const at = [SHELF_SECTION_START, STYLE_SECTION_START].map((marker) => agentsMd.indexOf(marker)).filter((index) => index !== -1);
+  return (at.length ? agentsMd.slice(0, Math.min(...at)) : agentsMd).trim();
+}
+
+/**
+ * What the owner has already written down about how the library is kept, for the combine step: their AGENTS.md above Avanzel's
+ * sections (not Avanzel's own template text), their CLAUDE.md unless it only points at AGENTS.md, and the Obsidian settings that name
+ * the daily notes folder and the like. Each is cut to `MAX_CONTEXT` characters, and so is the whole.
+ */
+export function studyInstructions(root: string): string {
+  const parts: string[] = [];
+  const own = aboveSections(fileText(root, "AGENTS.md"));
+  if (own !== "" && own !== aboveSections(template("AGENTS.md"))) parts.push(`AGENTS.md:\n${cut(own, MAX_CONTEXT)}`);
+  const claude = fileText(root, "CLAUDE.md").trim();
+  if (claude !== "" && claude !== "@AGENTS.md") parts.push(`CLAUDE.md:\n${cut(claude, MAX_CONTEXT)}`);
+  for (const file of [".obsidian/daily-notes.json", ".obsidian/app.json"]) {
+    const text = fileText(root, file).trim();
+    if (text !== "") parts.push(`${file}:\n${cut(text, MAX_CONTEXT)}`);
+  }
+  return cut(parts.join("\n\n"), MAX_CONTEXT);
+}
+
+/** `style` as the combine step is told it: at most `MAX_CONTEXT` characters. */
+export function styleForPrompt(style: string): string {
+  return cut(style, MAX_CONTEXT);
+}
+
+/**
+ * The proposal a finished study makes: one shelf per own folder that holds notes, in plan order. `summaries` is what was learned about
+ * each folder (null when it could not be); `combined` is the combine step's answer, or null when it could not be read, in which case
+ * each folder's own purpose is its definition and there is no style. A folder that already is a shelf with a definition keeps its
+ * current name and definition: a second study proposes definitions only for the folders without one.
+ */
+export function buildProposal(
+  plan: StudyPlan,
+  summaries: Readonly<Record<string, FolderSummary | null>>,
+  combined: ReturnType<typeof parseCombineAnswer>,
+  current: { shelves: readonly OwnShelf[]; style: string },
+): StudyProposal {
+  const shelves = plan.folders.map((folder): ProposedShelf => {
+    const summary = summaries[folder] ?? null;
+    const proposed = combined?.shelves.find((shelf) => shelf.folder === folder);
+    const own = current.shelves.find((shelf) => folderKey(shelf.folder) === folderKey(folder) && shelf.definition.trim() !== "");
+    return {
+      folder,
+      name: own?.name ?? proposed?.name ?? summary?.name ?? (cleanShelfName(folder.slice(folder.lastIndexOf("/") + 1)) || folder),
+      definition: own?.definition ?? proposed?.definition ?? (summary ? cleanDefinition(summary.purpose) : ""),
+      map: proposed?.map ?? summary?.map ?? "",
+      confidence: summary?.confidence ?? "low",
+      studied: summary !== null,
+      hasDefinition: own !== undefined,
+    };
+  });
+  return { shelves, style: combined?.style ?? "", currentStyle: current.style, attachments: plan.attachments, clashes: plan.clashes };
 }
