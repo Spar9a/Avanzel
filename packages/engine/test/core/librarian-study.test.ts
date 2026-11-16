@@ -352,4 +352,60 @@ describe.skipIf(!git.available())("studying the library", () => {
       await expect(librarian.applyStudy({ style: "", shelves: [PHILOSOPHY, twin] })).rejects.toThrow("already exists");
     });
   });
+
+  describe("setting the house style", () => {
+    const agents = () => readFileSync(join(vault.root, "AGENTS.md"), "utf8");
+
+    it("sets the style in settings and AGENTS.md as one commit, which undo takes back", async () => {
+      await librarian.setHouseStyle("Dates as dd.mm.yyyy.");
+      const shelvesBefore = loadSettings(vault.root).shelves;
+      const result = await librarian.setHouseStyle("  Short paragraphs.\n");
+      expect(loadSettings(vault.root).houseStyle).toBe("Short paragraphs.");
+      expect(librarian.settings.houseStyle).toBe("Short paragraphs.");
+      expect(agents()).toContain("## How this library is written\n\nShort paragraphs.");
+      expect(agents()).not.toContain("Dates as dd.mm.yyyy.");
+      expect(loadSettings(vault.root).shelves).toEqual(shelvesBefore);
+      expect(gitOut(vault.root, "log", "-1", "--format=%s").trim()).toBe("avanzel: set the house style");
+      expect(gitOut(vault.root, "status", "--porcelain")).toBe("");
+      expect(await librarian.undo([result.commit!])).toBe(1);
+      expect(loadSettings(vault.root).houseStyle).toBe("Dates as dd.mm.yyyy.");
+      expect(agents()).toContain("Dates as dd.mm.yyyy.");
+    });
+
+    it("removes the style with an empty one", async () => {
+      await librarian.setHouseStyle("Dates as dd.mm.yyyy.");
+      await librarian.setHouseStyle("");
+      expect(loadSettings(vault.root).houseStyle).toBe("");
+      expect(agents()).not.toContain("avanzel:style");
+      expect(agents()).not.toContain("Dates as dd.mm.yyyy.");
+    });
+
+    it("refuses a style longer than AGENTS.md should carry, and changes nothing", async () => {
+      const before = gitOut(vault.root, "log", "--format=%H");
+      await expect(librarian.setHouseStyle("я".repeat(4001))).rejects.toThrow(
+        "The house style can be at most 4000 characters, and this one has 4001. Shorten it.",
+      );
+      await expect(librarian.setHouseStyle("я".repeat(4000))).resolves.toBeDefined(); // characters are counted as a person sees them
+      expect(gitOut(vault.root, "log", "--format=%H").split("\n").length).toBe(before.split("\n").length + 1);
+    });
+
+    it("writes no style section into an AGENTS.md of the owner's own, and keeps the style in settings", async () => {
+      writeFileSync(join(vault.root, "AGENTS.md"), "# My own rules\n\nBe brief.\n");
+      await librarian.setHouseStyle("Dates as dd.mm.yyyy.");
+      expect(agents()).toBe("# My own rules\n\nBe brief.\n");
+      expect(loadSettings(vault.root).houseStyle).toBe("Dates as dd.mm.yyyy.");
+    });
+
+    it("leaves a study in progress alone", async () => {
+      const controller = new AbortController();
+      const progress = vi.fn((p: StudyProgress) => {
+        if (p.done === 1) controller.abort();
+      });
+      await expect(librarian.study({ signal: controller.signal, progress })).rejects.toThrow(STOPPED);
+      expect(librarian.studyResumable()).toBe(true);
+      await librarian.setHouseStyle("Dates as dd.mm.yyyy.");
+      expect(librarian.studyResumable()).toBe(true);
+      expect(existsSync(join(vault.root, ".avanzel/study/plan.json"))).toBe(true);
+    });
+  });
 });

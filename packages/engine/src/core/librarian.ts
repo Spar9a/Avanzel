@@ -11,7 +11,7 @@ import { basename, extname, isAbsolute, join, relative, resolve, sep } from "nod
 import { AvanzelError, type Transcriber } from "../types.ts";
 import { Changes, diff, snapshot, visibleFiles, type Snapshot } from "./changes.ts";
 import type { ToolStep } from "./claude-stream.ts";
-import { loadSettings, saveSettings, type Settings } from "./config.ts";
+import { loadSettings, MAX_HOUSE_STYLE, saveSettings, type Settings } from "./config.ts";
 import { localDate } from "./dates.ts";
 import type { HostedProvider } from "./hosted-model.ts";
 import { flowItems, frontmatterFields, splitFrontmatter } from "./frontmatter.ts";
@@ -174,7 +174,17 @@ export interface StudyApply {
   shelves: { folder: string; name: string; definition: string; map: string; fileHere: boolean }[];
   style: string;
 }
-const STUDY_STOPPED = "The study was stopped. What it learned so far is kept, and Learn this library goes on from there.";
+
+/**
+ * Whether the house style is written into the `AGENTS.md` of the library at `root`: only when that file is missing or already holds
+ * Avanzel's own marked sections. An `AGENTS.md` of the owner's own gets no style section; the style reaches the agent through the prompt.
+ */
+function styleGoesInAgents(root: string): boolean {
+  const path = join(root, "AGENTS.md");
+  return !lstatOrNull(path)?.isFile() || readFileSync(path, "utf8").includes(SHELF_SECTION_START);
+}
+
+const STUDY_STOPPED ="The study was stopped. What it learned so far is kept, and Learn this library goes on from there.";
 /** A step that took at least this long is followed by a pause, so that a filing waiting for the library's lock can take it. */
 const STEP_PAUSE_AFTER_MS = 300;
 const STEP_PAUSE_MS = 250; // longer than the lock's poll, which is 200
@@ -529,9 +539,8 @@ export class Librarian {
       const madeKeys = made.map((shelf) => folderKey(shelf.folder));
       const declinedShelves = current.declinedShelves.filter((declined) => !madeKeys.includes(folderKey(declined)));
       const next = { ...current, shelves, declinedShelves, excludedFolders: excluded, houseStyle: apply.style };
-      // Decided now, before the shelves section is written: an AGENTS.md of the owner's own, without Avanzel's markers, gets no style section.
-      const agentsPath = join(root, "AGENTS.md");
-      const styleInAgents = !lstatOrNull(agentsPath)?.isFile() || readFileSync(agentsPath, "utf8").includes(SHELF_SECTION_START);
+      // Decided now, before the shelves section is written, which would give an AGENTS.md of the owner's own Avanzel's markers.
+      const styleInAgents = styleGoesInAgents(root);
       return {
         next,
         apply: () => {
@@ -543,6 +552,30 @@ export class Librarian {
           if (notes.length) addLearnedNotes(root, notes);
           removeInside(root, STUDY_DIR);
           this.vault.appendLog("learn", made.length ? made.map((shelf) => shelf.folder).join(", ") : "library", this.clock());
+          return { moved: [], notMoved: [], folderKept: false };
+        },
+      };
+    });
+  }
+
+  /**
+   * Set the library's house style, or remove it with "", as one shelf operation (one commit, which `undo` takes back): it is saved in
+   * settings, and written into `AGENTS.md` as `applyStudy` writes it (only when that file is missing or holds Avanzel's own marked
+   * sections). Nothing else changes: not the shelves, and not a study in progress. A style longer than AGENTS.md should carry is refused.
+   */
+  async setHouseStyle(text: string): Promise<ShelfResult> {
+    const style = text.trim();
+    const length = shelfTextLength(style);
+    if (length > MAX_HOUSE_STYLE) {
+      throw new AvanzelError(`The house style can be at most ${MAX_HOUSE_STYLE} characters, and this one has ${length}. Shorten it.`);
+    }
+    const root = this.vault.root;
+    return this.#shelfOperation("set the house style", (current) => {
+      const inAgents = styleGoesInAgents(root);
+      return {
+        next: { ...current, houseStyle: style },
+        apply: () => {
+          if (inAgents) writeStyleSection(root, style);
           return { moved: [], notMoved: [], folderKept: false };
         },
       };
