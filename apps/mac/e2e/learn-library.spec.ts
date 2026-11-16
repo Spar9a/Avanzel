@@ -144,8 +144,13 @@ test("a thought recorded while a study runs is filed before the study ends", asy
   await app.close();
 });
 
-/** A Philosophy shelf that a study learned, applied the way the review screen applies it, before any filing. */
+/**
+ * A Philosophy shelf that a study learned, applied the way the review screen applies it, before any filing. The study runs first: Apply
+ * is refused while no study waits for review.
+ */
 async function learnedPhilosophy(app: ElectronApplication): Promise<void> {
+  await call(app, "startStudy", true);
+  await studyIs(app, "ready");
   await call(app, "applyStudy", {
     shelves: [
       { folder: "Philosophy", name: "Philosophy", definition: "Notes on thinkers.", map: "", fileHere: true },
