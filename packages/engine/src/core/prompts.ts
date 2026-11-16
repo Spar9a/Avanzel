@@ -252,7 +252,7 @@ export function reviewPrompt(reportRel: string, now: Date, shelves: readonly Own
  * would end the fence early and leave the rest outside it, so it gets a backslash: `<\/shown-answer>`, which reads the
  * same in Markdown. The prompt is left with one closing tag, its own.
  */
-function keepInsideFence(words: string, tag: "shown-answer" | "conversation"): string {
+export function keepInsideFence(words: string, tag: string): string {
   return words.replace(new RegExp(`<\\s*\\/\\s*${tag}`, "gi"), `<\\/${tag}`);
 }
 

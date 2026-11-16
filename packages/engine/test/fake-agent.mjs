@@ -20,7 +20,9 @@
 // writes goals/half.md and a line in index.md, then never finishes; later runs file normally) |
 // folder-at-archive (a capture whose words contain "blocked-archive" gets a folder where its
 // archived copy goes, raw/<yyyy>/<mm>/<id>.md, besides the usual filing; other captures file normally) | link-page (files as
-// usual, then makes the page it wrote a link to $FAKE_AGENT_OUTSIDE, a file outside the library).
+// usual, then makes the page it wrote a link to $FAKE_AGENT_OUTSIDE, a file outside the library) |
+// study-garbled (a study-folder run for a folder named in $FAKE_AGENT_FOLDER, comma-separated, replies "not json").
+// The study tasks (study-folder, study-combine) answer with a fenced json block built from the prompt, in every other mode.
 // The agent check's prompt, "Reply with the single word: ready.", gets "ready".
 // FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt, pid}.
 // FAKE_AGENT_DELAY_MS=<ms> waits that long before anything else (an agent that takes a moment);
@@ -452,6 +454,32 @@ if (task === "file") {
   }
   const suggestion = process.env.FAKE_AGENT_SUGGEST ? `\nNew shelf: ${process.env.FAKE_AGENT_SUGGEST.replaceAll("{page}", pageRel)}` : "";
   await reply(`Filed into [[${pageStem}]].${suggestion}`);
+} else if (task === "study-folder") {
+  // The prompt's second line names the folder (`Path: "<json>"`); its tree, when it lists a subfolder, earns a map.
+  const path = JSON.parse(/^Path: (".*")$/m.exec(prompt)[1]);
+  const name = path.split("/").pop() || "Library root";
+  const garbled = (process.env.FAKE_AGENT_FOLDER ?? "").split(",").filter(Boolean);
+  if (mode === "study-garbled" && (garbled.includes(name) || garbled.includes(path))) {
+    await reply("not json");
+  } else {
+    const tree = /<tree>\n([\s\S]*?)\n<\/tree>/.exec(prompt)?.[1] ?? "";
+    const answer = {
+      name,
+      purpose: `Notes about ${name}.`,
+      conventions: "Dated headings.",
+      map: tree.split("\n").length > 1 ? "one folder per thinker" : "",
+      confidence: "high",
+      why: "",
+    };
+    await reply(`Studied.\n\n\`\`\`json\n${JSON.stringify(answer)}\n\`\`\``);
+  }
+} else if (task === "study-combine") {
+  // One shelf for each summary given (`<summary folder="…">` and its JSON); a "not studied" one gets none.
+  const shelves = [...prompt.matchAll(/<summary folder=("(?:[^"\\]|\\.)*")>\n(\{[\s\S]*?\})\n<\/summary>/g)].map((match) => {
+    const summary = JSON.parse(match[2]);
+    return { folder: JSON.parse(match[1]), name: summary.name, definition: summary.purpose, map: summary.map };
+  });
+  await reply(`Combined.\n\n\`\`\`json\n${JSON.stringify({ shelves, style: "Dates as dd.mm.yyyy." })}\n\`\`\``);
 } else if (task === "ask") {
   const pages = readdirSync(root)
     .filter((name) => !name.startsWith(".") && !["inbox", "raw", "tasks"].includes(name) && isDir(join(root, name)))
