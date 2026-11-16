@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { diff, snapshot } from "../../src/core/changes.ts";
+import { diff, snapshot, visibleFiles } from "../../src/core/changes.ts";
 import {
   LEARNED_NOTES,
   addLearnedNotes,
@@ -66,7 +66,7 @@ describe("keeping the owner's old notes", () => {
     write(root, "Shelf/added.md", "x\ny\n");
     write(root, "Shelf/new-to-me.md", "not learned\n");
     const learned = new Set(["Shelf/rewritten.md", "Shelf/deleted.md", "Shelf/added.md"]);
-    const kept = captureKept(root, learned, []);
+    const kept = captureKept(root, learned, [], visibleFiles(root));
     const put = run(root, kept, () => {
       writeFileSync(join(root, "Shelf/rewritten.md"), "ONE\ntwo\n");
       rmSync(join(root, "Shelf/deleted.md"));
@@ -85,7 +85,7 @@ describe("keeping the owner's old notes", () => {
     write(root, "Рецепты/борщ.md", "свекла\n");
     write(root, "Рецепты/суп/плов.md", "рис\n");
     write(root, "Other/x.md", "x\n");
-    const kept = captureKept(root, new Set(), ["рецепты"]);
+    const kept = captureKept(root, new Set(), ["рецепты"], visibleFiles(root));
     const put = run(root, kept, () => {
       writeFileSync(join(root, "Рецепты/борщ.md"), "свекла\nи сметана\n"); // even an addition
       rmSync(join(root, "Рецепты/суп/плов.md"));
@@ -104,7 +104,7 @@ describe("keeping the owner's old notes", () => {
     const onDisk = "Café".normalize("NFD");
     write(root, `${onDisk}/menu.md`, "tea\n");
     write(root, `${onDisk}/old.md`, "coffee\n");
-    const kept = captureKept(root, new Set([`${"Café".normalize("NFC")}/old.md`]), ["Café".normalize("NFC")]);
+    const kept = captureKept(root, new Set([`${"Café".normalize("NFC")}/old.md`]), ["Café".normalize("NFC")], visibleFiles(root));
     const put = run(root, kept, () => {
       writeFileSync(join(root, `${onDisk}/menu.md`), "changed\n");
       rmSync(join(root, `${onDisk}/old.md`));
@@ -118,7 +118,7 @@ describe("keeping the owner's old notes", () => {
     const root = tmp();
     const onDisk = "Café/ñ.md".normalize("NFD");
     write(root, onDisk, "one\n");
-    const kept = captureKept(root, new Set(["Café/ñ.md".normalize("NFC")]), []);
+    const kept = captureKept(root, new Set(["Café/ñ.md".normalize("NFC")]), [], visibleFiles(root));
     const put = run(root, kept, () => writeFileSync(join(root, onDisk), "two\n"));
     expect(put).toEqual([onDisk]);
     expect(read(root, onDisk)).toBe("one\n");
@@ -128,7 +128,7 @@ describe("keeping the owner's old notes", () => {
     const root = tmp();
     write(root, "S/a.md", "a\n");
     write(root, "S/b.md", "b\n");
-    const kept = captureKept(root, new Set(["S/a.md", "S/b.md"]), []);
+    const kept = captureKept(root, new Set(["S/a.md", "S/b.md"]), [], visibleFiles(root));
     run(root, kept, () => {
       renameSync(join(root, "S/a.md"), join(root, "S/a2.md"));
       rmSync(join(root, "S/b.md"));
@@ -138,10 +138,67 @@ describe("keeping the owner's old notes", () => {
     expect(read(root, "S/b.md")).toBe("b\n");
   });
 
+  it("reads only Markdown under an excluded folder, removing what was created there but not restoring other kinds", () => {
+    const root = tmp();
+    write(root, "Рецепты/борщ.md", "свекла\n");
+    write(root, "Рецепты/photo.png", "png-bytes");
+    const kept = captureKept(root, new Set(), ["Рецепты"], visibleFiles(root));
+    expect([...kept.files.keys()]).toEqual(["Рецепты/борщ.md"]);
+    const put = run(root, kept, () => {
+      rmSync(join(root, "Рецепты/борщ.md"));
+      writeFileSync(join(root, "Рецепты/photo.png"), "changed");
+      write(root, "Рецепты/new.png", "made");
+    });
+    expect(put).toEqual(["Рецепты/new.png", "Рецепты/борщ.md"]);
+    expect(read(root, "Рецепты/photo.png")).toBe("changed");
+    expect(existsSync(join(root, "Рецепты/new.png"))).toBe(false);
+  });
+
+  it("puts back an excluded folder that was replaced by a file, and reports what it really did", () => {
+    const root = tmp();
+    write(root, "Рецепты/борщ.md", "свекла\n");
+    write(root, "Рецепты/суп/плов.md", "рис\n");
+    const kept = captureKept(root, new Set(), ["Рецепты"], visibleFiles(root));
+    const put = run(root, kept, () => {
+      rmSync(join(root, "Рецепты"), { recursive: true });
+      writeFileSync(join(root, "Рецепты"), "a file now");
+    });
+    expect(put).toEqual(["Рецепты", "Рецепты/борщ.md", "Рецепты/суп/плов.md"]);
+    expect(read(root, "Рецепты/борщ.md")).toBe("свекла\n");
+    expect(read(root, "Рецепты/суп/плов.md")).toBe("рис\n");
+  });
+
+  it("puts back an excluded folder that was replaced by a link elsewhere", () => {
+    const root = tmp();
+    const elsewhere = join(tmp(), "elsewhere");
+    mkdirSync(elsewhere);
+    write(root, "Рецепты/борщ.md", "свекла\n");
+    const kept = captureKept(root, new Set(), ["Рецепты"], visibleFiles(root));
+    const put = run(root, kept, () => {
+      rmSync(join(root, "Рецепты"), { recursive: true });
+      symlinkSync(elsewhere, join(root, "Рецепты"));
+    });
+    expect(put).toEqual(["Рецепты/борщ.md"]);
+    expect(read(root, "Рецепты/борщ.md")).toBe("свекла\n");
+    expect(existsSync(join(elsewhere, "борщ.md"))).toBe(false); // nothing was written through the link
+  });
+
+  it("puts back a learned note whose shelf folder became a file", () => {
+    const root = tmp();
+    write(root, "S/a.md", "a\n");
+    const kept = captureKept(root, new Set(["S/a.md"]), [], visibleFiles(root));
+    const put = run(root, kept, () => {
+      rmSync(join(root, "S"), { recursive: true });
+      writeFileSync(join(root, "S"), "a file now");
+    });
+    expect(put).toEqual(["S/a.md"]);
+    expect(read(root, "S/a.md")).toBe("a\n");
+  });
+
   it("restores from what it read before, with no git in the library", async () => {
     const lib = await Vault.init(join(tmp(), "lib"), { git: false });
     write(lib.root, "Shelf/old.md", "first\nsecond\n");
-    const kept = captureKept(lib.root, new Set(["Shelf/old.md"]), []);
+    const kept = captureKept(lib.root, new Set(["Shelf/old.md"]), [], visibleFiles(lib.root));
     const put = run(lib.root, kept, () => writeFileSync(join(lib.root, "Shelf/old.md"), "second\n"));
     expect(put).toEqual(["Shelf/old.md"]);
     expect(read(lib.root, "Shelf/old.md")).toBe("first\nsecond\n");

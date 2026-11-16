@@ -468,7 +468,8 @@ export class Librarian {
   /**
    * Apply what a study proposed, as one shelf operation (one commit, which `undo` takes back): each `fileHere` folder becomes a shelf
    * with its map and the day it was learned (one that already is a shelf only gets its map), each folder that isn't filed into is
-   * left out, and the house style is saved, and written into `AGENTS.md` when it holds Avanzel's own marked sections. The notes
+   * left out (unless it is already one of the owner's shelves, which stays a shelf), and the house style is saved, and written into
+   * `AGENTS.md` only when that file is missing or already held Avanzel's own marked sections. The notes
    * already in the new shelves are remembered as the owner's, which a run may add to but not rewrite. The study's own files are removed.
    */
   async applyStudy(apply: StudyApply): Promise<ShelfResult> {
@@ -509,13 +510,13 @@ export class Librarian {
       const madeKeys = made.map((shelf) => folderKey(shelf.folder));
       const declinedShelves = current.declinedShelves.filter((declined) => !madeKeys.includes(folderKey(declined)));
       const next = { ...current, shelves, declinedShelves, excludedFolders: excluded, houseStyle: apply.style };
+      // Decided now, before the shelves section is written: an AGENTS.md of the owner's own, without Avanzel's markers, gets no style section.
+      const agentsPath = join(root, "AGENTS.md");
+      const styleInAgents = !lstatOrNull(agentsPath)?.isFile() || readFileSync(agentsPath, "utf8").includes(SHELF_SECTION_START);
       return {
         next,
         apply: () => {
-          const agentsPath = join(root, "AGENTS.md");
-          if (lstatOrNull(agentsPath)?.isFile() && readFileSync(agentsPath, "utf8").includes(SHELF_SECTION_START)) {
-            writeStyleSection(root, apply.style);
-          }
+          if (styleInAgents) writeStyleSection(root, apply.style);
           for (const shelf of made) this.#editIndex((index) => withIndexHeading(index, shelf.name));
           const notes = visibleFiles(root).filter(
             (rel) => rel.endsWith(".md") && rel.includes("/") && madeKeys.includes(folderKey(rel.slice(0, rel.indexOf("/")))),
@@ -538,7 +539,7 @@ export class Librarian {
       const clash = current.shelves.find((other) => other !== shelf && sameShelf(other.name, name));
       if (clash) throw new AvanzelError(`A shelf called ${clash.name} already exists. Choose another name.`);
       if (name !== shelf.name) refuseBuiltInName(name);
-      const next = { ...current, shelves: current.shelves.map((other) => (other === shelf ? { folder, name, definition } : other)) };
+      const next = { ...current, shelves: current.shelves.map((other) => (other === shelf ? { ...other, name, definition } : other)) };
       return {
         next,
         apply: () => {

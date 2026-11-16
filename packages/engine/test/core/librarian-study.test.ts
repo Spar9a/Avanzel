@@ -313,6 +313,24 @@ describe.skipIf(!git.available())("studying the library", () => {
       expect(result.commit).not.toBeNull(); // an exclusion and a style are a change worth a commit
     });
 
+    it("writes no style section into an owner's AGENTS.md even when a shelf is made", async () => {
+      writeFileSync(join(vault.root, "AGENTS.md"), "# My own rules\n\nBe brief.\n");
+      await librarian.applyStudy({ style: "Dates as dd.mm.yyyy.", shelves: [PHILOSOPHY] });
+      const agents = readFileSync(join(vault.root, "AGENTS.md"), "utf8");
+      expect(agents).toContain("| `Philosophy/` | Ideas of thinkers. |");
+      expect(agents).not.toContain("avanzel:style");
+      expect(agents).not.toContain("Dates as dd.mm.yyyy.");
+      expect(loadSettings(vault.root).houseStyle).toBe("Dates as dd.mm.yyyy.");
+    });
+
+    it("keeps a learned shelf's map and day when it is renamed", async () => {
+      await librarian.applyStudy({ style: "", shelves: [PHILOSOPHY] });
+      await librarian.editShelf("Philosophy", { name: "Thinkers", definition: "People who thought." });
+      expect(loadSettings(vault.root).shelves).toEqual([
+        { folder: "Philosophy", name: "Thinkers", definition: "People who thought.", map: "Stoicism/: one folder per thinker", learnedAt: "2026-10-20" },
+      ]);
+    });
+
     it("gives an existing own shelf its map and leaves its name and definition", async () => {
       await librarian.makeShelf({ folder: "Philosophy", name: "Thinkers", definition: "My own words." });
       await librarian.applyStudy({ style: "", shelves: [{ ...PHILOSOPHY, name: "Philosophy", definition: "Other." }] });
