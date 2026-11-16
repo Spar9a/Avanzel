@@ -26,25 +26,41 @@ import { template } from "../../src/core/templates.ts";
 import { useTmp } from "./helpers.ts";
 
 describe("folderProblem", () => {
-  it("accepts a lowercase kebab-case folder", () => {
-    expect(folderProblem("projects", [])).toBeNull();
-    expect(folderProblem("side-quests-2", [])).toBeNull();
-    expect(folderProblem("a".repeat(40), [])).toBeNull();
+  it("accepts a folder named as the owner likes: any language, capitals, spaces, dashes and underscores", () => {
+    for (const folder of [
+      "projects", "side-quests-2", "a".repeat(40), "Projects", "my projects", "проекты", "Мои проекты", "Ёлка и йод", "x_y",
+      "a--b", "-a", "2024 Поездки", "日記", "Café", "п".repeat(40),
+    ]) {
+      expect(folderProblem(folder, []), folder).toBeNull();
+    }
   });
 
   it.each([
-    ["Projects", "capital letters"],
-    ["-a", "a leading dash"],
-    ["a--b", "a double dash"],
-    ["a-", "a trailing dash"],
     ["a".repeat(41), "41 characters"],
+    ["п".repeat(41), "41 Cyrillic characters"],
     ["", "empty"],
-    ["my projects", "a space"],
-    ["проекты", "non-Latin letters"],
+    [" projects", "a leading space"],
+    ["projects ", "a trailing space"],
+    ["a/b", "a slash"],
+    ["a\\b", "a backslash"],
+    ["a:b", "a colon"],
+    ["a|b", "the table separator"],
+    ["a`b", "a backtick"],
+    ["[[a]]", "wikilink brackets"],
+    ["a#b", "a hash"],
+    ["a^b", "a caret"],
+    ['a"b', "a double quote"],
+    ["a*b", "an asterisk"],
+    ["a?b", "a question mark"],
+    ["a<b>", "angle brackets"],
+    ["a\nb", "a line break"],
+    ["a\u2028b", "a line separator"],
+    ["a\tb", "a tab"],
     ["ideas", "a built-in shelf"],
+    ["Ideas", "a built-in shelf in another case"],
     ["meetings", "meetings, which is built in"],
     ["inbox", "a special folder"],
-    ["raw", "a special folder"],
+    ["Raw", "a special folder in another case"],
     [".x", "a leading dot"],
   ])("refuses %j (%s)", (folder) => {
     const problem = folderProblem(folder, []);
@@ -60,6 +76,12 @@ describe("folderProblem", () => {
 
   it("does not refuse a folder that is not one of the taken ones", () => {
     expect(folderProblem("projects", ["other"])).toBeNull();
+  });
+
+  it("takes a folder as taken in any case and either Unicode form", () => {
+    expect(folderProblem("Проекты", ["проекты"])).toContain("already exists");
+    // "й" written as one character and as "и" with its mark: macOS may keep a folder's name either way.
+    expect(folderProblem("мой", ["мой"])).toContain("already exists");
   });
 });
 
@@ -108,8 +130,20 @@ describe("suggestFolder", () => {
     expect(suggestFolder("My Projects")).toBe("my-projects");
   });
 
-  it("is empty when the name has no Latin letters", () => {
-    expect(suggestFolder("Проекты")).toBe("");
+  it("keeps the letters of any language, and drops only the accents of Latin ones", () => {
+    expect(suggestFolder("Проекты")).toBe("проекты");
+    expect(suggestFolder("Мои  проекты, 2024!")).toBe("мои-проекты-2024");
+    expect(suggestFolder("Йога и ёлки")).toBe("йога-и-ёлки");
+    expect(suggestFolder("Café à Paris")).toBe("cafe-a-paris");
+    expect(suggestFolder("a b c d e f g h")).toBe("a-b-c-d-e");
+    expect([...suggestFolder("п".repeat(60))]).toHaveLength(40);
+  });
+
+  it("is empty when the name has no letters or digits, and what it suggests passes the folder rule", () => {
+    expect(suggestFolder("💡 !!")).toBe("");
+    for (const name of ["Проекты", "My Projects", "Café à Paris", "Мои проекты 2024", "日記 帳"]) {
+      expect(folderProblem(suggestFolder(name), []), name).toBeNull();
+    }
   });
 });
 
@@ -331,9 +365,13 @@ describe("checkedSuggestion", () => {
   });
 
   it("drops a folder that breaks the folder rules, or is a built-in or special folder", () => {
-    for (const folder of ["Projects", "my projects", "goals", "meetings", "inbox", ".hidden", "", "a".repeat(41)]) {
+    for (const folder of ["a/b", "x:y", "goals", "Ideas", "meetings", "inbox", ".hidden", "", "a".repeat(41)]) {
       expect(checkedSuggestion({ ...parsed, folder }, state), folder).toBeNull();
     }
+  });
+
+  it("keeps a folder named in another language, with capitals and spaces", () => {
+    expect(checkedSuggestion({ ...parsed, folder: "Мои проекты", name: "Мои проекты" }, state)?.folder).toBe("Мои проекты");
   });
 
   it("drops a folder, name or definition that is empty after trimming, however it matches", () => {

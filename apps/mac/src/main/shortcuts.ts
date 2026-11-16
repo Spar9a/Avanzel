@@ -181,6 +181,21 @@ export function registerShortcuts(
 }
 
 /**
+ * Registers dictating into any app's own shortcut, after the actions' (`registerShortcuts`), with `register`, and says why it doesn't work
+ * (null when it does): one Avanzel leaves to apps, one an action already has, one macOS doesn't understand, or one another app holds.
+ */
+export function cursorShortcutProblemOf(accelerator: string, shortcuts: Shortcuts, register: (accelerator: string) => boolean): string | null {
+  if (leftToApps(accelerator)) return `${prettyAccelerator(accelerator)} is a shortcut apps use themselves, so Avanzel doesn't take it. Pick one with ⌃ or ⌥.`;
+  const owner = (Object.keys(ACTION_NAMES) as (keyof Shortcuts)[]).find((key) => shortcuts[key] && sameShortcut(shortcuts[key]) === sameShortcut(accelerator));
+  if (owner) return `${prettyAccelerator(shortcuts[owner])} is already the shortcut for ${ACTION_NAMES[owner]}. Pick another shortcut.`;
+  try {
+    return register(accelerator) ? null : `${takenMessage(accelerator, null)} Pick another shortcut.`;
+  } catch {
+    return `“${accelerator}” is not a shortcut macOS understands.`;
+  }
+}
+
+/**
  * Up to `count` of `key`'s ALTERNATIVES that are free now, best first. One Avanzel already uses for an action is
  * skipped. Each other one is tried by registering it, and let go of at once; one that throws counts as taken.
  */

@@ -18,9 +18,14 @@ import {
   CLAUDE_CODE_NOT_ADDED,
   claudeCodeNotAdded,
   CURSOR_DICTATION_DESCRIPTION,
+  CURSOR_SHORTCUT_DESCRIPTION,
+  CURSOR_SHORTCUT_DICTATION_DESCRIPTION,
+  cursorDictationDescription,
   cursorKeyName,
   cursorKeyOptions,
   cursorStatus,
+  DICTATION_BLOCKED,
+  dictationKeyName,
   DAYS,
   DELETE_FAILED_BODY,
   DICTATION_NOT_COPIED,
@@ -42,7 +47,7 @@ import {
   DOWNLOAD_NOT_STARTED,
   failedSaveLine,
   fileModeLine,
-  FOLDER_LATIN_HINT,
+  FOLDER_HINT,
   folderHint,
   folderLine,
   folderProblemText,
@@ -162,6 +167,9 @@ describe("settings copy", () => {
       // The switch is right above it, so it says only what is left to do.
       expect(dictationsStart(false)).toBe("Turn it on above, tap the key and speak. What you say shows here.");
       expect(dictationsStart(true)).toBe("Tap the key and speak. What you say shows here.");
+      // With a shortcut of the person's own, as the switch above it says.
+      expect(dictationsStart(false, "custom")).toBe("Turn it on above, press the shortcut and speak. What you say shows here.");
+      expect(dictationsStart(true, "custom")).toBe("Press the shortcut and speak. What you say shows here.");
       expect(DICTATION_NOT_INSERTED).toBe("These words didn't go in. Copy them to paste yourself.");
       expect(DICTATION_NOT_DELETED).toBe("That dictation couldn't be deleted.");
     });
@@ -604,8 +612,16 @@ describe("a scheduled review's copy", () => {
       ["Left Option", "left-option", true],
       ["Right Command", "right-command", false],
       ["Right Control", "right-control", false],
+      ["Custom shortcut…", "custom", false],
     ]);
+    expect(cursorKeyOptions("custom").map((option) => option.checked)).toEqual([false, false, false, false, true]);
     expect(cursorKeyName("right-control")).toBe("Right Control");
+    expect(dictationKeyName("right-control")).toBe("Right Control");
+    expect(dictationKeyName("custom")).toBe("Custom shortcut…");
+    expect(cursorDictationDescription("custom")).toBe(
+      "Press the shortcut to start and again to finish, or press Esc to cancel. The words go where the cursor is.",
+    );
+    expect(cursorDictationDescription("left-option")).toBe(CURSOR_DICTATION_DESCRIPTION);
   });
 
   it("the dictation switch says in one calm sentence how it works", () => {
@@ -664,10 +680,12 @@ describe("a scheduled review's copy", () => {
   });
 
   describe("cursorStatus", () => {
-    const sees = { available: true, accessibility: true, inputMonitoring: true };
+    const sees = { available: true, accessibility: true, inputMonitoring: true, microphone: "granted" as const };
+    const none = { available: true, accessibility: false, inputMonitoring: false, microphone: "denied" as const };
 
-    it("says all is well when both permissions are granted, with nothing to press", () => {
-      expect(cursorStatus(sees)).toEqual({ line: "Avanzel can see the key and paste for you.", fix: null });
+    it("says all is well when every permission is granted, with nothing to press", () => {
+      expect(cursorStatus(sees)).toEqual({ line: "Avanzel can hear you, see the key and paste for you.", fix: null });
+      expect(cursorStatus(sees, "custom")).toEqual({ line: "Avanzel can hear you and paste for you.", fix: null });
     });
 
     it("names the one permission that is missing, with a button that opens its pane", () => {
@@ -679,18 +697,37 @@ describe("a scheduled review's copy", () => {
         line: "Avanzel needs Accessibility to paste for you.",
         fix: "Open System Settings",
       });
-    });
-
-    it("names both in one sentence when both are missing", () => {
-      expect(cursorStatus({ available: true, accessibility: false, inputMonitoring: false })).toEqual({
-        line: "Avanzel needs Input Monitoring to see the key and Accessibility to paste for you.",
+      expect(cursorStatus({ ...sees, microphone: "denied" })).toEqual({
+        line: "Avanzel needs the microphone to hear you.",
         fix: "Open System Settings",
       });
     });
 
+    it("offers Allow microphone while macOS hasn't asked about it, as macOS then asks itself", () => {
+      expect(cursorStatus({ ...sees, microphone: "not-determined" })).toEqual({
+        line: "Avanzel needs the microphone to hear you.",
+        fix: "Allow microphone",
+      });
+    });
+
+    it("names them all in one sentence when several are missing", () => {
+      expect(cursorStatus({ ...none, microphone: "granted" })).toEqual({
+        line: "Avanzel needs Input Monitoring to see the key and Accessibility to paste for you.",
+        fix: "Open System Settings",
+      });
+      expect(cursorStatus(none).line).toBe(
+        "Avanzel needs the microphone to hear you, Input Monitoring to see the key and Accessibility to paste for you.",
+      );
+    });
+
+    it("asks for no Input Monitoring while a shortcut of the person's own starts a dictation", () => {
+      expect(cursorStatus({ ...sees, inputMonitoring: false }, "custom")).toEqual({ line: "Avanzel can hear you and paste for you.", fix: null });
+      expect(cursorStatus(none, "custom").line).toBe("Avanzel needs the microphone to hear you and Accessibility to paste for you.");
+    });
+
     it("says it is not available on a Mac without the helper, and offers nothing to press", () => {
       // The permissions mean nothing then, whatever they say.
-      expect(cursorStatus({ available: false, accessibility: false, inputMonitoring: false })).toEqual({
+      expect(cursorStatus({ ...none, available: false })).toEqual({
         line: "Dictating into any app isn't available on this Mac.",
         fix: null,
       });
@@ -699,17 +736,21 @@ describe("a scheduled review's copy", () => {
     it("keeps to the copy rules: sentence case, a full stop, no exclamation mark", () => {
       const lines = [
         CURSOR_DICTATION_DESCRIPTION,
+        CURSOR_SHORTCUT_DICTATION_DESCRIPTION,
+        CURSOR_SHORTCUT_DESCRIPTION,
+        DICTATION_BLOCKED,
         ...[
           sees,
           { ...sees, inputMonitoring: false },
           { ...sees, accessibility: false },
-          { available: true, accessibility: false, inputMonitoring: false },
-          { available: false, accessibility: false, inputMonitoring: false },
-        ].map((state) => cursorStatus(state).line),
+          none,
+          { ...none, available: false },
+        ].flatMap((state) => [cursorStatus(state).line, cursorStatus(state, "custom").line]),
       ];
       for (const line of lines) {
         expect(line).toMatch(/^[A-Z][^!]*\.$/);
-        expect(line.length).toBeLessThan(100);
+        // The longest names all three permissions, each with why.
+        expect(line.length).toBeLessThan(120);
         expect(line).not.toMatch(/\b[A-Z]{2,}\b|Oops|Sorry/);
       }
     });
@@ -810,21 +851,27 @@ describe("Settings → Your shelves", () => {
   const FOLDERS = [
     "projects", "side-quests-2", "a".repeat(40), "Projects", "-a", "a--b", "a-", "a".repeat(41), "", "my projects", "проекты",
     "goals", "ideas", "problems", "memories", "people", "topics", "meetings", "inbox", "raw", "reviews", "tasks", ".x", "x_y",
+    "Мои проекты", "Ideas", "RAW", " a", "a ", "a/b", "a\\b", "a:b", "a|b", "a`b", "[[a]]", "a#b", "a^b", "a\nb", "a\tb", "п".repeat(41),
+    "мой",
   ];
-  const TAKEN: readonly (readonly string[])[] = [[], ["projects"], ["other", "side-quests-2"]];
+  const TAKEN: readonly (readonly string[])[] = [[], ["projects"], ["other", "side-quests-2"], ["Проекты", "мой"]];
 
   it("makes the folder to suggest as the engine does", () => {
-    for (const name of ["My Projects", "Проекты", "", "  Side   quests, 2! ", "Café à Paris", "a b c d e f g h", "x".repeat(60), "Ideas 💡"]) {
+    for (const name of [
+      "My Projects", "Проекты", "", "  Side   quests, 2! ", "Café à Paris", "a b c d e f g h", "x".repeat(60), "Ideas 💡", "Мои проекты, 2024",
+      "Йога и ёлки", "п".repeat(60), "日記 帳", "💡",
+    ]) {
       expect(folderHint(name)).toBe(suggestFolder(name));
     }
     expect(folderHint("My Projects")).toBe("my-projects");
   });
 
-  it("asks for a folder typed in Latin letters when the name has none, and nothing crashes", () => {
-    expect(folderHint("Проекты")).toBe("");
-    expect(FOLDER_LATIN_HINT).toBe("Type a folder name in Latin letters, such as projects.");
+  it("suggests a folder in the name's own language, and asks for one when the name has no letters or digits", () => {
+    expect(folderHint("Проекты")).toBe("проекты");
+    expect(folderHint("💡")).toBe("");
+    expect(FOLDER_HINT).toBe("Type a folder name, such as projects.");
     // The hint shows for a name with no folder to suggest, and for no name at all it stays quiet.
-    expect(folderLine("Проекты", "", [])).toBe(FOLDER_LATIN_HINT);
+    expect(folderLine("💡", "", [])).toBe(FOLDER_HINT);
     expect(folderLine("", "", [])).toBeUndefined();
     expect(folderLine("My Projects", "my-projects", [])).toBeUndefined();
   });
@@ -867,14 +914,24 @@ describe("Settings → Your shelves", () => {
   });
 
   it("says why a hand-made folder whose name breaks the folder rule can't be given a definition", () => {
-    expect(HAND_MADE_FOLDER_PROBLEM).toBe(
-      "This folder's name can't be a shelf's. Rename it in Finder with lowercase Latin letters, digits and dashes, then add a definition.",
+    expect(HAND_MADE_FOLDER_PROBLEM).toBe("Its files stay where they are. Rename it in Finder, then add a definition.");
+    // Why, in the rule's own first sentence, then what is safe and the fix: renaming in Finder, not choosing another folder name.
+    expect(handMadeFolderProblem("a#b")).toBe(
+      'A folder name can\'t hold / \\ : * ? " < > | ` [ ] # ^ or a line break. Its files stay where they are. Rename it in Finder, then add a definition.',
     );
-    for (const folder of ["Projects", "my projects", "проекты", "a--b", ".hidden", "a".repeat(41), "x_y"]) {
-      expect(handMadeFolderProblem(folder)).toBe(HAND_MADE_FOLDER_PROBLEM);
+    expect(handMadeFolderProblem(" a")).toBe(
+      "A folder name can't start or end with a space. Its files stay where they are. Rename it in Finder, then add a definition.",
+    );
+    expect(handMadeFolderProblem("a".repeat(41))).toBe(
+      "A folder name can be at most 40 characters, and this one has 41. Its files stay where they are. Rename it in Finder, then add a definition.",
+    );
+    for (const folder of ["a|b", "a#b", "[[a]]", ".hidden", "a".repeat(41), " a"]) {
+      expect(handMadeFolderProblem(folder)?.endsWith(HAND_MADE_FOLDER_PROBLEM)).toBe(true);
+      expect(handMadeFolderProblem(folder)).not.toContain("Choose another");
       expect(folderProblem(folder, [])).not.toBeNull();
     }
-    for (const folder of ["projects", "side-quests-2", "a".repeat(40)]) {
+    // An Obsidian vault's folders, as they are named.
+    for (const folder of ["projects", "side-quests-2", "a".repeat(40), "Projects", "my projects", "Проекты", "Мои заметки", "a--b", "x_y"]) {
       expect(handMadeFolderProblem(folder)).toBeNull();
       expect(folderProblem(folder, [])).toBeNull();
     }

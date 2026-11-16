@@ -46,7 +46,8 @@ Avanzel enforces a few guarantees no matter how the agent behaves:
 ## Your own shelves
 
 Besides the six shelves, you can have shelves of your own, such as `projects/` or `recipes/`. A shelf
-has a name, a folder (lowercase letters, digits and dashes) and a line on what belongs on it. Own
+has a name, a folder (named in any language, such as `Проекты` or `my projects`) and a line on what
+belongs on it. A folder name can't hold `/ \ : * ? " < > | [ ] # ^` or a backtick. Own
 shelves share one brown look in Library and on the filing card.
 
 Add one in Settings → General → "Your shelves": give it a name, a folder and "What belongs on it". You

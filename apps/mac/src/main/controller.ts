@@ -121,6 +121,7 @@ import type {
   CapsuleState,
   CardAction,
   CursorPermission,
+  DictationPermissionState,
   FiledPage,
   LibraryPatch,
   ModelStatus,
@@ -144,7 +145,7 @@ import { TranscriberCache } from "./transcriber-cache.ts";
 import { browserWindow, frontContext } from "./front-app.ts";
 import { electronClipboard } from "./cursor-clipboard.ts";
 import { COPY_PROMPT_MS, CursorDictation, type CursorHost } from "./cursor-dictation.ts";
-import { CURSOR_HELPER_GAVE_UP, CursorHelper, cursorPermissionsOf, type CursorPermissionState } from "./cursor-helper.ts";
+import { CURSOR_HELPER_GAVE_UP, CursorHelper, cursorPermissionsOf } from "./cursor-helper.ts";
 import { DEFAULT_SKIP_APPS } from "./cursor-policy.ts";
 import { DictationHistory, type DictationEntry } from "./dictation-history.ts";
 import { deleteDictationResult, forgetDictation, pageOf, type ForgetHook, type Forgotten } from "./dictation-rows.ts";
@@ -202,7 +203,7 @@ import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, u
 import { answeredBy, ShelfSuggestions, type PendingShelf } from "./shelf-suggestions.ts";
 import { askOf, libraryAskOf, ownShelvesInfo, parseShelfAsk, parseShelfOp, shelfUndoNotice } from "./shelf-asks.ts";
 import { shelfMadeNotes, type NotMovedReason } from "../shared/shelves.ts";
-import { freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
+import { cursorShortcutProblemOf, freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
 import { bringForward, showWhenReady, stealFocus } from "./stage.ts";
@@ -494,8 +495,10 @@ export class Controller {
   private readonly cursor: CursorDictation;
   /** The native helper that sees the key and pastes, while the setting is on and a library is open (`applyCursorDictation`). */
   private cursorHelper: CursorHelper | null = null;
-  /** The key the running helper was last told to watch. */
+  /** The key the running helper was last told to watch, or "custom" for one started for a shortcut of the person's own. */
   private cursorKey: AppSettings["cursorDictation"]["key"] | null = null;
+  /** Why dictating into any app's own shortcut isn't registered, for Settings; null while it is or isn't used (`registerCursorShortcut`). */
+  private cursorShortcutProblem: string | null = null;
   /** The history of dictations, in the app's own data (`<userData>/dictations.jsonl`), never in the library. */
   private readonly dictations: DictationHistory;
   /**
@@ -819,7 +822,7 @@ export class Controller {
       this.askChanged();
     }
     this.recoverCalls();
-    this.applyCursorDictation(); // dictating into any app needs a library, whose dictionary its words go through
+    void this.applyCursorDictation(); // dictating into any app needs a library, whose dictionary its words go through
   }
 
   /** `openLibrary`'s work: the library that is open closes, and the one at `libraryPath`, if any, opens in its place. */
@@ -955,13 +958,14 @@ export class Controller {
   /**
    * Settings records a new shortcut (`recording`): Avanzel's own shortcuts are let go meanwhile, so the keys pressed reach its page
    * rather than macOS's handler of a shortcut Avanzel holds (pressing ⌥Space would record a thought instead of being recorded). They
-   * are registered again when the recording ends, saved or not.
+   * are registered again when the recording ends, saved or not, and the windows are told: the shortcut a recording saved may reach
+   * main before the recording's end does, while nothing can be registered, and only now is it known whether it works.
    */
   shortcutRecording(sender: WebContents, recording: unknown): void {
     if (!this.isPanelPage(sender)) return;
     this.shortcutsLetGo = recording === true;
     if (this.shortcutsLetGo) shortcutApi().unregisterAll();
-    else void this.applyShortcuts();
+    else void this.applyShortcuts().then(() => this.broadcast());
   }
 
   /** Settings records a shortcut (`shortcutRecording`): none is registered until it ends, whatever asks for them meanwhile. */
@@ -993,6 +997,7 @@ export class Controller {
       shortcuts = this.store.get().shortcuts;
       registration = registerShortcuts(shortcuts, handlers, api, running);
     }
+    this.registerCursorShortcut(api, shortcuts);
     this.shortcutProblems = registration.problems;
     this.takenShortcuts = registration.taken.map((key) => ({
       kind: "shortcut-taken",
@@ -2404,28 +2409,55 @@ export class Controller {
     if (this.cursorHelper) void this.cursor.tap();
   }
 
-  /** Turns dictating into any app on or off, or chooses its key, as Settings asks; what `patch` leaves out stays as it was. */
+  /**
+   * Turns dictating into any app on or off, or chooses its key or its own shortcut, as Settings asks; what `patch` leaves out stays as it
+   * was. Turning it on has macOS ask, at once, for what it still lacks (`askForDictation`): without that, the first tap of the key was the
+   * first anyone heard of a missing permission, and with Input Monitoring missing that tap was never even seen.
+   */
   async setCursorDictation(patch: Partial<AppSettings["cursorDictation"]>): Promise<SettingsSnapshot> {
-    return this.changeApp({ cursorDictation: { ...this.store.get().cursorDictation, ...patch } });
+    const wasOn = this.store.get().cursorDictation.enabled;
+    const snapshot = await this.changeApp({ cursorDictation: { ...this.store.get().cursorDictation, ...patch } });
+    // Not awaited: the switch shows as on while macOS asks, and Settings reads the answers again when it has the focus back.
+    if (!wasOn && this.store.get().cursorDictation.enabled) void this.askForDictation();
+    return snapshot;
+  }
+
+  /**
+   * macOS's own prompts for what dictating into any app needs, one after another: the microphone (its prompt waits for the answer), then
+   * Accessibility and, while a modifier key is used, Input Monitoring. Each comes up once; after a refusal only System Settings can grant,
+   * which the Dictation pane's Notice opens. The windows are told after, so they show what was granted.
+   */
+  private async askForDictation(): Promise<void> {
+    await requestMicrophone().catch(() => false);
+    await cursorPermissionsOf(this.cursorHelper, true, this.store.get().cursorDictation.key !== "custom").catch(() => undefined);
+    this.broadcast();
   }
 
   /** What macOS has granted for dictating into any app, for Settings: asked of the running helper, or of one that lives for the answer. */
-  async cursorPermissions(): Promise<CursorPermissionState> {
-    return cursorPermissionsOf(this.cursorHelper, false);
+  async cursorPermissions(): Promise<DictationPermissionState> {
+    return { ...(await cursorPermissionsOf(this.cursorHelper, false)), microphone: permissionStatus("microphone") };
   }
 
   /**
    * Has macOS ask for the permissions (its prompts come up once; after a refusal only System Settings can grant), and opens System
-   * Settings at `permission` when it is missing, as a row of Privacy asks; with none named, at the one still missing, Input Monitoring first,
-   * as without it the key is never seen.
+   * Settings at `permission` when it is missing, as a row of Privacy asks; with none named, at the first one still missing: the
+   * microphone, which macOS asks about itself while it hasn't, then Input Monitoring while a modifier key is used, as without it the key
+   * is never seen, then Accessibility.
    */
-  async askCursorPermissions(permission?: CursorPermission): Promise<CursorPermissionState> {
-    const state = await cursorPermissionsOf(this.cursorHelper, true);
-    if (!state.available) return state;
-    const lacks: Record<CursorPermission, boolean> = { "input-monitoring": !state.inputMonitoring, accessibility: !state.accessibility };
+  async askCursorPermissions(permission?: CursorPermission): Promise<DictationPermissionState> {
+    const listen = this.store.get().cursorDictation.key !== "custom";
+    if ((permission === undefined || permission === "microphone") && permissionStatus("microphone") !== "granted") {
+      if (permissionStatus("microphone") === "not-determined") await requestMicrophone().catch(() => false);
+      else await this.openPrivacy("microphone");
+      return this.cursorPermissions();
+    }
+    const state = await cursorPermissionsOf(this.cursorHelper, true, listen);
+    const answer = { ...state, microphone: permissionStatus("microphone") };
+    if (!state.available || permission === "microphone") return answer;
+    const lacks = { "input-monitoring": listen && !state.inputMonitoring, accessibility: !state.accessibility };
     const missing = permission ? (lacks[permission] ? permission : null) : lacks["input-monitoring"] ? "input-monitoring" : lacks.accessibility ? "accessibility" : null;
     if (missing) this.openPane(missing);
-    return state;
+    return answer;
   }
 
   /**
@@ -2519,9 +2551,17 @@ export class Controller {
    * Runs the helper while the setting is on and a library is open, and has it watch the chosen key; stops it otherwise. Called at
    * launch (a library opens), whenever a library opens or closes, and when the setting changes.
    */
-  private applyCursorDictation(): void {
+  private applyCursorDictation(): Promise<void> {
     const { enabled, key } = this.store.get().cursorDictation;
-    if (!enabled || !this.vault || this.quitting) return void this.stopCursorHelper();
+    // Its own shortcut is registered with the others, or let go, as the setting now says (`applyShortcuts`).
+    const shortcuts = this.applyShortcuts();
+    if (!enabled || !this.vault || this.quitting) {
+      void this.stopCursorHelper();
+      return shortcuts;
+    }
+    // The helper can't be told to stop watching a key: going from a key to a shortcut of the person's own starts a fresh one, which watches none.
+    if (this.cursorHelper && key === "custom" && this.cursorKey !== null && this.cursorKey !== "custom") void this.stopCursorHelper();
+    const watch = key === "custom" ? null : key;
     if (!this.cursorHelper) {
       this.cursorHelper = new CursorHelper({
         onTap: () => this.pressCursorDictation(),
@@ -2529,11 +2569,24 @@ export class Controller {
         // that kept stopping and is no longer started again is said on a card (`cursorHelperProblem`).
         onProblem: (message) => this.cursorHelperProblem(message),
       });
-      this.cursorHelper.start(key);
-    } else if (key !== this.cursorKey) {
-      this.cursorHelper.setKey(key);
+      this.cursorHelper.start(watch);
+    } else if (key !== this.cursorKey && watch) {
+      this.cursorHelper.setKey(watch);
     }
     this.cursorKey = key;
+    return shortcuts;
+  }
+
+  /**
+   * Registers dictating into any app's own shortcut, after the others (`applyShortcuts`), while the setting is on with "custom", a library is
+   * open and nothing records a shortcut. Its problem is said in Settings (`cursorShortcutProblem`): an action's shortcut already, one Avanzel
+   * leaves to apps, or one another app holds.
+   */
+  private registerCursorShortcut(api: ShortcutApi, shortcuts: Shortcuts): void {
+    this.cursorShortcutProblem = null;
+    const { enabled, key, shortcut } = this.store.get().cursorDictation;
+    if (!enabled || key !== "custom" || !shortcut || !this.vault || this.quitting) return;
+    this.cursorShortcutProblem = cursorShortcutProblemOf(shortcut, shortcuts, (accelerator) => api.register(accelerator, () => this.pressCursorDictation()));
   }
 
   /**
@@ -6094,6 +6147,7 @@ export class Controller {
       tasks: report.tasks.map((task) => this.taskInfo(task, stateRuns, now)),
       taskProblems: report.problems.map((p) => ({ file: vault ? vault.relativePath(p.file) : p.file, message: p.message })),
       shortcutProblems: this.shortcutProblems,
+      cursorShortcutProblem: this.cursorShortcutProblem,
       shortcutAlternatives: Object.fromEntries(this.takenShortcuts.map((taken) => [taken.key, taken.alternatives])),
       obsidian: this.obsidianInstalled(),
       opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
@@ -6181,7 +6235,7 @@ export class Controller {
     if (patch.launchAtLogin !== undefined && process.env.AVANZEL_TEST !== "1" && app.isPackaged) {
       app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
     }
-    if (JSON.stringify(before.cursorDictation) !== JSON.stringify(after.cursorDictation)) this.applyCursorDictation();
+    if (JSON.stringify(before.cursorDictation) !== JSON.stringify(after.cursorDictation)) await this.applyCursorDictation();
     if (JSON.stringify(before.voiceTrigger) !== JSON.stringify(after.voiceTrigger) || before.microphoneId !== after.microphoneId) {
       if (before.voiceTrigger.enabled !== after.voiceTrigger.enabled || before.microphoneId !== after.microphoneId) this.applyVoiceTrigger();
       this.refreshPanel(); // Capture shows the trigger as it is now
@@ -7139,10 +7193,12 @@ export class Controller {
   /**
    * Presses `key`'s shortcut as the person would: the callback the shortcut stand-in (AVANZEL_FAKE_TAKEN_SHORTCUTS)
    * registered for it runs. False when it holds none, as for a shortcut another app holds: that press never reaches
-   * Avanzel.
+   * Avanzel. "cursorDictation" is dictating into any app's own shortcut.
    */
-  pressShortcutForTests(key: keyof Shortcuts | "Escape"): boolean {
-    const press = fakeShortcuts.get(key === "Escape" ? key : this.store.get().shortcuts[key]);
+  pressShortcutForTests(key: keyof Shortcuts | "Escape" | "cursorDictation"): boolean {
+    const settings = this.store.get();
+    const accelerator = key === "Escape" ? key : key === "cursorDictation" ? (settings.cursorDictation.shortcut ?? "") : settings.shortcuts[key];
+    const press = fakeShortcuts.get(accelerator);
     press?.();
     return press !== undefined;
   }

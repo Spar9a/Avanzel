@@ -96,6 +96,30 @@ test("(a) a shelf added in Settings is listed in AGENTS.md and in the shelf draw
   await app.close();
 });
 
+test("(a2) a folder named in Russian, as an Obsidian vault names it, becomes a shelf as it is; a new shelf named in Russian gets a Russian folder", async () => {
+  const library = await makeLibrary();
+  mkdirSync(path.join(library, "Мои проекты"));
+  writeFileSync(path.join(library, "Мои проекты", "план.md"), "# План\n");
+  const { app } = await launchOn(library);
+  const settings = await openSettings(app);
+  const general = paneOf(settings, "General");
+  await general.getByRole("button", { name: "Add definition", exact: true }).click();
+  await general.getByRole("textbox", { name: "What belongs on it", exact: true }).fill(DEFINITION);
+  await general.getByRole("button", { name: "Save shelf", exact: true }).click();
+  await expect.poll(() => loadSettings(library).shelves).toEqual([{ folder: "Мои проекты", name: "Мои проекты", definition: DEFINITION }]);
+  expect(readFileSync(path.join(library, "AGENTS.md"), "utf8")).toContain(`| \`Мои проекты/\` | ${DEFINITION} |`);
+  expect(existsSync(path.join(library, "Мои проекты", "план.md"))).toBe(true);
+
+  await general.getByRole("button", { name: "Add shelf", exact: true }).click();
+  await general.getByRole("textbox", { name: "Name", exact: true }).fill("Рецепты");
+  await expect(general.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("рецепты");
+  await general.getByRole("textbox", { name: "What belongs on it", exact: true }).fill("Dishes to cook.");
+  await general.getByRole("button", { name: "Save shelf", exact: true }).click();
+  await expect.poll(() => loadSettings(library).shelves.map((shelf) => shelf.folder)).toEqual(["Мои проекты", "рецепты"]);
+  expect(existsSync(path.join(library, "рецепты"))).toBe(true);
+  await app.close();
+});
+
 test("(b) the filed card asks, Make shelf moves the page onto the new shelf, and Library tags it and filters by it", async () => {
   const { app, capsule, library } = await suggesting();
   await fileAThought(app);

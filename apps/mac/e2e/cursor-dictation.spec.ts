@@ -94,6 +94,27 @@ test("two taps paste the words at the cursor, give the clipboard back, and keep 
   await app.close();
 });
 
+test("a shortcut of the person's own starts and ends a dictation as the key does, and choosing a key again lets it go", async () => {
+  const { script, pasteOut } = fakeCursor();
+  const { app } = await launchWith(script);
+  await call(app, "setCursorDictation", { enabled: true, key: "custom", shortcut: "Control+Alt+D" });
+  expect(await call(app, "pressShortcutForTests", "cursorDictation")).toBe(true);
+  await expect.poll(() => capsuleKind(app)).toBe("listening");
+  await wait(1_000);
+  expect(await call(app, "pressShortcutForTests", "cursorDictation")).toBe(true);
+  await expect.poll(() => pasted(pasteOut), { timeout: 30_000 }).toBe(WORDS);
+  await expect.poll(() => cursorIdle(app)).toBe(true);
+  // Back on a key to tap, the shortcut is no longer Avanzel's: a press never reaches it.
+  await call(app, "setCursorDictation", { key: "right-option" });
+  expect(await call(app, "pressShortcutForTests", "cursorDictation")).toBe(false);
+  // Turned off, it isn't registered either.
+  await call(app, "setCursorDictation", { key: "custom" });
+  expect(await call(app, "pressShortcutForTests", "cursorDictation")).toBe(true);
+  await call(app, "setCursorDictation", { enabled: false });
+  expect(await call(app, "pressShortcutForTests", "cursorDictation")).toBe(false);
+  await app.close();
+});
+
 test("when focus moved to another window, nothing is pasted and the copy card names the app; Copy puts the words on the clipboard", async () => {
   const { script, pasteOut } = fakeCursor({ targets: [slack(501), { ...slack(777, "Notes"), app: { name: "Notes", bundleId: "com.apple.Notes", pid: 777 } }], taps: [500, 1500] });
   const { app } = await launchWith(script);

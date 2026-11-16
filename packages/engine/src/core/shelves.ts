@@ -6,7 +6,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { lstatOrNull, replaceInside } from "./inside.ts";
-import { slugify } from "./vault.ts";
 
 /** The shelves every library starts with. Kept here, and re-exported by vault.ts, so these rules can use them while vault.ts loads. */
 export const SHELVES = ["goals", "ideas", "problems", "memories", "people", "topics"] as const;
@@ -29,21 +28,37 @@ export const MAX_SHELF_DEFINITION = 300;
 export const MAX_SHELF_FOLDER = 40;
 
 /**
- * Why `folder` can't be a new shelf's folder, as a sentence the owner can read, or null when it can. `taken` is the folders of the
- * existing own shelves only: a folder already on disk that isn't one of them is adopted, not refused.
+ * What a folder name can't hold: what macOS or Obsidian can't put in a file name (`/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`), the shelves
+ * table's separator and code mark (`|`, a backtick), what a wikilink takes as its own (`[`, `]`, `#`, `^`), and control characters.
+ */
+const FORBIDDEN_IN_FOLDER = /[/\\:*?"<>|`[\]#^\p{Cc}\u2028\u2029]/u;
+
+/** A folder as it is compared: in one Unicode form (macOS may keep "й" as two characters) and one case (a Mac's disk ignores case). */
+export function folderKey(folder: string): string {
+  return folder.normalize("NFC").toLowerCase();
+}
+
+/**
+ * Why `folder` can't be a new shelf's folder, as a sentence the owner can read, or null when it can. A folder is named as the owner
+ * likes, in any language and case and with spaces, so an Obsidian vault's folders become shelves as they are named. `taken` is the
+ * folders of the existing own shelves only: a folder already on disk that isn't one of them is adopted, not refused. Avanzel's own
+ * folders and the taken ones are refused in any case, as the disk takes "Ideas" for "ideas".
  */
 export function folderProblem(folder: string, taken: readonly string[]): string | null {
-  if (folder === "") return "A shelf needs a folder name. Type one in lowercase letters, digits and dashes.";
+  if (folder === "") return "A shelf needs a folder name. Type one.";
   if (folder.startsWith(".")) return "A folder name can't start with a dot. Choose another folder name.";
-  if (folder.length > MAX_SHELF_FOLDER) {
-    return `A folder name can be at most ${MAX_SHELF_FOLDER} characters, and this one has ${folder.length}. Choose a shorter folder name.`;
+  if (folder.trim() !== folder) return "A folder name can't start or end with a space. Remove the space.";
+  const length = shelfTextLength(folder);
+  if (length > MAX_SHELF_FOLDER) {
+    return `A folder name can be at most ${MAX_SHELF_FOLDER} characters, and this one has ${length}. Choose a shorter folder name.`;
   }
-  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(folder)) {
-    return "A folder name uses lowercase letters a to z, digits and single dashes, with no spaces. Choose another folder name.";
+  if (FORBIDDEN_IN_FOLDER.test(folder)) {
+    return 'A folder name can\'t hold / \\ : * ? " < > | ` [ ] # ^ or a line break. Choose another folder name.';
   }
-  if (BUILT_IN_SHELVES.includes(folder)) return `${folder} is one of Avanzel's own shelves. Choose another folder name.`;
-  if (SPECIAL_DIRS.includes(folder)) return `${folder} is a folder Avanzel keeps for itself. Choose another folder name.`;
-  if (taken.includes(folder)) return `A shelf called ${folder} already exists. Choose another folder name.`;
+  const key = folderKey(folder);
+  if (BUILT_IN_SHELVES.includes(key)) return `${folder} is one of Avanzel's own shelves. Choose another folder name.`;
+  if (SPECIAL_DIRS.includes(key)) return `${folder} is a folder Avanzel keeps for itself. Choose another folder name.`;
+  if (taken.some((other) => folderKey(other) === key)) return `A shelf called ${folder} already exists. Choose another folder name.`;
   return null;
 }
 
@@ -104,9 +119,15 @@ export function sameShelf(a: string, b: string): boolean {
   return shelfKey(a) === shelfKey(b);
 }
 
-/** A folder to suggest for a shelf name, made as page slugs are. Empty when the name has no Latin letters or digits. */
+/**
+ * A folder to suggest for a shelf name: up to five of its words, in lowercase and joined by dashes, in whatever language it is written.
+ * Latin letters lose their accents, as page slugs do ("Café" is "cafe"); other scripts keep theirs ("Мой проект" is "мой-проект").
+ * Empty when the name has no letters or digits.
+ */
 export function suggestFolder(name: string): string {
-  return slugify(name, 5, MAX_SHELF_FOLDER);
+  const plain = name.normalize("NFD").replace(/(\p{Script=Latin})\p{M}+/gu, "$1").normalize("NFC").toLowerCase();
+  const words = (plain.match(/[\p{L}\p{N}][\p{L}\p{M}\p{N}]*/gu) ?? []).slice(0, 5);
+  return [...words.join("-")].slice(0, MAX_SHELF_FOLDER).join("").replace(/^-+|-+$/g, "");
 }
 
 /** What each shelf Avanzel keeps holds, as the "Holds" column of the table in the template `AGENTS.md` says. */
@@ -172,7 +193,7 @@ function onAShelf(page: string, own: readonly OwnShelf[]): boolean {
   const parts = page.split("/");
   const folder = parts[0] ?? "";
   if (parts.length !== 2 || !page.endsWith(".md") || parts[1] === ".md") return false;
-  return (SHELVES as readonly string[]).includes(folder) || own.some((shelf) => shelf.folder === folder);
+  return (SHELVES as readonly string[]).includes(folder) || own.some((shelf) => folderKey(shelf.folder) === folderKey(folder));
 }
 
 /** A name as one line, with no `|` or line break: whitespace collapsed, cut to length. */

@@ -4,7 +4,7 @@
 // recordings the library has kept.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { isSetupStep, SETUP_STEPS, type AppSettings, type CursorKey, type SetupStep, type Shortcuts } from "../shared/ipc.ts";
+import { isSetupStep, SETUP_STEPS, type AppSettings, type CursorKey, type DictationKey, type SetupStep, type Shortcuts } from "../shared/ipc.ts";
 
 /** The voice trigger's word until the person picks one: the app's own name. */
 export const TRIGGER_WORD = "Avanzel";
@@ -40,11 +40,16 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
 
 const CURSOR_KEYS: readonly CursorKey[] = ["right-option", "left-option", "right-command", "right-control"];
 
-/** The dictation setting as far as it makes sense: a switch that isn't true is off, and a key Avanzel doesn't know is Right Option. */
+/**
+ * The dictation setting as far as it makes sense: a switch that isn't true is off, and a key Avanzel doesn't know is Right Option. Its own
+ * shortcut is kept when it is a string with something in it; "custom" without one is Right Option, as there would be nothing to press.
+ */
 function cursorDictationOf(raw: unknown): AppSettings["cursorDictation"] {
   const given = isRecord(raw) ? raw : {};
-  const key = CURSOR_KEYS.find((known) => known === given.key) ?? "right-option";
-  return { enabled: given.enabled === true, key };
+  const shortcut = typeof given.shortcut === "string" && given.shortcut.trim() ? given.shortcut.trim() : undefined;
+  const known = CURSOR_KEYS.find((each) => each === given.key);
+  const key: DictationKey = known ?? (given.key === "custom" && shortcut ? "custom" : "right-option");
+  return { enabled: given.enabled === true, key, ...(shortcut ? { shortcut } : {}) };
 }
 
 function voiceTriggerOf(raw: unknown): AppSettings["voiceTrigger"] {

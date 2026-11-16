@@ -126,6 +126,20 @@ describe("settings store", () => {
     expect(normalizeSettings({ cursorDictation: { enabled: true, key: "right-command" } }).cursorDictation).toEqual({ enabled: true, key: "right-command" });
     expect(normalizeSettings({ cursorDictation: { enabled: "yes", key: 4 } }).cursorDictation).toEqual({ enabled: false, key: "right-option" });
     expect(normalizeSettings({ cursorDictation: "on" }).cursorDictation).toEqual({ enabled: false, key: "right-option" });
+    // A shortcut of the person's own: kept as it is, and "custom" only with one to press.
+    expect(normalizeSettings({ cursorDictation: { enabled: true, key: "custom", shortcut: " Control+Alt+D " } }).cursorDictation).toEqual({
+      enabled: true,
+      key: "custom",
+      shortcut: "Control+Alt+D",
+    });
+    expect(normalizeSettings({ cursorDictation: { enabled: true, key: "custom" } }).cursorDictation).toEqual({ enabled: true, key: "right-option" });
+    expect(normalizeSettings({ cursorDictation: { enabled: true, key: "custom", shortcut: "  " } }).cursorDictation).toEqual({ enabled: true, key: "right-option" });
+    // Another key chosen keeps the shortcut, for Custom shortcut to bring back.
+    expect(normalizeSettings({ cursorDictation: { enabled: true, key: "left-option", shortcut: "Control+Alt+D" } }).cursorDictation).toEqual({
+      enabled: true,
+      key: "left-option",
+      shortcut: "Control+Alt+D",
+    });
   });
 
   it("keeps the dictation setting across an update and a new launch", () => {

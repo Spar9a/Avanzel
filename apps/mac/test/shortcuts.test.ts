@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ALTERNATIVES,
+  cursorShortcutProblemOf,
   freeAlternatives,
   inMenuLine,
   keyCaps,
@@ -12,6 +13,35 @@ import {
   type ShortcutApi,
 } from "../src/main/shortcuts.ts";
 import { DEFAULT_SETTINGS } from "../src/main/store.ts";
+
+describe("cursorShortcutProblemOf", () => {
+  const free = () => true;
+
+  it("registers a free shortcut of the person's own, and says nothing", () => {
+    const register = vi.fn(free);
+    expect(cursorShortcutProblemOf("Control+Alt+D", DEFAULT_SETTINGS.shortcuts, register)).toBeNull();
+    expect(register).toHaveBeenCalledWith("Control+Alt+D");
+  });
+
+  it("refuses one an action already has, however it is written, without registering it", () => {
+    const register = vi.fn(free);
+    expect(cursorShortcutProblemOf("Option+space", DEFAULT_SETTINGS.shortcuts, register)).toBe(
+      "⌥Space is already the shortcut for Record a thought. Pick another shortcut.",
+    );
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it("refuses one apps use themselves, and says one another app holds or macOS doesn't understand", () => {
+    expect(cursorShortcutProblemOf("Command+D", DEFAULT_SETTINGS.shortcuts, free)).toBe(
+      "⌘D is a shortcut apps use themselves, so Avanzel doesn't take it. Pick one with ⌃ or ⌥.",
+    );
+    expect(cursorShortcutProblemOf("Control+Alt+D", DEFAULT_SETTINGS.shortcuts, () => false)).toBe("⌃⌥D is used by another app. Pick another shortcut.");
+    const throws = () => {
+      throw new Error("no");
+    };
+    expect(cursorShortcutProblemOf("Control+Alt+Nope", DEFAULT_SETTINGS.shortcuts, throws)).toBe("“Control+Alt+Nope” is not a shortcut macOS understands.");
+  });
+});
 
 const handlers = () => ({ dictate: vi.fn(), capture: vi.fn(), type: vi.fn(), ask: vi.fn(), undo: vi.fn(), call: vi.fn(), region: vi.fn(), shot: vi.fn(), shotScreen: vi.fn(), shotMarks: vi.fn() });
 

@@ -7,8 +7,8 @@ import { prettyAccelerator } from "../../main/shortcuts.ts";
 import {
   DICTATION_PAGE,
   noSuchReview,
-  type CursorKey,
-  type CursorPermissionState,
+  type DictationKey,
+  type DictationPermissionState,
   type PickOption,
   type SettingsPane,
   type SettingsSnapshot,
@@ -102,13 +102,34 @@ export function microphoneOptions(id: string | null, devices: readonly InputDevi
 // The keys and their names are shared with the capsule, whose listening card names the key too.
 export { cursorKeyName };
 
-/** The dictation key's pop-up menu, with the key in use checked. */
-export function cursorKeyOptions(chosen: CursorKey): PickOption[] {
-  return CURSOR_KEYS.map(({ key, name }) => ({ label: name, value: key, checked: key === chosen }));
+/** The dictation key menu's last choice: a shortcut of the person's own, which they then type. */
+export const CUSTOM_SHORTCUT = "Custom shortcut…";
+
+/** The dictation key's pop-up menu, with the key in use checked: the four keys, then a shortcut of the person's own. */
+export function cursorKeyOptions(chosen: DictationKey): PickOption[] {
+  return [
+    ...CURSOR_KEYS.map(({ key, name }) => ({ label: name, value: key, checked: key === chosen })),
+    { label: CUSTOM_SHORTCUT, value: "custom", checked: chosen === "custom" },
+  ];
 }
+
+/** The dictation key's button: the key's name, or its menu's Custom shortcut… (the shortcut's keys are on the next row). */
+export const dictationKeyName = (key: DictationKey): string => (key === "custom" ? CUSTOM_SHORTCUT : cursorKeyName(key));
 
 /** The "Dictate into any app" switch's description: how it works, in one sentence. */
 export const CURSOR_DICTATION_DESCRIPTION = "Tap the key to start and again to finish, or press Esc to cancel. The words go where the cursor is.";
+/** The same, while a shortcut of the person's own starts and ends a dictation. */
+export const CURSOR_SHORTCUT_DICTATION_DESCRIPTION = "Press the shortcut to start and again to finish, or press Esc to cancel. The words go where the cursor is.";
+
+/** The switch's description for the key in use. */
+export const cursorDictationDescription = (key: DictationKey): string =>
+  key === "custom" ? CURSOR_SHORTCUT_DICTATION_DESCRIPTION : CURSOR_DICTATION_DESCRIPTION;
+
+/** The row of a shortcut of the person's own: its label, and what it says. */
+export const CURSOR_SHORTCUT_LABEL = "Shortcut";
+export const CURSOR_SHORTCUT_DESCRIPTION = "Click it to change it.";
+/** The shortcut field's keys before one is typed, which it shows only for the moment it starts recording. */
+export const CURSOR_SHORTCUT_NONE = "None";
 
 /**
  * The library log's switch: the person speaking ("I"), and where the words go. It says what the app does today: the agent can read
@@ -173,8 +194,10 @@ export const skipSitesSummary = (sites: readonly string[]): string => (sites.len
 
 /** The Dictation pane when the history is empty: the one line, and how to start, which the switch above it changes. */
 export const DICTATIONS_EMPTY = "Nothing dictated yet.";
-export const dictationsStart = (enabled: boolean): string =>
-  `${enabled ? "Tap the key and speak." : "Turn it on above, tap the key and speak."} What you say shows here.`;
+export const dictationsStart = (enabled: boolean, key: DictationKey = "right-option"): string => {
+  const start = key === "custom" ? "press the shortcut" : "tap the key";
+  return `${enabled ? `${start[0]!.toUpperCase()}${start.slice(1)} and speak.` : `Turn it on above, ${start} and speak.`} What you say shows here.`;
+};
 
 /** The heading over the Dictation pane's history. */
 export const DICTATIONS_RECENT = "Recent";
@@ -221,20 +244,39 @@ export function dictationPlace({ app, title, site }: { app: string; title: strin
 /** The key row's description: a tap on its own is what counts. */
 export const CURSOR_KEY_DESCRIPTION = "Tap it on its own. Used with another key, it does nothing.";
 
+/** "a", "a and b", "a, b and c". */
+const listed = (items: readonly string[]): string =>
+  items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+
 /**
  * The status line under the dictation switch, from what macOS has granted, and the label of the button that fixes it (none when
- * nothing needs fixing, or when nothing can: a Mac without the helper). It says which permission is missing and why Avanzel wants it.
+ * nothing needs fixing, or when nothing can: a Mac without the helper). It says which permissions are missing and why Avanzel wants
+ * each: the microphone always, Input Monitoring only while a modifier key is tapped (a shortcut of the person's own needs none), and
+ * Accessibility. The fix is Allow microphone while macOS hasn't asked about it, as macOS then asks itself; else Open System Settings.
  */
-export function cursorStatus(state: CursorPermissionState): { line: string; fix: string | null } {
+export function cursorStatus(state: DictationPermissionState, key: DictationKey = "right-option"): { line: string; fix: string | null } {
   if (!state.available) return { line: "Dictating into any app isn't available on this Mac.", fix: null };
-  const fix = "Open System Settings";
-  if (!state.inputMonitoring && !state.accessibility) {
-    return { line: "Avanzel needs Input Monitoring to see the key and Accessibility to paste for you.", fix };
+  const listens = key !== "custom";
+  const needs = [
+    ...(state.microphone !== "granted" ? ["the microphone to hear you"] : []),
+    ...(listens && !state.inputMonitoring ? ["Input Monitoring to see the key"] : []),
+    ...(!state.accessibility ? ["Accessibility to paste for you"] : []),
+  ];
+  if (needs.length > 0) {
+    return { line: `Avanzel needs ${listed(needs)}.`, fix: state.microphone === "not-determined" ? "Allow microphone" : "Open System Settings" };
   }
-  if (!state.inputMonitoring) return { line: "Avanzel needs Input Monitoring to see the key.", fix };
-  if (!state.accessibility) return { line: "Avanzel needs Accessibility to paste for you.", fix };
-  return { line: "Avanzel can see the key and paste for you.", fix: null };
+  return { line: listens ? "Avanzel can hear you, see the key and paste for you." : "Avanzel can hear you and paste for you.", fix: null };
 }
+
+/**
+ * The Notice over a dictation that is on but can't work yet: what happened, and (its body, after `cursorStatus`'s line) what is safe.
+ * Its button is the fix. Settings asks again when it has the focus back, and the helper then starts hearing the key, so no relaunch is needed.
+ */
+export const DICTATION_BLOCKED = "Dictating into any app can't work yet.";
+export const DICTATION_BLOCKED_SAFE = "It stays on, and works once macOS allows it.";
+/** The Notice of a dictation shortcut that doesn't work: what is safe, and its fix, which records another. */
+export const CURSOR_SHORTCUT_SAFE = "Your other shortcuts still work.";
+export const CHANGE_SHORTCUT = "Change shortcut";
 
 /** The speech model row's description for a model the engine doesn't run: no name or languages, which its Notice says can't be used. */
 export const SPEECH_MODEL_DESCRIPTION = "Turns your voice into text on this Mac. Nothing is sent anywhere.";
@@ -643,8 +685,8 @@ export const ADD_DEFINITION = "Add definition";
 export const SHELF_NAME_LABEL = "Name";
 export const SHELF_FOLDER_LABEL = "Folder";
 export const SHELF_DEFINITION_LABEL = "What belongs on it";
-/** What the Folder field says while the name gives no folder to suggest (it has no Latin letters or digits), and none is typed. */
-export const FOLDER_LATIN_HINT = "Type a folder name in Latin letters, such as projects.";
+/** What the Folder field says while the name gives no folder to suggest (it has no letters or digits), and none is typed. */
+export const FOLDER_HINT = "Type a folder name, such as projects.";
 
 /** A folder's most characters, as the engine holds it (MAX_SHELF_FOLDER in shelves.ts); the renderer can't import the engine, so a test pins this to it. The name's and the definition's limits are the engine's to enforce, in its own words. */
 export const MAX_SHELF_FOLDER = 40;
@@ -657,9 +699,11 @@ export const SHELF_REMOVE = "Remove";
 export const SUGGESTED_SAVE_LINE = "Saving makes the shelf and moves the page it was suggested for onto it.";
 /** Under the definition's field while a name is typed and it is empty. */
 export const SAY_WHAT_BELONGS = "Say what belongs on it to save the shelf.";
-/** Under the Folder row of a folder made by hand whose name the folder rule refuses: it can't be given a definition until it is renamed. */
-export const HAND_MADE_FOLDER_PROBLEM =
-  "This folder's name can't be a shelf's. Rename it in Finder with lowercase Latin letters, digits and dashes, then add a definition.";
+/**
+ * Under the Folder row of a folder made by hand whose name the folder rule refuses, after the rule's own first sentence (why): what is safe,
+ * and the fix. It can't be given a definition until it is renamed.
+ */
+export const HAND_MADE_FOLDER_PROBLEM = "Its files stay where they are. Rename it in Finder, then add a definition.";
 
 /**
  * Whether a row's Remove is offered: for a shelf of the owner's (it has a definition) that holds no page. A folder made by hand is no
@@ -681,38 +725,55 @@ export function shelfRowLine(definition: string, pages: number): string {
   return `${definition === "" ? NO_DEFINITION : definition} · ${pages} ${pages === 1 ? "page" : "pages"}`;
 }
 
-/** The folder to suggest for a shelf name, as the engine's `suggestFolder` makes it: up to five words of its Latin letters and digits, joined by dashes. Empty when it has none. */
+/**
+ * The folder to suggest for a shelf name, as the engine's `suggestFolder` makes it: up to five of its words, in lowercase and joined by
+ * dashes, in any language; Latin letters lose their accents. Empty when it has no letters or digits.
+ */
 export function folderHint(name: string): string {
-  const ascii = name.normalize("NFKD").replace(/[^\x00-\x7f]/g, "");
-  const words = (ascii.toLowerCase().match(/[a-z0-9]+/g) ?? []).slice(0, 5);
-  return words.join("-").slice(0, MAX_SHELF_FOLDER).replace(/^-+|-+$/g, "");
+  const plain = name.normalize("NFD").replace(/(\p{Script=Latin})\p{M}+/gu, "$1").normalize("NFC").toLowerCase();
+  const words = (plain.match(/[\p{L}\p{N}][\p{L}\p{M}\p{N}]*/gu) ?? []).slice(0, 5);
+  return [...words.join("-")].slice(0, MAX_SHELF_FOLDER).join("").replace(/^-+|-+$/g, "");
 }
+
+/** What a folder name can't hold, as the engine's folder rule says (FORBIDDEN_IN_FOLDER in shelves.ts). */
+const FORBIDDEN_IN_FOLDER = /[/\\:*?"<>|`[\]#^\p{Cc}\u2028\u2029]/u;
+const folderKey = (folder: string): string => folder.normalize("NFC").toLowerCase();
 
 /**
  * Why `folder` can't be a new shelf's folder, as the engine's `folderProblem` says it (null when it can); `taken` is the folders of the
  * owner's shelves. A test holds this equal to the engine's.
  */
 export function folderProblemText(folder: string, taken: readonly string[]): string | null {
-  if (folder === "") return "A shelf needs a folder name. Type one in lowercase letters, digits and dashes.";
+  if (folder === "") return "A shelf needs a folder name. Type one.";
   if (folder.startsWith(".")) return "A folder name can't start with a dot. Choose another folder name.";
-  if (folder.length > MAX_SHELF_FOLDER) {
-    return `A folder name can be at most ${MAX_SHELF_FOLDER} characters, and this one has ${folder.length}. Choose a shorter folder name.`;
+  if (folder.trim() !== folder) return "A folder name can't start or end with a space. Remove the space.";
+  const length = [...folder].length;
+  if (length > MAX_SHELF_FOLDER) {
+    return `A folder name can be at most ${MAX_SHELF_FOLDER} characters, and this one has ${length}. Choose a shorter folder name.`;
   }
-  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(folder)) {
-    return "A folder name uses lowercase letters a to z, digits and single dashes, with no spaces. Choose another folder name.";
+  if (FORBIDDEN_IN_FOLDER.test(folder)) {
+    return 'A folder name can\'t hold / \\ : * ? " < > | ` [ ] # ^ or a line break. Choose another folder name.';
   }
-  if (BUILT_IN_FOLDERS.includes(folder)) return `${folder} is one of Avanzel's own shelves. Choose another folder name.`;
-  if (SPECIAL_FOLDERS.includes(folder)) return `${folder} is a folder Avanzel keeps for itself. Choose another folder name.`;
-  if (taken.includes(folder)) return `A shelf called ${folder} already exists. Choose another folder name.`;
+  const key = folderKey(folder);
+  if (BUILT_IN_FOLDERS.includes(key)) return `${folder} is one of Avanzel's own shelves. Choose another folder name.`;
+  if (SPECIAL_FOLDERS.includes(key)) return `${folder} is a folder Avanzel keeps for itself. Choose another folder name.`;
+  if (taken.some((other) => folderKey(other) === key)) return `A shelf called ${folder} already exists. Choose another folder name.`;
   return null;
 }
 
 const BUILT_IN_FOLDERS: readonly string[] = [...SHELVES, "meetings"];
 const SPECIAL_FOLDERS: readonly string[] = ["inbox", "raw", "reviews", "tasks"];
 
-/** `HAND_MADE_FOLDER_PROBLEM` when a folder made by hand has a name the folder rule refuses (so the engine would refuse its shelf), else null. */
+/**
+ * Why a folder made by hand can't be a shelf, when the folder rule refuses its name (so the engine would refuse its shelf), else null: the
+ * rule's own first sentence, which says why, then `HAND_MADE_FOLDER_PROBLEM`. The rule's "choose another folder name" is not this
+ * folder's fix: it is renamed in Finder.
+ */
 export function handMadeFolderProblem(folder: string): string | null {
-  return folderProblemText(folder, []) === null ? null : HAND_MADE_FOLDER_PROBLEM;
+  const problem = folderProblemText(folder, []);
+  if (problem === null) return null;
+  const why = problem.slice(0, problem.indexOf(". ") + 1 || problem.length);
+  return `${why} ${HAND_MADE_FOLDER_PROBLEM}`;
 }
 
 /** The line under the definition's field: it says what is missing once a name is typed, and says nothing before that. */
@@ -721,10 +782,10 @@ export function definitionLine(name: string, definition: string): string | undef
 }
 
 /**
- * The line under the Folder field: the hint when the name has no Latin letters and no folder is typed, the folder's problem when
+ * The line under the Folder field: the hint when the name has no letters or digits and no folder is typed, the folder's problem when
  * it has one, else none. Nothing is said before a name or a folder is typed.
  */
 export function folderLine(name: string, folder: string, taken: readonly string[]): string | undefined {
-  if (folder === "") return name.trim() === "" ? undefined : FOLDER_LATIN_HINT;
+  if (folder === "") return name.trim() === "" ? undefined : FOLDER_HINT;
   return folderProblemText(folder, taken) ?? undefined;
 }

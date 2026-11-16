@@ -1,11 +1,11 @@
 // What macOS has granted for dictating into any app, which the Dictation pane acts on and the Privacy pane lists.
 import { useEffect, useRef, useState } from "react";
-import type { CursorPermission, CursorPermissionState } from "../../shared/ipc.ts";
+import type { CursorPermission, DictationPermissionState } from "../../shared/ipc.ts";
 
 const api = window.avanzel.settings;
 
 /** What macOS last said, in this window. */
-let lastAnswer: CursorPermissionState | null = null;
+let lastAnswer: DictationPermissionState | null = null;
 
 /**
  * Null until the first answer, and a pane that comes back starts from the last one: asking the helper can take a second, and the window shouldn't
@@ -13,10 +13,10 @@ let lastAnswer: CursorPermissionState | null = null;
  * the focus back, which is where the person is after granting a permission in System Settings. An answer that comes after a newer question was
  * asked is dropped, so the older one can't overwrite it.
  */
-export function useCursorPermissions(enabled: boolean): { state: CursorPermissionState | null; ask(permission?: CursorPermission): Promise<void> } {
-  const [state, setState] = useState<CursorPermissionState | null>(lastAnswer);
+export function useCursorPermissions(enabled: boolean): { state: DictationPermissionState | null; ask(permission?: CursorPermission): Promise<void> } {
+  const [state, setState] = useState<DictationPermissionState | null>(lastAnswer);
   const asked = useRef(0);
-  const check = (question: () => Promise<CursorPermissionState>) => {
+  const check = (question: () => Promise<DictationPermissionState>) => {
     const mine = ++asked.current;
     return question().then(
       (answer) => {

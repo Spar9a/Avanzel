@@ -7,8 +7,20 @@ import type { AgentFailure, PartialEdits, TooBroad } from "./problems.ts";
 export type { CursorKey } from "../main/tap-detector.ts";
 export type { CursorPermissionState } from "../main/cursor-helper.ts";
 
+/**
+ * What macOS has granted for dictating into any app, as Settings is told it: the helper's answer (Input Monitoring, Accessibility, and
+ * whether this Mac has the helper at all), and where the microphone stands, which every dictation needs to hear.
+ */
+export type DictationPermissionState = CursorPermissionState & { microphone: PermissionStatus };
+
 /** A permission that dictating into any app needs, as System Settings names its place. */
-export type CursorPermission = "input-monitoring" | "accessibility";
+export type CursorPermission = "microphone" | "input-monitoring" | "accessibility";
+
+/**
+ * What starts and ends a dictation into any app: a tap of one of the modifier keys (`CursorKey`), which the helper watches, or (`custom`)
+ * a shortcut of the person's own, registered as Avanzel's other shortcuts are, which needs no Input Monitoring.
+ */
+export type DictationKey = CursorKey | "custom";
 
 export interface FiledPage {
   title: string;
@@ -426,8 +438,12 @@ export interface AppSettings {
   launchAtLogin: boolean;
   /** The person has agreed, once, to Avanzel hearing a call app's sound for call notes. */
   callConsent: boolean;
-  /** Dictating into any app: a tap of `key` starts and ends a dictation whose words go in at the cursor. Off until the person turns it on. */
-  cursorDictation: { enabled: boolean; key: CursorKey };
+  /**
+   * Dictating into any app: a tap of `key` starts and ends a dictation whose words go in at the cursor; with `key` "custom", a press of
+   * `shortcut` (an Electron accelerator, as `shortcuts` holds them) does. `shortcut` is kept when another key is chosen, so choosing
+   * Custom shortcut again brings it back. Off until the person turns it on.
+   */
+  cursorDictation: { enabled: boolean; key: DictationKey; shortcut?: string };
   /**
    * A thought started by voice, as Siri is: while `enabled`, the microphone stays open and saying `word` starts recording a thought, as
    * Record a thought's shortcut does, and saying `stopWord` while it records stops it, as Stop does (the word is cut from its text).
@@ -730,6 +746,8 @@ export interface SettingsSnapshot {
   tasks: TaskInfo[];
   taskProblems: TaskFileProblem[];
   shortcutProblems: Partial<Record<keyof Shortcuts, string>>;
+  /** Why dictating into any app's own shortcut doesn't work (another app or another action holds it), or null while it does or isn't used. */
+  cursorShortcutProblem: string | null;
   /** For each shortcut another app holds, the free ones to use instead, best first (empty when none of them is free). */
   shortcutAlternatives: Partial<Record<keyof Shortcuts, string[]>>;
   obsidian: boolean;
@@ -1234,18 +1252,23 @@ export interface AvanzelBridge {
     addToClaudeCode(): Promise<SettingsSnapshot>;
     /** Shortcuts records a new one: Avanzel's own let go meanwhile, so the keys reach the page; registered again when it ends. */
     recordingShortcut(recording: boolean): void;
-    /** Turns dictating into any app on or off, or chooses its key; what isn't in `patch` stays. The helper starts, stops or watches the new key at once. */
+    /**
+     * Turns dictating into any app on or off, or chooses its key or its own shortcut; what isn't in `patch` stays. The helper starts, stops
+     * or watches the new key at once. Turning it on has macOS ask for what it still needs (the microphone, then Input Monitoring and
+     * Accessibility), so its prompts come up as the switch goes on rather than never.
+     */
     setCursorDictation(patch: Partial<AppSettings["cursorDictation"]>): Promise<SettingsSnapshot>;
     /**
      * What macOS has granted for dictating into any app, and whether this Mac can do it at all. It answers while the setting is off
      * too, and leaves nothing running.
      */
-    cursorPermissions(): Promise<CursorPermissionState>;
+    cursorPermissions(): Promise<DictationPermissionState>;
     /**
-     * Has macOS ask for both permissions, and opens System Settings at `permission` if it is missing; with none named, at the one still
-     * missing (Input Monitoring first, as the key can't be seen without it). Resolves with what was granted at the time it asked.
+     * Has macOS ask for the permissions, and opens System Settings at `permission` if it is missing; with none named, at the first one
+     * still missing (the microphone, then Input Monitoring while a modifier key is used, then Accessibility). Resolves with what was
+     * granted at the time it asked.
      */
-    askCursorPermissions(permission?: CursorPermission): Promise<CursorPermissionState>;
+    askCursorPermissions(permission?: CursorPermission): Promise<DictationPermissionState>;
     /**
      * The newest `limit` dictations at the cursor (DICTATION_PAGE when it is not a whole number above 0), newest first, each as the
      * Dictation pane shows it, with the total the history holds. Needs no library.

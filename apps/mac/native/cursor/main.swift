@@ -23,7 +23,9 @@
 //                                                    ok:false while Input Monitoring is missing, but the key stays chosen
 //                                                    and works once a later watch or permissions command finds the permission.
 //   {"id":2,"cmd":"permissions","prompt":false}      replies {"ok":true,"accessibility":bool,"inputMonitoring":bool};
-//                                                    prompt:true asks macOS for both
+//                                                    prompt:true asks macOS for both; with "listen":false
+//                                                    as well, for Accessibility only (a shortcut of the
+//                                                    person's own needs no Input Monitoring)
 //   {"id":3,"cmd":"inspect","keep":true}             replies {"ok":true,"app":{"name","bundleId","pid"},"window":{"title"}|null,
 //                                                    "element":{"role","secure","takesText":"yes"|"no"|"unknown"}|null}.
 //                                                    The app is the one the keys go to (Accessibility's focused application,
@@ -405,8 +407,10 @@ func run(_ command: String, _ request: [String: Any]) -> [String: Any] {
     case "permissions":
         if request["prompt"] as? Bool == true {
             _ = accessibilityAllowed(prompt: true)
-            _ = CGRequestListenEventAccess()
-            DispatchQueue.main.sync { installTap(force: true) }
+            if request["listen"] as? Bool != false {
+                _ = CGRequestListenEventAccess()
+                DispatchQueue.main.sync { installTap(force: true) }
+            }
         } else {
             DispatchQueue.main.sync { installTap(force: false) }
         }

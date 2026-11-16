@@ -150,8 +150,11 @@ export class CursorHelper {
   // (`respawnLater`); after that it stays stopped and onProblem hears CURSOR_HELPER_GAVE_UP once. Apart from that a request after the helper
   // ended starts it again, and if it ends at once every time, every request fails and calls onProblem once. Callers (a dictation, the
   // setup screen's check) must make a request per person's action, never in a loop.
-  /** Runs the helper if it is not running, and has it watch `key`; a call while it runs asks it to watch again, which retries a watch that was refused. */
-  start(key: CursorKey): void {
+  /**
+   * Runs the helper if it is not running, and has it watch `key`; a call while it runs asks it to watch again, which retries a watch that was
+   * refused. With no key (a dictation started by a shortcut of the person's own) it watches nothing, and is there to look and paste.
+   */
+  start(key: CursorKey | null): void {
     this.closed = false;
     this.started = true;
     this.gaveUp = false;
@@ -174,11 +177,14 @@ export class CursorHelper {
     if (this.child && !this.stopping.has(this.child)) this.watch();
   }
 
-  /** Whether Avanzel may see the key and use the Accessibility API; `prompt` has macOS ask for both. */
-  async permissions(prompt: boolean): Promise<CursorPermissions> {
+  /**
+   * Whether Avanzel may see the key and use the Accessibility API; `prompt` has macOS ask for both, or (`listen` false, for a shortcut of the
+   * person's own, which needs no Input Monitoring) for Accessibility only.
+   */
+  async permissions(prompt: boolean, listen = true): Promise<CursorPermissions> {
     const fake = this.fakeIfOn();
     if (fake) return fake.script.permissions ?? { accessibility: true, inputMonitoring: true };
-    const reply = await this.request({ cmd: "permissions", prompt });
+    const reply = await this.request(listen ? { cmd: "permissions", prompt } : { cmd: "permissions", prompt, listen });
     return { accessibility: reply.accessibility === true, inputMonitoring: reply.inputMonitoring === true };
   }
 
@@ -265,7 +271,7 @@ export class CursorHelper {
     await this.exits.get(child);
   }
 
-  private useKey(key: CursorKey): void {
+  private useKey(key: CursorKey | null): void {
     // Half a tap of the old key is nothing for the new one.
     if (key !== this.key) this.detector = new TapDetector();
     this.key = key;
@@ -449,14 +455,15 @@ const errorText = (error: unknown): string => (error instanceof Error ? error.me
  * What the helper says is granted, for Settings, which shows it whether or not dictating is on. `running` is the helper the app
  * already runs, if any; without one, a short-lived helper answers and is ended after, so the setting being off costs nothing more
  * than the question. A Mac without the helper, or a helper that can't answer, is "not available": that is not the same as a
- * permission being missing, and the person is told so. `prompt` has macOS ask for both permissions.
+ * permission being missing, and the person is told so. `prompt` has macOS ask for both permissions; with `listen` false, for
+ * Accessibility only (`permissions`).
  */
-export async function cursorPermissionsOf(running: CursorHelper | null, prompt: boolean): Promise<CursorPermissionState> {
+export async function cursorPermissionsOf(running: CursorHelper | null, prompt: boolean, listen = true): Promise<CursorPermissionState> {
   const unavailable = { available: false, accessibility: false, inputMonitoring: false };
   if (!CursorHelper.available()) return unavailable;
   const helper = running ?? new CursorHelper({ onTap: () => undefined, onProblem: () => undefined });
   try {
-    return { available: true, ...(await helper.permissions(prompt)) };
+    return { available: true, ...(await helper.permissions(prompt, listen)) };
   } catch {
     return unavailable;
   } finally {

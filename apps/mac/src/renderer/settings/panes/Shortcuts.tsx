@@ -4,9 +4,9 @@ import { Actions, Button, Group, GroupRow, Notice, ShortcutField, Stack } from "
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ACTION_NAMES, inMenuLine, prettyAccelerator } from "../../../main/shortcuts.ts";
 import type { Shortcuts as ShortcutKeys } from "../../../shared/ipc.ts";
-import { passesThrough, refusedShortcut, toAccelerator } from "../accelerator.ts";
 import { shortcutRefusedLine } from "../copy.ts";
 import type { PaneProps } from "../parts.tsx";
+import { useShortcutRecorder } from "../shortcut-recorder.ts";
 
 const api = window.avanzel.settings;
 
@@ -56,47 +56,25 @@ export function Shortcuts({ primary, ...props }: PaneProps & { primary: boolean 
     boxes.current[key]?.querySelector("button")?.focus();
   };
 
-  // While a shortcut is recorded, the next whole shortcut pressed anywhere in the window is saved: one with ⌃ or ⌥, or a
-  // bare F-key (toAccelerator). Leaving the window ends it, as does leaving the row (its group's onBlur) and leaving the
-  // pane, which unmounts this. A layout effect, so the listening stops in the same commit that ends the recording or
-  // takes the pane away: a key pressed on the next pane, even at once, is never taken for this one.
-  useLayoutEffect(() => {
-    if (recording === null) return;
-    const listen = (event: KeyboardEvent) => {
-      if (event.key === "Tab") return; // the focus may leave the row, which ends the recording
-      // ⌘⇧R or ⇧R is a whole shortcut it won't take: said before a ⌘ key goes on to the app, which it still does.
-      const instead = refusedShortcut(event);
-      if (instead) setRefused(instead);
-      if (passesThrough(event)) return; // a ⌘ key it never takes is the app's: ⌘Q still quits while it listens
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.key === "Escape") {
-        setSaved({ key: recording, said: NOT_CHANGED });
-        return setRecording(null);
-      }
-      const accelerator = toAccelerator(event);
-      if (!accelerator) return; // only modifiers so far, or a key apps use themselves: keep listening
+  // While a shortcut is recorded, the next whole shortcut pressed anywhere in the window is saved (`useShortcutRecorder`). Leaving the
+  // window ends it, as does leaving the row (its group's onBlur) and leaving the pane, which unmounts this.
+  useShortcutRecorder(recording !== null, {
+    onShortcut: (accelerator) => {
+      if (recording === null) return;
       setRecording(null);
       void save(recording, accelerator);
-    };
-    const stop = () => setRecording(null);
-    window.addEventListener("keydown", listen, true);
-    window.addEventListener("blur", stop);
-    return () => {
-      window.removeEventListener("keydown", listen, true);
-      window.removeEventListener("blur", stop);
-    };
-  }, [recording, snap, onChange, attempt]);
+    },
+    onCancel: () => {
+      if (recording !== null) setSaved({ key: recording, said: NOT_CHANGED });
+      setRecording(null);
+    },
+    // ⌘⇧R or ⇧R is a whole shortcut it won't take: said before a ⌘ key goes on to the app, which it still does.
+    onRefused: setRefused,
+    onStop: () => setRecording(null),
+  });
 
-  // While it records, Avanzel's own shortcuts are let go: macOS would hand a key Avanzel holds to it, and the page would never see it.
-  const listening = recording !== null;
   // A recording that starts, moves to another row, or ends says nothing yet of keys it won't take.
   useLayoutEffect(() => setRefused(null), [recording]);
-  useLayoutEffect(() => {
-    if (!listening) return;
-    api.recordingShortcut(true);
-    return () => api.recordingShortcut(false);
-  }, [listening]);
 
   return (
     <>

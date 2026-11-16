@@ -26,6 +26,9 @@ async function permissionsDrawn(settings: Page): Promise<void> {
   });
 }
 
+/** What the red notice of a dictation that can't work yet says is safe, after what is missing. */
+const STAYS_ON = "It stays on, and works once macOS allows it.";
+
 /** The Dictation pane's first group, which has no heading: what the pane holds under the toolbar. */
 const group = (settings: Page) => settings.getByRole("main");
 
@@ -59,6 +62,7 @@ test("the key is chosen from Right Option, Left Option, Right Command and Right 
     { label: "Left Option", checked: false },
     { label: "Right Command", checked: false },
     { label: "Right Control", checked: false },
+    { label: "Custom shortcut…", checked: false },
   ]);
   await pickIn(settings, "Dictation key", "Right Command");
   await expect.poll(async () => (await snapshot(app)).app.cursorDictation.key).toBe("right-command");
@@ -150,7 +154,8 @@ test("with both missing the pane says both in one sentence, turning dictating on
   await expect(group(settings).getByText(line, { exact: true })).toBeVisible();
   await group(settings).getByRole("switch", { name: "Dictate into any app" }).click();
   await expect.poll(async () => (await snapshot(app)).app.cursorDictation.enabled).toBe(true);
-  await expect(group(settings).getByText(line, { exact: true })).toBeVisible();
+  // On, it is the red notice's: the line, and that dictating stays on.
+  await expect(settings.getByRole("alert").getByText(`${line} ${STAYS_ON}`, { exact: true })).toBeVisible();
   // Input Monitoring is asked for first: the key can't be seen without it.
   await group(settings).getByRole("button", { name: "Open System Settings" }).click();
   await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Input Monitoring"]);
@@ -164,5 +169,125 @@ test("on a Mac where the helper isn't there, the pane says dictating isn't avail
   await expect(group(settings).getByText("Dictating into any app isn't available on this Mac.", { exact: true })).toBeVisible();
   await expect(group(settings).getByRole("switch", { name: "Dictate into any app" })).toBeDisabled();
   await expect(group(settings).getByRole("button", { name: /^Dictation key: / })).toBeDisabled();
+  await app.close();
+});
+
+test("turning dictating on has macOS ask about the microphone at once, and a refusal is a red notice whose button opens System Settings", async () => {
+  const app = await launch({
+    AVANZEL_LIBRARY: await makeLibrary(),
+    AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: true }),
+    AVANZEL_FAKE_PERMISSIONS: "microphone:not-determined",
+    AVANZEL_FAKE_MIC_ANSWER: "denied",
+  });
+  const settings = await openSettings(app, "Dictation");
+  // Off, it is a plain line: nothing is broken yet.
+  await expect(group(settings).getByText("Avanzel needs the microphone to hear you.", { exact: true })).toBeVisible();
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+  await group(settings).getByRole("switch", { name: "Dictate into any app" }).click();
+  // macOS was asked, without another press: its answer is the microphone's status now.
+  await expect.poll(async () => (await snapshot(app)).permissions.microphone).toBe("denied");
+  await settings.evaluate(() => window.dispatchEvent(new Event("focus")));
+  const notice = settings.getByRole("alert");
+  await expect(notice.getByText("Dictating into any app can't work yet.", { exact: true })).toBeVisible();
+  await expect(notice.getByText(`Avanzel needs the microphone to hear you. ${STAYS_ON}`, { exact: true })).toBeVisible();
+  await notice.getByRole("button", { name: "Open System Settings" }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Microphone"]);
+  await app.close();
+});
+
+test("turning dictating on with the microphone granted at macOS's prompt leaves nothing to say", async () => {
+  const app = await launch({
+    AVANZEL_LIBRARY: await makeLibrary(),
+    AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: true }),
+    AVANZEL_FAKE_PERMISSIONS: "microphone:not-determined",
+    AVANZEL_FAKE_MIC_ANSWER: "granted",
+  });
+  const settings = await openSettings(app, "Dictation");
+  await group(settings).getByRole("switch", { name: "Dictate into any app" }).click();
+  await expect.poll(async () => (await snapshot(app)).permissions.microphone).toBe("granted");
+  await settings.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await permissionsDrawn(settings);
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+  await expect(group(settings).getByText(/^Avanzel needs /)).toHaveCount(0);
+  await app.close();
+});
+
+test("with Accessibility missing while dictating is on, the pane shows a red notice instead of the line", async () => {
+  const script = fakeCursor({ accessibility: false, inputMonitoring: true });
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_FAKE_CURSOR: script });
+  await call(app, "setCursorDictation", { enabled: true });
+  const settings = await openSettings(app, "Dictation");
+  const notice = settings.getByRole("alert");
+  await expect(notice.getByText("Dictating into any app can't work yet.", { exact: true })).toBeVisible();
+  await expect(notice.getByText(`Avanzel needs Accessibility to paste for you. ${STAYS_ON}`, { exact: true })).toBeVisible();
+  // Said once: the notice, not the plain line as well.
+  await expect(group(settings).getByText("Avanzel needs Accessibility to paste for you.", { exact: true })).toHaveCount(0);
+  await expect(group(settings).getByRole("button", { name: "Open System Settings" })).toHaveCount(1);
+  await notice.getByRole("button", { name: "Open System Settings" }).click();
+  await expect.poll(() => call(app, "openedForTests")).toEqual(["System Settings → Accessibility"]);
+  // Turned off, it is the plain line again: nothing is broken while it is off.
+  await group(settings).getByRole("switch", { name: "Dictate into any app" }).click();
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+  await expect(group(settings).getByText("Avanzel needs Accessibility to paste for you.", { exact: true })).toBeVisible();
+  await app.close();
+});
+
+test("Custom shortcut… records a shortcut of the person's own, Esc keeps the key, and it needs no Input Monitoring", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const env = { AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData, AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: false }) };
+  const app = await launch(env);
+  const settings = await openSettings(app, "Dictation");
+  await expect(group(settings).getByText("Avanzel needs Input Monitoring to see the key.", { exact: true })).toBeVisible();
+  const field = group(settings).getByRole("button", { name: "Dictation shortcut: type the new shortcut" });
+
+  // Esc before a shortcut is typed: the key stays as it was, and its field goes.
+  await pickIn(settings, "Dictation key", "Custom shortcut…");
+  await expect(field).toBeFocused();
+  await settings.keyboard.press("Escape");
+  await expect(field).toHaveCount(0);
+  expect((await snapshot(app)).app.cursorDictation.key).toBe("right-option");
+  // The field went, and the focus is back on the menu the recording began from, not lost.
+  await expect(group(settings).getByRole("button", { name: "Dictation key: Right Option", exact: true })).toBeFocused();
+
+  await pickIn(settings, "Dictation key", "Custom shortcut…");
+  await expect(field).toBeFocused();
+  await settings.keyboard.press("Control+Alt+D");
+  await expect.poll(async () => (await snapshot(app)).app.cursorDictation).toEqual({ enabled: false, key: "custom", shortcut: "Control+Alt+D" });
+  await expect(group(settings).getByRole("button", { name: "Dictation shortcut: ⌃⌥D. Change", exact: true })).toBeVisible();
+  await expect(group(settings).getByRole("button", { name: "Dictation key: Custom shortcut…", exact: true })).toBeVisible();
+  await expect(settings.getByText("Press the shortcut to start and again to finish, or press Esc to cancel. The words go where the cursor is.", { exact: true })).toBeVisible();
+  // A shortcut needs no Input Monitoring: nothing is said of it now.
+  await permissionsDrawn(settings);
+  await expect(group(settings).getByText(/^Avanzel needs /)).toHaveCount(0);
+  await app.close();
+
+  // Kept: Avanzel opens with it.
+  const again = await launch(env);
+  const settingsAgain = await openSettings(again, "Dictation");
+  await expect(settingsAgain.getByRole("button", { name: "Dictation shortcut: ⌃⌥D. Change", exact: true })).toBeVisible();
+  await again.close();
+});
+
+test("a dictation shortcut that is an action's already, or another app's, is a red notice while dictating is on", async () => {
+  const app = await launch({
+    AVANZEL_LIBRARY: await makeLibrary(),
+    AVANZEL_FAKE_CURSOR: fakeCursor({ accessibility: true, inputMonitoring: true }),
+    AVANZEL_FAKE_TAKEN_SHORTCUTS: "Control+Alt+T",
+  });
+  await call(app, "setCursorDictation", { enabled: true, key: "custom", shortcut: "Alt+Space" });
+  const settings = await openSettings(app, "Dictation");
+  await expect(settings.getByRole("alert").getByText("⌥Space is already the shortcut for Record a thought. Pick another shortcut.", { exact: true })).toBeVisible();
+  await call(app, "setCursorDictation", { shortcut: "Control+Alt+T" });
+  await expect(settings.getByRole("alert").getByText("⌃⌥T is used by another app. Pick another shortcut.", { exact: true })).toBeVisible();
+  expect(await call(app, "pressShortcutForTests", "cursorDictation")).toBe(false);
+  // Its fix records another, in the field above.
+  const notice = settings.getByRole("alert");
+  await expect(notice.getByText("Your other shortcuts still work.", { exact: true })).toBeVisible();
+  await notice.getByRole("button", { name: "Change shortcut", exact: true }).click();
+  await expect(group(settings).getByRole("button", { name: "Dictation shortcut: type the new shortcut" })).toBeFocused();
+  await settings.keyboard.press("Control+Alt+D");
+  await expect.poll(async () => (await snapshot(app)).app.cursorDictation.shortcut).toBe("Control+Alt+D");
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+  expect(await call(app, "pressShortcutForTests", "cursorDictation")).toBe(true);
   await app.close();
 });
