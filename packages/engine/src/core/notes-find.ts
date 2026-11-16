@@ -53,6 +53,8 @@ export interface FoundNote {
   passages: string[];
   score: number;
   pattern: EntryPattern | null;
+  /** The note is the owner's (`ownersNotes`), which a run may only add to; set by the librarian, not by `findNotes`. */
+  owner?: boolean;
 }
 
 const cut = (text: string, chars: number): string => [...text].slice(0, chars).join("");

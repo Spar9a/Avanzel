@@ -224,6 +224,25 @@ describe("file", () => {
     expect(vault.logMentions(capture.id)).toBe(false);
   });
 
+  it("does not count a run that changed nothing as filed when an earlier run's line in the log names the capture", async () => {
+    const capture = librarian.captureText("Something the agent ignores");
+    vault.appendLog("file", `[[${capture.id}]] → [[an-old-note]]`, NOW); // left by an earlier run whose pages were put back
+    mode("noop");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(false);
+    expect(outcome.error).toContain("finished without filing anything");
+    expect(vault.pending()).toEqual([capture.path]);
+  });
+
+  it("logs a filing whose capture an earlier run's line in the log already names", async () => {
+    const capture = librarian.captureText("Something to file");
+    vault.appendLog("file", `[[${capture.id}]] → [[an-old-note]]`, NOW);
+    mode("nolog");
+    const outcome = await only(librarian.file());
+    expect(outcome.ok).toBe(true);
+    expect(read(vault.logPath).split(`[[${capture.id}]]`)).toHaveLength(3); // the old line and this filing's own
+  });
+
   it("a run that finished without filing is other, whatever its reply says", async () => {
     // The reply talks of a usage limit, but only what a failed run printed is read for one.
     const reply = "You've hit your usage limit. Try again at 3:05 PM.";

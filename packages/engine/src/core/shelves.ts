@@ -326,6 +326,21 @@ function tableCell(text: string): string {
   return text.replace(/[|`]/g, "").replace(new RegExp(LINE_BREAK.source, "g"), "").trim();
 }
 
+/**
+ * The maps of the shelves that have one, below the table (a table row holds one line): each shelf's folder, then each line of its
+ * map as an item under it, made safe as a definition is (`cleanDefinition`), so that no map can end the section or break the list.
+ */
+function mapLines(shelves: readonly OwnShelf[]): string[] {
+  const mapped = shelves.flatMap((shelf) => {
+    const lines = (shelf.map ?? "")
+      .split(LINE_BREAK)
+      .map((line) => cleanDefinition(line.replace(/^\s*[-*+]\s+/, "")))
+      .filter(Boolean);
+    return lines.length ? [`- \`${tableCell(shelf.folder)}/\``, ...lines.map((line) => `  - ${line}`)] : [];
+  });
+  return mapped.length ? ["", "How the subfolders of these shelves are used:", "", ...mapped] : [];
+}
+
 function shelfSection(shelves: readonly OwnShelf[]): string {
   const body =
     shelves.length === 0
@@ -334,6 +349,7 @@ function shelfSection(shelves: readonly OwnShelf[]): string {
           "| Path | Holds |",
           "|---|---|",
           ...shelves.map((shelf) => `| \`${tableCell(shelf.folder)}/\` | ${tableCell(cleanDefinition(shelf.definition))} |`),
+          ...mapLines(shelves),
         ];
   return [SHELF_SECTION_START, "## Your shelves", "", ...body, "", SHELF_SECTION_END].join("\n");
 }

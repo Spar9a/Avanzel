@@ -302,11 +302,25 @@ export class Vault {
     replaceInside(this.root, "log.md", `${existing}${separator}${Vault.logLine(now, op, details)}\n`);
   }
 
-  logMentions(captureId: string): boolean {
+  /**
+   * Whether log.md names the capture, in what was written to it after its first `since` bytes (`logSize`, taken before a run): a run
+   * is asked about its own lines, not an earlier run's. A log shorter than `since` was rewritten, so all of it is read.
+   */
+  logMentions(captureId: string, since = 0): boolean {
     try {
-      return readFileSync(this.logPath, "utf8").includes(`[[${captureId}]]`);
+      const log = readFileSync(this.logPath);
+      return log.subarray(since <= log.length ? since : 0).toString("utf8").includes(`[[${captureId}]]`);
     } catch {
       return false;
+    }
+  }
+
+  /** How long log.md is now, in bytes (0 when it is missing or can't be read): `logMentions`' `since`. */
+  logSize(): number {
+    try {
+      return lstatOrNull(this.logPath)?.isFile() ? statSync(this.logPath).size : 0;
+    } catch {
+      return 0;
     }
   }
 

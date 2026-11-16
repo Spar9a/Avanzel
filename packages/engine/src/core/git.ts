@@ -176,6 +176,33 @@ export async function commitAll(root: string, message: string): Promise<string |
   return commitStaged(root, message);
 }
 
+/**
+ * Whether the library's files are all as HEAD has them: there is a HEAD, and `git status` lists nothing (what git ignores aside). False
+ * without a repository, without git, and when git can't say.
+ */
+export async function isClean(root: string): Promise<boolean> {
+  if (!isRepo(root) || !available()) return false;
+  if ((await git(root, ["rev-parse", "--verify", "-q", "HEAD"])).code !== 0) return false;
+  const status = await git(root, ["status", "--porcelain", "-z"]);
+  return status.code === 0 && status.stdout === "";
+}
+
+/**
+ * Put each of `paths` (library-relative) that HEAD has back as HEAD has it, in the work tree and the index: a changed or deleted file
+ * gets HEAD's bytes. Returns the paths it put back, as they were given; a path HEAD hasn't (one a run made) is left to the caller. Nothing
+ * when there is no repository or git, or git refuses.
+ */
+export async function restoreFromHead(root: string, paths: readonly string[]): Promise<string[]> {
+  if (!isRepo(root) || !available() || paths.length === 0) return [];
+  const listed = await git(root, ["--literal-pathspecs", "ls-tree", "-r", "-z", "--name-only", "HEAD", "--", ...paths]);
+  if (listed.code !== 0) return [];
+  const inHead = new Set(listed.stdout.split("\0").filter(Boolean).map((path) => path.normalize("NFC")));
+  const tracked = paths.filter((path) => inHead.has(path.normalize("NFC")));
+  if (tracked.length === 0) return [];
+  const checkout = await git(root, ["--literal-pathspecs", ...SAFE, "checkout", "HEAD", "--", ...tracked]);
+  return checkout.code === 0 ? tracked : [];
+}
+
 /** `git revert` one commit as a new commit; false, with nothing left half-done, when it does not apply. */
 export async function revert(root: string, sha: string): Promise<boolean> {
   if (!isRepo(root) || !available() || !SHA.test(sha)) return false;

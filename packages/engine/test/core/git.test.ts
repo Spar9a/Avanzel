@@ -136,6 +136,28 @@ describe.skipIf(!git.available())("git", () => {
     expect(subjects(root)).toEqual(["first"]);
   });
 
+  it("says whether every file is as HEAD has it, and puts files back as HEAD has them", async () => {
+    gitIdentity();
+    const root = repo();
+    await git.initRepo(root);
+    expect(await git.isClean(root)).toBe(false); // no HEAD yet
+    write(root, "Café/a.md".normalize("NFC"), "a\n");
+    write(root, "b.md", "b\n");
+    await git.commitAll(root, "first");
+    expect(await git.isClean(root)).toBe(true);
+    writeFileSync(join(root, "Café/a.md".normalize("NFC")), "changed\n");
+    rmSync(join(root, "b.md"));
+    write(root, "new.md", "new\n");
+    expect(await git.isClean(root)).toBe(false);
+    const back = await git.restoreFromHead(root, ["Café/a.md".normalize("NFD"), "b.md", "new.md"]);
+    expect(back).toEqual(["Café/a.md".normalize("NFD"), "b.md"]); // the made one is the caller's to take away
+    expect(readFileSync(join(root, "Café/a.md".normalize("NFC")), "utf8")).toBe("a\n");
+    expect(readFileSync(join(root, "b.md"), "utf8")).toBe("b\n");
+    rmSync(join(root, "new.md"));
+    expect(await git.isClean(root)).toBe(true);
+    expect(await git.restoreFromHead(tmp(), ["b.md"])).toEqual([]);
+  });
+
   it("does nothing outside a repository", async () => {
     expect(git.isRepo(tmp())).toBe(false);
     expect(await git.commitAll(tmp(), "x")).toBeNull();

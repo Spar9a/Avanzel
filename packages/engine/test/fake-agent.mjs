@@ -25,7 +25,8 @@
 // add-to-found (a filing appends "\n## <today's entry start>\n<words>\n" to the first `path:` of the prompt's <found-notes>, instead of
 // writing an idea page) | rewrite-found (a filing replaces that note's text with "<words>\n") | rewrite-found-page (as rewrite-found,
 // then files an idea page as usual) | new-subfolder (a filing writes its page as
-// $FAKE_AGENT_FOLDER/idea-<id>.md, a nested path, making the folders) | rewrite-note (a review, or an ask that saves, replaces the text of $FAKE_AGENT_PAGE).
+// $FAKE_AGENT_FOLDER/idea-<id>.md, a nested path, making the folders) | rewrite-note (a review, or an ask that saves, replaces the text of $FAKE_AGENT_PAGE) |
+// study-edit (every study-folder run rewrites $FAKE_AGENT_PAGE and writes made-by-a-study.md beside it, then answers as usual).
 // The study tasks (study-folder, study-combine) answer with a fenced json block built from the prompt, in every other mode.
 // The agent check's prompt, "Reply with the single word: ready.", gets "ready".
 // FAKE_AGENT_RECORD=<file> appends one JSON line per run: {argv, images, prompt, pid}.
@@ -487,6 +488,11 @@ if (task === "file") {
   const path = JSON.parse(/^Path: (".*")$/m.exec(prompt)[1]);
   const name = path.split("/").pop() || "Library root";
   const garbled = (process.env.FAKE_AGENT_FOLDER ?? "").split(",").filter(Boolean);
+  if (mode === "study-edit" && process.env.FAKE_AGENT_PAGE) {
+    // An agent that edits while it was only meant to read: it rewrites $FAKE_AGENT_PAGE and makes a note beside it, then answers.
+    writeFileSync(join(root, process.env.FAKE_AGENT_PAGE), "Rewritten by a study.\n");
+    writeFileSync(join(root, dirname(process.env.FAKE_AGENT_PAGE), "made-by-a-study.md"), "Made by a study.\n");
+  }
   if (mode === "study-garbled" && (garbled.includes(name) || garbled.includes(path))) {
     await reply("not json");
   } else {

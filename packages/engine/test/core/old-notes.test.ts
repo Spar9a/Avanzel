@@ -4,10 +4,13 @@ import { describe, expect, it } from "vitest";
 import { diff, snapshot, visibleFiles } from "../../src/core/changes.ts";
 import {
   LEARNED_NOTES,
+  addAvanzelPages,
   addLearnedNotes,
   captureKept,
   keepsOldLines,
   keptPaths,
+  ownersNotes,
+  readAvanzelPages,
   readLearnedNotes,
   restoreKept,
 } from "../../src/core/old-notes.ts";
@@ -48,6 +51,33 @@ describe("the list of learned notes", () => {
       version: 1,
       notes: ["A/a.md", "B/b.md", "Café/a.md".normalize("NFC")],
     });
+  });
+
+  it("keeps the pages Avanzel made beside the learned notes, in NFC, and the learned notes with them", () => {
+    addLearnedNotes(tmp(), ["A/old.md"]);
+    addAvanzelPages(tmp(), ["Café/made.md".normalize("NFD")]);
+    addAvanzelPages(tmp(), ["A/made.md"]);
+    addLearnedNotes(tmp(), ["A/older.md"]);
+    expect([...readAvanzelPages(tmp())].sort()).toEqual(["A/made.md", "Café/made.md".normalize("NFC")]);
+    expect(JSON.parse(readFileSync(join(tmp(), LEARNED_NOTES), "utf8"))).toEqual({
+      version: 1,
+      notes: ["A/old.md", "A/older.md"],
+      avanzel: ["A/made.md", "Café/made.md".normalize("NFC")],
+    });
+  });
+});
+
+describe("the owner's notes by rule", () => {
+  const tmp = useTmp();
+
+  it("are every note on a learned shelf, at any depth and in any case of the folder, but the pages Avanzel made there", () => {
+    addAvanzelPages(tmp(), ["Shelf/made.md"]);
+    addLearnedNotes(tmp(), ["Gone/listed.md"]);
+    const paths = ["Shelf/old.md", "Shelf/made.md", "shelf/Deep/new.MD", "Shelf/photo.png", "Other/x.md", "Shelf.md", "Café/a.md".normalize("NFD")];
+    expect([...ownersNotes(tmp(), ["Shelf", "Café".normalize("NFC")], paths)].sort()).toEqual(
+      ["Café/a.md".normalize("NFC"), "Gone/listed.md", "Shelf/old.md", "shelf/Deep/new.MD"].sort(),
+    );
+    expect([...ownersNotes(tmp(), [], paths)]).toEqual(["Gone/listed.md"]);
   });
 });
 

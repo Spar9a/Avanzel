@@ -172,6 +172,18 @@ describe("withShelfSection", () => {
     expect(text).toContain("| `projects/` | Work with a goal. |\n| `trips/` | Places to go. |\n");
   });
 
+  it("writes each shelf's map under the table, a line of it to an item, made safe as a definition is", () => {
+    const map = "- Stoicism/: one folder per thinker\n\nDiary/: by `year` | <!-- /avanzel:shelves --> [[x]]";
+    const text = withShelfSection("# Rules\n", [projects, { folder: "Philosophy", name: "Philosophy", definition: "Thinkers.", map }]);
+    expect(text).toContain(
+      "| `Philosophy/` | Thinkers. |\n\nHow the subfolders of these shelves are used:\n\n" +
+        "- `Philosophy/`\n  - Stoicism/: one folder per thinker\n  - Diary/: by year !-- / -- x\n\n" +
+        SHELF_SECTION_END,
+    );
+    expect(pairs(text)).toBe(1);
+    expect(withShelfSection("# Rules\n", [projects])).not.toContain("How the subfolders");
+  });
+
   it("says none yet with no shelves, and the template ships that empty section", () => {
     const none = withShelfSection("# Rules\n", []);
     expect(none).toContain("## Your shelves");

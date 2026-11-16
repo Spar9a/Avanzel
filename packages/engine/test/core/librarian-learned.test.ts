@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as git from "../../src/core/git.ts";
 import { Librarian } from "../../src/core/librarian.ts";
+import { readAvanzelPages } from "../../src/core/old-notes.ts";
 import { Vault } from "../../src/core/vault.ts";
 import { NOW, envHome, gitIdentity, write } from "./helpers.ts";
 import { fakeSettings, mode, recordRuns, tmp } from "./librarian-fixtures.ts";
@@ -60,8 +61,9 @@ describe.skipIf(!git.available())("filing in a learned library", () => {
       expect(prompt).toContain(HINT);
     });
 
-    it("gives the map that a later study gave a hand-made shelf in every filing, notes found or not", async () => {
+    it("makes a hand-made shelf that a later study files into a learned one, with the map it gave, whose notes are searched", async () => {
       await librarian.makeShelf({ folder: "projects", name: "Projects", definition: "Work." });
+      write(vault.root, "projects/client.md", "# Client\n\nСенека о письмах клиенту.\n");
       await librarian.applyStudy({
         style: "Dates as dd.mm.yyyy.",
         shelves: [{ folder: "projects", name: "Projects", definition: "Work.", map: "one folder per client", fileHere: true }],
@@ -71,6 +73,7 @@ describe.skipIf(!git.available())("filing in a learned library", () => {
         name: "Projects",
         definition: "Work.",
         map: "one folder per client",
+        learnedAt: "2026-10-20",
       });
       mode("add-to-found");
       const runs = recordRuns();
@@ -81,7 +84,7 @@ describe.skipIf(!git.available())("filing in a learned library", () => {
       await librarian.file();
       const [found, nothing] = runs().map((run) => run.prompt);
       for (const prompt of [found!, nothing!]) expect(prompt).toContain("- projects/: Work.\n  map: one folder per client\n");
-      expect(found).toContain("<found-notes>");
+      expect(found).toContain("- path: projects/client.md\n  owner's note: may only be added to\n");
       expect(found).toContain("- Diary/: Days.\n- projects/"); // a learned shelf with no note found still gets no map
       expect(nothing).not.toContain("<found-notes>");
     });
@@ -176,6 +179,48 @@ describe.skipIf(!git.available())("filing in a learned library", () => {
       expect(runs()[0]!.prompt).toContain("On a shelf learned from the library (learned on 2026-10-20)");
     });
 
+    it("puts back a note the owner wrote on a learned shelf after Apply, when a run rewrites it", async () => {
+      write(vault.root, "Philosophy/Late.md", "# Late\n\nWritten in Obsidian after Apply.\n");
+      gitOut("add", "-A");
+      gitOut("commit", "-m", "a later note of the owner's");
+      mode("rewrite-note");
+      vi.stubEnv("FAKE_AGENT_PAGE", "Philosophy/Late.md");
+      const reviewed = await librarian.review();
+      expect(reviewed.result.ok).toBe(true);
+      expect(readFileSync(join(vault.root, "Philosophy/Late.md"), "utf8")).toBe("# Late\n\nWritten in Obsidian after Apply.\n");
+    });
+
+    it("lets a later run rewrite a page Avanzel made on a learned shelf, and marks only the owner's found notes", async () => {
+      mode("new-subfolder");
+      vi.stubEnv("FAKE_AGENT_FOLDER", "Philosophy/Stoicism/Epictetus");
+      const made = capture("Эпиктет о письмах Сенеки");
+      const [outcome] = await librarian.file();
+      expect(outcome!.ok).toBe(true);
+      const page = `Philosophy/Stoicism/Epictetus/idea-${made.id}.md`;
+      expect(readAvanzelPages(vault.root).has(page)).toBe(true);
+      expect(gitOut("status", "--porcelain")).toBe(""); // the list is in the filing's commit
+
+      const runs = recordRuns();
+      mode("ok");
+      capture("Сенека о письмах");
+      await librarian.file();
+      const found = runs()[0]!.prompt.slice(runs()[0]!.prompt.indexOf("<found-notes>"));
+      expect(found).toContain("- path: Philosophy/Stoicism/Seneca.md\n  owner's note: may only be added to\n");
+      expect(found).toMatch(new RegExp(`- path: ${page.replaceAll(".", "\\.")}\\n(?!  owner's note)`));
+
+      mode("rewrite-note");
+      vi.stubEnv("FAKE_AGENT_PAGE", page);
+      await librarian.review();
+      expect(readFileSync(join(vault.root, page), "utf8")).toBe("Rewritten by a review.\n");
+    });
+
+    it("tells the filing agent to stay out of the folders the owner left out", async () => {
+      const runs = recordRuns();
+      capture();
+      await librarian.file();
+      expect(runs()[0]!.prompt).toContain("These folders are the owner's own, and off-limits: Recipes/. Never write, move or delete anything in them.");
+    });
+
     it("puts an old note back after a saved answer that rewrote it", async () => {
       mode("rewrite-note");
       vi.stubEnv("FAKE_AGENT_PAGE", "Philosophy/Stoicism/Seneca.md");
@@ -186,7 +231,7 @@ describe.skipIf(!git.available())("filing in a learned library", () => {
       expect(readFileSync(join(vault.root, "Philosophy/Stoicism/Seneca.md"), "utf8")).toBe(SENECA);
       expect(asked.changes.modified).not.toContain("Philosophy/Stoicism/Seneca.md");
       expect(asked.changes.created).toContain("topics/answer.md");
-      expect(runs()[0]!.prompt).toContain("A note that was the owner's before may only be added to");
+      expect(runs()[0]!.prompt).toContain("A note of the owner's on a learned shelf may only be added to");
       expect(gitOut("status", "--porcelain")).toBe("");
     });
   });

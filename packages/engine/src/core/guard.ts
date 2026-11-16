@@ -8,9 +8,11 @@ import { join } from "node:path";
 import { lstatOrNull, realFoldersTo, removeInside, writeInside } from "./inside.ts";
 
 // Instructions and settings that load or execute on later runs. A headless agent run may not change
-// them (a capture could carry a prompt injection); Avanzel undoes any change after every run.
+// them (a capture could carry a prompt injection); Avanzel undoes any change after every run. The list of the owner's learned
+// notes, which a run that emptied it would quietly stop protecting, and a study's saved steps and proposal are Avanzel's own too.
 export const PROTECTED = [
-  "AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".avanzel/config.toml", "opencode.json", ".mcp.json",
+  "AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".avanzel/config.toml", ".avanzel/learned-notes.json", ".avanzel/study",
+  "opencode.json", ".mcp.json",
   ".git/config", ".git/hooks", ".agents", ".claude", ".codex", ".cursor", ".gemini", ".opencode", "tasks",
 ];
 // The folders those lie in (.avanzel, .git): swapping one for a symlink would redirect what is inside.

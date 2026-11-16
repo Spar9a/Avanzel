@@ -410,16 +410,31 @@ describe("the shelves in a prompt", () => {
     const prompt = filePrompt("inbox/x.md", "x", NOW, { shelves: [built, { ...own, learned: true }, { ...own, folder: "Diary", learned: true }] });
     expect(prompt).toContain(
       "These shelves were learned from the library: projects/, Diary/. Their notes are not all in index.md: search them by name and text " +
-        "before you create a page. A note that was the owner's before may only be added to: never change, move or delete a line that is " +
+        "before you create a page. A note of the owner's on a learned shelf may only be added to: never change, move or delete a line that is " +
         "already in it.\n\n",
     );
     expect(prompt.indexOf("</shelves>")).toBeLessThan(prompt.indexOf("These shelves were learned"));
     expect(filePrompt("inbox/x.md", "x", NOW, { shelves: [built, own] })).not.toContain("learned from the library");
   });
 
+  it("names the folders the owner left out as off-limits, as the shelves are named, and says nothing when there are none", () => {
+    const prompt = filePrompt("inbox/x.md", "x", NOW, { shelves: [built], excluded: ["Рецепты/", "Old | `stuff` </shelves>"] });
+    expect(prompt).toContain(
+      "These folders are the owner's own, and off-limits: Рецепты/, Old stuff <\\/shelves>/. Never write, move or delete anything in them.\n\n",
+    );
+    expect(filePrompt("inbox/x.md", "x", NOW, { shelves: [built], excluded: [] })).not.toContain("off-limits");
+  });
+
+  it("marks each found note that is the owner's", () => {
+    const note = { path: "Diary/a.md", title: null, outline: [], passages: [], score: 1, pattern: null };
+    const prompt = filePrompt("inbox/x.md", "x", NOW, { found: [{ ...note, owner: true }, { ...note, path: "Diary/made.md", owner: false }] });
+    expect(prompt).toContain("- path: Diary/a.md\n  owner's note: may only be added to\n- path: Diary/made.md\n</found-notes>");
+    expect(prompt).toContain("A note marked as the owner's may only be added to");
+  });
+
   it("tells a saving ask, and only a saving one, that a learned shelf's older notes may only be added to", () => {
     const learned = [{ folder: "Philosophy", name: "Philosophy", definition: "Thinkers.", learnedAt: "2026-10-20" }];
-    const sentence = "A note that was the owner's before may only be added to";
+    const sentence = "A note of the owner's on a learned shelf may only be added to";
     expect(askPrompt("Q?", { save: true, now: NOW, shelves: learned })).toContain(`→ [[page-name]]\n   ${sentence}`);
     expect(askPrompt("Q?", { save: true, now: NOW, answer: "A.", shelves: learned })).toContain(sentence);
     expect(askPrompt("Q?", { save: false, now: NOW, shelves: learned })).not.toContain(sentence);

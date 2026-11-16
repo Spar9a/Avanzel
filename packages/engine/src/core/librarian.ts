@@ -31,7 +31,17 @@ import {
 import { createInside, lstatOrNull, realFoldersTo, removeInside, replaceInside, writeInside } from "./inside.ts";
 import { parseDictionary } from "./dictionary.ts";
 import { findNotes, type FoundNote } from "./notes-find.ts";
-import { addLearnedNotes, captureKept, keptPaths, readLearnedNotes, restoreKept, type KeptNotes } from "./old-notes.ts";
+import {
+  addAvanzelPages,
+  addLearnedNotes,
+  captureKept,
+  keptPaths,
+  onFolders,
+  ownersNotes,
+  readAvanzelPages,
+  restoreKept,
+  type KeptNotes,
+} from "./old-notes.ts";
 import { askPrompt, filePrompt, reviewPrompt, type AskTurn, type ShelfNote } from "./prompts.ts";
 import {
   BUILT_IN_DEFINITIONS,
@@ -174,9 +184,13 @@ export interface StudyProgress {
 
 const STUDY_DIR = ".avanzel/study";
 
-/** What the owner chose of a study's proposal: each folder to file into (`fileHere`) or leave out, and the house style. */
+/**
+ * What the owner chose of a study's proposal, and the house style. Each folder is filed into (`fileHere: true`), left out because the
+ * owner switched it off (`false`: it is remembered as excluded), or left as it is (`"skip"`: a folder that wasn't studied and that the
+ * owner didn't switch on, which a later study reaches again).
+ */
 export interface StudyApply {
-  shelves: { folder: string; name: string; definition: string; map: string; fileHere: boolean }[];
+  shelves: { folder: string; name: string; definition: string; map: string; fileHere: boolean | "skip" }[];
   style: string;
 }
 
@@ -189,7 +203,19 @@ function styleGoesInAgents(root: string): boolean {
   return !lstatOrNull(path)?.isFile() || readFileSync(path, "utf8").includes(SHELF_SECTION_START);
 }
 
-const STUDY_STOPPED ="The study was stopped. What it learned so far is kept, and Learn this library goes on from there.";
+const STUDY_STOPPED = "The study was stopped. What it learned so far is kept, and Learn this library goes on from there.";
+/** How many of the files a study's step changed its stop names. */
+const STUDY_CHANGED_SHOWN = 5;
+
+/** Why a study stopped when its agent changed files and they could not all be put back (`rels`, library-relative). */
+function studyChanged(rels: readonly string[]): string {
+  const shown = [...rels].sort().slice(0, STUDY_CHANGED_SHOWN);
+  const more = rels.length - shown.length;
+  return (
+    `The study stopped because the agent changed files it was only meant to read: ${shown.join(", ")}${more > 0 ? `, and ${more} more` : ""}. ` +
+    "Nothing else changed; check those files, then Learn this library goes on from there."
+  );
+}
 /** A step that took at least this long is followed by a pause, so that a filing waiting for the library's lock can take it. */
 const STEP_PAUSE_AFTER_MS = 300;
 const STEP_PAUSE_MS = 250; // longer than the lock's poll, which is 200
@@ -465,8 +491,8 @@ export class Librarian {
 
   /**
    * Make a shelf of the owner's own: its folder (one that is already there is adopted as it is), its entry in config.toml and
-   * `AGENTS.md`, its heading in `index.md`, and `pages` moved into it (`ShelfResult.notMoved` names the ones that could not).
-   * All of it is one commit, which `undo` takes back.
+   * `AGENTS.md`, its heading in `index.md`, and `pages` moved into it (`ShelfResult.notMoved` names the ones that could not). A folder
+   * the owner left out (`excludedFolders`) or turned down is neither from then on. All of it is one commit, which `undo` takes back.
    */
   async makeShelf(shelf: OwnShelf, pages: readonly string[] = []): Promise<ShelfResult> {
     const root = this.vault.root;
@@ -483,9 +509,10 @@ export class Librarian {
       if (there && !there.isDirectory()) {
         throw new AvanzelError(`A file or link called ${folder} is already in the library, so no shelf was made. Choose another folder name.`);
       }
-      // A shelf that is made is no longer one the owner turned down.
+      // A shelf that is made is no longer one the owner turned down, nor a folder they left out.
       const declinedShelves = current.declinedShelves.filter((declined) => declined !== folder);
-      const next = { ...current, shelves: [...current.shelves, { folder, name, definition }], declinedShelves };
+      const excludedFolders = current.excludedFolders.filter((excluded) => folderKey(excluded.replace(/\/+$/, "")) !== folderKey(folder));
+      const next = { ...current, shelves: [...current.shelves, { folder, name, definition }], declinedShelves, excludedFolders };
       return {
         next,
         apply: () => {
@@ -501,23 +528,32 @@ export class Librarian {
 
   /**
    * Apply what a study proposed, as one shelf operation (one commit, which `undo` takes back): each `fileHere` folder becomes a shelf
-   * with its map and the day it was learned (one that already is a shelf only gets its map), each folder that isn't filed into is
-   * left out (unless it is already one of the owner's shelves, which stays a shelf), and the house style is saved, and written into
-   * `AGENTS.md` only when that file is missing or already held Avanzel's own marked sections. The notes
-   * already in the new shelves are remembered as the owner's, which a run may add to but not rewrite. The study's own files are removed.
+   * with its map and the day it was learned (one that already is a shelf gets its map, and that day when it had none), each folder the
+   * owner switched off is left out (unless it is already one of the owner's shelves, which stays a shelf), a skipped one is left as it
+   * is, and the house style is saved, and written into `AGENTS.md` only when that file is missing or already held Avanzel's own marked
+   * sections. Every note on a learned shelf is from then on the owner's (`ownersNotes`), which a run may add to but not rewrite; the
+   * ones there now are listed too. A built-in shelf or one of Avanzel's own folders is never left out. The study's own files are removed.
    */
   async applyStudy(apply: StudyApply): Promise<ShelfResult> {
     const root = this.vault.root;
     return this.#shelfOperation("learn this library", (current) => {
       const shelves = [...current.shelves];
       const made: OwnShelf[] = [];
+      const learnedAt = localDate(this.clock());
       for (const item of apply.shelves) {
-        if (!item.fileHere) continue;
+        if (item.fileHere !== false) continue;
+        const key = folderKey(item.folder.replace(/\/+$/, ""));
+        if ([...BUILT_IN_SHELVES, ...SPECIAL_DIRS].some((folder) => folderKey(folder) === key)) {
+          throw new AvanzelError(`${item.folder} is one of Avanzel's own folders, so it can't be left out. Nothing was applied.`);
+        }
+      }
+      for (const item of apply.shelves) {
+        if (item.fileHere !== true) continue;
         const map = [...item.map].slice(0, MAX_MAP).join("").trim();
         const at = shelves.findIndex((other) => sameShelf(other.folder, item.folder));
         const existing = shelves[at];
         if (existing) {
-          shelves[at] = { ...existing, ...(map ? { map } : {}) };
+          shelves[at] = { ...existing, ...(map ? { map } : {}), ...(existing.learnedAt ? {} : { learnedAt }) };
           continue;
         }
         const name = checkedName(item.name);
@@ -531,14 +567,15 @@ export class Librarian {
         if (there && !there.isDirectory()) {
           throw new AvanzelError(`A file or link called ${item.folder} is already in the library, so no shelf was made. Choose another folder name.`);
         }
-        const shelf: OwnShelf = { folder: item.folder, name, definition, ...(map ? { map } : {}), learnedAt: localDate(this.clock()) };
+        const shelf: OwnShelf = { folder: item.folder, name, definition, ...(map ? { map } : {}), learnedAt };
         shelves.push(shelf);
         made.push(shelf);
       }
-      const filedKeys = apply.shelves.filter((item) => item.fileHere).map((item) => folderKey(item.folder));
-      const excluded = [...current.excludedFolders.filter((folder) => !filedKeys.includes(folderKey(folder)))];
+      const filedKeys = apply.shelves.filter((item) => item.fileHere === true).map((item) => folderKey(item.folder));
+      const excluded = [...current.excludedFolders.filter((folder) => !filedKeys.includes(folderKey(folder.replace(/\/+$/, ""))))];
       for (const item of apply.shelves) {
-        if (item.fileHere || shelves.some((other) => sameShelf(other.folder, item.folder))) continue;
+        // Only a folder the owner switched off is left out; a skipped one is left as it is, for a later study.
+        if (item.fileHere !== false || shelves.some((other) => sameShelf(other.folder, item.folder))) continue;
         if (!excluded.some((folder) => folderKey(folder) === folderKey(item.folder))) excluded.push(item.folder);
       }
       const madeKeys = made.map((shelf) => folderKey(shelf.folder));
@@ -829,23 +866,36 @@ export class Librarian {
     // continue, files they added) is not read from it.
     const continues = agent === null ? this.#continues(original.toString("utf8")) : null;
     const files = agent === null && original.toString("utf8").includes("raw/attachments/");
-    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, agent, continues, files, names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term), instructions, shelves: this.#shelfNotes(pending, found), style: this.settings.houseStyle, found });
+    const prompt = filePrompt(captureRel, captureId, now, {
+      attachments,
+      call,
+      agent,
+      continues,
+      files,
+      names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term),
+      instructions,
+      shelves: this.#shelfNotes(pending, found),
+      style: this.settings.houseStyle,
+      found,
+      excluded: this.settings.excludedFolders,
+    });
+    const logBefore = this.vault.logSize();
     // Only a caller that asked for the steps is told them: Claude Code's come from its own events, and other agents'
     // from the folder. The changes below are read from `after`, the library as the run left it, whether or not they are.
-    const { result, guarded, after } = await this.#run(prompt, { write: true, images: attachments, signal, before, steps });
-    const restoral = restoreCapture(root, captureRel, original, archiveExisted ? null : archiveRel);
-    const savedOriginal = restoral === "blocked" ? this.#keepOriginal(captureId, original) : null;
+    const { result, guarded, after } = await this.#runKeeping(prompt, { write: true, images: attachments, signal, before, steps }, before, kept);
     // `after` is from before the guard and the capture's restoral put anything back. What they touch is left out: the
-    // capture is in inbox/ or raw/, and the guard lists what it put back; so is what `restoreKept` put back.
+    // capture is in inbox/ or raw/, and the guard lists what it put back; so is what `restoreKept` put back, first of all.
     const run = diff(before, after).without([...SOURCES, ...guarded]);
     const putBack = restoreKept(root, kept, run);
     const { old: keptOld, out: keptOut } = putBack;
+    const restoral = restoreCapture(root, captureRel, original, archiveExisted ? null : archiveRel);
+    const savedOriginal = restoral === "blocked" ? this.#keepOriginal(captureId, original) : null;
     const changes = run.without(keptPaths(putBack));
     const newFolders = newSubfolders(changes.created, before.keys(), this.settings.shelves);
     const refused = result.refused.map((refusedPath) => insideLibrary(root, refusedPath) ?? refusedPath);
     const restored = restoral === "restored";
     const ran = { agent, changes, message: result.output, restored, savedOriginal, guarded, refused, keptOld, keptOut, newFolders };
-    const error = this.#notFiled(result, restoral, changes, captureId, archiveRel, keptPaths(putBack));
+    const error = this.#notFiled(result, restoral, changes, captureId, archiveRel, keptPaths(putBack), logBefore);
     if (error !== null) {
       // What the run left behind (it failed, timed out, was cancelled or filed nothing) is its own
       // commit, handed out with the outcome so Undo covers it; a run that changed nothing makes none.
@@ -855,31 +905,47 @@ export class Librarian {
       const failure: RunFailure = result.ok ? { kind: "other", resetsAt: null, line: errorLine(error) } : classifyFailure(result);
       return outcome(captureId, { ...ran, error, commit, failure });
     }
-    if (!this.vault.logMentions(captureId)) {
+    if (!this.vault.logMentions(captureId, logBefore)) {
       this.vault.appendLog("file", `[[${captureId}]] → ${changes.pages.map(wikilink).join(", ")}`, now);
     }
+    this.#rememberAvanzelPages(changes.created);
     const archivedTo = this.vault.archive(path, now);
     const commit = await this.#commit(`avanzel: file ${captureId}`);
     return outcome(captureId, { ...ran, ok: true, archivedTo, commit, suggestion: this.#suggestion(changes, result.output, pending, foldersBefore) });
   }
 
   /**
-   * What a run must not be able to lose (`captureKept`): the owner's notes from before the library was learned, and the folders they
+   * What a run must not be able to lose (`captureKept`): the owner's notes on the learned shelves (`ownersNotes`), and the folders they
    * left out. `before` is the library's snapshot from just before the run.
    */
   #keptNotes(before: Snapshot): KeptNotes {
-    return captureKept(this.vault.root, readLearnedNotes(this.vault.root), this.settings.excludedFolders, before.keys());
+    const owners = ownersNotes(this.vault.root, this.#learnedFolders(), before.keys());
+    return captureKept(this.vault.root, owners, this.settings.excludedFolders, before.keys());
+  }
+
+  /** The folders of the shelves a study learned. */
+  #learnedFolders(): string[] {
+    return this.settings.shelves.filter((shelf) => shelf.learnedAt).map((shelf) => shelf.folder);
+  }
+
+  /** Remember the pages a run made on the learned shelves (of `created`) as Avanzel's own, which a later run may rewrite. */
+  #rememberAvanzelPages(created: readonly string[]): void {
+    const folders = this.#learnedFolders().map(folderKey);
+    const pages = created.filter((rel) => onFolders(folders, rel));
+    if (pages.length) addAvanzelPages(this.vault.root, pages);
   }
 
   /**
    * The notes on the learned shelves that the capture's words may be about (`findNotes`), dated for `now`: its body without front
-   * matter, at most `FOUND_QUERY_CHARS` characters of it, is the query. None when no shelf was learned.
+   * matter, at most `FOUND_QUERY_CHARS` characters of it, is the query. Each says whether it is the owner's note (`FoundNote.owner`),
+   * which may only be added to. None when no shelf was learned.
    */
   #foundNotes(captureText: string, now: Date): FoundNote[] {
-    const folders = this.settings.shelves.filter((shelf) => shelf.learnedAt).map((shelf) => shelf.folder);
+    const folders = this.#learnedFolders();
     if (folders.length === 0) return [];
     const words = codePoints(splitFrontmatter(captureText)[1], FOUND_QUERY_CHARS);
-    return findNotes(this.vault.root, words, { folders, now });
+    const avanzel = readAvanzelPages(this.vault.root);
+    return findNotes(this.vault.root, words, { folders, now }).map((note) => ({ ...note, owner: !avanzel.has(note.path.normalize("NFC")) }));
   }
 
   /**
@@ -973,9 +1039,18 @@ export class Librarian {
   /**
    * Why a filing run did not file its capture, or null when it did. Avanzel's own findings say why first, and name the agent as
    * a person knows it: a card keeps only about the first 100 characters of a line, and a capture's id is long, while the card
-   * and the evening review's digest already say which note it is.
+   * and the evening review's digest already say which note it is. Only a log line this run wrote counts (log.md past its first
+   * `logBefore` bytes): an earlier run's line for the same capture, one that wasn't filed, never makes this one filed.
    */
-  #notFiled(result: RunResult, restoral: Restoral, changes: Changes, captureId: string, archiveRel: string, putBack: readonly string[]): string | null {
+  #notFiled(
+    result: RunResult,
+    restoral: Restoral,
+    changes: Changes,
+    captureId: string,
+    archiveRel: string,
+    putBack: readonly string[],
+    logBefore: number,
+  ): string | null {
     if (!result.ok) return (result.stderr || result.output).trim().slice(-800);
     if (restoral === "blocked") return "A symlink in inbox/ kept Avanzel from putting back the words the agent changed.";
     if (putBack.length && !changes.pages.length) {
@@ -985,7 +1060,7 @@ export class Librarian {
         "The thought stays in the inbox for the next filing."
       );
     }
-    if (!changes.pages.length && !this.vault.logMentions(captureId)) {
+    if (!changes.pages.length && !this.vault.logMentions(captureId, logBefore)) {
       // Exit 0 but nothing written: a denied tool, a refusal or a question back. Not filed.
       const reply = collapse(result.output) || "(no reply)";
       return `${agentName(this.harness.name)} finished without filing anything. Its reply: ${reply.slice(0, 500)}`;
@@ -1075,7 +1150,9 @@ export class Librarian {
       const before = snapshot(this.vault.root);
       const prompt = askPrompt(question, { save, now, answer, history, shelves: this.settings.shelves });
       const kept = save ? this.#keptNotes(before) : null; // a read-only run has no write tools
-      const { result, guarded } = await this.#run(prompt, { write: save, signal });
+      const { result, guarded } = kept
+        ? await this.#runKeeping(prompt, { write: save, signal }, before, kept)
+        : await this.#run(prompt, { write: save, signal });
       const ran = diff(before, snapshot(this.vault.root)).without(guarded);
       const changes = kept ? ran.without(keptPaths(restoreKept(this.vault.root, kept, ran))) : ran;
       let commit: string | null = null;
@@ -1085,6 +1162,7 @@ export class Librarian {
           const pages = saved.map(wikilink).join(", ");
           this.vault.appendLog("ask", `${codePoints(collapse(question), 80)} → ${pages}`, now);
         }
+        this.#rememberAvanzelPages(changes.created);
         commit = await this.#commit(`avanzel: save answer to “${codePoints(collapse(question), 60)}”`);
       } else if (save) {
         commit = await this.#commit("avanzel: leftovers of an answer that was not saved"); // not the owner's
@@ -1107,7 +1185,7 @@ export class Librarian {
       await this.#commitOwnerChanges(`review ${stem(report)}`);
       const before = snapshot(root);
       const kept = this.#keptNotes(before);
-      const { result, guarded } = await this.#run(reviewPrompt(reportRel, now, this.settings.shelves), { write: true, signal });
+      const { result, guarded } = await this.#runKeeping(reviewPrompt(reportRel, now, this.settings.shelves), { write: true, signal }, before, kept);
       if (result.ok && result.output) {
         // Only when the agent wrote no report; never through a link it may have put there.
         createInside(root, reportRel, `# Review ${localDate(now)}\n\n${result.output}\n`);
@@ -1117,6 +1195,7 @@ export class Librarian {
       let commit: string | null;
       if (result.ok) {
         if (!this.vault.logMentions(stem(report))) this.vault.appendLog("review", `[[${stem(report)}]]`, now);
+        this.#rememberAvanzelPages(changes.created);
         commit = await this.#commit(`avanzel: review ${stem(report)}`);
       } else {
         commit = await this.#commit(`avanzel: leftovers of failed review ${stem(report)}`); // not the owner's
@@ -1132,10 +1211,14 @@ export class Librarian {
     return previewOf(planStudy(this.vault.root, this.settings, this.clock()));
   }
 
-  /** The proposal of a study that finished and was neither applied nor discarded. */
+  /**
+   * The proposal of a study that finished and was neither applied nor discarded. Whether its style would go into `AGENTS.md`
+   * (`styleInAgents`) is said as that file is now.
+   */
   studyProposal(): StudyProposal | null {
     const data = this.#readStudy("proposal.json");
-    return isRecord(data) && Array.isArray(data.shelves) && typeof data.style === "string" ? (data as unknown as StudyProposal) : null;
+    if (!isRecord(data) || !Array.isArray(data.shelves) || typeof data.style !== "string") return null;
+    return { ...(data as unknown as StudyProposal), styleInAgents: styleGoesInAgents(this.vault.root) };
   }
 
   /** A study was started and has not finished: `study()` goes on from where it stopped. */
@@ -1152,7 +1235,8 @@ export class Librarian {
    * Go through the library one folder at a time with the filing agent, reading only, and propose a shelf for each folder and a house
    * style. Every step's answer is saved under `.avanzel/study/` as it comes, so a stopped study goes on from the next step. The lock is
    * taken for one step at a time, so a filing can take it between steps. `fresh` throws away what an earlier study saved and begins again;
-   * without it, a finished study's proposal is returned as it is. Nothing is committed and nothing is written outside `.avanzel/study/`.
+   * without it, a finished study's proposal is returned as it is. Nothing is written outside `.avanzel/study/`, and only the owner's own
+   * changes are committed (before each step, with git and auto-commit): each step's run is checked for writes (`#studyRun`).
    * Stopping through `signal` rejects with an `AvanzelError`, once the step in flight has ended.
    */
   async study({
@@ -1202,7 +1286,11 @@ export class Librarian {
       instructions: studyInstructions(root),
     });
     const combined = await this.#askStudy(prompt, (reply) => parseCombineAnswer(reply, plan), signal);
-    const proposal = buildProposal(plan, summaries, combined, { shelves: this.settings.shelves, style: this.settings.houseStyle });
+    const proposal = buildProposal(plan, summaries, combined, {
+      shelves: this.settings.shelves,
+      style: this.settings.houseStyle,
+      styleInAgents: styleGoesInAgents(root),
+    });
     this.#saveStudy("proposal.json", proposal);
     return proposal;
   }
@@ -1233,7 +1321,7 @@ export class Librarian {
    */
   async #askStudy<T>(prompt: string, parse: (reply: string) => T | null, signal: AbortSignal | undefined): Promise<T | null> {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const { result } = await this.vault.withLock(() => this.#run(prompt, { write: false, signal }));
+      const { result } = await this.vault.withLock(() => this.#studyRun(prompt, signal));
       if (signal?.aborted && !result.ok) throw new AvanzelError(STUDY_STOPPED);
       if (!result.ok) {
         const { kind } = classifyFailure(result);
@@ -1245,6 +1333,39 @@ export class Librarian {
       if (signal?.aborted) throw new AvanzelError(STUDY_STOPPED);
     }
     return null;
+  }
+
+  /**
+   * One read-only run of a study, under the lock the caller holds, and checked: not every agent can be held to reading (OpenCode
+   * without its plan agent, a harness of the owner's own), so whatever the run changed in the library is found from snapshots taken
+   * before and after it. The owner's notes waiting in the inbox (a capture takes no lock) and what the guard put back are left out.
+   * With git and auto-commit, the owner's own changes are committed first, so that each file the run changed, made or deleted is put
+   * back as HEAD has it (what the run left in a changed or made file is kept under `.avanzel/logs/study/` first, in case it was the
+   * owner's own typing); then the study goes on. Without them, or when anything can't be put back, the study stops with an
+   * `AvanzelError` that names the files, before the step is saved.
+   */
+  async #studyRun(prompt: string, signal: AbortSignal | undefined): Promise<Ran> {
+    const root = this.vault.root;
+    let fromHead = false;
+    if (this.settings.autoCommit && gitops.isRepo(root) && gitops.available()) {
+      await this.#commitOwnerChanges("learn this library");
+      fromHead = await gitops.isClean(root);
+    }
+    const before = snapshot(root);
+    const ran = await this.#run(prompt, { write: false, signal, before });
+    const changed = diff(before, ran.after).without([...SOURCES, ...ran.guarded]);
+    if (changed.empty) return ran;
+    const all = [...changed.created, ...changed.modified, ...changed.deleted];
+    if (!fromHead) throw new AvanzelError(studyChanged(all));
+    const aside = `${this.vault.relativePath(this.vault.logsDir)}/study/${localDate(this.clock())}-${Date.now()}`;
+    for (const rel of [...changed.created, ...changed.modified]) {
+      if (lstatOrNull(join(root, rel))?.isFile()) writeInside(root, `${aside}/${rel}`, readFileSync(join(root, rel)));
+    }
+    const back = new Set(await gitops.restoreFromHead(root, [...changed.modified, ...changed.deleted, ...changed.created]));
+    for (const rel of changed.created) if (!back.has(rel)) removeInside(root, rel);
+    const left = all.filter((rel) => (changed.created.includes(rel) ? lstatOrNull(join(root, rel)) !== null : !back.has(rel)));
+    if (left.length) throw new AvanzelError(studyChanged(left));
+    return ran;
   }
 
   #readStudy(rel: string): unknown {
@@ -1327,6 +1448,29 @@ export class Librarian {
       guarded = undoProtected(root, protectedBefore);
     }
     return { result, guarded, after };
+  }
+
+  /**
+   * `#run`, for a run that may write: when it throws (the agent could not be started, the stop came in a bad moment, the disk failed)
+   * after the agent may have written, what it did to `kept` (`captureKept`'s owner's notes and left-out folders) is put back before the
+   * error goes on. `before` is the library as it was when the run began; given in `options` too, the run returns `after` as `#run`
+   * does. When it returns, the caller puts back what it must (`restoreKept`).
+   */
+  #runKeeping(prompt: string, options: RunSpec & WithBefore, before: Snapshot, kept: KeptNotes): Promise<Ran & { after: Snapshot }>;
+  #runKeeping(prompt: string, options: RunSpec, before: Snapshot, kept: KeptNotes): Promise<Ran>;
+  async #runKeeping(
+    prompt: string,
+    options: RunSpec & Partial<WithBefore>,
+    before: Snapshot,
+    kept: KeptNotes,
+  ): Promise<Ran & { after?: Snapshot }> {
+    try {
+      // `#run`'s own overloads: given `before` in `options`, it returns `after` too.
+      return (await this.#run(prompt, options as RunSpec)) as Ran & { after?: Snapshot };
+    } catch (error) {
+      if (kept.files.size > 0 || kept.folders.length > 0) restoreKept(this.vault.root, kept, diff(before, snapshot(this.vault.root)));
+      throw error;
+    }
   }
 
   async #commit(message: string): Promise<string | null> {

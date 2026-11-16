@@ -79,6 +79,10 @@ describe("argv", () => {
     expect(builtin("opencode").headlessArgv("P", VAULT, { write: true, model: null, outputFile: OUT })).toEqual([
       "opencode", "run", "--dir", "/v/My Brain", "P",
     ]);
+    // A read-only run is OpenCode's plan agent, which may not edit.
+    expect(builtin("opencode").headlessArgv("P", VAULT, { write: false, model: "a/b", outputFile: OUT })).toEqual([
+      "opencode", "run", "--dir", "/v/My Brain", "--agent", "plan", "-m", "a/b", "P",
+    ]);
     // Cursor only proposes edits in print mode unless --force; read-only asks keep it off.
     expect(builtin("cursor-agent").headlessArgv("P", VAULT, { write: true, model: "gpt-5", outputFile: OUT })).toEqual([
       "cursor-agent", "-p", "--force", "--output-format", "text", "--model", "gpt-5", "P",

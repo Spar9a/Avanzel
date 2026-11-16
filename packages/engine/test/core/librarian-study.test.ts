@@ -238,6 +238,50 @@ describe.skipIf(!git.available())("studying the library", () => {
     expect(combine).toContain("<instructions>\n(none)\n</instructions>");
   });
 
+  describe("an agent that writes while it studies", () => {
+    const seneca = () => readFileSync(join(vault.root, "Philosophy/Stoicism/Seneca.md"), "utf8");
+
+    beforeEach(() => {
+      vi.stubEnv("FAKE_AGENT_PAGE", "Philosophy/Stoicism/Seneca.md");
+      mode("study-edit");
+    });
+
+    it("with git, puts the note back and takes away what it made, keeps what it wrote aside, and goes on", async () => {
+      write(vault.root, "Philosophy/Mine.md", "Typed since the last commit.\n"); // the owner's, committed before the first step
+      const proposal = await librarian.study();
+      expect(proposal.shelves.map((s) => s.studied)).toEqual([true, true]);
+      expect(seneca()).toBe("# Seneca\n\nLetters.\n");
+      expect(existsSync(join(vault.root, "Philosophy/Stoicism/made-by-a-study.md"))).toBe(false);
+      expect(gitOut(vault.root, "status", "--porcelain")).toBe("");
+      expect(gitOut(vault.root, "log", "-1", "--format=%s").trim()).toBe("avanzel: owner's changes before learn this library");
+      const aside = readdirSync(join(vault.logsDir, "study"), { recursive: true, encoding: "utf8" });
+      expect(aside.some((rel) => rel.endsWith("Stoicism/Seneca.md"))).toBe(true);
+    });
+
+    it("without git, stops before the step is saved and names the files it changed", async () => {
+      settingsWith({ autoCommit: false });
+      expect(await reason(librarian.study())).toBe(
+        "The study stopped because the agent changed files it was only meant to read: Philosophy/Stoicism/Seneca.md, " +
+          "Philosophy/Stoicism/made-by-a-study.md. Nothing else changed; check those files, then Learn this library goes on from there.",
+      );
+      expect(savedStep(0)).toBe(false);
+      expect(librarian.studyResumable()).toBe(true);
+      expect(seneca()).toBe("Rewritten by a study.\n"); // left for the owner to see
+    });
+
+    it("leaves alone a thought that comes into the inbox while a step runs", async () => {
+      vi.stubEnv("FAKE_AGENT_PAGE", "inbox/a-thought.md");
+      await librarian.study();
+      expect(readFileSync(join(vault.root, "inbox/a-thought.md"), "utf8")).toBe("Rewritten by a study.\n");
+    });
+  });
+
+  it("says whether the style would go into AGENTS.md", async () => {
+    expect((await librarian.study()).styleInAgents).toBe(true);
+    writeFileSync(join(vault.root, "AGENTS.md"), "# My own rules\n");
+    expect(librarian.studyProposal()?.styleInAgents).toBe(false);
+  });
+
   it("lets a filing take the library between steps", async () => {
     vi.stubEnv("FAKE_AGENT_DELAY_MS", "400");
     vi.stubEnv("FAKE_AGENT_DELAY_TASK", "study-folder");
@@ -331,13 +375,46 @@ describe.skipIf(!git.available())("studying the library", () => {
       ]);
     });
 
-    it("gives an existing own shelf its map and leaves its name and definition", async () => {
+    it("gives an existing own shelf its map and the day it was learned, and leaves its name and definition", async () => {
       await librarian.makeShelf({ folder: "Philosophy", name: "Thinkers", definition: "My own words." });
       await librarian.applyStudy({ style: "", shelves: [{ ...PHILOSOPHY, name: "Philosophy", definition: "Other." }] });
       expect(loadSettings(vault.root).shelves).toEqual([
-        { folder: "Philosophy", name: "Thinkers", definition: "My own words.", map: "Stoicism/: one folder per thinker" },
+        { folder: "Philosophy", name: "Thinkers", definition: "My own words.", map: "Stoicism/: one folder per thinker", learnedAt: "2026-10-20" },
       ]);
-      expect(readLearnedNotes(vault.root).size).toBe(0); // a shelf that was there before is not newly learned
+      // Its notes are the owner's by rule from now on; the older list only lists the notes of the shelves Apply made.
+      expect(readLearnedNotes(vault.root).size).toBe(0);
+    });
+
+    it("keeps the day an existing shelf was first learned", async () => {
+      await librarian.applyStudy({ style: "", shelves: [PHILOSOPHY] });
+      librarian = new Librarian(vault, fakeSettings({}), { clock: () => new Date(2026, 11, 1) });
+      await librarian.applyStudy({ style: "", shelves: [{ ...PHILOSOPHY, map: "New map." }] });
+      expect(loadSettings(vault.root).shelves[0]).toMatchObject({ map: "New map.", learnedAt: "2026-10-20" });
+    });
+
+    it("leaves a skipped folder alone: no shelf, not left out, and a later study reaches it again", async () => {
+      await librarian.applyStudy({ style: "", shelves: [PHILOSOPHY, { ...RECIPES, fileHere: "skip" }] });
+      const settings = loadSettings(vault.root);
+      expect(settings.shelves.map((s) => s.folder)).toEqual(["Philosophy"]);
+      expect(settings.excludedFolders).toEqual([]);
+      settingsWith({ shelves: settings.shelves });
+      const proposal = await librarian.study();
+      expect(proposal.shelves.find((s) => s.folder === "Рецепты")).toMatchObject({ studied: true, hasDefinition: false });
+    });
+
+    it.each(["ideas", "Inbox", "tasks"])("refuses to leave out %s, one of Avanzel's own folders, and changes nothing", async (folder) => {
+      await expect(librarian.applyStudy({ style: "x", shelves: [PHILOSOPHY, { ...RECIPES, folder }] })).rejects.toThrow(
+        `${folder} is one of Avanzel's own folders, so it can't be left out. Nothing was applied.`,
+      );
+      expect(loadSettings(vault.root)).toMatchObject({ shelves: [], excludedFolders: [], houseStyle: "" });
+    });
+
+    it("brings back a folder left out when it is made a shelf by hand", async () => {
+      await librarian.applyStudy({ style: "", shelves: [PHILOSOPHY, RECIPES] });
+      expect(loadSettings(vault.root).excludedFolders).toEqual(["Рецепты"]);
+      await librarian.makeShelf({ folder: "Рецепты".normalize("NFD"), name: "Recipes", definition: "Dishes." });
+      expect(loadSettings(vault.root).excludedFolders).toEqual([]);
+      expect(librarian.settings.excludedFolders).toEqual([]);
     });
 
     it("refuses a folder the folder rules refuse, in their own words, and changes nothing", async () => {

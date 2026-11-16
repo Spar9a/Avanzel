@@ -1,5 +1,6 @@
-// The owner's notes from before Avanzel learned the library. A run may add to one of them but never rewrite or delete it, and it
-// may not touch a folder the owner left out. The agent is told so; this is the check behind that, from what was read beforehand
+// The owner's notes on the shelves Avanzel learned from the library: every note there but the pages Avanzel made itself, whether it
+// was written before the shelf was learned or after. A run may add to one of them but never rewrite or delete it, and it may not
+// touch a folder the owner left out. The agent is told so; this is the check behind that, from what was read beforehand
 // (so it holds in a library with no git, and in one where the owner's changes are not committed yet).
 
 import { lstatSync, readFileSync, rmSync } from "node:fs";
@@ -8,30 +9,89 @@ import type { Changes } from "./changes.ts";
 import { lstatOrNull, realFoldersTo, removeInside, replaceInside, writeInside } from "./inside.ts";
 import { folderKey } from "./shelves.ts";
 
-/** `{ "version": 1, "notes": string[] }`: library-relative paths of the notes that were there when the library was learned, in NFC. */
+/**
+ * `{ "version": 1, "notes": string[], "avanzel"?: string[] }`, library-relative paths in NFC. `notes`: the notes that were there when a
+ * shelf was first learned (kept for libraries learned before the rule below). `avanzel`: the pages Avanzel itself made on learned shelves
+ * since. Every other Markdown file on a learned shelf is the owner's note (`ownersNotes`), whenever it was written.
+ */
 export const LEARNED_NOTES = ".avanzel/learned-notes.json";
 
-/** The learned notes, as NFC paths; empty when the file is missing or can't be read. */
-export function readLearnedNotes(root: string): Set<string> {
+interface LearnedList {
+  notes: Set<string>;
+  avanzel: Set<string>;
+}
+
+const nfcStrings = (list: unknown): Set<string> =>
+  new Set(Array.isArray(list) ? list.filter((item): item is string => typeof item === "string").map((item) => item.normalize("NFC")) : []);
+
+/** Both lists, as NFC paths; empty when the file is missing or can't be read. */
+function readList(root: string): LearnedList {
   try {
     const path = join(root, LEARNED_NOTES);
-    if (!lstatOrNull(path)?.isFile()) return new Set();
+    if (!lstatOrNull(path)?.isFile()) return { notes: new Set(), avanzel: new Set() };
     const data: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (typeof data !== "object" || data === null) return new Set();
-    const { version, notes } = data as { version?: unknown; notes?: unknown };
-    if (version !== 1 || !Array.isArray(notes)) return new Set();
-    return new Set(notes.filter((note): note is string => typeof note === "string").map((note) => note.normalize("NFC")));
+    if (typeof data !== "object" || data === null) return { notes: new Set(), avanzel: new Set() };
+    const { version, notes, avanzel } = data as { version?: unknown; notes?: unknown; avanzel?: unknown };
+    if (version !== 1 || !Array.isArray(notes)) return { notes: new Set(), avanzel: new Set() };
+    return { notes: nfcStrings(notes), avanzel: nfcStrings(avanzel) };
   } catch {
-    return new Set();
+    return { notes: new Set(), avanzel: new Set() };
   }
 }
 
-/** Add `notes` to the learned ones. The list is written aside and renamed over the old one, so a half-written file never drops the protection. */
+/** The list written aside and renamed over the old one, so a half-written file never drops the protection. */
+function writeList(root: string, list: LearnedList): void {
+  const data = { version: 1, notes: [...list.notes].sort(), ...(list.avanzel.size ? { avanzel: [...list.avanzel].sort() } : {}) };
+  if (!replaceInside(root, LEARNED_NOTES, `${JSON.stringify(data, null, 2)}\n`)) {
+    throw new Error(`${LEARNED_NOTES} could not be written inside the library.`);
+  }
+}
+
+/** The learned notes, as NFC paths; empty when the file is missing or can't be read. */
+export function readLearnedNotes(root: string): Set<string> {
+  return readList(root).notes;
+}
+
+/** Add `notes` to the learned ones. */
 export function addLearnedNotes(root: string, notes: readonly string[]): void {
-  const all = readLearnedNotes(root);
-  for (const note of notes) all.add(note.normalize("NFC"));
-  const text = `${JSON.stringify({ version: 1, notes: [...all].sort() }, null, 2)}\n`;
-  if (!replaceInside(root, LEARNED_NOTES, text)) throw new Error(`${LEARNED_NOTES} could not be written inside the library.`);
+  const list = readList(root);
+  for (const note of notes) list.notes.add(note.normalize("NFC"));
+  writeList(root, list);
+}
+
+/** The pages Avanzel made on learned shelves, as NFC paths. */
+export function readAvanzelPages(root: string): Set<string> {
+  return readList(root).avanzel;
+}
+
+/** Remember `pages` as Avanzel's own, which a later run may rewrite; nothing is written when all of them are known already. */
+export function addAvanzelPages(root: string, pages: readonly string[]): void {
+  const list = readList(root);
+  const before = list.avanzel.size;
+  for (const page of pages) list.avanzel.add(page.normalize("NFC"));
+  if (list.avanzel.size !== before) writeList(root, list);
+}
+
+/** Whether `rel` is a Markdown file somewhere under one of `folders` (`folderKey`s), below its top level. */
+export function onFolders(folders: readonly string[], rel: string): boolean {
+  const slash = rel.indexOf("/");
+  return slash !== -1 && rel.toLowerCase().endsWith(".md") && folders.includes(folderKey(rel.slice(0, slash)));
+}
+
+/**
+ * The owner's notes among `paths` (library-relative, as a snapshot's keys), as NFC paths: every Markdown file on a learned shelf
+ * (`learnedFolders`) but the pages Avanzel made there (`readAvanzelPages`), whenever it was written, and every note of the older list.
+ */
+export function ownersNotes(root: string, learnedFolders: readonly string[], paths: Iterable<string>): Set<string> {
+  const list = readList(root);
+  const folders = learnedFolders.map(folderKey).filter((key) => key !== "");
+  const owners = new Set(list.notes);
+  if (folders.length === 0) return owners;
+  for (const rel of paths) {
+    const nfc = rel.normalize("NFC");
+    if (onFolders(folders, rel) && !list.avanzel.has(nfc)) owners.add(nfc);
+  }
+  return owners;
 }
 
 function linesOf(text: string): string[] {

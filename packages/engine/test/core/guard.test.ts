@@ -57,6 +57,23 @@ describe("the guard", () => {
     expect(read(join(root, "AGENTS.md"))).toBe(rules);
   });
 
+  it("puts back the list of the owner's learned notes and a study's saved steps", () => {
+    write(root, ".avanzel/learned-notes.json", '{"version":1,"notes":["Shelf/old.md"]}\n');
+    write(root, ".avanzel/study/steps/0.json", '{"id":"folder:Shelf","summary":null}\n');
+    const before = protectedState(root);
+    writeFileSync(join(root, ".avanzel/learned-notes.json"), '{"version":1,"notes":[]}\n');
+    rmSync(join(root, ".avanzel/study/steps/0.json"));
+    write(root, ".avanzel/study/proposal.json", "{}");
+    expect(undoProtected(root, before)).toEqual([
+      ".avanzel/learned-notes.json",
+      ".avanzel/study/proposal.json",
+      ".avanzel/study/steps/0.json",
+    ]);
+    expect(read(join(root, ".avanzel/learned-notes.json"))).toBe('{"version":1,"notes":["Shelf/old.md"]}\n');
+    expect(read(join(root, ".avanzel/study/steps/0.json"))).toBe('{"id":"folder:Shelf","summary":null}\n');
+    expect(existsSync(join(root, ".avanzel/study/proposal.json"))).toBe(false);
+  });
+
   it("removes what a run added under a protected folder", () => {
     write(root, ".claude/commands/x.md", "Tidy the inbox.");
     const before = protectedState(root);

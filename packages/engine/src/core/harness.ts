@@ -240,9 +240,13 @@ const BUILTINS: Readonly<Record<string, Harness>> = {
   opencode: new Harness({
     name: "opencode",
     binary: "opencode",
-    // `-f` takes several values, so the files come after the prompt.
-    headless: (prompt, vault, { model, images }) => [
-      "opencode", "run", "--dir", vault, ...opt("-m", model), prompt, ...images.flatMap((image) => ["-f", image]),
+    // `-f` takes several values, so the files come after the prompt. A read-only run uses OpenCode's own `plan` agent, whose
+    // permissions deny every edit (but a plan file under .opencode/plans/, which the guard puts back): checked with
+    // `opencode agent list` on OpenCode 1.18.5. The library's opencode.json denies bash for both agents. Avanzel checks
+    // a study's run besides (`Librarian.#askStudy`), so an OpenCode without that agent changes nothing it keeps.
+    headless: (prompt, vault, { write, model, images }) => [
+      "opencode", "run", "--dir", vault, ...(write ? [] : ["--agent", "plan"]), ...opt("-m", model), prompt,
+      ...images.flatMap((image) => ["-f", image]),
     ],
     interactive: (vault, model) => ["opencode", vault, ...opt("-m", model)],
   }),

@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultSettings } from "../../src/core/config.ts";
 import {
+  MAX_STUDY_STEPS,
+  MAX_SUMMARIES,
   combinePrompt,
+  evenShares,
   folderPrompt,
   parseCombineAnswer,
   parseFolderAnswer,
@@ -44,23 +47,32 @@ describe("planStudy", () => {
     expect(plan.steps[3]).toMatchObject({ kind: "combine", sample: [], parts: [] });
   });
 
-  it("studies a big folder in parts, one per subfolder, joined after them", () => {
+  it("studies a big folder in parts: a part for each big subfolder, one for the rest, joined after them", () => {
     const root = tmp();
-    for (let i = 0; i < 40; i++) write(root, `Philosophy/Stoicism/s${i}.md`, `# S${i}\n`);
+    for (let i = 0; i < 70; i++) write(root, `Philosophy/Stoicism/s${i}.md`, `# S${i}\n`);
     for (let i = 0; i < 30; i++) write(root, `Philosophy/Existentialism/e${i}.md`, `# E${i}\n`);
     write(root, "Philosophy/Intro.md", "# Intro\n");
     const plan = planStudy(root, defaultSettings(), NOW);
-    expect(plan.steps.map((s) => s.id).slice(0, 4)).toEqual([
-      "part:Philosophy/Stoicism",
-      "part:Philosophy/Existentialism",
-      "part:Philosophy",
-      "join:Philosophy",
-    ]);
-    const join = plan.steps[3];
-    expect(join).toMatchObject({ kind: "join", notes: 71, sample: [] });
-    expect(join?.parts).toEqual(["part:Philosophy/Stoicism", "part:Philosophy/Existentialism", "part:Philosophy"]);
-    expect(plan.steps[2]).toMatchObject({ kind: "part", notes: 1, sample: ["Philosophy/Intro.md"] });
-    expect(plan.steps[0]).toMatchObject({ folder: "Philosophy", notes: 40 });
+    expect(plan.steps.map((s) => s.id)).toEqual(["part:Philosophy/Stoicism", "part:Philosophy", "join:Philosophy", "combine"]);
+    const join = plan.steps[2];
+    expect(join).toMatchObject({ kind: "join", notes: 101, sample: [] });
+    expect(join?.parts).toEqual(["part:Philosophy/Stoicism", "part:Philosophy"]);
+    // The rest: the folder's own note and its small subfolder, sampled across both.
+    expect(plan.steps[1]).toMatchObject({ kind: "part", notes: 31, apart: ["Philosophy/Stoicism"] });
+    expect(plan.steps[1]?.sample).toHaveLength(12);
+    expect(plan.steps[1]?.sample).toContain("Philosophy/Intro.md");
+    expect(plan.steps[1]?.sample.every((p) => !p.startsWith("Philosophy/Stoicism/"))).toBe(true);
+    expect(plan.steps[0]).toMatchObject({ folder: "Philosophy", notes: 70 });
+  });
+
+  it("keeps a big folder of small subfolders one step, sampled across them", () => {
+    const root = tmp();
+    for (let i = 0; i < 40; i++) write(root, `Philosophy/Stoicism/s${i}.md`, `# S${i}\n`);
+    for (let i = 0; i < 30; i++) write(root, `Philosophy/Existentialism/e${i}.md`, `# E${i}\n`);
+    const plan = planStudy(root, defaultSettings(), NOW);
+    expect(plan.steps.map((s) => s.id)).toEqual(["folder:Philosophy", "combine"]);
+    expect(plan.steps[0]?.sample.some((p) => p.startsWith("Philosophy/Stoicism/"))).toBe(true);
+    expect(plan.steps[0]?.sample.some((p) => p.startsWith("Philosophy/Existentialism/"))).toBe(true);
   });
 
   it("applies the same rule to a big subfolder, and keeps a big folder with one subfolder whole", () => {
@@ -72,14 +84,72 @@ describe("planStudy", () => {
     const plan = planStudy(root, defaultSettings(), NOW);
     expect(plan.steps.map((s) => s.id)).toEqual([
       "part:Big/Deep/A",
-      "part:Big/Deep/B",
+      "part:Big/Deep",
       "join:Big/Deep",
-      "part:Big/Other",
+      "part:Big",
       "join:Big",
       "folder:Single",
       "combine",
     ]);
-    expect(plan.steps.find((s) => s.id === "join:Big")?.parts).toEqual(["join:Big/Deep", "part:Big/Other"]);
+    expect(plan.steps.find((s) => s.id === "join:Big")?.parts).toEqual(["join:Big/Deep", "part:Big"]);
+    expect(plan.steps.find((s) => s.id === "part:Big/Deep")).toMatchObject({ notes: 5, apart: ["Big/Deep/A"] });
+  });
+
+  it("plans a handful of steps for seven years of daily notes in a folder per year and month", () => {
+    const root = tmp();
+    for (let year = 2019; year <= 2025; year++) {
+      for (let month = 1; month <= 12; month++) {
+        for (let day = 1; day <= 28; day++) write(root, `Daily/${year}/${String(month).padStart(2, "0")}/${day}.md`, "x\n");
+      }
+    }
+    const plan = planStudy(root, defaultSettings(), NOW);
+    // A step for each year (its months sampled together), the join of the years, and the combine step.
+    expect(plan.steps).toHaveLength(9);
+    expect(plan.steps.filter((s) => s.kind === "part").map((s) => s.path)).toHaveLength(7);
+    expect(plan.steps.find((s) => s.id === "part:Daily/2019")?.sample).toHaveLength(12);
+  });
+
+  it("never plans more than 40 steps, the largest folders keeping their parts first", () => {
+    const root = tmp();
+    // Twelve folders of three big subfolders each, F11 the largest: studied in parts, each takes four steps (three parts and a join).
+    for (let f = 0; f < 12; f++) {
+      const folder = `F${String(f).padStart(2, "0")}`;
+      for (let s = 0; s < 3; s++) for (let i = 0; i < 61 + f; i++) write(root, `${folder}/S${s}/n${i}.md`, "x\n");
+    }
+    const plan = planStudy(root, defaultSettings(), NOW);
+    expect(MAX_STUDY_STEPS).toBe(40);
+    // A step for each folder and the combine step leave 27 to spare: nine folders in parts (three more steps each), three in one step.
+    expect(plan.steps.filter((s) => s.kind === "join").map((s) => s.folder)).toEqual(["F11", "F10", "F09", "F08", "F07", "F06", "F05", "F04", "F03"]);
+    expect(plan.steps.filter((s) => s.kind === "folder").map((s) => s.folder)).toEqual(["F02", "F01", "F00"]);
+    expect(plan.steps).toHaveLength(MAX_STUDY_STEPS);
+    // One more folder of parts fits nowhere: it is one step, and the plan still has no more than 40.
+    for (let s = 0; s < 3; s++) for (let i = 0; i < 100; i++) write(root, `Biggest/S${s}/n${i}.md`, "x\n");
+    const more = planStudy(root, defaultSettings(), NOW);
+    expect(more.steps.length).toBeLessThanOrEqual(MAX_STUDY_STEPS);
+    expect(more.steps.find((s) => s.folder === "Biggest" && s.kind === "join")).toBeDefined(); // the largest keeps its parts
+  });
+
+  it("gives the combine step at most 120,000 characters of summaries, cut evenly", () => {
+    const root = tmp();
+    for (let f = 0; f < 40; f++) write(root, `F${f}/a.md`, "x\n");
+    const plan = planStudy(root, defaultSettings(), NOW);
+    const long = (path: string): FolderSummary => ({ path, name: path, purpose: "p".repeat(1000), conventions: "c".repeat(1500), map: "m".repeat(1200), confidence: "high", why: "w".repeat(500) });
+    const summaries = Object.fromEntries(plan.folders.map((folder) => [folder, long(folder)]));
+    summaries[plan.folders[0]!] = { ...long(plan.folders[0]!), purpose: "short", conventions: "", map: "", why: "" };
+    const prompt = combinePrompt(summaries, plan, { currentStyle: "", instructions: "" });
+    const bodies = [...prompt.matchAll(/<summary folder="[^"]*">\n([\s\S]*?)\n<\/summary>/g)].map((m) => [...m[1]!].length);
+    expect(bodies).toHaveLength(40);
+    expect(bodies.reduce((sum, n) => sum + n, 0)).toBeLessThanOrEqual(MAX_SUMMARIES);
+    expect(Math.min(...bodies)).toBeLessThan(200); // the short one is whole
+    const cut = bodies.filter((n) => n > 200);
+    expect(Math.max(...cut) - Math.min(...cut)).toBeLessThanOrEqual(1);
+    expect(MAX_SUMMARIES).toBe(120_000);
+  });
+
+  it("shares characters evenly, a short one keeping all it has", () => {
+    expect(evenShares([10, 100, 100], 120)).toEqual([10, 55, 55]);
+    expect(evenShares([10, 20], 100)).toEqual([10, 20]);
+    expect(evenShares([], 100)).toEqual([]);
   });
 
   it("leaves out excluded folders, in any case and Unicode form", () => {
@@ -166,7 +236,7 @@ describe("folderPrompt", () => {
 
   it("gives a join its parts' summaries instead of notes", () => {
     const root = tmp();
-    for (let i = 0; i < 40; i++) write(root, `P/A/${i}.md`, "x\n");
+    for (let i = 0; i < 70; i++) write(root, `P/A/${i}.md`, "x\n");
     for (let i = 0; i < 30; i++) write(root, `P/B/${i}.md`, "x\n");
     const plan = planStudy(root, defaultSettings(), NOW);
     const join = plan.steps.find((s) => s.kind === "join")!;
@@ -174,6 +244,19 @@ describe("folderPrompt", () => {
     const prompt = folderPrompt(root, join, plan, [summary]);
     expect(prompt).toContain("Stoic notes");
     expect(prompt).not.toContain("<note ");
+  });
+
+  it("tells the part that reads the rest of a folder which big subfolders it leaves out, and leaves them out of its tree", () => {
+    const root = tmp();
+    for (let i = 0; i < 70; i++) write(root, `P/Big/${i}.md`, "x\n");
+    for (let i = 0; i < 3; i++) write(root, `P/Small/${i}.md`, "x\n");
+    write(root, "P/own.md", "x\n");
+    const plan = planStudy(root, defaultSettings(), NOW);
+    const rest = plan.steps.find((s) => s.id === "part:P")!;
+    const prompt = folderPrompt(root, rest, plan);
+    expect(prompt).toContain('the folder "P" without its bigger subfolders "Big" (each of those is studied on its own)');
+    const tree = /<tree>\n([\s\S]*?)\n<\/tree>/.exec(prompt)![1]!;
+    expect(tree).toBe("P/ (4 notes)\n  Small/ (3 notes)");
   });
 
   it("caps the folder tree at 200 lines", () => {
