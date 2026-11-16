@@ -285,6 +285,17 @@ describe("withStyleSection", () => {
     expect(withStyleSection("# Mine\n", "x")).toMatch(/^# Mine\n\n<!-- avanzel:style -->/);
   });
 
+  it("does not let a removed marker join its neighbours into a new one", () => {
+    for (const kind of ["style", "shelves"]) {
+      const joined = withStyleSection("# Mine\n", `x <!-- avanzel:<!-- avanzel:${kind} -->${kind} --> y`);
+      expect(joined).not.toContain(`<!-- avanzel:shelves -->`);
+      expect(joined.split(STYLE_SECTION_START)).toHaveLength(2);
+      expect(joined.split("<!-- /avanzel:style -->")).toHaveLength(2);
+      expect(joined).not.toMatch(new RegExp(`<!--\\s*avanzel:${kind}\\s*-->[\\s\\S]*<!--\\s*avanzel:${kind}\\s*-->`));
+      expect(withStyleSection(joined, "")).toBe("# Mine\n");
+    }
+  });
+
   it("changes nothing when there is no style and no section", () => {
     expect(withStyleSection("# Mine\n", "")).toBe("# Mine\n");
   });

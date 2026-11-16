@@ -342,7 +342,13 @@ const STYLE_PAIR = new RegExp(
 
 /** The style text with every marker of Avanzel's own sections taken out, so it can't close or open a section early. */
 function styleText(style: string): string {
-  return style.replace(/<!--\s*\/?avanzel:(?:style|shelves)\s*-->/g, "").trim();
+  // Removing one marker can join its neighbours into another (`<!-- avanzel:<!-- avanzel:style -->style -->`), so repeat until stable.
+  let kept = style;
+  for (let before = ""; before !== kept; ) {
+    before = kept;
+    kept = kept.replace(/<!--\s*\/?avanzel:(?:style|shelves)\s*-->/g, "");
+  }
+  return kept.trim();
 }
 
 function styleSection(style: string): string {
