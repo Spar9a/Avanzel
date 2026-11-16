@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { REVIEW_STUDY, STUDY_OFFER_LATER, STUDY_OPEN_SETTINGS } from "../src/renderer/panel/copy.ts";
+import { REVIEW_STUDY, STUDY_OPEN_SETTINGS } from "../src/renderer/panel/copy.ts";
+import { STUDY_OFFER_LATER } from "../src/renderer/settings/copy.ts";
 
 describe("the panel's words for Learn this library's cards", () => {
   it("keeps the buttons' words", () => {
+    // Not now is Settings' own word, which the panel's card shares: it puts the offer away in both.
     expect(STUDY_OFFER_LATER).toBe("Not now");
     expect(REVIEW_STUDY).toBe("Review");
     // A study that paused on a failed run is told in Settings, which says why and goes on with it. Settings is the pane's name.

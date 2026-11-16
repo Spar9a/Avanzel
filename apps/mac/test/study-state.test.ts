@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AvanzelError, NoAgentError } from "@avanzel/engine";
 import { undoRefused } from "../src/shared/problems.ts";
 import type { StudyProposal } from "../src/shared/ipc.ts";
-import { parseStudyApply, studyEndedState, studyFailureMessage, studyOffered, studyUndoNotice, unlearnedFoldersOf } from "../src/main/study-state.ts";
+import { parseStudyApply, studyApplyRefusal, studyEndedState, studyFailureMessage, studyOffered, studyUndoNotice, unlearnedFoldersOf } from "../src/main/study-state.ts";
 
 const PROPOSAL: StudyProposal = {
   shelves: [{ folder: "Philosophy", name: "Philosophy", definition: "Thinkers and their books.", map: "", confidence: "high", studied: true, hasDefinition: false }],
@@ -10,6 +10,7 @@ const PROPOSAL: StudyProposal = {
   currentStyle: "",
   attachments: [],
   clashes: [],
+  styleInAgents: true,
 };
 
 describe("studyOffered", () => {
@@ -72,12 +73,34 @@ describe("parseStudyApply", () => {
     expect(parseStudyApply({ shelves: [], style: "" })).toEqual({ shelves: [], style: "" });
   });
 
+  it("keeps a skipped folder as skipped", () => {
+    expect(parseStudyApply({ shelves: [{ ...item, fileHere: "skip" }], style: "" })?.shelves[0]?.fileHere).toBe("skip");
+  });
+
   it("is null for anything that isn't whole", () => {
     expect(parseStudyApply(null)).toBeNull();
     expect(parseStudyApply({ shelves: [item] })).toBeNull();
     expect(parseStudyApply({ shelves: "Philosophy", style: "" })).toBeNull();
     expect(parseStudyApply({ shelves: [{ ...item, fileHere: "yes" }], style: "" })).toBeNull();
     expect(parseStudyApply({ shelves: [{ ...item, map: undefined }], style: "" })).toBeNull();
+  });
+});
+
+describe("studyApplyRefusal", () => {
+  const item = { folder: "Philosophy", name: "Philosophy", definition: "Thinkers.", map: "", fileHere: true };
+
+  it("lets through a choice of the proposal that waits, its folders in any case or Unicode form", () => {
+    expect(studyApplyRefusal({ shelves: [item], style: "" }, { kind: "ready", proposal: PROPOSAL })).toBeNull();
+    expect(studyApplyRefusal({ shelves: [{ ...item, folder: "philosophy" }], style: "" }, { kind: "ready", proposal: PROPOSAL })).toBeNull();
+  });
+
+  it("refuses when no study waits for review, and a folder the proposal doesn't name", () => {
+    expect(studyApplyRefusal({ shelves: [item], style: "" }, { kind: "idle", resumable: false })).toBe(
+      "No study is waiting for review, so nothing was applied. Run Learn this library again.",
+    );
+    expect(studyApplyRefusal({ shelves: [item, { ...item, folder: "ideas" }], style: "" }, { kind: "ready", proposal: PROPOSAL })).toBe(
+      "ideas isn't in the study's proposal, so nothing was applied. Review the study again.",
+    );
   });
 });
 

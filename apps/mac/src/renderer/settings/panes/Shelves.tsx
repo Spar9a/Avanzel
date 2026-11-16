@@ -14,7 +14,6 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import type { LibraryInfo, ShelfAsk, ShelfOp, StudyPreview } from "../../../shared/ipc.ts";
 import { shortened } from "../../../shared/clip.ts";
 import { harnessName } from "../../../main/jobs.ts";
-import { STUDY_OFFER_LATER } from "../../panel/copy.ts";
 import {
   ADD_DEFINITION,
   ADD_SHELF,
@@ -29,6 +28,7 @@ import {
   LEARN_LIBRARY,
   REMOVE_HOUSE_STYLE_QUESTION,
   removeShelfQuestion,
+  STUDY_OFFER_LATER,
   RESUME_STUDY,
   SAVE_SHELF,
   SHELF_CANCEL,
@@ -53,7 +53,7 @@ import {
   studyRunningLine,
   SUGGESTED_SAVE_LINE,
 } from "../copy.ts";
-import { attemptChange, type PaneProps } from "../parts.tsx";
+import type { PaneProps } from "../parts.tsx";
 import { StudyReview, type StudyReviewState } from "./StudyReview.tsx";
 
 const api = window.avanzel.settings;

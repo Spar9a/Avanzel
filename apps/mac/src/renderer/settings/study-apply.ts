@@ -2,9 +2,13 @@
 // tests can hold it: which folders start turned on, the house style it starts with, when Apply can be pressed, and what Apply sends.
 import type { ProposedShelf, StudyApply, StudyProposal } from "../../shared/ipc.ts";
 
-/** What the owner made of one proposed folder: whether to file into it, and its definition and map as they stand in the fields. */
+/**
+ * What the owner made of one proposed folder: whether to file into it, whether the owner turned its switch themselves (`switched`), and
+ * its definition and map as they stand in the fields.
+ */
 export interface ShelfEdit {
   fileHere: boolean;
+  switched: boolean;
   definition: string;
   map: string;
 }
@@ -21,6 +25,7 @@ export interface ReviewDraft {
  */
 export const editOf = (shelf: ProposedShelf): ShelfEdit => ({
   fileHere: shelf.hasDefinition || shelf.definition.trim() !== "",
+  switched: false,
   definition: shelf.definition,
   map: shelf.map,
 });
@@ -44,7 +49,9 @@ export function studyReady(proposal: StudyProposal, edits: readonly ShelfEdit[])
 
 /**
  * What Apply sends, folder by folder, trimmed: a folder that is already the owner's shelf is always filed into and keeps its definition
- * (Apply gives it only its map); any other is filed into as its switch says, with the definition typed.
+ * (Apply gives it only its map); any other is filed into as its switch says, with the definition typed. A folder that is off is left out
+ * (and remembered so) only when the owner switched it off; one that started off and was never touched (a folder that wasn't studied) is
+ * skipped, which leaves it as it is for a later study.
  */
 export function studyApplyOf(proposal: StudyProposal, draft: ReviewDraft): StudyApply {
   return {
@@ -55,7 +62,7 @@ export function studyApplyOf(proposal: StudyProposal, draft: ReviewDraft): Study
         name: shelf.name,
         definition: shelf.hasDefinition ? shelf.definition : edit.definition.trim(),
         map: edit.map.trim(),
-        fileHere: shelf.hasDefinition || edit.fileHere,
+        fileHere: shelf.hasDefinition || edit.fileHere ? true : edit.switched ? false : "skip",
       };
     }),
     style: draft.style.trim(),

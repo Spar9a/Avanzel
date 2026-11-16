@@ -1,6 +1,8 @@
 // Settings → General, in place of Your shelves while a study waits for review: what Avanzel learned of each of the owner's folders, to
 // check and change before anything is written. Each folder has File here, what belongs on it and its map; one that is already a shelf of
-// the owner's keeps its definition and takes only its map. Then the house style the study wrote, beside the one in use, the folders of
+// the owner's keeps its definition and takes only its map. A folder is left out only when the owner switches it off; one that starts off
+// and is never touched is left as it is (`studyApplyOf`). Then the house style the study wrote, beside the one in use (and, when the
+// library's AGENTS.md is the owner's own, a line that says the style is kept in Avanzel's settings instead), the folders of
 // the owner's that carry a name of Avanzel's own, and Discard (which asks first) and Apply. Apply sends what the owner chose
 // (`settings.applyStudy`), as one change Undo takes back; a refusal is told by the window's Notice (`attemptChange`). What the owner
 // typed is kept by Settings (`useStudyReview`), not here, so it outlasts the pane and the window.
@@ -24,6 +26,7 @@ import {
   SHELF_DEFINITION_LABEL,
   STUDY_READY_TITLE,
   STUDY_REVIEW_NOTE,
+  STYLE_IN_SETTINGS,
 } from "../copy.ts";
 import { attemptChange, type PaneProps } from "../parts.tsx";
 import { draftOf, reviewKey, studyApplyOf, studyReady, type ReviewDraft, type ShelfEdit } from "../study-apply.ts";
@@ -94,7 +97,7 @@ function ShelfGroup({ shelf, edit, onEdit }: { shelf: ProposedShelf; edit: Shelf
         </>
       ) : (
         <>
-          <Switch label={fileHereLabel(shelf.name)} checked={edit.fileHere} onChange={(fileHere) => onEdit({ fileHere })} />
+          <Switch label={fileHereLabel(shelf.name)} checked={edit.fileHere} onChange={(fileHere) => onEdit({ fileHere, switched: true })} />
           <GroupReveal open={edit.fileHere}>
             <div className="settings-editor">
               <TextArea
@@ -160,6 +163,11 @@ export function StudyReview(props: PaneProps & { proposal: StudyProposal; review
               <Text variant="footnote" tone="secondary">{CURRENT_STYLE_LABEL}</Text>
               <Lines text={proposal.currentStyle} />
             </Stack>
+          </div>
+        )}
+        {!proposal.styleInAgents && (
+          <div className="settings-words">
+            <Text variant="footnote" tone="secondary">{STYLE_IN_SETTINGS}</Text>
           </div>
         )}
       </Group>

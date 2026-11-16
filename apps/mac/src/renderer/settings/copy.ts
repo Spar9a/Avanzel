@@ -798,6 +798,8 @@ export const LEARN_LIBRARY = "Learn this library…";
 /** The offer above the shelves, while the library has folders of the owner's own that no study learned. The panel's card says it too. */
 export const STUDY_OFFER_TITLE = "This library has folders of its own.";
 export const STUDY_OFFER_BODY = "Avanzel can study them and file the way you do. Nothing changes until you apply.";
+/** Not now on Learn this library's offer, in Settings and in the panel's card alike: it puts the offer away in both. */
+export const STUDY_OFFER_LATER = "Not now";
 /**
  * The confirm's line: what a study reads and how many runs of the library's agent it takes, before it starts. `agent` is the agent's name
  * as people know it ("Claude Code"), or null when none is chosen yet.
@@ -834,6 +836,9 @@ export const NOT_STUDIED = "Not studied. Its notes couldn't be read this time. S
 export const LOW_CONFIDENCE = "Avanzel isn't sure about this folder.";
 export const HOUSE_STYLE_LABEL = "How this library is written";
 export const CURRENT_STYLE_LABEL = "The style in use now";
+/** Under the house style on the review screen, when the library's AGENTS.md is the owner's own: Apply writes no style into it. */
+export const STYLE_IN_SETTINGS =
+  "Your AGENTS.md is your own, so the style is kept in Avanzel's settings and given to the agent with each filing.";
 export const APPLY_STUDY = "Apply";
 export const DISCARD_STUDY = "Discard";
 /** Discard's question: what the study learned can't be had back but by studying again. */

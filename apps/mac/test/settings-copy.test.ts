@@ -112,6 +112,8 @@ import {
 } from "../src/renderer/settings/copy.ts";
 import {
   APPLY_STUDY,
+  STYLE_IN_SETTINGS,
+  STUDY_OFFER_LATER,
   CLASH_BODY,
   clashLine,
   CURRENT_STYLE_LABEL,
@@ -1013,6 +1015,10 @@ describe("Learn this library's words in Settings", () => {
     expect(LOW_CONFIDENCE).toBe("Avanzel isn't sure about this folder.");
     expect(HOUSE_STYLE_LABEL).toBe("How this library is written");
     expect(CURRENT_STYLE_LABEL).toBe("The style in use now");
+    expect(STYLE_IN_SETTINGS).toBe(
+      "Your AGENTS.md is your own, so the style is kept in Avanzel's settings and given to the agent with each filing.",
+    );
+    expect(STUDY_OFFER_LATER).toBe("Not now");
     expect(APPLY_STUDY).toBe("Apply");
     expect(DISCARD_STUDY).toBe("Discard");
     expect(STUDY_FAILED_SAFE).toBe("Nothing in your library changed. What was studied so far is kept.");

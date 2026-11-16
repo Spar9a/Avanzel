@@ -54,12 +54,29 @@ export function parseStudyApply(raw: unknown): StudyApply | null {
   for (const item of raw.shelves) {
     if (!isObject(item)) return null;
     const { folder, name, definition, map, fileHere } = item;
-    if (typeof folder !== "string" || typeof name !== "string" || typeof definition !== "string" || typeof map !== "string" || typeof fileHere !== "boolean") {
+    if (
+      typeof folder !== "string" ||
+      typeof name !== "string" ||
+      typeof definition !== "string" ||
+      typeof map !== "string" ||
+      (typeof fileHere !== "boolean" && fileHere !== "skip")
+    ) {
       return null;
     }
     shelves.push({ folder, name, definition, map, fileHere });
   }
   return { shelves, style: raw.style };
+}
+
+/**
+ * Why Apply is refused before it reaches the library, or null when it may go on: no study waits for review (`study`), or `apply` names a
+ * folder its proposal doesn't (compared as the disk does, `folderKey`). In words for the window's Notice; nothing was applied either way.
+ */
+export function studyApplyRefusal(apply: StudyApply, study: StudyState): string | null {
+  if (study.kind !== "ready") return "No study is waiting for review, so nothing was applied. Run Learn this library again.";
+  const proposed = new Set(study.proposal.shelves.map((shelf) => folderKey(shelf.folder)));
+  const stray = apply.shelves.find((item) => !proposed.has(folderKey(item.folder)));
+  return stray ? `${stray.folder} isn't in the study's proposal, so nothing was applied. Review the study again.` : null;
 }
 
 /** What is told once an Undo has taken back a study's Apply (by notification: no filed card is of it), or the refusal of any Undo. */

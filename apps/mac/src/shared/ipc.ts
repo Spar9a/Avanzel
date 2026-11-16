@@ -217,6 +217,8 @@ export interface StudyProposal {
   attachments: string[];
   /** Avanzel's folders that already hold notes of the owner's. */
   clashes: string[];
+  /** Whether Apply writes the style into the library's AGENTS.md; false when that file is the owner's own, and the style stays in settings. */
+  styleInAgents: boolean;
 }
 
 /** What Learn this library will do, in numbers, before the owner agrees to it: the engine's `StudyPreview`. */
@@ -226,9 +228,13 @@ export interface StudyPreview {
   steps: number;
 }
 
-/** What the owner chose of a study's proposal (the engine's `StudyApply`): each folder to file into (`fileHere`) or leave out, and the house style. */
+/**
+ * What the owner chose of a study's proposal (the engine's `StudyApply`), and the house style. Each folder is filed into (`fileHere:
+ * true`), left out because the owner switched it off (`false`, remembered as excluded), or left as it is (`"skip"`: off, and never
+ * switched by the owner, so a later study reaches it again).
+ */
 export interface StudyApply {
-  shelves: { folder: string; name: string; definition: string; map: string; fileHere: boolean }[];
+  shelves: { folder: string; name: string; definition: string; map: string; fileHere: boolean | "skip" }[];
   style: string;
 }
 

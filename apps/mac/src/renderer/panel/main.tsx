@@ -21,8 +21,8 @@ import { isSettingsPane, PANEL_TABS, type AskResult, type AvanzelBridge, type Ch
 import { AGENT_SHELF_ASK, agentShelfTitle, EDIT_FIRST, MAKE_SHELF, SAY_NO } from "../capsule/copy.ts";
 import { anyShelfOf } from "../common/shelf.ts";
 import { SettingsApp } from "../settings/SettingsApp.tsx";
-import { LEARN_LIBRARY, STUDY_FAILED_SAFE, STUDY_OFFER_BODY, STUDY_OFFER_TITLE, STUDY_READY_TITLE, STUDY_STOP, studyRunningLine, UPDATE_NOT_NOW, updateReadyState } from "../settings/copy.ts";
-import { CHAT_CLEARED, CHAT_EMPTY, CHAT_FIELD, CHAT_FIRST, CHAT_FOLLOW_UP, CONTINUE_IN_CHAT, NEW_CHAT, inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, REVIEW_STUDY, shelfMakesLine, shelfQuestion, SORTS, sortLabel, sortPages, STUDY_OFFER_LATER, STUDY_OPEN_SETTINGS, type PageFilter, type PageSort } from "./copy.ts";
+import { LEARN_LIBRARY, STUDY_FAILED_SAFE, STUDY_OFFER_BODY, STUDY_OFFER_LATER, STUDY_OFFER_TITLE, STUDY_READY_TITLE, STUDY_STOP, studyRunningLine, UPDATE_NOT_NOW, updateReadyState } from "../settings/copy.ts";
+import { CHAT_CLEARED, CHAT_EMPTY, CHAT_FIELD, CHAT_FIRST, CHAT_FOLLOW_UP, CONTINUE_IN_CHAT, NEW_CHAT, inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, REVIEW_STUDY, shelfMakesLine, shelfQuestion, SORTS, sortLabel, sortPages, STUDY_OPEN_SETTINGS, type PageFilter, type PageSort } from "./copy.ts";
 import { shelfBusy, type ShelfPress } from "./shelf-busy.ts";
 import "./styles.css";
 

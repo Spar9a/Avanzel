@@ -206,7 +206,7 @@ import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, u
 import { answeredBy, ShelfSuggestions, type PendingShelf } from "./shelf-suggestions.ts";
 import { askOf, libraryAskOf, ownShelvesInfo, parseShelfAsk, parseShelfOp, shelfUndoNotice } from "./shelf-asks.ts";
 import { shelfMadeNotes, type NotMovedReason } from "../shared/shelves.ts";
-import { parseStudyApply, studyEndedState, studyFailureMessage, studyOffered, studyUndoNotice, unlearnedFoldersOf } from "./study-state.ts";
+import { parseStudyApply, studyApplyRefusal, studyEndedState, studyFailureMessage, studyOffered, studyUndoNotice, unlearnedFoldersOf } from "./study-state.ts";
 import { cursorShortcutProblemOf, freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
@@ -4548,7 +4548,8 @@ export class Controller {
   /**
    * Apply, on the study's review screen: what the owner chose (`raw`, checked by `parseStudyApply`) becomes shelves, left-out folders and
    * the house style, as one commit, in turn with the library's other runs. That commit is the library's latest Undo, kept as a made shelf
-   * is (`undoRecords`, `learned`), whose Undo says what went. Refused while a study runs; a second press while one goes does nothing.
+   * is (`undoRecords`, `learned`), whose Undo says what went. Refused while a study runs, and when no study waits for review or `raw`
+   * names a folder its proposal doesn't (`studyApplyRefusal`); a second press while one goes does nothing.
    * What the engine refuses (a name that is taken, a file in a folder's way) rejects, with nothing changed.
    */
   async applyStudy(raw: unknown): Promise<SettingsSnapshot> {
@@ -4557,6 +4558,8 @@ export class Controller {
     const vault = this.requireVault();
     this.refuseWhileStudying();
     if (this.studyChanging) return this.snapshot();
+    const refusal = studyApplyRefusal(apply, this.study);
+    if (refusal) throw new AvanzelError(refusal);
     const root = vault.root;
     this.studyChanging = true;
     try {
