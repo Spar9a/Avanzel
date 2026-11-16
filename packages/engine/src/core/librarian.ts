@@ -31,7 +31,7 @@ import {
 import { createInside, lstatOrNull, realFoldersTo, removeInside, replaceInside, writeInside } from "./inside.ts";
 import { parseDictionary } from "./dictionary.ts";
 import { findNotes, type FoundNote } from "./notes-find.ts";
-import { addLearnedNotes, captureKept, readLearnedNotes, restoreKept, type KeptNotes } from "./old-notes.ts";
+import { addLearnedNotes, captureKept, keptPaths, readLearnedNotes, restoreKept, type KeptNotes } from "./old-notes.ts";
 import { askPrompt, filePrompt, reviewPrompt, type AskTurn, type ShelfNote } from "./prompts.ts";
 import {
   BUILT_IN_DEFINITIONS,
@@ -140,10 +140,15 @@ export interface FileOutcome {
    */
   suggestion: ShelfSuggestion | null;
   /**
-   * What was put back after the run (`restoreKept`), library-relative and sorted: the owner's notes from before the library was learned
-   * that the run rewrote or deleted, and what it created, changed or deleted in a folder the owner left out. These are not in `changes`.
+   * The owner's notes from before the library was learned that the run rewrote or deleted, which were put back as they were
+   * (`restoreKept`'s `old`), library-relative and sorted. These are not in `changes`.
    */
   keptOld: string[];
+  /**
+   * What the run created, changed or deleted in a folder the owner left out, which was put back as it was or, when the run made it, taken
+   * away (`restoreKept`'s `out`), library-relative and sorted. These are not in `changes` either.
+   */
+  keptOut: string[];
   /** The folders this filing made inside one of the owner's shelves, below its top level (`newSubfolders`), library-relative and sorted. */
   newFolders: string[];
 }
@@ -833,13 +838,14 @@ export class Librarian {
     // `after` is from before the guard and the capture's restoral put anything back. What they touch is left out: the
     // capture is in inbox/ or raw/, and the guard lists what it put back; so is what `restoreKept` put back.
     const run = diff(before, after).without([...SOURCES, ...guarded]);
-    const keptOld = restoreKept(root, kept, run);
-    const changes = run.without(keptOld);
+    const putBack = restoreKept(root, kept, run);
+    const { old: keptOld, out: keptOut } = putBack;
+    const changes = run.without(keptPaths(putBack));
     const newFolders = newSubfolders(changes.created, before.keys(), this.settings.shelves);
     const refused = result.refused.map((refusedPath) => insideLibrary(root, refusedPath) ?? refusedPath);
     const restored = restoral === "restored";
-    const ran = { agent, changes, message: result.output, restored, savedOriginal, guarded, refused, keptOld, newFolders };
-    const error = this.#notFiled(result, restoral, changes, captureId, archiveRel, keptOld);
+    const ran = { agent, changes, message: result.output, restored, savedOriginal, guarded, refused, keptOld, keptOut, newFolders };
+    const error = this.#notFiled(result, restoral, changes, captureId, archiveRel, keptPaths(putBack));
     if (error !== null) {
       // What the run left behind (it failed, timed out, was cancelled or filed nothing) is its own
       // commit, handed out with the outcome so Undo covers it; a run that changed nothing makes none.
@@ -969,10 +975,10 @@ export class Librarian {
    * a person knows it: a card keeps only about the first 100 characters of a line, and a capture's id is long, while the card
    * and the evening review's digest already say which note it is.
    */
-  #notFiled(result: RunResult, restoral: Restoral, changes: Changes, captureId: string, archiveRel: string, keptOld: readonly string[]): string | null {
+  #notFiled(result: RunResult, restoral: Restoral, changes: Changes, captureId: string, archiveRel: string, putBack: readonly string[]): string | null {
     if (!result.ok) return (result.stderr || result.output).trim().slice(-800);
     if (restoral === "blocked") return "A symlink in inbox/ kept Avanzel from putting back the words the agent changed.";
-    if (keptOld.length && !changes.pages.length) {
+    if (putBack.length && !changes.pages.length) {
       // Its log line may name a page, but everything it wrote was put back (`restoreKept`): the thought is on no shelf.
       return (
         `${agentName(this.harness.name)} only changed notes it may not rewrite, so they were put back as they were. ` +
@@ -1071,7 +1077,7 @@ export class Librarian {
       const kept = save ? this.#keptNotes(before) : null; // a read-only run has no write tools
       const { result, guarded } = await this.#run(prompt, { write: save, signal });
       const ran = diff(before, snapshot(this.vault.root)).without(guarded);
-      const changes = kept ? ran.without(restoreKept(this.vault.root, kept, ran)) : ran;
+      const changes = kept ? ran.without(keptPaths(restoreKept(this.vault.root, kept, ran))) : ran;
       let commit: string | null = null;
       const saved = changes.pages.filter(isShelfPage);
       if (save && result.ok && saved.length) {
@@ -1107,7 +1113,7 @@ export class Librarian {
         createInside(root, reportRel, `# Review ${localDate(now)}\n\n${result.output}\n`);
       }
       const ran = diff(before, snapshot(root)).without(guarded);
-      const changes = ran.without(restoreKept(root, kept, ran));
+      const changes = ran.without(keptPaths(restoreKept(root, kept, ran)));
       let commit: string | null;
       if (result.ok) {
         if (!this.vault.logMentions(stem(report))) this.vault.appendLog("review", `[[${stem(report)}]]`, now);
@@ -1398,6 +1404,7 @@ function outcome(captureId: string, fields: Partial<Omit<FileOutcome, "captureId
     failure: null,
     suggestion: null,
     keptOld: [],
+    keptOut: [],
     newFolders: [],
     ...fields,
   };

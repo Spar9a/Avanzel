@@ -108,6 +108,7 @@ describe.skipIf(!git.available())("filing in a learned library", () => {
       expect(outcome!.archivedTo).toBeNull();
       expect(existsSync(made.path)).toBe(true);
       expect(outcome!.keptOld).toEqual(["Philosophy/Stoicism/Seneca.md"]);
+      expect(outcome!.keptOut).toEqual([]);
       expect(outcome!.changes.modified).not.toContain("Philosophy/Stoicism/Seneca.md");
       expect(readFileSync(join(vault.root, "Philosophy/Stoicism/Seneca.md"), "utf8")).toBe(SENECA);
       expect(gitOut("status", "--porcelain")).toBe("");
@@ -155,7 +156,9 @@ describe.skipIf(!git.available())("filing in a learned library", () => {
       expect(outcome!.ok).toBe(false);
       expect(outcome!.error).toContain(NOT_FILED);
       expect(existsSync(made.path)).toBe(true);
-      expect(outcome!.keptOld).toEqual([page]);
+      // A page the run made in a folder the owner left out was taken away, not kept as it was: it isn't one of their old notes.
+      expect(outcome!.keptOld).toEqual([]);
+      expect(outcome!.keptOut).toEqual([page]);
       expect(outcome!.newFolders).toEqual([]);
       expect(outcome!.changes.created).not.toContain(page);
       expect(existsSync(join(vault.root, page))).toBe(false);

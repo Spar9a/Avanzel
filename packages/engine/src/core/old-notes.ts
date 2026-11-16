@@ -100,11 +100,24 @@ function clearObstacles(root: string, rel: string): void {
 }
 
 /**
+ * What `restoreKept` really did, library-relative and sorted. `old`: learned notes put back as they were. `out`: what was put back or
+ * removed under an excluded folder; a file the run made there is gone rather than kept, so it is told apart from the old notes.
+ */
+export interface RestoredKept {
+  old: string[];
+  out: string[];
+}
+
+/** Every path `restoreKept` put back or removed, which a run's changes leave out. */
+export const keptPaths = (kept: RestoredKept): string[] => [...kept.old, ...kept.out];
+
+/**
  * Undo what `changes` did to what `captureKept` read: a learned note that was deleted, or whose lines were not all kept, gets its old bytes
  * back; anything created, changed or deleted under an excluded folder is put back as it was (what was created is removed; a file or link
- * made where the folder was is cleared away). Only what was really done is reported: the paths put back or removed, sorted.
+ * made where the folder was is cleared away). Only what was really done is reported: the learned notes put back (`old`), and the paths put
+ * back or removed under an excluded folder (`out`), each sorted. A learned note under an excluded folder counts as `out`.
  */
-export function restoreKept(root: string, kept: KeptNotes, changes: Changes): string[] {
+export function restoreKept(root: string, kept: KeptNotes, changes: Changes): RestoredKept {
   const done = new Set<string>();
   const putBack = (rel: string, bytes: Buffer) => {
     clearObstacles(root, rel);
@@ -136,5 +149,7 @@ export function restoreKept(root: string, kept: KeptNotes, changes: Changes): st
     }
     if (text === null || !keepsOldLines(old.toString("utf8"), text)) putBack(rel, old);
   }
-  return [...done].sort();
+  const all = [...done].sort();
+  const out = all.filter((rel) => underExcluded(kept.folders, rel));
+  return { old: all.filter((rel) => !underExcluded(kept.folders, rel)), out };
 }

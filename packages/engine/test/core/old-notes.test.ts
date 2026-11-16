@@ -7,6 +7,7 @@ import {
   addLearnedNotes,
   captureKept,
   keepsOldLines,
+  keptPaths,
   readLearnedNotes,
   restoreKept,
 } from "../../src/core/old-notes.ts";
@@ -73,7 +74,7 @@ describe("keeping the owner's old notes", () => {
       writeFileSync(join(root, "Shelf/added.md"), "x\nnote\ny\nmore\n");
       writeFileSync(join(root, "Shelf/new-to-me.md"), "changed freely\n");
     });
-    expect(put).toEqual(["Shelf/deleted.md", "Shelf/rewritten.md"]);
+    expect(put).toEqual({ old: ["Shelf/deleted.md", "Shelf/rewritten.md"], out: [] });
     expect(read(root, "Shelf/rewritten.md")).toBe("one\ntwo\n");
     expect(read(root, "Shelf/deleted.md")).toBe("keep me\n");
     expect(read(root, "Shelf/added.md")).toBe("x\nnote\ny\nmore\n");
@@ -92,11 +93,25 @@ describe("keeping the owner's old notes", () => {
       write(root, "Рецепты/новый.md", "made by the run\n");
       write(root, "Other/y.md", "outside\n");
     });
-    expect(put).toEqual(["Рецепты/борщ.md", "Рецепты/новый.md", "Рецепты/суп/плов.md"]);
+    expect(put).toEqual({ old: [], out: ["Рецепты/борщ.md", "Рецепты/новый.md", "Рецепты/суп/плов.md"] });
     expect(read(root, "Рецепты/борщ.md")).toBe("свекла\n");
     expect(read(root, "Рецепты/суп/плов.md")).toBe("рис\n");
     expect(existsSync(join(root, "Рецепты/новый.md"))).toBe(false);
     expect(existsSync(join(root, "Other/y.md"))).toBe(true);
+  });
+
+  it("tells the learned notes it put back apart from what it put back or took away in an excluded folder", () => {
+    const root = tmp();
+    write(root, "Shelf/old.md", "one\n");
+    write(root, "Рецепты/борщ.md", "свекла\n");
+    const kept = captureKept(root, new Set(["Shelf/old.md"]), ["Рецепты"], visibleFiles(root));
+    const put = run(root, kept, () => {
+      writeFileSync(join(root, "Shelf/old.md"), "rewritten\n");
+      writeFileSync(join(root, "Рецепты/борщ.md"), "changed\n");
+      write(root, "Рецепты/новый.md", "made by the run\n");
+    });
+    expect(put).toEqual({ old: ["Shelf/old.md"], out: ["Рецепты/борщ.md", "Рецепты/новый.md"] });
+    expect(keptPaths(put)).toEqual(["Shelf/old.md", "Рецепты/борщ.md", "Рецепты/новый.md"]);
   });
 
   it("matches an excluded folder kept in decomposed Unicode on disk", () => {
@@ -109,7 +124,9 @@ describe("keeping the owner's old notes", () => {
       writeFileSync(join(root, `${onDisk}/menu.md`), "changed\n");
       rmSync(join(root, `${onDisk}/old.md`));
     });
-    expect(put).toHaveLength(2);
+    // A learned note inside an excluded folder is told as what was put back there.
+    expect(put.old).toEqual([]);
+    expect(put.out).toHaveLength(2);
     expect(read(root, `${onDisk}/menu.md`)).toBe("tea\n");
     expect(read(root, `${onDisk}/old.md`)).toBe("coffee\n");
   });
@@ -120,7 +137,7 @@ describe("keeping the owner's old notes", () => {
     write(root, onDisk, "one\n");
     const kept = captureKept(root, new Set(["Café/ñ.md".normalize("NFC")]), [], visibleFiles(root));
     const put = run(root, kept, () => writeFileSync(join(root, onDisk), "two\n"));
-    expect(put).toEqual([onDisk]);
+    expect(put).toEqual({ old: [onDisk], out: [] });
     expect(read(root, onDisk)).toBe("one\n");
   });
 
@@ -149,7 +166,7 @@ describe("keeping the owner's old notes", () => {
       writeFileSync(join(root, "Рецепты/photo.png"), "changed");
       write(root, "Рецепты/new.png", "made");
     });
-    expect(put).toEqual(["Рецепты/new.png", "Рецепты/борщ.md"]);
+    expect(put).toEqual({ old: [], out: ["Рецепты/new.png", "Рецепты/борщ.md"] });
     expect(read(root, "Рецепты/photo.png")).toBe("changed");
     expect(existsSync(join(root, "Рецепты/new.png"))).toBe(false);
   });
@@ -163,7 +180,7 @@ describe("keeping the owner's old notes", () => {
       rmSync(join(root, "Рецепты"), { recursive: true });
       writeFileSync(join(root, "Рецепты"), "a file now");
     });
-    expect(put).toEqual(["Рецепты", "Рецепты/борщ.md", "Рецепты/суп/плов.md"]);
+    expect(put).toEqual({ old: [], out: ["Рецепты", "Рецепты/борщ.md", "Рецепты/суп/плов.md"] });
     expect(read(root, "Рецепты/борщ.md")).toBe("свекла\n");
     expect(read(root, "Рецепты/суп/плов.md")).toBe("рис\n");
   });
@@ -178,7 +195,7 @@ describe("keeping the owner's old notes", () => {
       rmSync(join(root, "Рецепты"), { recursive: true });
       symlinkSync(elsewhere, join(root, "Рецепты"));
     });
-    expect(put).toEqual(["Рецепты/борщ.md"]);
+    expect(put).toEqual({ old: [], out: ["Рецепты/борщ.md"] });
     expect(read(root, "Рецепты/борщ.md")).toBe("свекла\n");
     expect(existsSync(join(elsewhere, "борщ.md"))).toBe(false); // nothing was written through the link
   });
@@ -191,7 +208,7 @@ describe("keeping the owner's old notes", () => {
       rmSync(join(root, "S"), { recursive: true });
       writeFileSync(join(root, "S"), "a file now");
     });
-    expect(put).toEqual(["S/a.md"]);
+    expect(put).toEqual({ old: ["S/a.md"], out: [] });
     expect(read(root, "S/a.md")).toBe("a\n");
   });
 
@@ -200,7 +217,7 @@ describe("keeping the owner's old notes", () => {
     write(lib.root, "Shelf/old.md", "first\nsecond\n");
     const kept = captureKept(lib.root, new Set(["Shelf/old.md"]), [], visibleFiles(lib.root));
     const put = run(lib.root, kept, () => writeFileSync(join(lib.root, "Shelf/old.md"), "second\n"));
-    expect(put).toEqual(["Shelf/old.md"]);
+    expect(put).toEqual({ old: ["Shelf/old.md"], out: [] });
     expect(read(lib.root, "Shelf/old.md")).toBe("first\nsecond\n");
   });
 });

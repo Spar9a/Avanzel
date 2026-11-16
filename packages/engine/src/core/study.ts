@@ -509,6 +509,8 @@ export function buildProposal(
   const shelves = plan.folders.map((folder): ProposedShelf => {
     const summary = summaries[folder] ?? null;
     const proposed = combined?.shelves.find((shelf) => shelf.folder === folder);
+    // Every own shelf has a definition (config.ts refuses one under 1 character), so `hasDefinition` is false only for a folder that is no
+    // shelf yet, whose new definition Apply takes; Apply gives an existing shelf only its map.
     const own = current.shelves.find((shelf) => folderKey(shelf.folder) === folderKey(folder) && shelf.definition.trim() !== "");
     return {
       folder,
