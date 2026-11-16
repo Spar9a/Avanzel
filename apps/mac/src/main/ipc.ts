@@ -113,6 +113,8 @@ export function registerIpc(controller: Controller): void {
   handle("settings:apply-study", (_e, apply: unknown) => controller.applyStudy(apply));
   handle("settings:discard-study", () => controller.discardStudy());
   handle("settings:set-house-style", (_e, style: unknown) => controller.setHouseStyle(style));
+  on("settings:drop-study-preview", () => controller.dropStudyPreview());
+  on("settings:dismiss-study-offer", () => controller.dismissStudyOffer());
   handle("settings:download-hosted", (_e, id: unknown) => controller.downloadHosted(String(id)));
   handle("settings:cancel-hosted-download", (_e, id: unknown) => controller.cancelHostedDownload(String(id)));
   handle("settings:cancel-speech-model-download", () => controller.cancelSpeechModelDownload());

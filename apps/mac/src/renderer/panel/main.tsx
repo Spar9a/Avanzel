@@ -21,8 +21,8 @@ import { isSettingsPane, PANEL_TABS, type AskResult, type AvanzelBridge, type Ch
 import { AGENT_SHELF_ASK, agentShelfTitle, EDIT_FIRST, MAKE_SHELF, SAY_NO } from "../capsule/copy.ts";
 import { anyShelfOf } from "../common/shelf.ts";
 import { SettingsApp } from "../settings/SettingsApp.tsx";
-import { LEARN_LIBRARY, STUDY_OFFER_BODY, STUDY_OFFER_TITLE, STUDY_READY_TITLE, STUDY_STOP, studyRunningLine, UPDATE_NOT_NOW, updateReadyState } from "../settings/copy.ts";
-import { CHAT_CLEARED, CHAT_EMPTY, CHAT_FIELD, CHAT_FIRST, CHAT_FOLLOW_UP, CONTINUE_IN_CHAT, NEW_CHAT, inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, REVIEW_STUDY, shelfMakesLine, shelfQuestion, SORTS, sortLabel, sortPages, STUDY_OFFER_LATER, type PageFilter, type PageSort } from "./copy.ts";
+import { LEARN_LIBRARY, STUDY_FAILED_SAFE, STUDY_OFFER_BODY, STUDY_OFFER_TITLE, STUDY_READY_TITLE, STUDY_STOP, studyRunningLine, UPDATE_NOT_NOW, updateReadyState } from "../settings/copy.ts";
+import { CHAT_CLEARED, CHAT_EMPTY, CHAT_FIELD, CHAT_FIRST, CHAT_FOLLOW_UP, CONTINUE_IN_CHAT, NEW_CHAT, inboxLine, notesLabel, pageDay,reviewOutcome, reviewState, REVIEW_STUDY, shelfMakesLine, shelfQuestion, SORTS, sortLabel, sortPages, STUDY_OFFER_LATER, STUDY_OPEN_SETTINGS, type PageFilter, type PageSort } from "./copy.ts";
 import { shelfBusy, type ShelfPress } from "./shelf-busy.ts";
 import "./styles.css";
 
@@ -939,9 +939,9 @@ function ShelfQuestion({ ask, snap }: { ask: LibraryShelfAsk; snap: PanelSnapsho
 
 /**
  * Learn this library's card at the top of Library: while a study runs, how far it is, with Stop (busy once pressed, until the step in
- * flight ends); once one is ready, Review, which opens Settings → General on its review screen; else, while the library has folders of the
- * owner's own to learn and the card wasn't put away, the offer, with Not now and Learn this library… (Settings, where the cost is shown
- * before anything starts). Nothing for a study that paused on a failed run: Settings says why and goes on with it.
+ * flight ends); once one is ready, Review, which opens Settings → General on its review screen; a study that paused on a failed run, in
+ * the engine's words, with Open Settings, where it goes on; else, while the library has folders of the owner's own to learn and the card
+ * wasn't put away, the offer, with Not now and Learn this library…, which opens Settings → General showing what a study costs.
  */
 function StudyCard({ snap }: { snap: PanelSnapshot }) {
   const study = snap.study;
@@ -969,14 +969,30 @@ function StudyCard({ snap }: { snap: PanelSnapshot }) {
       />
     );
   }
+  if (study.kind === "failed") {
+    return (
+      <Notice
+        tone="error"
+        title={study.message}
+        actions={
+          <Actions align="start">
+            <Button size="small" variant="secondary" onClick={() => act("study-review")}>{STUDY_OPEN_SETTINGS}</Button>
+          </Actions>
+        }
+      >
+        {STUDY_FAILED_SAFE}
+      </Notice>
+    );
+  }
   if (!snap.studyOffer) return null;
+  // Its button is a secondary: the shelf questions under it have the place's primary.
   return (
     <Notice
       title={STUDY_OFFER_TITLE}
       actions={
         <Actions align="start">
           <Button size="small" variant="quiet" onClick={() => act("study-offer-later")}>{STUDY_OFFER_LATER}</Button>
-          <Button size="small" variant="primary" onClick={() => act("study-review")}>{LEARN_LIBRARY}</Button>
+          <Button size="small" variant="secondary" onClick={() => act("study-learn")}>{LEARN_LIBRARY}</Button>
         </Actions>
       }
     >

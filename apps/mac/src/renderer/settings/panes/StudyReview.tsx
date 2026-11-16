@@ -1,62 +1,58 @@
 // Settings → General, in place of Your shelves while a study waits for review: what Avanzel learned of each of the owner's folders, to
 // check and change before anything is written. Each folder has File here, what belongs on it and its map; one that is already a shelf of
 // the owner's keeps its definition and takes only its map. Then the house style the study wrote, beside the one in use, the folders of
-// the owner's that carry a name of Avanzel's own, and Discard and Apply. Apply sends what the owner chose (`settings.applyStudy`), as one
-// change Undo takes back; a refusal is told by the window's Notice (`attemptChange`).
-import { Actions, Button, Group, GroupReveal, Stack, Switch, Text, TextArea } from "@avanzel/ui";
+// the owner's that carry a name of Avanzel's own, and Discard (which asks first) and Apply. Apply sends what the owner chose
+// (`settings.applyStudy`), as one change Undo takes back; a refusal is told by the window's Notice (`attemptChange`). What the owner
+// typed is kept by Settings (`useStudyReview`), not here, so it outlasts the pane and the window.
+import { Actions, Button, Confirm, Group, GroupReveal, Notice, Stack, Switch, Text, TextArea } from "@avanzel/ui";
 import { useState, type ReactNode } from "react";
-import type { ProposedShelf, StudyApply, StudyProposal } from "../../../shared/ipc.ts";
+import type { ProposedShelf, SettingsSnapshot, StudyProposal } from "../../../shared/ipc.ts";
 import {
   APPLY_STUDY,
+  CLASH_BODY,
   clashLine,
   CURRENT_STYLE_LABEL,
+  definitionLabel,
   DISCARD_STUDY,
-  FILE_HERE,
+  DISCARD_STUDY_QUESTION,
+  fileHereLabel,
   HOUSE_STYLE_LABEL,
   LOW_CONFIDENCE,
+  mapLabel,
   NOT_STUDIED,
   SAY_WHAT_BELONGS,
   SHELF_DEFINITION_LABEL,
-  STUDY_MAP_LABEL,
   STUDY_READY_TITLE,
   STUDY_REVIEW_NOTE,
 } from "../copy.ts";
 import { attemptChange, type PaneProps } from "../parts.tsx";
+import { draftOf, reviewKey, studyApplyOf, studyReady, type ReviewDraft, type ShelfEdit } from "../study-apply.ts";
 
 const api = window.avanzel.settings;
 
-/** What the owner made of one proposed folder: whether to file into it, and its definition and map as they stand in the fields. */
-interface ShelfEdit {
-  fileHere: boolean;
-  definition: string;
-  map: string;
+/** What Settings keeps of the review screen: the draft of the proposal that waits (null while none does), and the Apply or Discard going. */
+export interface StudyReviewState {
+  draft: ReviewDraft | null;
+  change(update: (draft: ReviewDraft) => ReviewDraft): void;
+  doing: "apply" | "discard" | null;
+  setDoing(doing: "apply" | "discard" | null): void;
 }
 
 /**
- * A folder starts turned on when it has something to say what belongs on it: an unstudied folder with no definition starts off, so
- * Apply isn't held back by a field the owner never asked for.
+ * The review screen's draft, kept by Settings so a return to General, or to Settings, finds it as it was. It is kept under the library and
+ * the proposal (`reviewKey`): another library, or another study's proposal, starts afresh from what the study proposed (`draftOf`).
  */
-const editOf = (shelf: ProposedShelf): ShelfEdit => ({
-  fileHere: shelf.hasDefinition || shelf.definition.trim() !== "",
-  definition: shelf.definition,
-  map: shelf.map,
-});
-
-/** The folders one by one: a folder that is already the owner's shelf is always filed into, and keeps its definition. */
-export function studyApplyOf(proposal: StudyProposal, edits: readonly ShelfEdit[], style: string): StudyApply {
-  return {
-    shelves: proposal.shelves.map((shelf, i) => {
-      const edit = edits[i] ?? editOf(shelf);
-      return {
-        folder: shelf.folder,
-        name: shelf.name,
-        definition: shelf.hasDefinition ? shelf.definition : edit.definition.trim(),
-        map: edit.map.trim(),
-        fileHere: shelf.hasDefinition || edit.fileHere,
-      };
-    }),
-    style: style.trim(),
-  };
+export function useStudyReview(snap: SettingsSnapshot | null): StudyReviewState {
+  const library = snap?.library?.path ?? null;
+  const proposal = snap?.study.kind === "ready" ? snap.study.proposal : null;
+  const key = library !== null && proposal ? reviewKey(library, proposal) : null;
+  const [kept, setKept] = useState<{ key: string | null; draft: ReviewDraft | null }>({ key: null, draft: null });
+  const [doing, setDoing] = useState<"apply" | "discard" | null>(null);
+  const draft = kept.key === key ? kept.draft : proposal ? draftOf(proposal) : null;
+  if (kept.key !== key) setKept({ key, draft });
+  const change = (update: (draft: ReviewDraft) => ReviewDraft) =>
+    setKept((now) => (now.key === key && now.draft ? { key, draft: update(now.draft) } : now));
+  return { draft, change, doing, setDoing };
 }
 
 /** Lines of text kept as lines: a style or a definition shown as read-only words, a paragraph each. */
@@ -73,11 +69,14 @@ function Lines({ text }: { text: string }): ReactNode {
   );
 }
 
-/** One proposed folder's group: File here (none on an existing shelf), what belongs on it, its map, and a line when it wasn't studied or Avanzel isn't sure. */
+/**
+ * One proposed folder's group: File here (none on an existing shelf), what belongs on it, its map, and a line when it wasn't studied or
+ * Avanzel isn't sure. Each control is named with the folder, as the group's heading doesn't name its rows.
+ */
 function ShelfGroup({ shelf, edit, onEdit }: { shelf: ProposedShelf; edit: ShelfEdit; onEdit(change: Partial<ShelfEdit>): void }): ReactNode {
   const map = shelf.map !== "" && (
     <div className="settings-editor">
-      <TextArea label={STUDY_MAP_LABEL} rows={4} value={edit.map} onChange={(next) => onEdit({ map: next })} />
+      <TextArea label={mapLabel(shelf.name)} rows={4} value={edit.map} onChange={(next) => onEdit({ map: next })} />
     </div>
   );
   const line = !shelf.studied ? NOT_STUDIED : shelf.confidence === "low" ? LOW_CONFIDENCE : null;
@@ -95,11 +94,11 @@ function ShelfGroup({ shelf, edit, onEdit }: { shelf: ProposedShelf; edit: Shelf
         </>
       ) : (
         <>
-          <Switch label={FILE_HERE} checked={edit.fileHere} onChange={(fileHere) => onEdit({ fileHere })} />
+          <Switch label={fileHereLabel(shelf.name)} checked={edit.fileHere} onChange={(fileHere) => onEdit({ fileHere })} />
           <GroupReveal open={edit.fileHere}>
             <div className="settings-editor">
               <TextArea
-                label={SHELF_DEFINITION_LABEL}
+                label={definitionLabel(shelf.name)}
                 rows={3}
                 value={edit.definition}
                 description={edit.definition.trim() === "" ? SAY_WHAT_BELONGS : undefined}
@@ -119,23 +118,24 @@ function ShelfGroup({ shelf, edit, onEdit }: { shelf: ProposedShelf; edit: Shelf
   );
 }
 
-/** The review screen of a study that is ready: `proposal` is `StudyState`'s. */
-export function StudyReview(props: PaneProps & { proposal: StudyProposal }): ReactNode {
-  const { proposal } = props;
-  const [edits, setEdits] = useState<ShelfEdit[]>(() => proposal.shelves.map(editOf));
-  const [style, setStyle] = useState(proposal.style);
-  const [doing, setDoing] = useState<"apply" | "discard" | null>(null);
-  // A folder turned on needs what belongs on it, unless it is already a shelf with one.
-  const ready = proposal.shelves.every((shelf, i) => shelf.hasDefinition || !edits[i]?.fileHere || edits[i].definition.trim() !== "");
+/** The review screen of a study that is ready: `proposal` is `StudyState`'s, and `review` what Settings keeps of it. */
+export function StudyReview(props: PaneProps & { proposal: StudyProposal; review: StudyReviewState }): ReactNode {
+  const { proposal, review } = props;
+  const draft = review.draft ?? draftOf(proposal);
+  const { doing } = review;
+  // Discard's question, over its button: what the study learned is gone once it is discarded.
+  const [asking, setAsking] = useState(false);
+  const ready = studyReady(proposal, draft.edits);
 
-  const edit = (i: number, change: Partial<ShelfEdit>) => setEdits((now) => now.map((one, at) => (at === i ? { ...one, ...change } : one)));
+  const edit = (i: number, change: Partial<ShelfEdit>) =>
+    review.change((now) => ({ ...now, edits: now.edits.map((one, at) => (at === i ? { ...one, ...change } : one)) }));
   const run = async (what: "apply" | "discard") => {
     if (doing) return;
-    setDoing(what);
+    review.setDoing(what);
     try {
-      await attemptChange(props, () => (what === "apply" ? api.applyStudy(studyApplyOf(proposal, edits, style)) : api.discardStudy()));
+      await attemptChange(props, () => (what === "apply" ? api.applyStudy(studyApplyOf(proposal, draft)) : api.discardStudy()));
     } finally {
-      setDoing(null);
+      review.setDoing(null);
     }
   };
 
@@ -148,11 +148,11 @@ export function StudyReview(props: PaneProps & { proposal: StudyProposal }): Rea
         </Stack>
       </div>
       {proposal.shelves.map((shelf, i) => (
-        <ShelfGroup key={shelf.folder} shelf={shelf} edit={edits[i] ?? editOf(shelf)} onEdit={(change) => edit(i, change)} />
+        <ShelfGroup key={shelf.folder} shelf={shelf} edit={draft.edits[i] ?? draftOf(proposal).edits[i]!} onEdit={(change) => edit(i, change)} />
       ))}
       <Group label={HOUSE_STYLE_LABEL}>
         <div className="settings-editor">
-          <TextArea label={HOUSE_STYLE_LABEL} labelHidden rows={6} value={style} onChange={setStyle} />
+          <TextArea label={HOUSE_STYLE_LABEL} labelHidden rows={6} value={draft.style} onChange={(style) => review.change((now) => ({ ...now, style }))} />
         </div>
         {proposal.currentStyle.trim() !== "" && (
           <div className="settings-words">
@@ -163,18 +163,27 @@ export function StudyReview(props: PaneProps & { proposal: StudyProposal }): Rea
           </div>
         )}
       </Group>
-      {proposal.clashes.length > 0 && (
-        <div className="settings-intro">
-          <Stack gap={4}>
-            {proposal.clashes.map((folder) => (
-              <Text key={folder} variant="footnote" tone="secondary">{clashLine(folder)}</Text>
-            ))}
-          </Stack>
-        </div>
-      )}
+      {proposal.clashes.map((folder) => (
+        <Notice key={folder} title={clashLine(folder)}>
+          {CLASH_BODY}
+        </Notice>
+      ))}
       <div className="settings-intro">
         <Actions>
-          <Button variant="secondary" busy={doing === "discard"} disabled={doing === "apply"} onClick={() => void run("discard")}>{DISCARD_STUDY}</Button>
+          <Confirm
+            open={asking}
+            question={DISCARD_STUDY_QUESTION}
+            confirmLabel={DISCARD_STUDY}
+            onConfirm={() => {
+              setAsking(false);
+              void run("discard");
+            }}
+            onCancel={() => setAsking(false)}
+          >
+            <Button variant="danger" expanded={asking} busy={doing === "discard"} disabled={doing === "apply"} onClick={() => setAsking(!asking)}>
+              {DISCARD_STUDY}
+            </Button>
+          </Confirm>
           <Button variant="primary" busy={doing === "apply"} disabled={!ready || doing === "discard"} onClick={() => void run("apply")}>{APPLY_STUDY}</Button>
         </Actions>
       </div>

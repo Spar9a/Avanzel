@@ -623,6 +623,8 @@ export class Controller {
   private readonly shelvesGoing = new Map<string, ShelfGoing["op"]>();
   /** Edit first's suggestion, for Settings → General's shelf form (`SettingsSnapshot.shelfDraft`), until the form takes it. */
   private shelfDraft: ShelfAsk | null = null;
+  /** The panel's Learn this library… asked Settings to show what a study costs (`SettingsSnapshot.studyPreviewAsked`), until it does. */
+  private studyPreviewAsked = false;
   /** Learn this library for the open library, as Settings and the panel show it (`startStudy`); read from its study files as it opens. */
   private study: StudyState = { kind: "idle", resumable: false };
   /**
@@ -3268,6 +3270,7 @@ export class Controller {
           // The folders it made in a shelf of the owner's, and what of theirs was put back: the card names them. Absent when none.
           ...(outcome.newFolders.length ? { newFolders: outcome.newFolders } : {}),
           ...(outcome.keptOld.length ? { keptOld: outcome.keptOld } : {}),
+          ...(outcome.keptOut.length ? { keptOut: outcome.keptOut } : {}),
         },
         // A card that asks about a shelf stays twice as long; when it goes, Library still asks.
         suggestion ? FILED_SHOW_MS * 2 : job.pages.length === 0 ? NO_NOTE_SHOW_MS : FILED_SHOW_MS,
@@ -4465,6 +4468,7 @@ export class Controller {
   private closeStudy(): void {
     this.studyRun?.abort.abort();
     this.study = { kind: "idle", resumable: false };
+    this.studyPreviewAsked = false; // asked of the library that closes
     this.unlearnedCache = null;
   }
 
@@ -4598,8 +4602,28 @@ export class Controller {
     return this.snapshot();
   }
 
-  /** Later, on the panel's card that offers Learn this library: it isn't offered for this library again. Settings still offers it. */
-  private dismissStudyOffer(): void {
+  /**
+   * Learn this library…, on the panel's card that offers it: Settings → General comes up in the panel and shows what a study costs at once
+   * (`studyPreviewAsked`, which rides on the settings snapshot until the shelves group takes it). Nothing without a library.
+   */
+  private askStudyPreview(): void {
+    if (!this.vault) return;
+    this.studyPreviewAsked = true;
+    this.showSettings("general"); // sends the snapshot, with the ask, once the panel is up
+  }
+
+  /** The shelves group took the ask (`settings.dropStudyPreview`); Settings is sent the snapshot without it. */
+  dropStudyPreview(): void {
+    if (!this.studyPreviewAsked) return;
+    this.studyPreviewAsked = false;
+    this.refreshSettings();
+  }
+
+  /**
+   * Not now, on the panel's card that offers Learn this library or on Settings' offer (`settings.dismissStudyOffer`): it isn't offered for
+   * this library again, in either. Settings still has its Learn this library… button.
+   */
+  dismissStudyOffer(): void {
     const vault = this.vault;
     if (!vault) return;
     const dismissed = this.store.get().studyOfferDismissed;
@@ -5486,6 +5510,7 @@ export class Controller {
     // Later on the one that offers it.
     if (action === "study-stop") return this.stopStudy();
     if (action === "study-review") return this.showSettings("general");
+    if (action === "study-learn") return this.askStudyPreview();
     if (action === "study-offer-later") return this.dismissStudyOffer();
     if (action.startsWith("queue-remove:")) return void this.removeQueued(action.slice(13));
     // Capture's Take a screenshot, each way of it.
@@ -6385,6 +6410,8 @@ export class Controller {
       update: this.updates.snapshot(),
       shelfDraft: this.shelfDraft,
       study: this.study,
+      studyPreviewAsked: this.studyPreviewAsked,
+      studyOfferDismissed: !!vault && this.store.get().studyOfferDismissed.includes(vault.root),
       mcpClients: [...MCP_CLIENTS],
       claudeCodeSetup: this.claudeCodeSetup,
     };

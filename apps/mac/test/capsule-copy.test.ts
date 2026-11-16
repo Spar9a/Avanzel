@@ -7,6 +7,8 @@ import {
   filedLine,
   keptOldLine,
   keptOldLines,
+  keptOutLine,
+  keptOutLines,
   newFolderLine,
   newFolderLines,
   MAKE_SHELF,
@@ -280,8 +282,18 @@ describe("the filed card's lines on what a filing did in the owner's own folders
     expect(keptOldLines(undefined)).toEqual([]);
   });
 
+  it("names what was put back or taken away in a folder the owner left out: a note without .md, any other file as it is", () => {
+    expect(keptOutLine("borscht")).toBe("borscht was taken out: Avanzel leaves that folder alone.");
+    expect(keptOutLines(["Recipes/soups/idea.md", "Recipes/photo.png", "Recipes"])).toEqual([
+      "idea was taken out: Avanzel leaves that folder alone.",
+      "photo.png was taken out: Avanzel leaves that folder alone.",
+      "Recipes was taken out: Avanzel leaves that folder alone.",
+    ]);
+    expect(keptOutLines(undefined)).toEqual([]);
+  });
+
   it("keep to the copy rules: no “!”, no three dots, no “I”", () => {
-    for (const line of [newFolderLine("Acme"), keptOldLine("Plan")]) {
+    for (const line of [newFolderLine("Acme"), keptOldLine("Plan"), keptOutLine("Soup")]) {
       expect(line, line).toMatch(/^\p{Lu}/u);
       expect(line, line).not.toContain("!");
       expect(line, line).not.toContain("...");

@@ -374,10 +374,15 @@ export type CapsuleState =
        */
       newFolders?: string[];
       /**
-       * What was put back after the run, library-relative (`FileOutcome.keptOld`): the owner's older notes that it rewrote, and what it
-       * did in a folder they left out. Absent when nothing was.
+       * The owner's older notes that the run rewrote and Avanzel put back as they were, library-relative (`FileOutcome.keptOld`). Absent
+       * when there were none.
        */
       keptOld?: string[];
+      /**
+       * What the run did in a folder the owner left out, put back or taken away, library-relative (`FileOutcome.keptOut`). Absent when
+       * there was nothing.
+       */
+      keptOut?: string[];
     }
   /**
    * Make shelf made `name`'s shelf: `moved` pages went onto it, and `notMoved` stayed where they were (one with that name was in its
@@ -833,6 +838,13 @@ export interface SettingsSnapshot {
   shelfDraft: ShelfAsk | null;
   /** Learn this library, for the open library (idle without one). */
   study: StudyState;
+  /**
+   * The panel's Learn this library… was pressed: Settings → General comes up and shows what a study costs at once. It stays until the
+   * shelves group takes it (`settings.dropStudyPreview`).
+   */
+  studyPreviewAsked: boolean;
+  /** The offer of Learn this library was put away for the open library (Not now, in the panel or in Settings): Settings shows only its button. */
+  studyOfferDismissed: boolean;
   /** The other agents Settings → Agents sets up to use the library (`Avanzel --mcp`), Claude Code first. */
   mcpClients: McpClientInfo[];
   /** What Add to Claude Code came to. */
@@ -1382,6 +1394,10 @@ export interface AvanzelBridge {
      * and leaving the study as it is. Rejects with what to do when it is too long.
      */
     setHouseStyle(style: string): Promise<SettingsSnapshot>;
+    /** The shelves group took the panel's ask to show what a study costs: `SettingsSnapshot.studyPreviewAsked` is false again. */
+    dropStudyPreview(): void;
+    /** Not now, on Settings' offer of Learn this library: it isn't offered for this library again, here or in the panel. */
+    dismissStudyOffer(): void;
     /** The private model's key, which the app keeps in the Keychain and never hands to a window: a new one. */
     /** Starts downloading a hosted model, which goes on in the background; the answer is the snapshot as it is then. */
     downloadHosted(id: string): Promise<SettingsSnapshot>;
@@ -1758,13 +1774,14 @@ export interface PanelSnapshot {
    */
   shelvesGoing: ShelfGoing[];
   /**
-   * Learn this library, for the open library: a card shows it running (`act("study-stop")`) or ready (`act("study-review")`, which opens
-   * Settings → General on the review). Idle without a library.
+   * Learn this library, for the open library: a card shows it running (`act("study-stop")`), ready (`act("study-review")`, which opens
+   * Settings → General on the review) or paused on a failed run (`act("study-review")` too). Idle without a library.
    */
   study: StudyState;
   /**
    * The card that offers Learn this library: the library has folders of the owner's own (`LibraryInfo.unlearnedFolders`), no study runs
-   * or waits for review, and the card wasn't put away for this library (`act("study-offer-later")`).
+   * or waits for review, and the card wasn't put away for this library (`act("study-offer-later")`). Its Learn this library…
+   * (`act("study-learn")`) opens Settings → General with what a study costs showing.
    */
   studyOffer: boolean;
 }

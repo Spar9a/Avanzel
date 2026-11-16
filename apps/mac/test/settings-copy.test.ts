@@ -112,10 +112,17 @@ import {
 } from "../src/renderer/settings/copy.ts";
 import {
   APPLY_STUDY,
+  CLASH_BODY,
   clashLine,
   CURRENT_STYLE_LABEL,
+  definitionLabel,
   DISCARD_STUDY,
+  DISCARD_STUDY_QUESTION,
   FILE_HERE,
+  fileHereLabel,
+  mapLabel,
+  REMOVE_HOUSE_STYLE_QUESTION,
+  START_OVER,
   HOUSE_STYLE_LABEL,
   HOUSE_STYLE_SAVE,
   LEARN_LIBRARY,
@@ -996,13 +1003,13 @@ describe("Learn this library's words in Settings", () => {
   it("keeps the fixed words of the offer, the confirm, the review and the house style", () => {
     expect(LEARN_LIBRARY).toBe("Learn this library…");
     expect(STUDY_OFFER_TITLE).toBe("This library has folders of its own.");
-    expect(STUDY_OFFER_BODY).toBe("Avanzel can study them and file the way you do. Nothing changes until you approve.");
+    expect(STUDY_OFFER_BODY).toBe("Avanzel can study them and file the way you do. Nothing changes until you apply.");
     expect(START_STUDY).toBe("Start study");
     expect(RESUME_STUDY).toBe("Go on with the study");
     expect(STUDY_READY_TITLE).toBe("The study is ready.");
     expect(STUDY_REVIEW_NOTE).toBe("Check what Avanzel learned. Turn off a folder to leave it alone. Nothing changes until you apply.");
     expect(FILE_HERE).toBe("File here");
-    expect(NOT_STUDIED).toBe("Not studied. Its notes couldn't be read this time.");
+    expect(NOT_STUDIED).toBe("Not studied. Its notes couldn't be read this time. Start a new study to try again.");
     expect(LOW_CONFIDENCE).toBe("Avanzel isn't sure about this folder.");
     expect(HOUSE_STYLE_LABEL).toBe("How this library is written");
     expect(CURRENT_STYLE_LABEL).toBe("The style in use now");
@@ -1012,14 +1019,24 @@ describe("Learn this library's words in Settings", () => {
     expect(STUDY_NOT_STARTED).toBe("The study didn't start.");
     expect([STUDY_MAP_LABEL, STUDY_STOP, HOUSE_STYLE_SAVE]).toEqual(["Map", "Stop", "Save"]);
     expect(STUDY_PROGRESS_LABEL).toBe("Studying the library");
+    expect(START_OVER).toBe("Start over");
+    expect(DISCARD_STUDY_QUESTION).toBe("Discard what the study learned?");
+    expect(REMOVE_HOUSE_STYLE_QUESTION).toBe("Remove the house style?");
+    expect(CLASH_BODY).toBe("Its notes stay where they are and weren't studied. Rename the folder to have them studied.");
   });
 
-  it("says what a study costs, in notes and folders, one or many", () => {
-    expect(studyCostLine({ folders: 3, notes: 120, steps: 4 })).toBe(
-      "Avanzel's agent reads up to 120 notes in 3 folders, one folder at a time, and proposes how to file into them. Nothing changes until you approve.",
+  it("names each folder's controls on the review screen, so VoiceOver tells one folder's from another's", () => {
+    expect(fileHereLabel("Philosophy")).toBe("File here: Philosophy");
+    expect(definitionLabel("Philosophy")).toBe("What belongs on Philosophy");
+    expect(mapLabel("Philosophy")).toBe("Map of Philosophy");
+  });
+
+  it("says what a study costs: the agent, the notes, the folders and the runs, one or many", () => {
+    expect(studyCostLine({ folders: 6, notes: 120, steps: 7 }, "Claude Code")).toBe(
+      "Claude Code reads up to 120 notes in 6 folders, in 7 runs, one folder at a time, and proposes how to file into them. Nothing changes until you apply.",
     );
-    expect(studyCostLine({ folders: 1, notes: 1, steps: 2 })).toBe(
-      "Avanzel's agent reads up to 1 note in 1 folder, one folder at a time, and proposes how to file into them. Nothing changes until you approve.",
+    expect(studyCostLine({ folders: 1, notes: 1, steps: 1 }, null)).toBe(
+      "Avanzel's agent reads up to 1 note in 1 folder, in 1 run, one folder at a time, and proposes how to file into them. Nothing changes until you apply.",
     );
   });
 
@@ -1030,14 +1047,18 @@ describe("Learn this library's words in Settings", () => {
   });
 
   it("names a folder of the owner's that has the name of one of Avanzel's", () => {
-    expect(clashLine("ideas")).toBe("Your ideas folder has the name Avanzel uses for its own ideas.");
+    expect(clashLine("ideas")).toBe("Your ideas folder has the name of Avanzel's own ideas.");
   });
 
   it("keeps to the copy rules: sentence case, a full stop or an ellipsis on sentences, no exclamation mark, no shouting", () => {
     const sentences = [
       STUDY_OFFER_TITLE,
       STUDY_OFFER_BODY,
-      studyCostLine({ folders: 2, notes: 30, steps: 3 }),
+      studyCostLine({ folders: 2, notes: 30, steps: 3 }, null),
+      studyCostLine({ folders: 2, notes: 30, steps: 3 }, "Codex"),
+      CLASH_BODY,
+      DISCARD_STUDY_QUESTION,
+      REMOVE_HOUSE_STYLE_QUESTION,
       studyRunningLine({ done: 1, steps: 3, current: "Work" }),
       studyRunningLine({ done: 2, steps: 3, current: "" }),
       studyRunningLine({ done: 0, steps: 0, current: "" }),
@@ -1049,8 +1070,10 @@ describe("Learn this library's words in Settings", () => {
       STUDY_NOT_STARTED,
       clashLine("people"),
     ];
-    const labels = [LEARN_LIBRARY, START_STUDY, RESUME_STUDY, FILE_HERE, HOUSE_STYLE_LABEL, CURRENT_STYLE_LABEL, APPLY_STUDY, DISCARD_STUDY, STUDY_MAP_LABEL, STUDY_STOP, HOUSE_STYLE_SAVE, STUDY_PROGRESS_LABEL];
-    for (const line of sentences) expect(line, line).toMatch(/^\p{Lu}[^!]*[.…]$/u);
+    const labels = [LEARN_LIBRARY, START_STUDY, RESUME_STUDY, START_OVER, FILE_HERE, HOUSE_STYLE_LABEL, CURRENT_STYLE_LABEL, APPLY_STUDY, DISCARD_STUDY, STUDY_MAP_LABEL, STUDY_STOP, HOUSE_STYLE_SAVE, STUDY_PROGRESS_LABEL];
+    for (const line of sentences) expect(line, line).toMatch(/^\p{Lu}[^!]*[.…?]$/u);
+    // The flow's button is Apply, so nothing says "approve".
+    for (const line of sentences) expect(line, line).not.toMatch(/approve/i);
     for (const label of labels) {
       expect(label, label).toMatch(/^\p{Lu}[^!.]*…?$/u);
       // Sentence case: no capital after the first word.

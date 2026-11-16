@@ -8,6 +8,7 @@ import { fileModeLine, libraryLine, RESTART_NOT_CALLED_OFF, RESTART_NOT_STARTED,
 import { attemptChange, NoLibrary, type PaneProps } from "../parts.tsx";
 import type { ReviewEdits } from "./Reviews.tsx";
 import { Shelves } from "./Shelves.tsx";
+import type { StudyReviewState } from "./StudyReview.tsx";
 
 const api = window.avanzel.settings;
 
@@ -97,7 +98,7 @@ function UpdatesGroup(props: PaneProps): ReactNode {
  * window ("That change wasn't saved."), as any change here is, and only there: the failure `edits` kept of it, which the
  * Reviews pane would tell again under the review, is cleared.
  */
-export function General(props: PaneProps & { edits: ReviewEdits }): ReactNode {
+export function General(props: PaneProps & { edits: ReviewEdits; review: StudyReviewState }): ReactNode {
   const { snap, onChange, attempt, edits } = props;
   const lib = snap.library;
   // The evening review, as the Reviews pane tells it from the others: by its kind. Tonight files only while it is on.

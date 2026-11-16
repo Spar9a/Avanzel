@@ -2,8 +2,8 @@
 // names it), the Notice for a call main refused, and the pane.
 // Each pane applies a change at once and draws the snapshot main sends back; a call main refuses is told in a Notice in a row of its own
 // above the pane (`attempt`), which stays in view however far the pane is scrolled, and which keeps the control that has the focus in
-// view. Settings keeps the reviews' open editor, their saves on the way and the failure of the last one, and the drafts of the lists
-// and their saves on the way, which outlast the pane.
+// view. Settings keeps the reviews' open editor, their saves on the way and the failure of the last one, the drafts of the lists and
+// their saves on the way, and the draft of a study's review, which outlast the pane.
 import { Notice, TabPanel, Tabs, type TabOption } from "@avanzel/ui";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { SETTINGS_PANES, isSettingsPane, type AvanzelBridge, type SettingsPane, type SettingsSnapshot } from "../../shared/ipc.ts";
@@ -15,6 +15,7 @@ import { General } from "./panes/General.tsx";
 import { Privacy } from "./panes/Privacy.tsx";
 import { Reviews, useReviewEdits, type ReviewEdits } from "./panes/Reviews.tsx";
 import { ShortcutsPane } from "./panes/Shortcuts.tsx";
+import { useStudyReview, type StudyReviewState } from "./panes/StudyReview.tsx";
 import { Voice } from "./panes/Voice.tsx";
 import { NoLibrary, type PaneProps } from "./parts.tsx";
 import "./styles.css";
@@ -35,10 +36,10 @@ const FOCUS_ROOM = 16;
  * its own hooks. Voice, Shortcuts, Dictation (the history is the app's own) and Privacy need none, and General shows the Notice itself,
  * among its other groups. Reviews, and General, which can turn the evening review on, are given Settings' `edits`.
  */
-function paneContent(pane: SettingsPane, props: PaneProps, edits: ReviewEdits, drafts: LibraryDrafts, listing: DictationListing): ReactNode {
+function paneContent(pane: SettingsPane, props: PaneProps, edits: ReviewEdits, drafts: LibraryDrafts, listing: DictationListing, review: StudyReviewState): ReactNode {
   switch (pane) {
     case "general":
-      return <General {...props} edits={edits} />;
+      return <General {...props} edits={edits} review={review} />;
     case "voice":
       return <Voice {...props} drafts={drafts} />;
     case "shortcuts":
@@ -111,6 +112,8 @@ export function SettingsApp({ startPane }: { startPane?: SettingsPane }) {
   const drafts = useLibraryDrafts(snap, draw, attempt);
   // And the dictation history, listed as Settings opens: the Dictation pane has its whole height the moment it shows.
   const listing = useDictationListing();
+  // And what the owner made of a study's proposal on General's review screen, and its Apply or Discard on the way.
+  const review = useStudyReview(snap);
   // Whether a press of the pointer on the tabs is under way: from its pointer-down to just after its release, which is where
   // the click that shows a pane comes. The press took the problem the person had seen away as it began (below); a refusal that
   // comes in during it, as a field's save does when the press takes the focus out of it, they haven't seen.
@@ -179,7 +182,7 @@ export function SettingsApp({ startPane }: { startPane?: SettingsPane }) {
           height="fill"
           pages={SETTINGS_PANES.map((each) => ({
             value: each,
-            content: <div className="settings-page">{paneContent(each, props, edits, drafts, listing)}</div>,
+            content: <div className="settings-page">{paneContent(each, props, edits, drafts, listing, review)}</div>,
           }))}
         />
       </main>

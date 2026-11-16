@@ -797,13 +797,18 @@ export function folderLine(name: string, folder: string, taken: readonly string[
 export const LEARN_LIBRARY = "Learn this library…";
 /** The offer above the shelves, while the library has folders of the owner's own that no study learned. The panel's card says it too. */
 export const STUDY_OFFER_TITLE = "This library has folders of its own.";
-export const STUDY_OFFER_BODY = "Avanzel can study them and file the way you do. Nothing changes until you approve.";
-/** The confirm's line: what a study reads, before it starts. */
-export const studyCostLine = (p: StudyPreview): string =>
-  `Avanzel's agent reads up to ${p.notes} ${p.notes === 1 ? "note" : "notes"} in ${p.folders} ${p.folders === 1 ? "folder" : "folders"}, one folder at a time, and proposes how to file into them. Nothing changes until you approve.`;
+export const STUDY_OFFER_BODY = "Avanzel can study them and file the way you do. Nothing changes until you apply.";
+/**
+ * The confirm's line: what a study reads and how many runs of the library's agent it takes, before it starts. `agent` is the agent's name
+ * as people know it ("Claude Code"), or null when none is chosen yet.
+ */
+export const studyCostLine = (p: StudyPreview, agent: string | null): string =>
+  `${agent ?? "Avanzel's agent"} reads up to ${p.notes} ${p.notes === 1 ? "note" : "notes"} in ${p.folders} ${p.folders === 1 ? "folder" : "folders"}, in ${p.steps} ${p.steps === 1 ? "run" : "runs"}, one folder at a time, and proposes how to file into them. Nothing changes until you apply.`;
 export const START_STUDY = "Start study";
 /** Start study, for a study that stopped part way or paused on a failed run: it goes on from where it was. */
 export const RESUME_STUDY = "Go on with the study";
+/** A paused study's other way on: it forgets what was studied so far and begins again. */
+export const START_OVER = "Start over";
 /**
  * How far a running study is: the folder it studies, or the last step, which puts the proposal together. Before its first step it
  * has no steps yet, and is getting ready.
@@ -821,15 +826,26 @@ export const STUDY_READY_TITLE = "The study is ready.";
 export const STUDY_REVIEW_NOTE = "Check what Avanzel learned. Turn off a folder to leave it alone. Nothing changes until you apply.";
 export const FILE_HERE = "File here";
 export const STUDY_MAP_LABEL = "Map";
-export const NOT_STUDIED = "Not studied. Its notes couldn't be read this time.";
+/** Each folder's controls, named with the folder, as each repeats once per folder and a group doesn't name its rows. */
+export const fileHereLabel = (name: string): string => `${FILE_HERE}: ${name}`;
+export const definitionLabel = (name: string): string => `What belongs on ${name}`;
+export const mapLabel = (name: string): string => `${STUDY_MAP_LABEL} of ${name}`;
+export const NOT_STUDIED = "Not studied. Its notes couldn't be read this time. Start a new study to try again.";
 export const LOW_CONFIDENCE = "Avanzel isn't sure about this folder.";
 export const HOUSE_STYLE_LABEL = "How this library is written";
 export const CURRENT_STYLE_LABEL = "The style in use now";
 export const APPLY_STUDY = "Apply";
 export const DISCARD_STUDY = "Discard";
-/** The house style's editor under the shelves, once there is one: Save (Edit and Remove are the shelves' own words). */
+/** Discard's question: what the study learned can't be had back but by studying again. */
+export const DISCARD_STUDY_QUESTION = "Discard what the study learned?";
+/** The house style's editor under the shelves, once there is one: Save (Edit and Remove are the shelves' own words), and Remove's question. */
 export const HOUSE_STYLE_SAVE = "Save";
+export const REMOVE_HOUSE_STYLE_QUESTION = "Remove the house style?";
 /** A study that paused on a failed run: its Notice's body, under the engine's words, with Go on with the study. */
 export const STUDY_FAILED_SAFE = "Nothing in your library changed. What was studied so far is kept.";
-/** A folder of the owner's that holds notes under the name of one of Avanzel's own shelves (`StudyProposal.clashes`). */
-export const clashLine = (folder: string): string => `Your ${folder} folder has the name Avanzel uses for its own ${folder}.`;
+/**
+ * A folder of the owner's that holds notes under the name of one of Avanzel's own shelves (`StudyProposal.clashes`): what happened, then
+ * what is safe and the fix (`CLASH_BODY`).
+ */
+export const clashLine = (folder: string): string => `Your ${folder} folder has the name of Avanzel's own ${folder}.`;
+export const CLASH_BODY = "Its notes stay where they are and weren't studied. Rename the folder to have them studied.";

@@ -3,14 +3,18 @@
 // call to main (`settings.shelves`), whose refusal is told by the window's Notice (`attemptChange`). Edit first, on a suggested shelf, opens the
 // form filled in from `snap.shelfDraft`; Save then makes the shelf from that suggestion, which moves its pages onto it.
 //
-// Learn this library lives here too: an offer above the group while the library has folders of the owner's own that no study learned, and
-// Learn this library… beside Add shelf, which shows what a study costs before it starts; while one runs, how far it is and Stop; a study that
-// paused on a failed run, in a Notice that goes on with it; and a study that is ready, its review screen in place of the group
-// (StudyReview.tsx). Once a study has given the library a house style, its row has Edit and Remove (`settings.setHouseStyle`).
+// Learn this library lives here too: an offer above the group while the library has folders of the owner's own that no study learned (with
+// Not now, which puts it away here and in the panel), else Learn this library… beside Add shelf; either shows what a study costs before it
+// starts, as the panel's Learn this library… does once it has opened General (`snap.studyPreviewAsked`). While one runs, how far it is and
+// Stop; a study that paused on a failed run, in a Notice that goes on with it or starts over; and a study that is ready, its review screen
+// in place of the group (StudyReview.tsx). Once a study has given the library a house style, its row has Edit and Remove, which asks first
+// (`settings.setHouseStyle`).
 import { Actions, Button, Confirm, Group, GroupRow, Notice, Progress, Row, Stack, Text, TextArea, TextField } from "@avanzel/ui";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import type { LibraryInfo, ShelfAsk, ShelfOp, StudyPreview } from "../../../shared/ipc.ts";
 import { shortened } from "../../../shared/clip.ts";
+import { harnessName } from "../../../main/jobs.ts";
+import { STUDY_OFFER_LATER } from "../../panel/copy.ts";
 import {
   ADD_DEFINITION,
   ADD_SHELF,
@@ -23,6 +27,7 @@ import {
   HOUSE_STYLE_LABEL,
   HOUSE_STYLE_SAVE,
   LEARN_LIBRARY,
+  REMOVE_HOUSE_STYLE_QUESTION,
   removeShelfQuestion,
   RESUME_STUDY,
   SAVE_SHELF,
@@ -36,6 +41,7 @@ import {
   SHELVES_EMPTY,
   SHELVES_LABEL,
   SHELVES_NOTE,
+  START_OVER,
   START_STUDY,
   STUDY_FAILED_SAFE,
   STUDY_NOT_STARTED,
@@ -48,7 +54,7 @@ import {
   SUGGESTED_SAVE_LINE,
 } from "../copy.ts";
 import { attemptChange, type PaneProps } from "../parts.tsx";
-import { StudyReview } from "./StudyReview.tsx";
+import { StudyReview, type StudyReviewState } from "./StudyReview.tsx";
 
 const api = window.avanzel.settings;
 
@@ -171,8 +177,8 @@ function FormRows({ form, taken, saving, onForm, onSave, onCancel }: FormRowsPro
 }
 
 /** The Your shelves group, for a library that exists: `shelves` are `LibraryInfo.ownShelves`. */
-export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
-  const { snap, shelves, onChange, attempt } = props;
+export function Shelves(props: PaneProps & { shelves: OwnShelves; review: StudyReviewState }): ReactNode {
+  const { snap, shelves, onChange, attempt, review } = props;
   const [form, setForm] = useState<Form | null>(null);
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -187,6 +193,8 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
   const [studying, setStudying] = useState<"preview" | "start" | null>(null);
   const [styleDraft, setStyleDraft] = useState<string | null>(null);
   const [styleSaving, setStyleSaving] = useState<"save" | "remove" | null>(null);
+  // The house style's Remove question, over its button.
+  const [removingStyle, setRemovingStyle] = useState(false);
 
   useEffect(() => {
     if (focus === null) return;
@@ -243,6 +251,8 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
   const study = snap.study;
   const unlearned = snap.library?.unlearnedFolders ?? [];
   const houseStyle = snap.library?.houseStyle ?? "";
+  // The agent a study runs with, by the name people know it by, for what the confirm says it costs.
+  const agent = snap.selectedHarness ? harnessName(snap.selectedHarness) : null;
   const openForm = (next: Form) => {
     setForm(next);
     setPreview(null);
@@ -290,20 +300,31 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
     }
   };
 
+  // The panel's Learn this library… opens General with what a study costs showing: the ask is let go as it is taken, so it shows once.
+  const previewAsked = snap.studyPreviewAsked;
+  useEffect(() => {
+    if (!previewAsked) return;
+    api.dropStudyPreview();
+    if (study.kind === "idle") void learn();
+  }, [previewAsked]);
+
   // A study that is ready: its review stands in place of the group until it is applied or discarded.
-  if (study.kind === "ready") return <StudyReview {...props} proposal={study.proposal} />;
+  if (study.kind === "ready") return <StudyReview {...props} proposal={study.proposal} review={review} />;
 
   const idle = study.kind === "idle";
   const confirming = idle && preview !== null;
   const resumable = idle && study.resumable;
 
-  // The offer, above the group, while there are folders to learn and no study is going or being confirmed; and a study that paused on a
-  // failed run, which goes on from where it was. Their buttons are secondaries: the pane's primary belongs to what is open in the group.
-  const offer = idle && !confirming && unlearned.length > 0 && (
+  // The offer, above the group, while there are folders to learn, no study is going or being confirmed, and it wasn't put away (Not now,
+  // here or in the panel). While it shows, its Learn this library… is the only one. A study that paused on a failed run goes on from where
+  // it was, or starts over. Their buttons are secondaries: the pane's primary belongs to what is open in the group.
+  const offering = idle && !confirming && unlearned.length > 0 && !snap.studyOfferDismissed;
+  const offer = offering && (
     <Notice
       title={STUDY_OFFER_TITLE}
       actions={
         <Actions align="start">
+          <Button size="small" variant="quiet" onClick={() => api.dismissStudyOffer()}>{STUDY_OFFER_LATER}</Button>
           <Button size="small" variant="secondary" busy={studying === "preview"} onClick={() => void learn()}>{LEARN_LIBRARY}</Button>
         </Actions>
       }
@@ -317,6 +338,7 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
       title={study.message}
       actions={
         <Actions align="start">
+          <Button size="small" variant="secondary" disabled={studying === "start"} onClick={() => void start(true)}>{START_OVER}</Button>
           <Button size="small" variant="secondary" busy={studying === "start"} onClick={() => void start(false)}>{RESUME_STUDY}</Button>
         </Actions>
       }
@@ -375,7 +397,20 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
               >
                 {SHELF_EDIT}
               </Button>
-              <Button size="small" variant="secondary" busy={styleSaving === "remove"} onClick={() => void saveStyle("", "remove")}>{SHELF_REMOVE}</Button>
+              <Confirm
+                open={removingStyle}
+                question={REMOVE_HOUSE_STYLE_QUESTION}
+                confirmLabel={SHELF_REMOVE}
+                onConfirm={() => {
+                  setRemovingStyle(false);
+                  void saveStyle("", "remove");
+                }}
+                onCancel={() => setRemovingStyle(false)}
+              >
+                <Button size="small" variant="danger" expanded={removingStyle} busy={styleSaving === "remove"} onClick={() => setRemovingStyle(!removingStyle)}>
+                  {SHELF_REMOVE}
+                </Button>
+              </Confirm>
             </Row>
           )}
         </GroupRow>
@@ -404,7 +439,7 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
       {confirming && (
         <div className="settings-editor">
           <Stack gap={10}>
-            <Text variant="callout">{studyCostLine(preview)}</Text>
+            <Text variant="callout">{studyCostLine(preview, agent)}</Text>
             <Actions>
               <Button variant="quiet" disabled={studying === "start"} onClick={() => setPreview(null)}>{SHELF_CANCEL}</Button>
               <Button variant="primary" busy={studying === "start"} onClick={() => void start(!resumable)}>{resumable ? RESUME_STUDY : START_STUDY}</Button>
@@ -418,7 +453,7 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves }): ReactNode {
         <div ref={addBox} className="settings-editor">
           <Actions align="start">
             <Button size="small" variant="secondary" onClick={() => openForm(blankForm)}>{ADD_SHELF}</Button>
-            {idle && !confirming && (
+            {idle && !confirming && !offering && (
               <Button size="small" variant="secondary" busy={studying === "preview"} onClick={() => void learn()}>{LEARN_LIBRARY}</Button>
             )}
           </Actions>

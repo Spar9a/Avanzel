@@ -147,7 +147,18 @@ export function newFolderLines(folders: readonly string[] | undefined): string[]
   return (folders ?? []).map((folder) => newFolderLine(lastPart(folder)));
 }
 
-/** The filed card's lines for what was put back (`keptOld`, library-relative): one each, by its file's name without .md. */
+/** The filed card's line for what the filing did in a folder the owner left out, put back or taken away, by its name. */
+export const keptOutLine = (name: string): string => `${name} was taken out: Avanzel leaves that folder alone.`;
+
+/** A note's name without .md; any other file's name as it is. */
+const shownName = (rel: string): string => lastPart(rel).replace(/\.md$/i, "");
+
+/** The filed card's lines for the old notes put back as they were (`keptOld`, library-relative): one each, by its name without .md. */
 export function keptOldLines(paths: readonly string[] | undefined): string[] {
-  return (paths ?? []).map((rel) => keptOldLine(lastPart(rel).replace(/\.md$/i, "")));
+  return (paths ?? []).map((rel) => keptOldLine(shownName(rel)));
+}
+
+/** The filed card's lines for what was put back or taken away in a folder left out (`keptOut`, library-relative): one each. */
+export function keptOutLines(paths: readonly string[] | undefined): string[] {
+  return (paths ?? []).map((rel) => keptOutLine(shownName(rel)));
 }
