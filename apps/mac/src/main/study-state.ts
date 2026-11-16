@@ -1,6 +1,6 @@
 // Learn this library as the windows see it (`StudyState`): whether the panel offers it, which folders it would study, what a study that
 // ended leaves, and what its Apply's Undo tells. Pure: the controller runs the study (`Controller.startStudy`).
-import { BUILT_IN_SHELVES, folderKey, SPECIAL_DIRS, type OwnShelf } from "@avanzel/engine";
+import { AvanzelError, BUILT_IN_SHELVES, folderKey, SPECIAL_DIRS, type OwnShelf } from "@avanzel/engine";
 import type { StudyApply, StudyProposal, StudyState } from "../shared/ipc.ts";
 import { undoRefused, type Problem } from "../shared/problems.ts";
 
@@ -65,5 +65,14 @@ export function parseStudyApply(raw: unknown): StudyApply | null {
 /** What is told once an Undo has taken back a study's Apply (by notification: no filed card is of it), or the refusal of any Undo. */
 export function studyUndoNotice(undone: boolean): Problem {
   if (!undone) return undoRefused;
-  return { title: "Undone", body: "The shelves and the house style that Learn this library set up are gone. Your notes are where they were." };
+  return { title: "Undone", body: "What Learn this library set up is gone. Your notes are where they were." };
+}
+
+/**
+ * What a study that failed says, as its failed state shows it: Avanzel's own words (an `AvanzelError`, such as the engine's "The study
+ * paused because …"), else a calm fixed line, as a raw error's words (a system call's, a crash's) aren't for the person. The caller logs it.
+ */
+export function studyFailureMessage(error: unknown): string {
+  if (error instanceof AvanzelError) return error.message;
+  return "The study stopped because of a problem in Avanzel. What it learned so far is kept, and Learn this library goes on from there.";
 }

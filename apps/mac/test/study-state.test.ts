@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { AvanzelError, NoAgentError } from "@avanzel/engine";
 import { undoRefused } from "../src/shared/problems.ts";
 import type { StudyProposal } from "../src/shared/ipc.ts";
-import { parseStudyApply, studyEndedState, studyOffered, studyUndoNotice, unlearnedFoldersOf } from "../src/main/study-state.ts";
+import { parseStudyApply, studyEndedState, studyFailureMessage, studyOffered, studyUndoNotice, unlearnedFoldersOf } from "../src/main/study-state.ts";
 
 const PROPOSAL: StudyProposal = {
   shelves: [{ folder: "Philosophy", name: "Philosophy", definition: "Thinkers and their books.", map: "", confidence: "high", studied: true, hasDefinition: false }],
@@ -81,14 +82,29 @@ describe("parseStudyApply", () => {
 });
 
 describe("studyUndoNotice", () => {
-  it("says the shelves and the house style are gone, and the notes are where they were", () => {
+  it("says what Learn this library set up is gone, and the notes are where they were, whatever the Apply made", () => {
     expect(studyUndoNotice(true)).toEqual({
       title: "Undone",
-      body: "The shelves and the house style that Learn this library set up are gone. Your notes are where they were.",
+      body: "What Learn this library set up is gone. Your notes are where they were.",
     });
   });
 
   it("is told as any refused Undo when git refused", () => {
     expect(studyUndoNotice(false)).toEqual(undoRefused);
+  });
+});
+
+describe("studyFailureMessage", () => {
+  it("keeps Avanzel's own words, the engine's pause among them", () => {
+    const paused = "The study paused because the agent hit its usage limit. What it learned so far is kept, and Learn this library goes on from there.";
+    expect(studyFailureMessage(new AvanzelError(paused))).toBe(paused);
+    expect(studyFailureMessage(new NoAgentError("No agent is installed."))).toBe("No agent is installed.");
+  });
+
+  it("says something calm and fixed for any other error, never its raw words", () => {
+    const calm = "The study stopped because of a problem in Avanzel. What it learned so far is kept, and Learn this library goes on from there.";
+    expect(studyFailureMessage(new Error("EACCES: permission denied, open '/x/.avanzel/study/plan.json'"))).toBe(calm);
+    expect(studyFailureMessage("boom")).toBe(calm);
+    expect(studyFailureMessage(undefined)).toBe(calm);
   });
 });

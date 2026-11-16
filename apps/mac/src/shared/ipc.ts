@@ -688,6 +688,8 @@ export interface LibraryInfo {
    * (`unlearnedFoldersOf`): what Learn this library would study. Settings offers it while there are any.
    */
   unlearnedFolders: string[];
+  /** config.toml's `house_style`: how the library is written, as a study learned it or the owner edited it; "" for none. */
+  houseStyle: string;
 }
 
 /** The library's `[private]` settings: the same as the engine's PrivateModel. */
@@ -1375,6 +1377,11 @@ export interface AvanzelBridge {
     applyStudy(apply: StudyApply): Promise<SettingsSnapshot>;
     /** Discard on the review screen, or Start again's first half: the study and what it learned are forgotten. Rejects while one runs. */
     discardStudy(): Promise<SettingsSnapshot>;
+    /**
+     * The house style's Edit and Remove ("" removes it): saved as one change, in turn with the library's other runs, while a study runs too,
+     * and leaving the study as it is. Rejects with what to do when it is too long.
+     */
+    setHouseStyle(style: string): Promise<SettingsSnapshot>;
     /** The private model's key, which the app keeps in the Keychain and never hands to a window: a new one. */
     /** Starts downloading a hosted model, which goes on in the background; the answer is the snapshot as it is then. */
     downloadHosted(id: string): Promise<SettingsSnapshot>;

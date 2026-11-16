@@ -75,6 +75,7 @@ const bridge: AvanzelBridge = {
     stopStudy: () => ipcRenderer.send("settings:stop-study"),
     applyStudy: (apply) => ipcRenderer.invoke("settings:apply-study", apply),
     discardStudy: () => ipcRenderer.invoke("settings:discard-study"),
+    setHouseStyle: (style) => ipcRenderer.invoke("settings:set-house-style", style),
     downloadHosted: (id: string) => ipcRenderer.invoke("settings:download-hosted", id),
     cancelHostedDownload: (id: string) => ipcRenderer.invoke("settings:cancel-hosted-download", id),
     cancelSpeechModelDownload: () => ipcRenderer.invoke("settings:cancel-speech-model-download"),

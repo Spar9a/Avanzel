@@ -206,7 +206,7 @@ import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, u
 import { answeredBy, ShelfSuggestions, type PendingShelf } from "./shelf-suggestions.ts";
 import { askOf, libraryAskOf, ownShelvesInfo, parseShelfAsk, parseShelfOp, shelfUndoNotice } from "./shelf-asks.ts";
 import { shelfMadeNotes, type NotMovedReason } from "../shared/shelves.ts";
-import { parseStudyApply, studyEndedState, studyOffered, studyUndoNotice, unlearnedFoldersOf } from "./study-state.ts";
+import { parseStudyApply, studyEndedState, studyFailureMessage, studyOffered, studyUndoNotice, unlearnedFoldersOf } from "./study-state.ts";
 import { cursorShortcutProblemOf, freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
@@ -4497,7 +4497,9 @@ export class Controller {
     if (this.studyChanging) throw new AvanzelError("The study's proposal is being applied or discarded, so no study started. Try again in a moment.");
     if (this.quitting) return this.snapshot();
     const librarian = await this.librarianFor(vault);
-    if (this.studyRun) throw new AvanzelError("A study is already running."); // a second press, while the librarian was made
+    // Asked again: a second press, an Apply or a Discard may have begun while the librarian was made.
+    if (this.studyRun) throw new AvanzelError("A study is already running.");
+    if (this.studyChanging) throw new AvanzelError("The study's proposal is being applied or discarded, so no study started. Try again in a moment.");
     if (this.vault?.root !== vault.root || this.quitting) return this.snapshot(); // another library opened meanwhile, or Avanzel quits
     const run = { root: vault.root, abort: new AbortController() };
     this.studyRun = run;
@@ -4509,7 +4511,11 @@ export class Controller {
     };
     void this.withRun((signal) => librarian.study({ signal, fresh, progress }), run.abort).then(
       (proposal) => this.studyEnded(run, { proposal }),
-      (error) => this.studyEnded(run, { message: errorMessage(error), aborted: run.abort.signal.aborted }),
+      (error) => {
+        const aborted = run.abort.signal.aborted;
+        if (!aborted) console.warn("study", error); // the raw error, which the windows are told only in Avanzel's words
+        this.studyEnded(run, { message: studyFailureMessage(error), aborted });
+      },
     );
     this.studyChanged();
     return this.snapshot();
@@ -4518,7 +4524,6 @@ export class Controller {
   /** `run`'s study ended: its state is the open library's when that is still its library (one that opened since read its own). */
   private studyEnded(run: { root: string; abort: AbortController }, end: Parameters<typeof studyEndedState>[0]): void {
     if (this.studyRun === run) this.studyRun = null;
-    if ("message" in end && !end.aborted) console.warn("study", end.message);
     if (this.vault?.root !== run.root) return;
     this.study = studyEndedState(end);
     this.studyChanged();
@@ -4561,6 +4566,19 @@ export class Controller {
       this.studyChanging = false;
     }
     this.shelvesChanged();
+    return this.snapshot();
+  }
+
+  /**
+   * The house style's Edit and Remove in Settings: `raw` (a string; "" removes it) becomes the library's house style, as one commit, in
+   * turn with the library's other runs. It leaves Learn this library as it is, so it works while a study runs, and a stopped study still
+   * goes on. Like a shelf's edit, it keeps no Undo record: the library's history has it. Too long a style rejects, with nothing changed.
+   */
+  async setHouseStyle(raw: unknown): Promise<SettingsSnapshot> {
+    if (typeof raw !== "string") throw new AvanzelError("Avanzel didn't understand that house style, so nothing changed. Try again.");
+    const vault = this.requireVault();
+    await this.enqueue(async () => (await this.librarianFor(vault)).setHouseStyle(raw));
+    this.shelvesChanged(); // Settings shows the style, and Ask reads again
     return this.snapshot();
   }
 
@@ -6315,6 +6333,7 @@ export class Controller {
             ...dictationInfo(settings),
             ownShelves: exists ? ownShelvesInfo(settings?.shelves ?? [], counts, (folder) => isEmptyShelfFolder(path.join(vault.root, folder))) : [],
             declinedShelves: settings?.declinedShelves ?? [],
+            houseStyle: settings?.houseStyle ?? "",
             unlearnedFolders: exists && settings ? unlearnedFoldersOf(counts, settings.shelves, settings.excludedFolders) : [],
           }
         : kept
@@ -6336,6 +6355,7 @@ export class Controller {
               ...dictationInfo(null),
               ownShelves: [],
               declinedShelves: [],
+              houseStyle: "",
               unlearnedFolders: [],
             }
           : null,
