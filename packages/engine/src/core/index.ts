@@ -7,6 +7,7 @@ export * from "./changes.ts";
 export * from "./steps.ts";
 export * from "./pages.ts";
 export * from "./search.ts";
+export * from "./notes-find.ts";
 export * as git from "./git.ts";
 export * from "./prompts.ts";
 export * from "./claude-stream.ts";
