@@ -9,7 +9,7 @@
 import { copyFileSync, existsSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { AvanzelError, type Transcriber } from "../types.ts";
-import { Changes, diff, snapshot, type Snapshot } from "./changes.ts";
+import { Changes, diff, snapshot, visibleFiles, type Snapshot } from "./changes.ts";
 import type { ToolStep } from "./claude-stream.ts";
 import { loadSettings, saveSettings, type Settings } from "./config.ts";
 import { localDate } from "./dates.ts";
@@ -30,14 +30,17 @@ import {
 } from "./harness.ts";
 import { createInside, lstatOrNull, realFoldersTo, removeInside, replaceInside, writeInside } from "./inside.ts";
 import { parseDictionary } from "./dictionary.ts";
+import { addLearnedNotes } from "./old-notes.ts";
 import { askPrompt, filePrompt, reviewPrompt, type AskTurn, type ShelfNote } from "./prompts.ts";
 import {
   BUILT_IN_DEFINITIONS,
   BUILT_IN_SHELVES,
   MAX_SHELF_NAME,
+  SHELF_SECTION_START,
   agentMadeFolders,
   checkedSuggestion,
   cleanDefinition,
+  folderKey,
   folderProblem,
   isEmptyShelfFolder,
   nameBreaksRules,
@@ -49,12 +52,14 @@ import {
   withIndexLineMoved,
   withoutEmptyIndexHeading,
   writeShelfSection,
+  writeStyleSection,
   type OwnShelf,
   type PendingShelf,
   type ShelfSuggestion,
 } from "./shelves.ts";
 import { insideLibrary, stepPath, type FilingStep } from "./steps.ts";
 import {
+  MAX_MAP,
   buildProposal,
   combinePrompt,
   folderPrompt,
@@ -151,6 +156,12 @@ export interface StudyProgress {
 }
 
 const STUDY_DIR = ".avanzel/study";
+
+/** What the owner chose of a study's proposal: each folder to file into (`fileHere`) or leave out, and the house style. */
+export interface StudyApply {
+  shelves: { folder: string; name: string; definition: string; map: string; fileHere: boolean }[];
+  style: string;
+}
 const STUDY_STOPPED = "The study was stopped. What it learned so far is kept, and Learn this library goes on from there.";
 /** A step that took at least this long is followed by a pause, so that a filing waiting for the library's lock can take it. */
 const STEP_PAUSE_AFTER_MS = 300;
@@ -401,7 +412,13 @@ export class Librarian {
       // An undone shelf operation changed the saved shelves; a config that can't be read is reported where settings are read.
       try {
         const saved = loadSettings(root);
-        this.#settings = { ...this.#settings, shelves: saved.shelves, declinedShelves: saved.declinedShelves };
+        this.#settings = {
+          ...this.#settings,
+          shelves: saved.shelves,
+          declinedShelves: saved.declinedShelves,
+          houseStyle: saved.houseStyle,
+          excludedFolders: saved.excludedFolders,
+        };
       } catch {
         /* keep what this librarian had */
       }
@@ -443,6 +460,70 @@ export class Librarian {
           const { moved, notMoved } = this.#movePages(pages, folder, name);
           this.vault.appendLog("shelf", moved.length ? `${folder} → ${moved.map(wikilink).join(", ")}` : folder, this.clock());
           return { moved, notMoved, folderKept: false };
+        },
+      };
+    });
+  }
+
+  /**
+   * Apply what a study proposed, as one shelf operation (one commit, which `undo` takes back): each `fileHere` folder becomes a shelf
+   * with its map and the day it was learned (one that already is a shelf only gets its map), each folder that isn't filed into is
+   * left out, and the house style is saved, and written into `AGENTS.md` when it holds Avanzel's own marked sections. The notes
+   * already in the new shelves are remembered as the owner's, which a run may add to but not rewrite. The study's own files are removed.
+   */
+  async applyStudy(apply: StudyApply): Promise<ShelfResult> {
+    const root = this.vault.root;
+    return this.#shelfOperation("learn this library", (current) => {
+      const shelves = [...current.shelves];
+      const made: OwnShelf[] = [];
+      for (const item of apply.shelves) {
+        if (!item.fileHere) continue;
+        const map = [...item.map].slice(0, MAX_MAP).join("").trim();
+        const at = shelves.findIndex((other) => sameShelf(other.folder, item.folder));
+        const existing = shelves[at];
+        if (existing) {
+          shelves[at] = { ...existing, ...(map ? { map } : {}) };
+          continue;
+        }
+        const name = checkedName(item.name);
+        const definition = checkedDefinition(item.definition);
+        const problem = folderProblem(item.folder, shelves.map((other) => other.folder));
+        if (problem) throw new AvanzelError(problem);
+        const clash = shelves.find((other) => sameShelf(other.name, name));
+        if (clash) throw new AvanzelError(`A shelf called ${clash.name} already exists. Choose another name.`);
+        refuseBuiltInName(name);
+        const there = lstatOrNull(join(root, item.folder));
+        if (there && !there.isDirectory()) {
+          throw new AvanzelError(`A file or link called ${item.folder} is already in the library, so no shelf was made. Choose another folder name.`);
+        }
+        const shelf: OwnShelf = { folder: item.folder, name, definition, ...(map ? { map } : {}), learnedAt: localDate(this.clock()) };
+        shelves.push(shelf);
+        made.push(shelf);
+      }
+      const filedKeys = apply.shelves.filter((item) => item.fileHere).map((item) => folderKey(item.folder));
+      const excluded = [...current.excludedFolders.filter((folder) => !filedKeys.includes(folderKey(folder)))];
+      for (const item of apply.shelves) {
+        if (item.fileHere || shelves.some((other) => sameShelf(other.folder, item.folder))) continue;
+        if (!excluded.some((folder) => folderKey(folder) === folderKey(item.folder))) excluded.push(item.folder);
+      }
+      const madeKeys = made.map((shelf) => folderKey(shelf.folder));
+      const declinedShelves = current.declinedShelves.filter((declined) => !madeKeys.includes(folderKey(declined)));
+      const next = { ...current, shelves, declinedShelves, excludedFolders: excluded, houseStyle: apply.style };
+      return {
+        next,
+        apply: () => {
+          const agentsPath = join(root, "AGENTS.md");
+          if (lstatOrNull(agentsPath)?.isFile() && readFileSync(agentsPath, "utf8").includes(SHELF_SECTION_START)) {
+            writeStyleSection(root, apply.style);
+          }
+          for (const shelf of made) this.#editIndex((index) => withIndexHeading(index, shelf.name));
+          const notes = visibleFiles(root).filter(
+            (rel) => rel.endsWith(".md") && rel.includes("/") && madeKeys.includes(folderKey(rel.slice(0, rel.indexOf("/")))),
+          );
+          if (notes.length) addLearnedNotes(root, notes);
+          removeInside(root, STUDY_DIR);
+          this.vault.appendLog("learn", made.length ? made.map((shelf) => shelf.folder).join(", ") : "library", this.clock());
+          return { moved: [], notMoved: [], folderKept: false };
         },
       };
     });
@@ -540,7 +621,13 @@ export class Librarian {
       const { next, apply } = plan(current);
       await this.#commitOwnerChanges(what);
       saveSettings(root, next);
-      this.#settings = { ...this.#settings, shelves: next.shelves, declinedShelves: next.declinedShelves };
+      this.#settings = {
+        ...this.#settings,
+        shelves: next.shelves,
+        declinedShelves: next.declinedShelves,
+        houseStyle: next.houseStyle,
+        excludedFolders: next.excludedFolders,
+      };
       if (JSON.stringify(next.shelves) !== JSON.stringify(current.shelves)) writeShelfSection(root, next.shelves);
       const done = apply();
       const commit = await this.#commit(`avanzel: ${what}`);

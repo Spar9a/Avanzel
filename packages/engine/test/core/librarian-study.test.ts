@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { loadSettings } from "../../src/core/config.ts";
 import * as git from "../../src/core/git.ts";
 import { Librarian, type StudyProgress } from "../../src/core/librarian.ts";
+import { readLearnedNotes } from "../../src/core/old-notes.ts";
 import { Vault } from "../../src/core/vault.ts";
 import { AvanzelError } from "../../src/types.ts";
 import { NOW, envHome, gitIdentity, write } from "./helpers.ts";
@@ -249,5 +251,87 @@ describe.skipIf(!git.available())("studying the library", () => {
     expect(seen.length).toBeLessThan(4); // the study was still going when the filing was done
     await pending;
     expect(readdirSync(join(vault.root, ".avanzel", "study")).includes("proposal.json")).toBe(true);
+  });
+
+  describe("applying a study", () => {
+    const PHILOSOPHY = { folder: "Philosophy", name: "Philosophy", definition: "Ideas of thinkers.", map: "Stoicism/: one folder per thinker", fileHere: true };
+    const RECIPES = { folder: "Рецепты", name: "Рецепты", definition: "Dishes.", map: "", fileHere: false };
+
+    it("makes each chosen folder a shelf with its map, leaves out the rest, writes the style, and is one commit", async () => {
+      const result = await librarian.applyStudy({ style: "Dates as dd.mm.yyyy.", shelves: [PHILOSOPHY, RECIPES] });
+      const settings = loadSettings(vault.root);
+      expect(settings.shelves).toEqual([
+        { folder: "Philosophy", name: "Philosophy", definition: "Ideas of thinkers.", map: "Stoicism/: one folder per thinker", learnedAt: "2026-10-20" },
+      ]);
+      expect(settings.excludedFolders).toEqual(["Рецепты"]);
+      expect(settings.houseStyle).toBe("Dates as dd.mm.yyyy.");
+      expect(readFileSync(join(vault.root, "AGENTS.md"), "utf8")).toContain("## How this library is written\n\nDates as dd.mm.yyyy.");
+      expect(readFileSync(join(vault.root, "AGENTS.md"), "utf8")).toContain("| `Philosophy/` | Ideas of thinkers. |");
+      expect(readFileSync(vault.indexPath, "utf8")).toContain("## Philosophy\n");
+      expect([...readLearnedNotes(vault.root)].sort()).toEqual([
+        "Philosophy/Hume.md",
+        "Philosophy/Kant.md",
+        "Philosophy/Plato.md",
+        "Philosophy/Stoicism/Epictetus.md",
+        "Philosophy/Stoicism/Seneca.md",
+      ]);
+      expect(existsSync(join(vault.root, ".avanzel/study"))).toBe(false);
+      expect(gitOut(vault.root, "log", "-1", "--format=%s").trim()).toBe("avanzel: learn this library");
+      expect(gitOut(vault.root, "status", "--porcelain")).toBe("");
+      expect(librarian.settings.houseStyle).toBe("Dates as dd.mm.yyyy.");
+      expect(librarian.settings.excludedFolders).toEqual(["Рецепты"]);
+      await librarian.undo([result.commit!]);
+      expect(loadSettings(vault.root)).toMatchObject({ shelves: [], excludedFolders: [], houseStyle: "" });
+      expect(librarian.settings).toMatchObject({ shelves: [], excludedFolders: [], houseStyle: "" });
+      expect(readLearnedNotes(vault.root).size).toBe(0);
+    });
+
+    it("removes a study that was in progress", async () => {
+      await librarian.study();
+      expect(existsSync(join(vault.root, ".avanzel/study/proposal.json"))).toBe(true);
+      await librarian.applyStudy({ style: "", shelves: [PHILOSOPHY] });
+      expect(existsSync(join(vault.root, ".avanzel/study"))).toBe(false);
+      expect(gitOut(vault.root, "status", "--porcelain")).toBe("");
+    });
+
+    it("applies with autoCommit off, writing everything and committing nothing", async () => {
+      librarian = new Librarian(vault, fakeSettings({ autoCommit: false }), { clock: () => NOW });
+      const before = gitOut(vault.root, "log", "--format=%H");
+      const result = await librarian.applyStudy({ style: "Dates as dd.mm.yyyy.", shelves: [PHILOSOPHY, RECIPES] });
+      expect(result.commit).toBeNull();
+      expect(gitOut(vault.root, "log", "--format=%H")).toBe(before);
+      expect(loadSettings(vault.root).shelves.map((s) => s.folder)).toEqual(["Philosophy"]);
+      expect(readLearnedNotes(vault.root).has("Philosophy/Stoicism/Seneca.md")).toBe(true);
+      expect(readFileSync(join(vault.root, "AGENTS.md"), "utf8")).toContain("Dates as dd.mm.yyyy.");
+    });
+
+    it("writes no style section into an AGENTS.md of the owner's own, and keeps the style in settings", async () => {
+      writeFileSync(join(vault.root, "AGENTS.md"), "# My own rules\n\nBe brief.\n");
+      const result = await librarian.applyStudy({ style: "Dates as dd.mm.yyyy.", shelves: [RECIPES] });
+      expect(readFileSync(join(vault.root, "AGENTS.md"), "utf8")).toBe("# My own rules\n\nBe brief.\n");
+      expect(loadSettings(vault.root).houseStyle).toBe("Dates as dd.mm.yyyy.");
+      expect(result.commit).not.toBeNull(); // an exclusion and a style are a change worth a commit
+    });
+
+    it("gives an existing own shelf its map and leaves its name and definition", async () => {
+      await librarian.makeShelf({ folder: "Philosophy", name: "Thinkers", definition: "My own words." });
+      await librarian.applyStudy({ style: "", shelves: [{ ...PHILOSOPHY, name: "Philosophy", definition: "Other." }] });
+      expect(loadSettings(vault.root).shelves).toEqual([
+        { folder: "Philosophy", name: "Thinkers", definition: "My own words.", map: "Stoicism/: one folder per thinker" },
+      ]);
+      expect(readLearnedNotes(vault.root).size).toBe(0); // a shelf that was there before is not newly learned
+    });
+
+    it("refuses a folder the folder rules refuse, in their own words, and changes nothing", async () => {
+      const bad = { ...PHILOSOPHY, folder: "Not | allowed", name: "Bad" };
+      await expect(librarian.applyStudy({ style: "x", shelves: [PHILOSOPHY, bad] })).rejects.toThrow(AvanzelError);
+      expect(loadSettings(vault.root)).toMatchObject({ shelves: [], excludedFolders: [], houseStyle: "" });
+      expect(gitOut(vault.root, "status", "--porcelain")).toBe("");
+    });
+
+    it("refuses two shelves with the same name", async () => {
+      const twin = { ...PHILOSOPHY, folder: "Рецепты", fileHere: true };
+      await expect(librarian.applyStudy({ style: "", shelves: [PHILOSOPHY, twin] })).rejects.toThrow("already exists");
+    });
   });
 });

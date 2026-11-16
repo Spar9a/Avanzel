@@ -28,7 +28,7 @@ export const CHARS_PER_NOTE = 2000;
 /** A folder with more notes than this, and at least two subfolders, is studied in parts. */
 export const PART_NOTES = 60;
 const MAX_TREE_LINES = 200;
-const MAX_MAP = 1200;
+export const MAX_MAP = 1200;
 const MAX_STYLE = 4000;
 const MAX_PURPOSE = 1000;
 const MAX_CONVENTIONS = 1500;
