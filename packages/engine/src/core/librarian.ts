@@ -30,7 +30,8 @@ import {
 } from "./harness.ts";
 import { createInside, lstatOrNull, realFoldersTo, removeInside, replaceInside, writeInside } from "./inside.ts";
 import { parseDictionary } from "./dictionary.ts";
-import { addLearnedNotes } from "./old-notes.ts";
+import { findNotes, type FoundNote } from "./notes-find.ts";
+import { addLearnedNotes, captureKept, readLearnedNotes, restoreKept, type KeptNotes } from "./old-notes.ts";
 import { askPrompt, filePrompt, reviewPrompt, type AskTurn, type ShelfNote } from "./prompts.ts";
 import {
   BUILT_IN_DEFINITIONS,
@@ -44,7 +45,9 @@ import {
   folderProblem,
   isEmptyShelfFolder,
   nameBreaksRules,
+  newSubfolders,
   parseSuggestion,
+  removeEmptySubfolders,
   sameShelf,
   shelfTextLength,
   withIndexHeading,
@@ -79,6 +82,8 @@ import { AUDIO_EXTS, IMAGE_EXTS, SPECIAL_DIRS, TEXT_EXTS, type Capture, type Vau
 import { watchWrites } from "./watch.ts";
 
 const SOURCES = ["inbox/", "raw/"];
+/** How much of a capture's words, in characters, the notes of the learned shelves are searched by. */
+const FOUND_QUERY_CHARS = 1000;
 /** What `progress` hears when a run has to wait for the library lock. */
 export const WAITING = "Waiting for another Avanzel run on this library…";
 /**
@@ -134,6 +139,13 @@ export interface FileOutcome {
    * (see `checkedSuggestion`): a dropped suggestion changes nothing about the filing.
    */
   suggestion: ShelfSuggestion | null;
+  /**
+   * What was put back after the run (`restoreKept`), library-relative and sorted: the owner's notes from before the library was learned
+   * that the run rewrote or deleted, and what it created, changed or deleted in a folder the owner left out. These are not in `changes`.
+   */
+  keptOld: string[];
+  /** The folders this filing made inside one of the owner's shelves, below its top level (`newSubfolders`), library-relative and sorted. */
+  newFolders: string[];
 }
 
 export interface AgentOutcome {
@@ -404,10 +416,17 @@ export class Librarian {
     const root = this.vault.root;
     return this.vault.withLock(async () => {
       let undone = 0;
+      const shelves = this.settings.shelves;
+      let files = snapshot(root);
       for (const sha of [...commits].reverse()) {
         const subject = (await gitops.subject(root, sha)) ?? sha;
         const message = `avanzel: undo ${subject.replace(/^avanzel: /, "")}`;
-        if ((await gitops.revertKeeping(root, sha, message, (rel) => this.#keptOnUndo(rel))) !== null) undone += 1;
+        if ((await gitops.revertKeeping(root, sha, message, (rel) => this.#keptOnUndo(rel))) === null) continue;
+        undone += 1;
+        // A subfolder a filing made in a shelf goes with its last page; git leaves one that holds Finder's files.
+        const now = snapshot(root);
+        removeEmptySubfolders(root, diff(files, now).deleted, shelves);
+        files = now;
       }
       // An undone shelf operation changed the saved shelves; a config that can't be read is reported where settings are read.
       try {
@@ -763,24 +782,30 @@ export class Librarian {
     const archiveExisted = lstatOrNull(join(root, archiveRel)) !== null;
     const attachments = this.#attachments(original.toString("utf8"));
     const before = snapshot(root);
+    const kept = this.#keptNotes(before);
     const foldersBefore = this.#topLevelFolders();
+    const found = this.#foundNotes(original.toString("utf8"), now);
     const call = this.#isCall(original.toString("utf8"));
     const agent = this.#agentOf(original.toString("utf8"));
     // An agent's note speaks with the agent's voice only: what the owner's own captures can ask of a filing (a page to
     // continue, files they added) is not read from it.
     const continues = agent === null ? this.#continues(original.toString("utf8")) : null;
     const files = agent === null && original.toString("utf8").includes("raw/attachments/");
-    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, agent, continues, files, names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term), instructions, shelves: this.#shelfNotes(pending) });
+    const prompt = filePrompt(captureRel, captureId, now, { attachments, call, agent, continues, files, names: parseDictionary(this.settings.voice.dictionary).map((entry) => entry.term), instructions, shelves: this.#shelfNotes(pending, found), style: this.settings.houseStyle, found });
     // Only a caller that asked for the steps is told them: Claude Code's come from its own events, and other agents'
     // from the folder. The changes below are read from `after`, the library as the run left it, whether or not they are.
     const { result, guarded, after } = await this.#run(prompt, { write: true, images: attachments, signal, before, steps });
     const restoral = restoreCapture(root, captureRel, original, archiveExisted ? null : archiveRel);
     const savedOriginal = restoral === "blocked" ? this.#keepOriginal(captureId, original) : null;
     // `after` is from before the guard and the capture's restoral put anything back. What they touch is left out: the
-    // capture is in inbox/ or raw/, and the guard lists what it put back.
-    const changes = diff(before, after).without([...SOURCES, ...guarded]);
+    // capture is in inbox/ or raw/, and the guard lists what it put back; so is what `restoreKept` put back.
+    const run = diff(before, after).without([...SOURCES, ...guarded]);
+    const keptOld = restoreKept(root, kept, run);
+    const changes = run.without(keptOld);
+    const newFolders = newSubfolders(changes.created, before.keys(), this.settings.shelves);
     const refused = result.refused.map((refusedPath) => insideLibrary(root, refusedPath) ?? refusedPath);
-    const ran = { agent, changes, message: result.output, restored: restoral === "restored", savedOriginal, guarded, refused };
+    const restored = restoral === "restored";
+    const ran = { agent, changes, message: result.output, restored, savedOriginal, guarded, refused, keptOld, newFolders };
     const error = this.#notFiled(result, restoral, changes, captureId, archiveRel);
     if (error !== null) {
       // What the run left behind (it failed, timed out, was cancelled or filed nothing) is its own
@@ -799,9 +824,32 @@ export class Librarian {
     return outcome(captureId, { ...ran, ok: true, archivedTo, commit, suggestion: this.#suggestion(changes, result.output, pending, foldersBefore) });
   }
 
-  /** Every shelf as the filing prompt lists it: the built-in ones, the owner's own, the pending suggestions and the ones turned down. */
-  #shelfNotes(pending: readonly PendingShelf[]): ShelfNote[] {
+  /**
+   * What a run must not be able to lose (`captureKept`): the owner's notes from before the library was learned, and the folders they
+   * left out. `before` is the library's snapshot from just before the run.
+   */
+  #keptNotes(before: Snapshot): KeptNotes {
+    return captureKept(this.vault.root, readLearnedNotes(this.vault.root), this.settings.excludedFolders, before.keys());
+  }
+
+  /**
+   * The notes on the learned shelves that the capture's words may be about (`findNotes`), dated for `now`: its body without front
+   * matter, at most `FOUND_QUERY_CHARS` characters of it, is the query. None when no shelf was learned.
+   */
+  #foundNotes(captureText: string, now: Date): FoundNote[] {
+    const folders = this.settings.shelves.filter((shelf) => shelf.learnedAt).map((shelf) => shelf.folder);
+    if (folders.length === 0) return [];
+    const words = codePoints(splitFrontmatter(captureText)[1], FOUND_QUERY_CHARS);
+    return findNotes(this.vault.root, words, { folders, now });
+  }
+
+  /**
+   * Every shelf as the filing prompt lists it: the built-in ones, the owner's own, the pending suggestions and the ones turned down. An
+   * own shelf's map goes with it only when one of the `found` notes is on it.
+   */
+  #shelfNotes(pending: readonly PendingShelf[], found: readonly FoundNote[] = []): ShelfNote[] {
     const { shelves, declinedShelves } = this.settings;
+    const foundOn = new Set(found.map((note) => folderKey(note.path.split("/")[0] ?? "")));
     const built = BUILT_IN_SHELVES.map((folder) => ({
       folder,
       name: capitalised(folder),
@@ -810,7 +858,13 @@ export class Librarian {
     }));
     return [
       ...built,
-      ...shelves.map((shelf) => ({ ...shelf, kind: "own" as const })),
+      ...shelves.map(({ folder, name, definition, map }) => ({
+        folder,
+        name,
+        definition,
+        ...(map && foundOn.has(folderKey(folder)) ? { map } : {}),
+        kind: "own" as const,
+      })),
       ...pending.map((shelf) => ({ ...shelf, kind: "pending" as const })),
       ...declinedShelves.map((folder) => ({ folder, name: folder, definition: "", kind: "declined" as const })),
     ];
@@ -1000,12 +1054,14 @@ export class Librarian {
       realFoldersTo(root, reportRel, true); // reviews/, for the agent to write into
       await this.#commitOwnerChanges(`review ${stem(report)}`);
       const before = snapshot(root);
+      const kept = this.#keptNotes(before);
       const { result, guarded } = await this.#run(reviewPrompt(reportRel, now, this.settings.shelves), { write: true, signal });
       if (result.ok && result.output) {
         // Only when the agent wrote no report; never through a link it may have put there.
         createInside(root, reportRel, `# Review ${localDate(now)}\n\n${result.output}\n`);
       }
-      const changes = diff(before, snapshot(root)).without(guarded);
+      const ran = diff(before, snapshot(root)).without(guarded);
+      const changes = ran.without(restoreKept(root, kept, ran));
       let commit: string | null;
       if (result.ok) {
         if (!this.vault.logMentions(stem(report))) this.vault.appendLog("review", `[[${stem(report)}]]`, now);
@@ -1295,6 +1351,8 @@ function outcome(captureId: string, fields: Partial<Omit<FileOutcome, "captureId
     commit: null,
     failure: null,
     suggestion: null,
+    keptOld: [],
+    newFolders: [],
     ...fields,
   };
 }

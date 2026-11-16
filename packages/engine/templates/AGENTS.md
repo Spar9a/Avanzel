@@ -23,7 +23,7 @@ write. Everything is plain Markdown, so it works in any editor and in Obsidian.
 | `index.md` | Catalog of every shelf page, one line each. Read it first; keep it current | edit |
 | `log.md` | History of what you did | append only |
 
-The owner may add shelves of their own in Avanzel; they are listed under "Your shelves" below. Never create a top-level folder yourself, except `meetings/` for a call: when a thought fits no shelf, file it on the closest one and suggest a shelf as the filing prompt says.
+The owner may add shelves of their own in Avanzel; they are listed under "Your shelves" below. A shelf learned from the library may have subfolders; its map in "Your shelves" says how they are used. Never create a top-level folder yourself, except `meetings/` for a call: when a thought fits no shelf, file it on the closest one and suggest a shelf as the filing prompt says.
 
 <!-- avanzel:shelves -->
 ## Your shelves
@@ -77,6 +77,7 @@ parked | done`; problems `open | solved | dropped`. Memories, people and topics 
    filed yourself in a conversation (see Operations).
 4. One page per thing. Before creating a page, check `index.md` and search the shelf; update the
    existing page instead of creating a near-duplicate. One capture may touch several pages.
+   A note that was in the library before Avanzel learned it may only be added to.
 5. Keep history: append dated bullets under `## Log`, then rewrite the summary to reflect the
    current state, and set `updated:`. Never delete pages; set `achieved`, `dropped`, `solved` or
    `done` instead.

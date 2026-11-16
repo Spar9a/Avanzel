@@ -3,9 +3,9 @@
 // The shelf list and the shelves the owner turned down live in `.avanzel/config.toml` (see config.ts); this file holds the rules both
 // the settings reader and the app's shelf form check against.
 
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { lstatOrNull, replaceInside } from "./inside.ts";
+import { lstatOrNull, realFoldersTo, replaceInside } from "./inside.ts";
 
 /** The shelves every library starts with. Kept here, and re-exported by vault.ts, so these rules can use them while vault.ts loads. */
 export const SHELVES = ["goals", "ideas", "problems", "memories", "people", "topics"] as const;
@@ -115,6 +115,45 @@ export function isEmptyShelfFolder(path: string): boolean {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     return false;
   }
+}
+
+/** The folders of `rel`'s path that lie inside one of `shelves`, below its top level, deepest first: `A/b/c/x.md` → `A/b/c`, `A/b`. */
+function subfoldersOn(rel: string, shelves: readonly { folder: string }[]): string[] {
+  const parts = rel.split("/").slice(0, -1);
+  if (parts.length < 2 || !shelves.some((shelf) => folderKey(shelf.folder) === folderKey(parts[0]!))) return [];
+  return parts.slice(1).map((_, at) => parts.slice(0, parts.length - at).join("/"));
+}
+
+/**
+ * The folders a run made inside one of `shelves`, below its top level: the folder of each Markdown file it created there that held no
+ * file before (`before`, the library's files then). Sorted.
+ */
+export function newSubfolders(created: readonly string[], before: Iterable<string>, shelves: readonly { folder: string }[]): string[] {
+  const old = [...before];
+  const made = new Set<string>();
+  for (const rel of created) {
+    const folder = rel.endsWith(".md") ? subfoldersOn(rel, shelves)[0] : undefined;
+    if (folder !== undefined && !old.some((path) => path.startsWith(`${folder}/`))) made.add(folder);
+  }
+  return [...made].sort();
+}
+
+/**
+ * Remove the folders that `deleted` (library paths of files just taken away) leaves empty (`isEmptyShelfFolder`) inside one of
+ * `shelves`, below its top level only: never a shelf's own folder. Deepest first, so a folder emptied by its subfolder going goes too.
+ * Nothing is removed through a link. Returns the folders removed.
+ */
+export function removeEmptySubfolders(root: string, deleted: readonly string[], shelves: readonly { folder: string }[]): string[] {
+  const depth = (folder: string) => folder.split("/").length;
+  const candidates = [...new Set(deleted.flatMap((rel) => subfoldersOn(rel, shelves)))].sort((a, b) => depth(b) - depth(a) || (a < b ? -1 : 1));
+  const removed: string[] = [];
+  for (const folder of candidates) {
+    const path = join(root, folder);
+    if (!lstatOrNull(path)?.isDirectory() || !realFoldersTo(root, `${folder}/-`, false) || !isEmptyShelfFolder(path)) continue;
+    rmSync(path, { recursive: true, force: true });
+    removed.push(folder);
+  }
+  return removed;
 }
 
 /** Two shelves are the same when their folders or names match, ignoring case and one trailing "s". */

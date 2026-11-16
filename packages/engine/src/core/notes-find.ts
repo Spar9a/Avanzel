@@ -112,12 +112,12 @@ function read(root: string, rel: string): string | null {
 /**
  * The notes under the given top-level folders of `root`, at any depth, that mention the words of `query` in any of their forms:
  * the most mentions first (a word in the file name or the title counts extra), then by path. Each comes with its headings and a few
- * passages, never its whole text.
+ * passages, never its whole text. `now` is the day each note's next entry is dated with (`EntryPattern.today`).
  */
 export function findNotes(
   root: string,
   query: string,
-  { folders, limit = 5 }: { folders: readonly string[]; limit?: number },
+  { folders, limit = 5, now = new Date() }: { folders: readonly string[]; limit?: number; now?: Date },
 ): FoundNote[] {
   const stems = queryStems(query);
   const wanted = new Set(folders.map(folderKey));
@@ -135,7 +135,6 @@ export function findNotes(
     if (score) scored.push({ path: rel, title, score });
   }
   scored.sort((a, b) => b.score - a.score || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  const now = new Date();
   return scored.slice(0, limit).map(({ path, title, score }) => {
     const text = read(root, path) ?? "";
     return { path, title, outline: outlineOf(text), passages: passagesOf(text, stems), score, pattern: entryPattern(text, now) };

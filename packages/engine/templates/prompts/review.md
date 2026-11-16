@@ -13,6 +13,7 @@ ${shelves}Run a health check of the whole library and write the report to `${rep
 
 Fix only safe things yourself: missing [[links]] and missing or stale index.md lines. Do not delete
 or merge pages; recommend that in the report instead. Never touch inbox/ or raw/.
+Notes the owner had before a shelf was learned are left as they are.
 
 Report format: a `# Review ${today}` heading, short sections of bullet points citing [[page-name]]s,
 and a final `## Suggested next steps` section. Then append one line to log.md in exactly this form:
