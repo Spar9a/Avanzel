@@ -38,7 +38,7 @@ export type DateFormat = "yyyy-mm-dd" | "dd.mm.yyyy" | "dd.mm.yy" | "dd/mm/yyyy"
 
 /** How a note takes new entries. `top` means before the first entry, `end` after the last, `under` at the end of that heading's section. */
 export interface EntryPattern {
-  /** The newest entries as they are written, in file order. */
+  /** The newest entries by date as they are written, oldest first. */
   entries: string[];
   dateFormat: DateFormat | null;
   /** The first entry's first line with its date replaced by today's, in the note's own format. */
@@ -190,30 +190,44 @@ interface Entry {
   /** Index of the entry's first line in the note's body, and one past its last. */
   start: number;
   end: number;
+  /** 1 to 6 for a heading, 7 for a list item. */
   level: number;
   date: DateMention;
+  /** The heading it sits under, as written; null when there is none, it is dated itself, or it is the note's title. */
+  parent: string | null;
 }
 
 /**
  * How a note takes new entries: dated headings or top-level dated list items, the way the owner dates them and where they go.
- * Null when the note has no dated entries.
+ * Null when the note has no dated entries. One pass over the lines, so a diary of thousands of entries costs no more than its length.
  */
 export function entryPattern(text: string, now: Date): EntryPattern | null {
   const lines = bodyLines(text);
-  const prose = proseLines(lines);
   const starts: Entry[] = [];
-  for (const [index, line] of prose) {
-    const level = headingLevel(line) || (/^[-*] /.test(line) ? 7 : 0);
+  // The headings above the current line, each deeper than the one before; a dated one is an entry's own heading, not a section.
+  const open: Array<{ level: number; line: string; dated: boolean }> = [];
+  let current: Entry | null = null;
+  for (const [index, line] of proseLines(lines)) {
+    const heading = headingLevel(line);
+    const level = heading || (/^[-*] /.test(line) ? 7 : 0);
     const date = level ? dateIn(line) : null;
-    if (date) starts.push({ start: index, end: lines.length, level, date });
+    // An entry runs to the next entry, or to a heading of its own level or higher (any heading ends a list item).
+    if (current && (date || (heading > 0 && heading <= current.level))) {
+      current.end = index;
+      current = null;
+    }
+    if (heading) {
+      while (open.length && open[open.length - 1]!.level >= heading) open.pop();
+    }
+    if (date) {
+      const above = open[open.length - 1];
+      const parent = above && above.level > 1 && !above.dated ? above.line : null;
+      current = { start: index, end: lines.length, level, date, parent };
+      starts.push(current);
+    }
+    if (heading) open.push({ level: heading, line: line.trimEnd(), dated: date !== null });
   }
   if (!starts.length) return null;
-  // An entry runs to the next entry, or to a heading of its own level or higher (any heading ends a list item).
-  for (const entry of starts) {
-    const next = prose.find(([index, line]) => index > entry.start && headingLevel(line) > 0 && headingLevel(line) <= entry.level);
-    const following = starts.find((other) => other.start > entry.start);
-    entry.end = Math.min(next?.[0] ?? lines.length, following?.start ?? lines.length);
-  }
 
   const tally = new Map<DateFormat, number>();
   for (const { date } of starts) tally.set(date.format, (tally.get(date.format) ?? 0) + 1);
@@ -223,7 +237,7 @@ export function entryPattern(text: string, now: Date): EntryPattern | null {
   const firstLine = lines[first.start] ?? "";
   const today = firstLine.slice(0, first.date.index) + formatDate(dateFormat, now) + firstLine.slice(first.date.index + first.date.text.length);
 
-  const sections = new Set(starts.map((entry) => parentHeading(prose, entry, starts)));
+  const sections = new Set(starts.map((entry) => entry.parent));
   const [section] = [...sections];
   let where: EntryPattern["where"];
   if (sections.size === 1 && section) {
@@ -239,22 +253,12 @@ export function entryPattern(text: string, now: Date): EntryPattern | null {
     where = down > up ? "top" : "end";
   }
 
-  const shown = where === "top" ? starts.slice(0, ENTRIES_SHOWN) : starts.slice(-ENTRIES_SHOWN);
-  const entries = shown.map((entry) => cut(lines.slice(entry.start, entry.end).join("\n").trimEnd(), ENTRY_CHARS));
+  // The newest by date, whichever way the note runs, shown oldest first.
+  const newest = starts
+    .map((entry, position) => ({ entry, position }))
+    .sort((a, b) => b.entry.date.sortKey - a.entry.date.sortKey || b.position - a.position)
+    .slice(0, ENTRIES_SHOWN)
+    .sort((a, b) => a.entry.date.sortKey - b.entry.date.sortKey || a.position - b.position);
+  const entries = newest.map(({ entry }) => cut(lines.slice(entry.start, entry.end).join("\n").trimEnd(), ENTRY_CHARS));
   return { entries, dateFormat, today, where };
-}
-
-/**
- * The heading an entry sits under, as written: the nearest one above it that is higher than the entry. Null when there is none, when
- * it is dated itself, or when it is the note's title (a level-1 heading), under which entries are simply added at the end or the top.
- */
-function parentHeading(prose: ReadonlyArray<[number, string]>, entry: Entry, starts: readonly Entry[]): string | null {
-  for (let at = prose.length - 1; at >= 0; at--) {
-    const [index, line] = prose[at]!;
-    const level = headingLevel(line);
-    if (index >= entry.start || !level || level >= entry.level) continue;
-    if (level === 1 || starts.some((other) => other.start === index)) return null;
-    return line.trimEnd();
-  }
-  return null;
 }

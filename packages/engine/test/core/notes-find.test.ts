@@ -33,12 +33,13 @@ describe("findNotes", () => {
   });
   it("gives each note its outline and short passages, never the whole note", () => {
     const root = library();
-    const big = "# Big\n\n" + "## Раздел\nСенека ".repeat(20_000);
-    write(root, "Philosophy/Big.md", big);
+    const sections = Array.from({ length: 5_000 }, (_, i) => `## Раздел ${i}\nСенека ${"я".repeat(400)}\n`).join("\n");
+    write(root, "Philosophy/Big.md", `# Big\n\n${sections}`);
     const note = findNotes(root, "Сенека", { folders: ["Philosophy"], limit: 10 }).find((n) => n.path === "Philosophy/Big.md")!;
-    expect(note.passages.length).toBeLessThanOrEqual(3);
-    expect(note.passages.every((p) => [...p].length <= 300)).toBe(true);
-    expect(note.outline.length).toBeLessThanOrEqual(30);
+    expect(note.passages).toHaveLength(3);
+    expect(note.passages.map((p) => [...p].length)).toEqual([300, 300, 300]);
+    expect(note.outline).toHaveLength(30);
+    expect(note.outline[0]).toBe("# Big");
   });
   it("matches a folder named in decomposed Unicode on disk", () => {
     const root = tmp();
@@ -89,6 +90,20 @@ describe("entryPattern", () => {
     expect(p.entries).toHaveLength(3);
     expect(p.entries[0]!.startsWith("## 02.11.26")).toBe(true);
     expect([...p.entries[0]!].length).toBe(400);
+  });
+  it("shows the newest entries by date in a newest-first Log, oldest of them first", () => {
+    const text = "# X\n\n## Log\n- 2026-11-09 — e\n- 2026-11-08 — d\n- 2026-11-07 — c\n- 2026-11-06 — b\n- 2026-11-05 — a\n";
+    const p = entryPattern(text, NOW)!;
+    expect(p.where).toEqual({ under: "## Log" });
+    expect(p.entries).toEqual(["- 2026-11-07 — c", "- 2026-11-08 — d", "- 2026-11-09 — e"]);
+  });
+  it("handles a diary of thousands of entries quickly", () => {
+    const text = "# Diary\n\n" + Array.from({ length: 8_000 }, (_, i) => `## ${String(1 + (i % 28)).padStart(2, "0")}.${String(1 + (i % 12)).padStart(2, "0")}.${2000 + Math.floor(i / 336)}\ntext ${i}\n`).join("\n");
+    const started = performance.now();
+    const p = entryPattern(text, NOW)!;
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(p.entries).toHaveLength(3);
+    expect(p.where).toBe("end");
   });
   it("ignores dates in front matter, code blocks and impossible dates", () => {
     expect(entryPattern("---\n- 2026-11-01\n---\n```\n## 2026-11-02\n```\n## v2026-99-99\n", NOW)).toBeNull();
