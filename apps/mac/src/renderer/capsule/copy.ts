@@ -147,8 +147,11 @@ export function newFolderLines(folders: readonly string[] | undefined): string[]
   return (folders ?? []).map((folder) => newFolderLine(lastPart(folder)));
 }
 
-/** The filed card's line for what the filing did in a folder the owner left out, put back or taken away, by its name. */
-export const keptOutLine = (name: string): string => `${name} was taken out: Avanzel leaves that folder alone.`;
+/**
+ * The filed card's line for what the filing did in a folder the owner left out, by its name: one neutral line whether Avanzel put the
+ * owner's file back or took away one the run made, as the folder is as it was either way.
+ */
+export const keptOutLine = (name: string): string => `${name} was left as it was: Avanzel leaves that folder alone.`;
 
 /** A note's name without .md; any other file's name as it is. */
 const shownName = (rel: string): string => lastPart(rel).replace(/\.md$/i, "");

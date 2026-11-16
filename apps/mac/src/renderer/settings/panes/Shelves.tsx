@@ -189,7 +189,7 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves; review: StudyR
   const taken = shelves.filter((shelf) => shelf.definition !== "").map((shelf) => shelf.folder);
   // Learn this library's confirm (what a study costs, once Learn this library… was pressed) and the house style's editor. The confirm, the
   // shelf form and the editor each have a primary button, so one opens at a time.
-  const [preview, setPreview] = useState<StudyPreview | null>(null);
+  const [preview, setPreview] = useState<{ cost: StudyPreview; fresh: boolean } | null>(null);
   const [studying, setStudying] = useState<"preview" | "start" | null>(null);
   const [styleDraft, setStyleDraft] = useState<string | null>(null);
   const [styleSaving, setStyleSaving] = useState<"save" | "remove" | null>(null);
@@ -258,13 +258,14 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves; review: StudyR
     setPreview(null);
     setStyleDraft(null);
   };
-  const learn = async () => {
+  // What a study costs, before it starts. `fresh`: Start over's, whose Start study begins afresh, forgetting what was studied so far.
+  const learn = async (fresh = false) => {
     if (studying) return;
     setStudying("preview");
     try {
       const cost = await attempt(() => api.previewStudy(), STUDY_NOT_STARTED);
       if (cost) {
-        setPreview(cost);
+        setPreview({ cost, fresh });
         setForm(null);
         setStyleDraft(null);
       }
@@ -301,19 +302,23 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves; review: StudyR
   };
 
   // The panel's Learn this library… opens General with what a study costs showing: the ask is let go as it is taken, so it shows once.
+  // A shelf form with something typed in it, or the house style's open editor, is never closed for it: the cost waits for the person's
+  // own press of Learn this library….
   const previewAsked = snap.studyPreviewAsked;
   useEffect(() => {
     if (!previewAsked) return;
     api.dropStudyPreview();
-    if (study.kind === "idle") void learn();
+    if (study.kind === "idle" && form?.dirty !== true && styleDraft === null) void learn();
   }, [previewAsked]);
 
   // A study that is ready: its review stands in place of the group until it is applied or discarded.
   if (study.kind === "ready") return <StudyReview {...props} proposal={study.proposal} review={review} />;
 
   const idle = study.kind === "idle";
-  const confirming = idle && preview !== null;
-  const resumable = idle && study.resumable;
+  // The cost shows for Learn this library… (idle) and for a paused study's Start over (failed).
+  const confirming = (idle || study.kind === "failed") && preview !== null;
+  const fresh = preview?.fresh === true;
+  const resumable = idle && study.resumable && !fresh;
 
   // The offer, above the group, while there are folders to learn, no study is going or being confirmed, and it wasn't put away (Not now,
   // here or in the panel). While it shows, its Learn this library… is the only one. A study that paused on a failed run goes on from where
@@ -332,15 +337,18 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves; review: StudyR
       {STUDY_OFFER_BODY}
     </Notice>
   );
+  // Start over shows what a fresh study costs first, and its Start study begins afresh; while that shows, the Notice only tells.
   const failed = study.kind === "failed" && (
     <Notice
       tone="error"
       title={study.message}
       actions={
-        <Actions align="start">
-          <Button size="small" variant="secondary" disabled={studying === "start"} onClick={() => void start(true)}>{START_OVER}</Button>
-          <Button size="small" variant="secondary" busy={studying === "start"} onClick={() => void start(false)}>{RESUME_STUDY}</Button>
-        </Actions>
+        !confirming && (
+          <Actions align="start">
+            <Button size="small" variant="secondary" busy={studying === "preview"} disabled={studying === "start"} onClick={() => void learn(true)}>{START_OVER}</Button>
+            <Button size="small" variant="secondary" busy={studying === "start"} disabled={studying === "preview"} onClick={() => void start(false)}>{RESUME_STUDY}</Button>
+          </Actions>
+        )
       }
     >
       {STUDY_FAILED_SAFE}
@@ -439,7 +447,7 @@ export function Shelves(props: PaneProps & { shelves: OwnShelves; review: StudyR
       {confirming && (
         <div className="settings-editor">
           <Stack gap={10}>
-            <Text variant="callout">{studyCostLine(preview, agent)}</Text>
+            <Text variant="callout">{studyCostLine(preview.cost, agent)}</Text>
             <Actions>
               <Button variant="quiet" disabled={studying === "start"} onClick={() => setPreview(null)}>{SHELF_CANCEL}</Button>
               <Button variant="primary" busy={studying === "start"} onClick={() => void start(!resumable)}>{resumable ? RESUME_STUDY : START_STUDY}</Button>

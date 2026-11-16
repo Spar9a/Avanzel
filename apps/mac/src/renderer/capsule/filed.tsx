@@ -1,6 +1,6 @@
 // The capsule once a filing ends well: one card of paper with the person's words, stamped, and in its foot who filed them and how long
 // it took, with Undo and Open at its right and Hide in its corner; under the pages, a line for each folder the filing made inside one of the
-// owner's shelves, each old note of theirs that was kept as it was, and each thing taken out of a folder they left out; and, when the
+// owner's shelves, each old note of theirs that was kept as it was, and each thing in a folder they left out that was left as it was; and, when the
 // librarian suggests a new shelf, the question under them. The panel's Processing tab draws the same card. Nothing here ticks.
 import { Actions, Button, Card, Stack, Text } from "@avanzel/ui";
 import { useState } from "react";

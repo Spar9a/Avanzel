@@ -282,12 +282,12 @@ describe("the filed card's lines on what a filing did in the owner's own folders
     expect(keptOldLines(undefined)).toEqual([]);
   });
 
-  it("names what was put back or taken away in a folder the owner left out: a note without .md, any other file as it is", () => {
-    expect(keptOutLine("borscht")).toBe("borscht was taken out: Avanzel leaves that folder alone.");
+  it("names what was put back or taken away in a folder the owner left out, in one neutral line: a note without .md, any other file as it is", () => {
+    expect(keptOutLine("borscht")).toBe("borscht was left as it was: Avanzel leaves that folder alone.");
     expect(keptOutLines(["Recipes/soups/idea.md", "Recipes/photo.png", "Recipes"])).toEqual([
-      "idea was taken out: Avanzel leaves that folder alone.",
-      "photo.png was taken out: Avanzel leaves that folder alone.",
-      "Recipes was taken out: Avanzel leaves that folder alone.",
+      "idea was left as it was: Avanzel leaves that folder alone.",
+      "photo.png was left as it was: Avanzel leaves that folder alone.",
+      "Recipes was left as it was: Avanzel leaves that folder alone.",
     ]);
     expect(keptOutLines(undefined)).toEqual([]);
   });
