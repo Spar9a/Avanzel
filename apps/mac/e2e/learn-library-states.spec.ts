@@ -10,7 +10,8 @@ import { call, gitOut, openSettings, paneOf, settingsRow } from "./helpers.ts";
 
 const OFFER_TITLE = "This library has folders of its own.";
 const STILL_RUNNING = "The study is still running, so nothing changed. Stop it first, then try again.";
-const SLOW = { FAKE_AGENT_DELAY_MS: "2500", FAKE_AGENT_DELAY_TASK: "study-folder" };
+// Long enough that a step is still in flight however slowly the test gets to it; a Stop, a quit or a switch kills the run, so it costs little.
+const SLOW = { FAKE_AGENT_DELAY_MS: "8000", FAKE_AGENT_DELAY_TASK: "study-folder" };
 
 /** What the review screen would send for a proposal: every folder filed into, as proposed. */
 function applyAll(state: StudyState) {

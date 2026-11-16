@@ -15,11 +15,23 @@ const THOUGHT = "Сенека о письмах";
 
 /** Records a thought (the transcript the app was launched with) and waits for its filed card. */
 async function fileAThought(app: ElectronApplication): Promise<void> {
-  await call(app, "toggleDictate");
-  await call(app, "toggleDictate");
-  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toMatch(/^(filed|error)$/);
+  await endOfThought(app);
   // A problem instead of Filed is told whole, so a failure says what the capsule said.
   expect(JSON.stringify(await call(app, "capsuleStateForTests")).slice(0, 2000)).toMatch(/^\{"kind":"filed"/);
+}
+
+/**
+ * Records a thought and waits for the card it ends in, Filed or a problem: a card other than the one the capsule showed before, so the
+ * last thought's card, still up, is never taken for this one's.
+ */
+async function endOfThought(app: ElectronApplication): Promise<void> {
+  const before = JSON.stringify(await call(app, "capsuleStateForTests"));
+  await call(app, "toggleDictate");
+  await call(app, "toggleDictate");
+  await expect.poll(async () => {
+    const state = (await call(app, "capsuleStateForTests")) as { kind: string };
+    return JSON.stringify(state) !== before && (state.kind === "filed" || state.kind === "error");
+  }, { timeout: 60_000 }).toBe(true);
 }
 
 /** Today as an entry of Seneca.md is dated: dd.mm.yyyy. */
@@ -84,9 +96,10 @@ test("an Obsidian-like library is studied folder by folder, reviewed and applied
 test("a study stopped from the panel goes on from where it stopped", async () => {
   const library = await obsidianLibrary();
   const record = recordFile();
-  const { app } = await launchOn(library, { FAKE_AGENT_DELAY_MS: "2500", FAKE_AGENT_DELAY_TASK: "study-folder", FAKE_AGENT_RECORD: record });
+  const { app } = await launchOn(library, { FAKE_AGENT_DELAY_MS: "8000", FAKE_AGENT_DELAY_TASK: "study-folder", FAKE_AGENT_RECORD: record });
   await call(app, "startStudy", true);
-  // The first folder is studied; Stop lands while the second one is.
+  // The first folder is studied; Stop lands while the second one is. Each step takes 8 s, so the second is still in flight however slowly
+  // the test gets to Stop; Stop kills its run, so that costs little.
   await expect.poll(async () => {
     const study = await studyOf(app);
     return study.kind === "running" ? study.done : -1;
@@ -148,9 +161,8 @@ test("a rewritten old note is put back and the filed card says so; a new subfold
   await learnedPhilosophy(app);
   // The agent only rewrites Seneca.md: it is put back as it was, and as nothing else was done, the thought isn't filed and says why.
   await agentMode(app, "rewrite-found");
-  await call(app, "toggleDictate");
-  await call(app, "toggleDictate");
-  await expect.poll(() => capsuleKind(app), { timeout: 60_000 }).toBe("error");
+  await endOfThought(app);
+  expect(await capsuleKind(app)).toBe("error");
   expect(readFileSync(path.join(library, SENECA), "utf8")).toBe(SENECA_TEXT);
   await expect(capsule.getByText(/only changed notes it may not rewrite, so they were put back as they were/)).toBeVisible();
   // The agent rewrites Seneca.md and writes a page of its own: the note is put back, the page is filed, and the card says so.
