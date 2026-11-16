@@ -36,6 +36,7 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
   voiceTrigger: Object.freeze({ enabled: false, word: TRIGGER_WORD, stopWord: STOP_WORD }),
   checkForUpdates: true,
   agentAccess: false,
+  studyOfferDismissed: Object.freeze([]) as unknown as string[],
 }) as AppSettings;
 
 const CURSOR_KEYS: readonly CursorKey[] = ["right-option", "left-option", "right-command", "right-control"];
@@ -73,6 +74,12 @@ export function writeJsonAtomic(file: string, value: unknown): void {
   renameSync(partial, file);
 }
 
+/** A list of library paths as far as it makes sense: the strings with something in them, each once, in their order; [] for anything else. */
+function pathsOf(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.filter((item): item is string => typeof item === "string" && item !== ""))];
+}
+
 export function normalizeSettings(raw: unknown): AppSettings {
   const r = isRecord(raw) ? raw : {};
   const given = isRecord(r.shortcuts) ? r.shortcuts : {};
@@ -94,6 +101,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
     // On unless the person turned it off: a settings file from before the setting has it on.
     checkForUpdates: r.checkForUpdates !== false,
     agentAccess: r.agentAccess === true,
+    studyOfferDismissed: pathsOf(r.studyOfferDismissed),
   };
 }
 

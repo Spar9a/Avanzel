@@ -192,6 +192,58 @@ export interface ShelfGoing {
   op: "make" | "decline";
 }
 
+/** A folder of the owner's as a study proposes to file into it: the engine's `ProposedShelf`. */
+export interface ProposedShelf {
+  folder: string;
+  name: string;
+  definition: string;
+  /** Its subfolder outline, one line per pattern; empty for a flat folder. */
+  map: string;
+  confidence: "high" | "low";
+  /** False when the agent's answer for it couldn't be read: the folder was not studied. */
+  studied: boolean;
+  /** The folder is already one of the owner's shelves, with a definition: Apply gives it only its map. */
+  hasDefinition: boolean;
+}
+
+/** What a study proposes, for the review screen: the engine's `StudyProposal`. */
+export interface StudyProposal {
+  shelves: ProposedShelf[];
+  /** The house style the study wrote. */
+  style: string;
+  /** The house style the library has now ("" for none), shown beside the new one. */
+  currentStyle: string;
+  /** The owner's folders with files but no notes, which were not studied. */
+  attachments: string[];
+  /** Avanzel's folders that already hold notes of the owner's. */
+  clashes: string[];
+}
+
+/** What Learn this library will do, in numbers, before the owner agrees to it: the engine's `StudyPreview`. */
+export interface StudyPreview {
+  folders: number;
+  notes: number;
+  steps: number;
+}
+
+/** What the owner chose of a study's proposal (the engine's `StudyApply`): each folder to file into (`fileHere`) or leave out, and the house style. */
+export interface StudyApply {
+  shelves: { folder: string; name: string; definition: string; map: string; fileHere: boolean }[];
+  style: string;
+}
+
+/**
+ * Learn this library, for the open library, as Settings and the panel show it: no study going (`resumable` when one stopped part way,
+ * which Learn this library goes on with), a study running (`done` of `steps`, on the folder `current`, "" for a step with none; `stopping`
+ * once Stop was pressed, until the step in flight ends), a proposal waiting for review, or a study that paused on a failed run, in the
+ * engine's words.
+ */
+export type StudyState =
+  | { kind: "idle"; resumable: boolean }
+  | { kind: "running"; done: number; steps: number; current: string; stopping: boolean }
+  | { kind: "ready"; proposal: StudyProposal }
+  | { kind: "failed"; message: string };
+
 /** A shelf of the owner's own, as Settings sends it: the engine's `OwnShelf`. */
 export interface OwnShelfInput {
   folder: string;
@@ -316,6 +368,16 @@ export type CapsuleState =
        * and stays twice as long. Absent when there is none.
        */
       suggestion?: ShelfAsk;
+      /**
+       * The folders the filing made inside one of the owner's shelves, below its top level, library-relative (`FileOutcome.newFolders`):
+       * the card names each by its last part. Absent when it made none.
+       */
+      newFolders?: string[];
+      /**
+       * What was put back after the run, library-relative (`FileOutcome.keptOld`): the owner's older notes that it rewrote, and what it
+       * did in a folder they left out. Absent when nothing was.
+       */
+      keptOld?: string[];
     }
   /**
    * Make shelf made `name`'s shelf: `moved` pages went onto it, and `notMoved` stayed where they were (one with that name was in its
@@ -457,6 +519,8 @@ export interface AppSettings {
    * library and leave notes in its inbox. Off until the person turns it on; the server reads it on every call.
    */
   agentAccess: boolean;
+  /** The libraries (their paths) whose panel card offering Learn this library was put away with Later: it isn't offered there again. */
+  studyOfferDismissed: string[];
 }
 
 /**
@@ -619,6 +683,11 @@ export interface LibraryInfo {
   ownShelves: { folder: string; name: string; definition: string; pages: number; empty: boolean }[];
   /** config.toml's `declined_shelves`: the folders the owner turned down, which the librarian doesn't suggest again. */
   declinedShelves: string[];
+  /**
+   * The top-level folders of the owner's own that hold notes and are neither a shelf (Avanzel's or their own) nor left out by a study
+   * (`unlearnedFoldersOf`): what Learn this library would study. Settings offers it while there are any.
+   */
+  unlearnedFolders: string[];
 }
 
 /** The library's `[private]` settings: the same as the engine's PrivateModel. */
@@ -760,6 +829,8 @@ export interface SettingsSnapshot {
    * none. It stays until the form takes it (`settings.dropShelfDraft`) or a `make` from it lands.
    */
   shelfDraft: ShelfAsk | null;
+  /** Learn this library, for the open library (idle without one). */
+  study: StudyState;
   /** The other agents Settings → Agents sets up to use the library (`Avanzel --mcp`), Claude Code first. */
   mcpClients: McpClientInfo[];
   /** What Add to Claude Code came to. */
@@ -1290,6 +1361,20 @@ export interface AvanzelBridge {
     openShelfDraft(ask: ShelfAsk): void;
     /** The shelf form took the draft, or let it go: `SettingsSnapshot.shelfDraft` is null again. */
     dropShelfDraft(): void;
+    /** Learn this library's confirm: what a study would do, in numbers (planned afresh, nothing written). */
+    previewStudy(): Promise<StudyPreview>;
+    /**
+     * Starts Learn this library (`fresh`: Start again, which forgets what an earlier study learned; else it goes on from where one
+     * stopped). It resolves at once, with the study running (`SettingsSnapshot.study`); how far it is comes with each snapshot after.
+     * Rejects while one runs.
+     */
+    startStudy(fresh: boolean): Promise<SettingsSnapshot>;
+    /** Stop: the study ends once the step in flight has, keeping what it learned (`study.stopping` meanwhile). */
+    stopStudy(): void;
+    /** Apply on the review screen: what the owner chose becomes shelves and the house style, as one change Undo takes back. Rejects while a study runs. */
+    applyStudy(apply: StudyApply): Promise<SettingsSnapshot>;
+    /** Discard on the review screen, or Start again's first half: the study and what it learned are forgotten. Rejects while one runs. */
+    discardStudy(): Promise<SettingsSnapshot>;
     /** The private model's key, which the app keeps in the Keychain and never hands to a window: a new one. */
     /** Starts downloading a hosted model, which goes on in the background; the answer is the snapshot as it is then. */
     downloadHosted(id: string): Promise<SettingsSnapshot>;
@@ -1665,6 +1750,16 @@ export interface PanelSnapshot {
    * busy until it ends, whether it was made, turned down or refused, and the others wait with it.
    */
   shelvesGoing: ShelfGoing[];
+  /**
+   * Learn this library, for the open library: a card shows it running (`act("study-stop")`) or ready (`act("study-review")`, which opens
+   * Settings → General on the review). Idle without a library.
+   */
+  study: StudyState;
+  /**
+   * The card that offers Learn this library: the library has folders of the owner's own (`LibraryInfo.unlearnedFolders`), no study runs
+   * or waits for review, and the card wasn't put away for this library (`act("study-offer-later")`).
+   */
+  studyOffer: boolean;
 }
 
 /** A file or screenshot added to a recording, as its Add list shows it: its name and when it was added (Date.now()). */

@@ -58,6 +58,16 @@ describe("settings store", () => {
     expect(new SettingsStore(file).get().agentAccess).toBe(true);
   });
 
+  it("keeps the libraries whose study offer was put away as paths, each once, and anything else as none", () => {
+    expect(DEFAULT_SETTINGS.studyOfferDismissed).toEqual([]);
+    expect(normalizeSettings({}).studyOfferDismissed).toEqual([]);
+    expect(normalizeSettings({ studyOfferDismissed: "/lib" }).studyOfferDismissed).toEqual([]);
+    expect(normalizeSettings({ studyOfferDismissed: ["/lib", 3, "", "/other", "/lib", null] }).studyOfferDismissed).toEqual(["/lib", "/other"]);
+    const file = path.join(tmp(), "settings.json");
+    new SettingsStore(file).update({ studyOfferDismissed: ["/lib"] });
+    expect(new SettingsStore(file).get().studyOfferDismissed).toEqual(["/lib"]);
+  });
+
   it("only reads a missing settings file, never writes it", () => {
     const file = path.join(tmp(), "settings.json");
     new SettingsStore(file).get();

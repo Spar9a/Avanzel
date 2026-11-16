@@ -73,6 +73,7 @@ import {
   type PrivateModel,
   type Settings,
   type ShadowTask,
+  type StudyProgress,
   type Transcriber,
   type Transcript,
   type VoiceOptions,
@@ -135,6 +136,8 @@ import type {
   SetupSnapshot,
   SetupStep,
   Shortcuts,
+  StudyPreview,
+  StudyState,
   TaskInfo,
 } from "../shared/ipc.ts";
 import { callAppLabel, runningCallApps, type CallApp } from "./call-apps.ts";
@@ -203,6 +206,7 @@ import { afterStop, defaultLibraryPath, suggestQuestions, tildePath, tooBroad, u
 import { answeredBy, ShelfSuggestions, type PendingShelf } from "./shelf-suggestions.ts";
 import { askOf, libraryAskOf, ownShelvesInfo, parseShelfAsk, parseShelfOp, shelfUndoNotice } from "./shelf-asks.ts";
 import { shelfMadeNotes, type NotMovedReason } from "../shared/shelves.ts";
+import { parseStudyApply, studyEndedState, studyOffered, studyUndoNotice, unlearnedFoldersOf } from "./study-state.ts";
 import { cursorShortcutProblemOf, freeAlternatives, likelyHolder, registerShortcuts, type ShortcutApi } from "./shortcuts.ts";
 import { CaptureCount, FirstRunLog, NoticedShortcuts, SettingsStore } from "./store.ts";
 import { openTerminal } from "./terminal.ts";
@@ -609,7 +613,7 @@ export class Controller {
    * whether its suggestion is pending again. What Make shelf made is kept in the library's undo record (`UndoRecord.shelf`), so that its
    * Undo says the right thing after a relaunch too.
    */
-  private readonly shelfUndos = new Map<string, { name: string; restored: boolean }>();
+  private readonly shelfUndos = new Map<string, { name: string; restored: boolean; learned: boolean }>();
   /** The capture each filing's commit filed, in this app run (a filing's, or one of an evening review's): its Undo takes the capture's pages off any suggestion. */
   private readonly filedCaptures = new Map<string, string>();
   /**
@@ -619,6 +623,17 @@ export class Controller {
   private readonly shelvesGoing = new Map<string, ShelfGoing["op"]>();
   /** Edit first's suggestion, for Settings → General's shelf form (`SettingsSnapshot.shelfDraft`), until the form takes it. */
   private shelfDraft: ShelfAsk | null = null;
+  /** Learn this library for the open library, as Settings and the panel show it (`startStudy`); read from its study files as it opens. */
+  private study: StudyState = { kind: "idle", resumable: false };
+  /**
+   * The study that runs, and the library it is of, from its start until its run has ended (after a Stop, once the step in flight has):
+   * one at a time, and Apply and Discard wait for none. A library that closes stops its study.
+   */
+  private studyRun: { root: string; abort: AbortController } | null = null;
+  /** A study's Apply or Discard is going: a study doesn't start meanwhile. */
+  private studyChanging = false;
+  /** The open library's folders a study would learn (`unlearnedFoldersOf`), as the panel last read them, for `pagesVersion`. */
+  private unlearnedCache: { root: string; version: number; folders: string[] } | null = null;
   private shortcutProblems: Partial<Record<keyof Shortcuts, string>> = {};
   /** The notice of each shortcut another app holds, with its free alternatives, in the order they register. */
   private takenShortcuts: TakenShortcut[] = [];
@@ -844,6 +859,7 @@ export class Controller {
     this.libraryMissing = null;
     this.filedUntil = null; // a stamp for a filing in the library that closes
     this.wake(); // and a night's sleep is for it too
+    this.closeStudy(); // a study of the library that closes stops, and goes on when it is open again
     if (!libraryPath) return;
     const vault = new Vault(libraryPath);
     if (!vault.exists()) {
@@ -861,6 +877,7 @@ export class Controller {
       return;
     }
     this.vault = vault;
+    this.study = this.studyAtOpen(vault);
     const saved = this.undoRecords.get(vault.root);
     this.lastFiled = saved.filing === null ? null : { commit: saved.filing, library: vault.root };
     this.lastEveningCommits = saved.evening;
@@ -3248,6 +3265,9 @@ export class Controller {
           // The agent changed the capture and the engine put the person's words back: the card says they are kept. Absent when it didn't.
           ...(outcome.restored ? { restored: true as const } : {}),
           ...(suggestion ? { suggestion } : {}),
+          // The folders it made in a shelf of the owner's, and what of theirs was put back: the card names them. Absent when none.
+          ...(outcome.newFolders.length ? { newFolders: outcome.newFolders } : {}),
+          ...(outcome.keptOld.length ? { keptOld: outcome.keptOld } : {}),
         },
         // A card that asks about a shelf stays twice as long; when it goes, Library still asks.
         suggestion ? FILED_SHOW_MS * 2 : job.pages.length === 0 ? NO_NOTE_SHOW_MS : FILED_SHOW_MS,
@@ -4021,7 +4041,7 @@ export class Controller {
       if (shelf) {
         this.undoRecords.patch(library.root, { shelf: null }); // taken back, or refused: either way it is offered no more
         const restored = undone && shelf.pending !== null && this.restoreSuggestion(library.root, shelf.pending);
-        this.shelfUndos.set(commit, { name: shelf.name, restored });
+        this.shelfUndos.set(commit, { name: shelf.name, restored, learned: shelf.learned === true });
       }
       if (undone) this.afterUndo(library.root, [commit]);
       this.reverting.delete(commit);
@@ -4416,6 +4436,185 @@ export class Controller {
     return this.snapshot();
   }
 
+  // ---------------------------------------------------------------- learn this library
+
+  /**
+   * A librarian for what Learn this library reads and forgets without an agent (its proposal, whether it can go on, its preview, its
+   * Discard): no speech-to-text engine, which `librarianFor` would wait for. Throws when the library's settings can't be read.
+   */
+  private studyLibrarian(vault: Vault): Librarian {
+    return new Librarian(vault, loadSettings(vault.root));
+  }
+
+  /**
+   * Where Learn this library stands for `vault` as it opens: the proposal of a study that finished, neither applied nor discarded, waits
+   * for review; else a study stopped part way can go on (`resumable`). Idle when the library's settings can't be read.
+   */
+  private studyAtOpen(vault: Vault): StudyState {
+    try {
+      const librarian = this.studyLibrarian(vault);
+      const proposal = librarian.studyProposal();
+      return proposal ? { kind: "ready", proposal } : { kind: "idle", resumable: librarian.studyResumable() };
+    } catch (error) {
+      console.warn("study", error);
+      return { kind: "idle", resumable: false };
+    }
+  }
+
+  /** The library closes: a study of it that runs stops (what it learned is kept, and it goes on there next time), and its state goes. */
+  private closeStudy(): void {
+    this.studyRun?.abort.abort();
+    this.study = { kind: "idle", resumable: false };
+    this.unlearnedCache = null;
+  }
+
+  /** Learn this library moved on: the panel, Settings and the menu are told. */
+  private studyChanged(): void {
+    this.refreshPanel();
+    this.broadcast();
+  }
+
+  /** A study runs (or is stopping): Apply and Discard, which change what it writes, are refused until it has ended. */
+  private refuseWhileStudying(): void {
+    if (this.studyRun) throw new AvanzelError("The study is still running, so nothing changed. Stop it first, then try again.");
+  }
+
+  /** Learn this library's confirm: what a study of the open library would do, in numbers. Nothing is written. */
+  async previewStudy(): Promise<StudyPreview> {
+    return this.studyLibrarian(this.requireVault()).previewStudy();
+  }
+
+  /**
+   * Learn this library: a study of the open library starts, afresh when `fresh` (Start again), else going on from where one stopped, and
+   * this resolves at once with it running. It is an agent run (`withRun`: the face thinks, and quitting stops it) but not in the queue:
+   * the engine takes the library's lock one step at a time, so a thought is filed between steps. Each step tells how far it is
+   * (`StudyState` running), and its end leaves a proposal for review, a study that can go on (stopped), or the failure in the engine's
+   * words. One at a time: refused while one runs, and while an Apply or a Discard is going.
+   */
+  async startStudy(fresh: boolean): Promise<SettingsSnapshot> {
+    const vault = this.requireVault();
+    if (this.studyRun) throw new AvanzelError("A study is already running.");
+    if (this.studyChanging) throw new AvanzelError("The study's proposal is being applied or discarded, so no study started. Try again in a moment.");
+    if (this.quitting) return this.snapshot();
+    const librarian = await this.librarianFor(vault);
+    if (this.studyRun) throw new AvanzelError("A study is already running."); // a second press, while the librarian was made
+    if (this.vault?.root !== vault.root || this.quitting) return this.snapshot(); // another library opened meanwhile, or Avanzel quits
+    const run = { root: vault.root, abort: new AbortController() };
+    this.studyRun = run;
+    this.study = { kind: "running", done: 0, steps: 0, current: "", stopping: false };
+    const progress = ({ done, steps, current }: StudyProgress) => {
+      if (this.studyRun !== run || this.vault?.root !== run.root) return;
+      this.study = { kind: "running", done, steps, current, stopping: run.abort.signal.aborted };
+      this.studyChanged();
+    };
+    void this.withRun((signal) => librarian.study({ signal, fresh, progress }), run.abort).then(
+      (proposal) => this.studyEnded(run, { proposal }),
+      (error) => this.studyEnded(run, { message: errorMessage(error), aborted: run.abort.signal.aborted }),
+    );
+    this.studyChanged();
+    return this.snapshot();
+  }
+
+  /** `run`'s study ended: its state is the open library's when that is still its library (one that opened since read its own). */
+  private studyEnded(run: { root: string; abort: AbortController }, end: Parameters<typeof studyEndedState>[0]): void {
+    if (this.studyRun === run) this.studyRun = null;
+    if ("message" in end && !end.aborted) console.warn("study", end.message);
+    if (this.vault?.root !== run.root) return;
+    this.study = studyEndedState(end);
+    this.studyChanged();
+  }
+
+  /**
+   * Stop, on the study's card or in Settings: the study ends once the step in flight has (a step waiting for the library's lock waits for
+   * the filing that holds it), keeping what it learned. The windows say it is stopping from now.
+   */
+  stopStudy(): void {
+    const run = this.studyRun;
+    if (!run || run.abort.signal.aborted) return;
+    run.abort.abort();
+    if (this.study.kind === "running") this.study = { ...this.study, stopping: true };
+    this.studyChanged();
+  }
+
+  /**
+   * Apply, on the study's review screen: what the owner chose (`raw`, checked by `parseStudyApply`) becomes shelves, left-out folders and
+   * the house style, as one commit, in turn with the library's other runs. That commit is the library's latest Undo, kept as a made shelf
+   * is (`undoRecords`, `learned`), whose Undo says what went. Refused while a study runs; a second press while one goes does nothing.
+   * What the engine refuses (a name that is taken, a file in a folder's way) rejects, with nothing changed.
+   */
+  async applyStudy(raw: unknown): Promise<SettingsSnapshot> {
+    const apply = parseStudyApply(raw);
+    if (!apply) throw new AvanzelError("Avanzel didn't understand what to apply from the study, so nothing changed. Try again.");
+    const vault = this.requireVault();
+    this.refuseWhileStudying();
+    if (this.studyChanging) return this.snapshot();
+    const root = vault.root;
+    this.studyChanging = true;
+    try {
+      const result = await this.enqueue(async () => (await this.librarianFor(vault)).applyStudy(apply));
+      if (result.commit) {
+        this.undoRecords.patch(root, { filing: result.commit, shelf: { commit: result.commit, name: "", pending: null, learned: true } });
+        if (this.vault?.root === root) this.lastFiled = { commit: result.commit, library: root };
+      }
+      if (this.vault?.root === root) this.study = { kind: "idle", resumable: false };
+    } finally {
+      this.studyChanging = false;
+    }
+    this.shelvesChanged();
+    return this.snapshot();
+  }
+
+  /** Discard, on the study's review screen: the study, what it learned and its proposal are forgotten. Refused while a study runs. */
+  async discardStudy(): Promise<SettingsSnapshot> {
+    const vault = this.requireVault();
+    this.refuseWhileStudying();
+    if (this.studyChanging) return this.snapshot();
+    this.studyChanging = true;
+    try {
+      await this.studyLibrarian(vault).discardStudy();
+    } finally {
+      this.studyChanging = false;
+    }
+    if (this.vault?.root === vault.root) this.study = { kind: "idle", resumable: false };
+    this.studyChanged();
+    return this.snapshot();
+  }
+
+  /** Later, on the panel's card that offers Learn this library: it isn't offered for this library again. Settings still offers it. */
+  private dismissStudyOffer(): void {
+    const vault = this.vault;
+    if (!vault) return;
+    const dismissed = this.store.get().studyOfferDismissed;
+    if (!dismissed.includes(vault.root)) {
+      try {
+        this.store.update({ studyOfferDismissed: [...dismissed, vault.root] });
+      } catch (error) {
+        console.error("study offer", error); // the card stays, and Later can be pressed again
+      }
+    }
+    this.studyChanged();
+  }
+
+  /** The folders of `vault` a study would learn (`unlearnedFoldersOf`); none when the library or its settings can't be read. */
+  private unlearnedIn(vault: Vault): string[] {
+    try {
+      const settings = loadSettings(vault.root);
+      return unlearnedFoldersOf(vault.shelfCounts(), settings.shelves, settings.excludedFolders);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Whether the panel offers Learn this library (`studyOffered`). The folders are read again once the pages changed or the panel comes up. */
+  private studyOfferFor(vault: Vault): boolean {
+    let cached = this.unlearnedCache;
+    if (!cached || cached.root !== vault.root || cached.version !== this.pagesVersion) {
+      cached = { root: vault.root, version: this.pagesVersion, folders: this.unlearnedIn(vault) };
+      this.unlearnedCache = cached;
+    }
+    return studyOffered(cached.folders, this.study, this.store.get().studyOfferDismissed, vault.root);
+  }
+
   /**
    * The Undo shortcut is pressed, in any app. It does nothing in three cases:
    * - Setup's window is open: the first thought it shows has an Undo of its own on screen, and a bar over that window would contradict it.
@@ -4455,7 +4654,8 @@ export class Controller {
     const shelf = this.shelfUndos.get(commit);
     if (shelf) {
       this.shelfUndos.delete(commit);
-      const notice = shelfUndoNotice(undone, shelf.name, shelf.restored);
+      // A study's Apply made several shelves and the house style at once: its Undo says so.
+      const notice = shelf.learned ? studyUndoNotice(undone) : shelfUndoNotice(undone, shelf.name, shelf.restored);
       this.notify(notice.title, notice.body);
       return this.refreshMenu();
     }
@@ -5264,6 +5464,11 @@ export class Controller {
     // The filing at work, on its card in Capture: Edit and Stop, as its card in the capsule has them.
     if (action === "filing-edit") return this.edit();
     if (action === "filing-stop") return this.stopShownFiling();
+    // Learn this library's cards: Stop on the one that runs, Review on the one that is ready (Settings → General shows the review), and
+    // Later on the one that offers it.
+    if (action === "study-stop") return this.stopStudy();
+    if (action === "study-review") return this.showSettings("general");
+    if (action === "study-offer-later") return this.dismissStudyOffer();
     if (action.startsWith("queue-remove:")) return void this.removeQueued(action.slice(13));
     // Capture's Take a screenshot, each way of it.
     if (action === "shot-screen" || action === "shot-area" || action === "shot-marks") return void this.screenshotThought(action === "shot-screen" ? "screen" : action === "shot-area" ? "area" : "marks");
@@ -5993,6 +6198,8 @@ export class Controller {
       update: this.updates.snapshot(),
       shelfSuggestions: vault ? this.pendingIn(vault.root).map(libraryAskOf) : [],
       shelvesGoing: [...this.shelvesGoing].map(([folder, op]) => ({ folder, op })),
+      study: this.study,
+      studyOffer: vault ? this.studyOfferFor(vault) : false,
     };
   }
 
@@ -6003,6 +6210,7 @@ export class Controller {
   private refreshPanel(showing = false): void {
     const win = this.panelWindow;
     if (!win || win.isDestroyed() || (!showing && !win.isVisible())) return;
+    if (showing) this.unlearnedCache = null; // folders made by hand meanwhile: the study's offer reads them again
     try {
       win.webContents.send("panel:changed", this.panelSnapshot());
     } catch (error) {
@@ -6083,6 +6291,7 @@ export class Controller {
     // either way (the model status says so), and reads as the one it would have been.
     const voice = (settings ?? defaultSettings()).voice;
     const { backend, model } = voice;
+    const counts = vault && exists ? vault.shelfCounts() : {}; // each top-level folder's notes: read once, as it walks the library
     return {
       app: this.store.get(),
       library: vault
@@ -6096,7 +6305,7 @@ export class Controller {
             gitUsable: git.gitUsable(),
             autoCommit: settings?.autoCommit ?? true,
             inbox: exists ? vault.pending().length : 0,
-            shelves: exists ? vault.shelfCounts() : {},
+            shelves: counts,
             harness: settings?.harness ?? "auto",
             models: settings?.models ?? {},
             ...privateInfo(settings, selected, this.hosted.info()),
@@ -6104,8 +6313,9 @@ export class Controller {
             timeoutSeconds: settings?.timeoutSeconds ?? 900,
             dictionary: settings?.voice.dictionary ?? [],
             ...dictationInfo(settings),
-            ownShelves: exists ? ownShelvesInfo(settings?.shelves ?? [], vault.shelfCounts(), (folder) => isEmptyShelfFolder(path.join(vault.root, folder))) : [],
+            ownShelves: exists ? ownShelvesInfo(settings?.shelves ?? [], counts, (folder) => isEmptyShelfFolder(path.join(vault.root, folder))) : [],
             declinedShelves: settings?.declinedShelves ?? [],
+            unlearnedFolders: exists && settings ? unlearnedFoldersOf(counts, settings.shelves, settings.excludedFolders) : [],
           }
         : kept
           ? {
@@ -6126,6 +6336,7 @@ export class Controller {
               ...dictationInfo(null),
               ownShelves: [],
               declinedShelves: [],
+              unlearnedFolders: [],
             }
           : null,
       hosted: this.hosted.info(),
@@ -6153,6 +6364,7 @@ export class Controller {
       opensInObsidian: !!vault && obsidianUrl(vault.root, "") !== null && this.obsidianInstalled(),
       update: this.updates.snapshot(),
       shelfDraft: this.shelfDraft,
+      study: this.study,
       mcpClients: [...MCP_CLIENTS],
       claudeCodeSetup: this.claudeCodeSetup,
     };
@@ -7141,6 +7353,11 @@ export class Controller {
 
   async idleForTests(): Promise<void> {
     await this.queue;
+  }
+
+  /** Learn this library for the open library, as the windows are told it. */
+  studyStateForTests(): StudyState {
+    return this.study;
   }
 
   /** Whether no dictation into another app is under way: the last one's words have been pasted and kept (or not kept) by now. */

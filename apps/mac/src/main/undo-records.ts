@@ -42,11 +42,16 @@ export interface UndoRecord {
   shelf: MadeShelf | null;
 }
 
-/** A shelf Make shelf made: its commit, the shelf's name, and the suggestion it answered, which its Undo puts back as pending (null for none). */
+/**
+ * A shelf Make shelf made: its commit, the shelf's name, and the suggestion it answered, which its Undo puts back as pending (null for none).
+ * `learned`: the commit is a study's Apply (Learn this library), which made the shelves and the house style at once; its Undo says so, and
+ * `name` is then "".
+ */
 export interface MadeShelf {
   commit: string;
   name: string;
   pending: PendingShelf | null;
+  learned?: true;
 }
 
 /** A commit's name in full: 40 hex digits (SHA-1), up to 64 (SHA-256). A shorter one, or a name such as HEAD, names no commit for sure. */
@@ -91,7 +96,8 @@ function normalizeReceipt(raw: unknown): FilingReceipt | null {
  */
 function normalizeShelf(raw: unknown): MadeShelf | null {
   if (!isObject(raw) || !isCommit(raw.commit) || typeof raw.name !== "string") return null;
-  return { commit: raw.commit, name: raw.name, pending: raw.pending === null ? null : normalizePending(raw.pending) };
+  const pending = raw.pending === null ? null : normalizePending(raw.pending);
+  return { commit: raw.commit, name: raw.name, pending, ...(raw.learned === true ? { learned: true as const } : {}) };
 }
 
 /** A record from whatever was read: a `filing` that is no commit is none, `evening` is kept only when every item is a commit, and a receipt and a made shelf only when whole. */

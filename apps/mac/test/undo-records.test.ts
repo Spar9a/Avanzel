@@ -285,6 +285,15 @@ describe("normalizeUndoRecord", () => {
     }
   });
 
+  it("reads a study's Apply as learned only when it says so, and keeps it across a relaunch", () => {
+    const learned = { commit: A, name: "", pending: null, learned: true as const };
+    expect(normalizeUndoRecord({ filing: A, shelf: learned }).shelf).toEqual(learned);
+    expect(normalizeUndoRecord({ filing: A, shelf: { ...learned, learned: "yes" } }).shelf).toEqual({ commit: A, name: "", pending: null });
+    const file = path.join(tmp(), "undo-records.json");
+    new UndoRecordStore(file).patch("/libs/a", { filing: A, shelf: learned });
+    expect(new UndoRecordStore(file).get("/libs/a").shelf).toEqual(learned);
+  });
+
   it("keeps a library for its made shelf alone, until a patch clears it", () => {
     const file = path.join(tmp(), "undo-records.json");
     const store = new UndoRecordStore(file);

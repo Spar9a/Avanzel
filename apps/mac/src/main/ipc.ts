@@ -106,6 +106,12 @@ export function registerIpc(controller: Controller): void {
   handle("settings:shelves", (_e, op: unknown) => controller.changeShelves(op));
   on("settings:open-shelf-draft", (_e, ask: unknown) => controller.openShelfDraft(ask));
   on("settings:drop-shelf-draft", () => controller.dropShelfDraft());
+  // Learn this library. What Apply sends is checked where it is used (`parseStudyApply`).
+  handle("settings:preview-study", () => controller.previewStudy());
+  handle("settings:start-study", (_e, fresh: unknown) => controller.startStudy(fresh === true));
+  on("settings:stop-study", () => controller.stopStudy());
+  handle("settings:apply-study", (_e, apply: unknown) => controller.applyStudy(apply));
+  handle("settings:discard-study", () => controller.discardStudy());
   handle("settings:download-hosted", (_e, id: unknown) => controller.downloadHosted(String(id)));
   handle("settings:cancel-hosted-download", (_e, id: unknown) => controller.cancelHostedDownload(String(id)));
   handle("settings:cancel-speech-model-download", () => controller.cancelSpeechModelDownload());
