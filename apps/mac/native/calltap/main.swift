@@ -1,11 +1,13 @@
 // avanzel-calltap: listens to what a Mac plays, the "them" side of a call, and writes it to stdout as raw 16 kHz mono
 // signed 16-bit little-endian samples, the format the speech model reads. It taps the sound the chosen apps play (--pid,
 // which may repeat: a call app and its sound-playing helpers), or everything the Mac plays when no app is named. The tap is silent to everyone else: the call app keeps playing as usual.
+// --exclude, which may repeat too, leaves a process out of everything the Mac plays, so Avanzel doesn't hear its own sounds.
+// A pid with no audio object is skipped without a word. With --pid it changes nothing: the named apps are all that is heard.
 //
 // Needs macOS 14.2 and the System Audio Recording permission. Status lines go to stderr as one JSON object each:
 //   {"event":"waiting"}                                    none of the named pids has an audio object yet; it retries
 //                                                          once a second for up to 10 s (said once)
-//   {"event":"started","sampleRate":48000,"channels":2}   the tap is running
+//   {"event":"started","sampleRate":48000,"channels":2}   the tap is running; sampleRate is the rate the sound is read at
 //   {"event":"error","message":"..."}                      it could not start; the exit code is 1
 //   {"event":"stopped","seconds":12.3}                     it ended on SIGINT, SIGTERM or --seconds, or, with --pid, once
 //                                                          every named pid has exited (the call app quit)
@@ -20,7 +22,7 @@
 // holders is sorted by pid. bundle, appPid, app and path are null when unknown. appPid is the outermost parent of the pid
 // (below launchd) that is a running .app, its own pid included: the app the person sees, not its helper.
 //
-// Usage: avanzel-calltap [--pid <pid>]... [--seconds <n>]
+// Usage: avanzel-calltap [--pid <pid>]... [--exclude <pid>]... [--seconds <n>]
 //        avanzel-calltap --watch-mic
 import AVFoundation
 import AppKit
@@ -43,6 +45,7 @@ func check(_ status: OSStatus, _ what: String) {
 }
 
 var pids: [pid_t] = []
+var excluded: [pid_t] = []
 var watchMic = false
 var limit: Double? = nil
 var args = CommandLine.arguments.dropFirst()
@@ -51,6 +54,9 @@ while let arg = args.popFirst() {
     case "--pid":
         guard let value = args.popFirst().flatMap({ pid_t($0) }) else { fail("--pid needs a process id") }
         pids.append(value)
+    case "--exclude":
+        guard let value = args.popFirst().flatMap({ pid_t($0) }) else { fail("--exclude needs a process id") }
+        excluded.append(value)
     case "--watch-mic": watchMic = true
     case "--seconds": limit = args.popFirst().flatMap { Double($0) }
     default: fail("unknown argument \(arg)")
@@ -66,6 +72,17 @@ func property<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelecto
     defer { value.deallocate() }
     guard AudioObjectGetPropertyData(object, &address, qualifierSize, qualifier, &size, value) == noErr else { return nil }
     return value.pointee
+}
+
+// The objects a property lists, trimmed to what was returned. Nil when it can't be read, which is not the same as none.
+func objectList(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> [AudioObjectID]? {
+    var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(object, &address, 0, nil, &size) == noErr else { return nil }
+    if size == 0 { return [] }
+    var objects = [AudioObjectID](repeating: kAudioObjectUnknown, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, &objects) == noErr else { return nil }
+    return Array(objects.prefix(Int(size) / MemoryLayout<AudioObjectID>.size))
 }
 
 // The audio process object of each named pid; a pid that is not playing sound has none.
@@ -99,13 +116,9 @@ func owningApp(_ pid: pid_t) -> NSRunningApplication? {
     return found
 }
 
-func micHolders() -> [(pid: pid_t, bundle: String?)] {
-    let system = AudioObjectID(kAudioObjectSystemObject)
-    var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-    var size: UInt32 = 0
-    guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
-    var objects = [AudioObjectID](repeating: kAudioObjectUnknown, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-    guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &objects) == noErr else { return [] }
+// Nil when Core Audio's process list can't be read: a passing failure, which must not read as nobody holding the microphone.
+func micHolders() -> [(pid: pid_t, bundle: String?)]? {
+    guard let objects = objectList(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyProcessObjectList) else { return nil }
     var holders: [(pid: pid_t, bundle: String?)] = []
     for object in objects {
         guard let running = property(object, kAudioProcessPropertyIsRunningInput, as: UInt32.self), running != 0,
@@ -135,7 +148,9 @@ func json(_ value: Any?) -> String {
 if watchMic {
     var last: String? = nil
     let poll = {
-        let holders = micHolders().map { holder -> String in
+        // A tick that couldn't read the list says nothing; the next one tries again.
+        guard let found = micHolders() else { return }
+        let holders = found.map { holder -> String in
             let app = owningApp(holder.pid)
             return "{\"pid\":\(holder.pid),\"bundle\":\(json(holder.bundle)),\"appPid\":\(json(app?.processIdentifier)),\"app\":\(json(app?.localizedName)),\"path\":\(json(app?.bundleURL?.path))}"
         }
@@ -175,7 +190,7 @@ if !pids.isEmpty {
     if processes.isEmpty { fail("no app you named is playing sound") }
     description = CATapDescription(stereoMixdownOfProcesses: processes)
 } else {
-    description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+    description = CATapDescription(stereoGlobalTapButExcludeProcesses: audioProcesses(excluded))
 }
 description.uuid = UUID()
 description.name = "Avanzel call tap"
@@ -186,8 +201,22 @@ var tap = AudioObjectID(kAudioObjectUnknown)
 check(AudioHardwareCreateProcessTap(description, &tap), "creating the tap")
 guard var format = property(tap, kAudioTapPropertyFormat, as: AudioStreamBasicDescription.self) else { fail("reading the tap's format failed") }
 
-// The aggregate device the tap listens through, anchored to the Mac's current output device.
-guard let output = property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultSystemOutputDevice, as: AudioObjectID.self), output != kAudioObjectUnknown else { fail("this Mac has no output device") }
+// The Mac's own speakers or headphone jack: the first built-in device that has output streams.
+func builtInOutput() -> AudioObjectID? {
+    guard let devices = objectList(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices) else { return nil }
+    return devices.first { device in
+        guard property(device, kAudioDevicePropertyTransportType, as: UInt32.self) == kAudioDeviceTransportTypeBuiltIn else { return false }
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams, mScope: kAudioObjectPropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        return AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr && size > 0
+    }
+}
+
+// The aggregate device the tap listens through, anchored to the Mac's built-in output. The aggregate's clock follows its main
+// sub-device, and AirPods change rate (24 kHz in call mode, 48 kHz otherwise), so anchored on them the other side came out at
+// double speed. The built-in output keeps its rate, and the tap still hears every app whatever device it plays on. Only a Mac
+// with no built-in output (some desktops) falls back to the current output device.
+guard let output = builtInOutput() ?? property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultSystemOutputDevice, as: AudioObjectID.self), output != kAudioObjectUnknown else { fail("this Mac has no output device") }
 var uidAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceUID, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
 var uidSize = UInt32(MemoryLayout<CFString?>.size)
 var outputUID: CFString? = nil
@@ -207,6 +236,12 @@ let aggregate: [String: Any] = [
 var device = AudioObjectID(kAudioObjectUnknown)
 check(AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &device), "creating the listening device")
 
+// The sound arrives at the aggregate's rate, which can differ from the tap's own format. Read at the wrong rate it plays too
+// fast or too slow, so the converter is built from the rate the aggregate really runs at.
+if let rate = property(device, kAudioDevicePropertyNominalSampleRate, as: Float64.self), rate.isFinite, rate > 0, rate != format.mSampleRate {
+    format.mSampleRate = rate
+}
+
 // Convert what arrives (usually 48 kHz stereo float) to 16 kHz mono 16-bit.
 guard let inFormat = AVAudioFormat(streamDescription: &format),
       let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true),
@@ -217,8 +252,9 @@ let out = FileHandle.standardOutput
 var samples: Int64 = 0
 
 var procID: AudioDeviceIOProcID? = nil
-check(AudioDeviceCreateIOProcIDWithBlock(&procID, device, queue) { _, input, _, _, _ in
-    guard let buffer = AVAudioPCMBuffer(pcmFormat: inFormat, bufferListNoCopy: input, deallocator: nil), buffer.frameLength > 0 else { return }
+// Converts one list of the tap's sound and writes it out. The list and its memory are only valid during the IOProc call.
+func writeConverted(_ list: UnsafePointer<AudioBufferList>) {
+    guard let buffer = AVAudioPCMBuffer(pcmFormat: inFormat, bufferListNoCopy: list, deallocator: nil), buffer.frameLength > 0 else { return }
     let capacity = AVAudioFrameCount(Double(buffer.frameLength) * outFormat.sampleRate / inFormat.sampleRate) + 16
     guard let converted = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
     var supplied = false
@@ -232,6 +268,16 @@ check(AudioDeviceCreateIOProcIDWithBlock(&procID, device, queue) { _, input, _, 
     guard error == nil, converted.frameLength > 0, let channel = converted.int16ChannelData else { return }
     samples += Int64(converted.frameLength)
     out.write(Data(bytes: channel[0], count: Int(converted.frameLength) * 2))
+}
+
+check(AudioDeviceCreateIOProcIDWithBlock(&procID, device, queue) { _, input, _, _, _ in
+    // A device with its own input, such as a USB headset, hands over its microphone's buffer as well as the tap's. A list of two
+    // doesn't fit the tap's format, so nothing was heard. The tap's stream is the last buffer: it goes on alone, in a list of
+    // one that lives until the conversion is done.
+    let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+    guard buffers.count > 1, let last = buffers.last else { return writeConverted(input) }
+    var single = AudioBufferList(mNumberBuffers: 1, mBuffers: last)
+    withUnsafeMutablePointer(to: &single) { writeConverted($0) }
 }, "starting to listen")
 check(AudioDeviceStart(device, procID), "starting the listening device")
 say(["event": "started", "sampleRate": format.mSampleRate, "channels": format.mChannelsPerFrame])
