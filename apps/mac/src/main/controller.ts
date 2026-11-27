@@ -2904,7 +2904,6 @@ export class Controller {
         this.afterCapture(capturePath, text, transcribedIn);
       },
       failed: (problem, action, actionLabel) => this.fail(problem, action, actionLabel),
-      notice: (line) => this.notify(line, ""),
       changed: () => {
         this.refreshMenu();
         this.offer.recheck(); // a call that began takes the question down; one that ended may let an app be asked about

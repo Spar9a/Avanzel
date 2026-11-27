@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 import { AvanzelError, defaultSettings, Librarian, Vault, type TimedText, type Transcriber } from "@avanzel/engine";
 import { CALL_RUNNING_LINE } from "../src/shared/transcribing.ts";
 import {
-  APP_QUIT_LINE,
   CALL_CONSENT_DIALOG,
   CALL_KEPT_LINE,
   CallNotes,
@@ -98,8 +97,6 @@ async function setup({
   const failed: { title: string; body: string; action?: string; actionLabel?: string }[] = [];
   /** The calls cut short that were offered (`recover`), what choosing each does, and the offer given back (closed once taken back). */
   const offers: { call: CutShortCall; finish: () => Promise<void>; notice: { closed: boolean; close(): void } }[] = [];
-  /** The short notices (`notice`). */
-  const notices: string[] = [];
   let consented = consent;
   let calls!: CallNotes;
   /** The ids the call-start commands carried, in order. */
@@ -139,7 +136,6 @@ async function setup({
     finishing: () => log.push("finishing"),
     filed: (capturePath, text) => filed.push({ path: capturePath, text }),
     failed: (problem, action, actionLabel) => failed.push({ ...problem, ...(action ? { action } : {}), ...(actionLabel ? { actionLabel } : {}) }),
-    notice: (line) => notices.push(line),
     changed: () => void phases.push(calls.phase),
     offerCutShort(call, finish) {
       const notice = {
@@ -158,7 +154,7 @@ async function setup({
   const mic = (samples: Float32Array, last = false) => calls.audio(micIds.at(-1)!, samples, last);
   /** The folder of the only call on disk. */
   const callDir = () => path.join(host.callsDir, readdirSync(host.callsDir)[0]!);
-  return { calls, host, log, taps, filed, failed, offers, notices, phases, vault, inbox, callsDir: host.callsDir, consented: () => consented, micIds, mic, callDir, state };
+  return { calls, host, log, taps, filed, failed, offers, phases, vault, inbox, callsDir: host.callsDir, consented: () => consented, micIds, mic, callDir, state };
 }
 
 describe("call notes", () => {
@@ -245,27 +241,26 @@ describe("call notes", () => {
     expect(text).toContain("Shall we start with the budget?");
   });
 
-  it("ends the call with what was heard when the helper stops by itself (the app quit)", async () => {
+  it("a helper that stops by itself, which nobody asked for, loses the other side and keeps the call for Finish the notes", async () => {
+    // The tap hears everything the Mac plays, so no call app quitting stops it: an unasked stop is the other side lost.
     const t = await setup();
     await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
     t.taps[0]!.emit({ event: "stopped", seconds: 4 });
     await t.calls.settled();
     expect(t.calls.running).toBe(false);
+    expect(t.failed).toEqual([
+      {
+        title: "The other side of the call stopped being heard.",
+        body: "What was heard so far is safe on this Mac.",
+        action: "finish-call",
+        actionLabel: "Finish the notes",
+      },
+    ]);
+    expect(readdirSync(t.callsDir)).toHaveLength(1);
+    expect(t.inbox()).toHaveLength(0);
+    await t.calls.finishKept();
     expect(t.inbox()).toHaveLength(1);
-    expect(t.filed).toHaveLength(1);
-    expect(t.failed).toEqual([]);
-    expect(t.notices).toEqual(["The call app quit, so the notes were finished with what was heard."]);
-    expect(APP_QUIT_LINE).toBe("The call app quit, so the notes were finished with what was heard.");
-  });
-
-  it("Stop gives no notice that the app quit", async () => {
-    const t = await setup();
-    await t.calls.start("Zoom");
-    t.mic(floats(2, 0.5), false);
-    await t.calls.stop();
-    expect(t.filed).toHaveLength(1);
-    expect(t.notices).toEqual([]);
   });
 
   it("a helper that fails before it started says the other side couldn't be heard, and ends the call with nothing kept", async () => {
@@ -781,7 +776,7 @@ describe("the menu settles after a call ends", () => {
     await t.calls.start("Zoom");
     t.taps[0]!.emit({ event: "stopped", seconds: 4 });
     await t.calls.settled();
-    expect(t.inbox()).toHaveLength(1);
+    expect(t.failed.map((f) => f.title)).toEqual(["The other side of the call stopped being heard."]);
     expect(t.phases.at(-1)).toBe("idle");
   });
 

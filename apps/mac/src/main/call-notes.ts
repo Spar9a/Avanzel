@@ -32,9 +32,6 @@ export const CALL_CONSENT_DIALOG = {
 export const THEM_NOT_HEARD =
   "The other side of this call wasn't heard. System Audio Recording may be off for Avanzel: check System Settings, Privacy & Security, Screen & System Audio Recording.";
 
-/** The short notice after the call app quit mid-call and its notes were finished (`CallHost.notice`). */
-export const APP_QUIT_LINE = "The call app quit, so the notes were finished with what was heard.";
-
 /**
  * The short notice when a call's microphone stopped and none came back within 3 s (the capsule's recorder, `Controller.callMicLost`).
  * The call goes on with the other side and what was recorded is kept, so the person only needs to know their own side is missing.
@@ -153,8 +150,6 @@ export interface CallHost {
   filed(capturePath: string, text: string, transcribedIn: number): void;
   /** The capsule's problem card, with its one fix. */
   failed(problem: Problem, action?: CardAction, actionLabel?: string): void;
-  /** A short notice that needs no answer (APP_QUIT_LINE). */
-  notice(line: string): void;
   /** A call started, ended, or began or ended being finished: the menu and the tray follow. */
   changed(): void;
   /**
@@ -179,8 +174,6 @@ interface ActiveCall {
   tapStartedAt: number | null;
   /** When the microphone's first sample was taken (its first block's arrival, less the block's length). */
   micStartedAt: number | null;
-  /** The helper stopped by itself: the call app quit. */
-  appQuit: boolean;
 }
 
 export class CallNotes {
@@ -251,7 +244,6 @@ export class CallNotes {
         lastBlock: null,
         tapStartedAt: null,
         micStartedAt: null,
-        appQuit: false,
       };
       call.maxTimer.unref?.();
       call.tap = host.newTap({ exclude: host.ownPids(), outFile: session.themFile, onEvent: (e) => this.tapSaid(call, e) });
@@ -483,8 +475,8 @@ export class CallNotes {
       call.tapStartedAt = Date.now();
       this.alignStreams(call);
     } else if (e.event === "stopped") {
-      call.appQuit = true; // the app quit: the call ends with what was heard
-      void this.end(call, "finish");
+      // Nobody asked: the tap hears everything the Mac plays, so it never stops for a call app that quit, and this stop lost the other side.
+      void this.end(call, "lost", TAP_LOST);
     } else if (e.event === "error") {
       console.error("calltap", e.message);
       void this.end(call, call.tapStartedAt === null ? "unheard" : "lost", TAP_LOST);
@@ -493,9 +485,9 @@ export class CallNotes {
 
   /**
    * Ends `call` once, however many ask: the microphone stops and its last block is waited for (audioTimeoutMs at most), the helper
-   * stops, and then the call is finished (`finish`), kept for Finish the notes with `problem` on its card (`lost`: the helper failed,
-   * or the disk is full), ended with the tap-refused notice (`unheard`: the helper failed before it started), or left for later
-   * (`leave`).
+   * stops, and then the call is finished (`finish`), kept for Finish the notes with `problem` on its card (`lost`: the helper failed
+   * or stopped when nobody asked, or the disk is full), ended with the tap-refused notice (`unheard`: the helper failed before it
+   * started), or left for later (`leave`).
    */
   private end(call: ActiveCall, how: "finish" | "lost" | "unheard" | "leave", problem: Problem = TAP_LOST): Promise<void> {
     if (call.ending) return call.ending;
@@ -522,7 +514,7 @@ export class CallNotes {
         this.keepIfHeard(call);
         return host.failed(TAP_REFUSED);
       }
-      if ((await this.finishCallFolder(call.dir)) && call.appQuit) host.notice(APP_QUIT_LINE);
+      await this.finishCallFolder(call.dir);
     })().finally(() => {
       // Only now is the end settled: the menu built before this (the changes the finish made) still saw it under way.
       this.ending--;
