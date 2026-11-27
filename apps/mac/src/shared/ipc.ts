@@ -1271,6 +1271,8 @@ export interface AvanzelBridge {
     sendTriggerAudio(samples: Float32Array): Promise<void>;
     /** Stop, on the listening card of a call: the call ends and becomes its notes. */
     stopCall(): void;
+    /** The call's microphone stopped and none came back within 3 s: main tells the person once, while the notes go on with the other side. */
+    callMicLost(): void;
     reportMicError(message: string): void;
     setInteractive(interactive: boolean): void;
     edit(): void;

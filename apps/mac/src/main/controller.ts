@@ -140,7 +140,7 @@ import type {
   StudyState,
   TaskInfo,
 } from "../shared/ipc.ts";
-import { CALL_CONSENT_DIALOG, CALL_KEPT_LINE, CallNotes, MAX_CALL_MS, type CallHost } from "./call-notes.ts";
+import { CALL_CONSENT_DIALOG, CALL_KEPT_LINE, CallNotes, MAX_CALL_MS, MIC_LOST_LINE, type CallHost } from "./call-notes.ts";
 import { CallTap } from "./calltap.ts";
 import { cleanSpeechModel, fakeCallTranscriber, fakeTranscript, patchedSettings } from "./dictionary-settings.ts";
 import { TranscriberCache } from "./transcriber-cache.ts";
@@ -2787,6 +2787,14 @@ export class Controller {
   /** Stop, on the call's listening card. Only the capsule's own page is heard. */
   stopCall(sender: WebContents): Promise<void> {
     return isPageOf(sender, this.capsule) ? this.stopCallNotes() : Promise.resolve();
+  }
+
+  /**
+   * The call's microphone stopped and none came back within 3 s (the capsule's recorder, once per loss): a short notice says so
+   * (MIC_LOST_LINE), as the call's other notices are shown. Only the capsule's own page is heard, and only while a call runs.
+   */
+  callMicLost(sender: WebContents): void {
+    if (isPageOf(sender, this.capsule) && this.calls.phase === "running") this.notify(MIC_LOST_LINE, "");
   }
 
   /**

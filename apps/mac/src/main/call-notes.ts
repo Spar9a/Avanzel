@@ -35,6 +35,12 @@ export const THEM_NOT_HEARD =
 /** The short notice after the call app quit mid-call and its notes were finished (`CallHost.notice`). */
 export const APP_QUIT_LINE = "The call app quit, so the notes were finished with what was heard.";
 
+/**
+ * The short notice when a call's microphone stopped and none came back within 3 s (the capsule's recorder, `Controller.callMicLost`).
+ * The call goes on with the other side and what was recorded is kept, so the person only needs to know their own side is missing.
+ */
+export const MIC_LOST_LINE = "Your microphone stopped. The call so far is safe, and the notes go on with the other side until it's back.";
+
 /** What a call's card says in place of "Nothing was recorded." when the call ended early but its folder kept what was heard (`cancel`). */
 export const CALL_KEPT_LINE = "The call's notes weren't made. What was heard is safe on this Mac.";
 

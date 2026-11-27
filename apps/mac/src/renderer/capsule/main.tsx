@@ -445,7 +445,7 @@ function App() {
         if (block.length > 0) void api.sendCallAudio(command.call, block, false);
       }, CALL_BLOCK_MS);
       try {
-        await recorder.current.start(current.microphoneId);
+        await recorder.current.start(current.microphoneId, { lost: () => api.callMicLost() });
       } catch (error) {
         api.reportMicError(error instanceof Error ? error.message : String(error));
       }

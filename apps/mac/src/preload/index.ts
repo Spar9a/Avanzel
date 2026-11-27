@@ -25,6 +25,7 @@ const bridge: AvanzelBridge = {
     sendCallAudio: (call, samples, last) => ipcRenderer.invoke("capsule:call-audio", call, samples, last),
     sendTriggerAudio: (samples) => ipcRenderer.invoke("capsule:trigger-audio", samples),
     stopCall: () => ipcRenderer.send("capsule:stop-call"),
+    callMicLost: () => ipcRenderer.send("capsule:call-mic-lost"),
     reportMicError: (message) => ipcRenderer.send("capsule:mic-error", message),
     setInteractive: (interactive) => ipcRenderer.send("capsule:interactive", interactive),
     edit: () => ipcRenderer.send("capsule:edit"),
