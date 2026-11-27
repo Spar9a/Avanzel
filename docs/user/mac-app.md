@@ -10,21 +10,25 @@ Shortcuts are in [Keyboard shortcuts](keybindings.md).
 
 The **evening review** (a scheduled review, 21:00 by default) files the day's inbox, writes a
 summary to `reviews/`, and can be taken back with **Undo the last evening review** in the menu bar
-menu. A **weekly review** looks over the whole library. Scheduled reviews are Markdown files in
+panel. A **weekly review** looks over the whole library. Scheduled reviews are Markdown files in
 `tasks/`; edit their times, agents and instructions in Settings → Reviews (a file Avanzel can't
 read is listed there with what is wrong with it). Running the evening or the weekly review
-yourself, from the menu bar menu or with Settings' **Run now**, asks first, since it runs your agent
+yourself, from the menu bar panel or with Settings' **Run now**, asks first, since it runs your agent
 on your plan and may count toward your usage limit; while the evening review runs, the menu shows
 how far it is ("Filing 2 of 5"). A review that comes due on its schedule doesn't ask.
 
 ## Notes on a call
 
-**Notes on a call** (macOS 14.2 or later): choose *Take notes on a call…* in the menu bar menu and
+**Notes on a call** (macOS 14.2 or later): choose *Take notes on a call…* in the menu bar panel and
 talk. Avanzel hears your microphone and the other side's sound, turns both into text on this Mac,
 and keeps no audio. When you stop, your agent files a meeting page with the decisions and a task for
 each person. It asks before the first call, because in many places everyone on a call must agree to
-it being recorded, and it never joins the call. It doesn't yet notice a call by itself, read
-calendar titles or tell the other side's voices apart.
+it being recorded, and it never joins the call.
+
+When another app has been using the microphone for a few seconds, Avanzel asks whether to take notes
+on the call, with **Take notes** and **Not now**. You can turn this off in Settings → General, with
+**Offer notes when a call starts**. Avanzel doesn't read calendar titles or tell the other side's
+voices apart.
 
 ## Dictating into any app
 

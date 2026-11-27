@@ -115,7 +115,7 @@ garbled notes the owner never asked for. So the two capture bugs from the first 
 ### 2. Who holds the microphone: a watch mode in calltap
 
 `avanzel-calltap --watch-mic` creates no tap and opens nothing. It listens as described in
-approach 1 (the plan polls once a second rather than registering listeners), and writes one JSON line to stderr each time the set of recording processes changes:
+approach 1 (the plan polls rather than registering listeners: every 250 ms while anyone holds the microphone, and every 1 s otherwise), and writes one JSON line to stderr each time the set of recording processes changes:
 
 ```
 {"event":"mic","holders":[{"pid":1234,"bundle":"us.zoom.xos"}]}
