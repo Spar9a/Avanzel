@@ -50,7 +50,7 @@ const transcriber: Transcriber = {
 class FakeTap implements Tap {
   stopped = false;
   constructor(
-    readonly opts: { pids: number[]; outFile: string; onEvent(e: TapEvent): void },
+    readonly opts: { exclude: number[]; outFile: string; onEvent(e: TapEvent): void },
     private readonly them: Buffer,
     private readonly says: boolean,
   ) {}
@@ -112,6 +112,7 @@ async function setup({
     audioTimeoutMs,
     maxCallMs,
     tapAvailable: () => true,
+    ownPids: () => [7, 8],
     consented: () => consented,
     async askConsent() {
       log.push("asked");
@@ -160,12 +161,10 @@ async function setup({
   return { calls, host, log, taps, filed, failed, offers, notices, phases, vault, inbox, callsDir: host.callsDir, consented: () => consented, micIds, mic, callDir, state };
 }
 
-const zoom = { name: "zoom.us", pids: [101, 102] };
-
 describe("call notes", () => {
   it("asks for consent first, and does nothing on Not now", async () => {
     const t = await setup({ consent: false, answer: false });
-    expect(await t.calls.start(zoom)).toBe(false);
+    expect(await t.calls.start("Zoom")).toBe(false);
     expect(t.log).toEqual(["asked"]);
     expect(t.taps).toHaveLength(0);
     expect(t.calls.running).toBe(false);
@@ -175,9 +174,9 @@ describe("call notes", () => {
 
   it("asks once: after Take notes it starts, and the next call is not asked", async () => {
     const t = await setup({ consent: false, answer: true });
-    expect(await t.calls.start(zoom)).toBe(true);
+    expect(await t.calls.start("Zoom")).toBe(true);
     await t.calls.stop();
-    expect(await t.calls.start("everything")).toBe(true);
+    expect(await t.calls.start()).toBe(true);
     expect(t.log.filter((line) => line === "asked")).toHaveLength(1);
   });
 
@@ -195,28 +194,28 @@ describe("call notes", () => {
     expect(CALL_CONSENT_DIALOG.cancelId).toBe(1);
   });
 
-  it("with consent, starts the tap on the app's pids and the microphone, and shows the call's listening card", async () => {
+  it("with consent, starts the tap on everything but Avanzel's own processes and the microphone, and shows the call's listening card", async () => {
     const t = await setup();
-    expect(await t.calls.start(zoom)).toBe(true);
+    expect(await t.calls.start("Zoom")).toBe(true);
     expect(t.calls.running).toBe(true);
     expect(t.taps).toHaveLength(1);
-    expect(t.taps[0]!.opts.pids).toEqual([101, 102]);
+    expect(t.taps[0]!.opts.exclude).toEqual([7, 8]);
     expect(t.log).toEqual(["listening number", "mic on"]);
     const [dir] = readdirSync(t.callsDir);
-    expect(JSON.parse(readFileSync(path.join(t.callsDir, dir!, "call.json"), "utf8")).app).toBe("zoom.us");
+    expect(JSON.parse(readFileSync(path.join(t.callsDir, dir!, "call.json"), "utf8")).app).toBe("Zoom");
   });
 
   it("refuses a second call while one runs", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
-    expect(await t.calls.start("everything")).toBe(false);
+    await t.calls.start("Zoom");
+    expect(await t.calls.start()).toBe(false);
     expect(t.taps).toHaveLength(1);
     expect(readdirSync(t.callsDir)).toHaveLength(1);
   });
 
   it("Stop writes one capture of source call in the inbox, removes calls/<id>/, and files it as a thought is", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
     await t.calls.stop();
     expect(t.taps[0]!.stopped).toBe(true);
@@ -235,7 +234,7 @@ describe("call notes", () => {
 
   it("puts the not-heard line first when the other side is silent", async () => {
     const t = await setup({ them: pcm(4, 0) });
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
     await t.calls.stop();
     const text = t.filed[0]!.text;
@@ -248,7 +247,7 @@ describe("call notes", () => {
 
   it("ends the call with what was heard when the helper stops by itself (the app quit)", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
     t.taps[0]!.emit({ event: "stopped", seconds: 4 });
     await t.calls.settled();
@@ -262,7 +261,7 @@ describe("call notes", () => {
 
   it("Stop gives no notice that the app quit", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
     await t.calls.stop();
     expect(t.filed).toHaveLength(1);
@@ -271,7 +270,7 @@ describe("call notes", () => {
 
   it("a helper that fails before it started says the app wasn't playing sound, and ends the call with nothing kept", async () => {
     const t = await setup({ tapStarts: false, them: Buffer.alloc(0), answerStop: false, audioTimeoutMs: 20 });
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.taps[0]!.emit({ event: "error", message: "no app you named is playing sound" });
     await t.calls.settled();
     expect(t.calls.running).toBe(false);
@@ -286,7 +285,7 @@ describe("call notes", () => {
 
   it("a helper that fails before it started keeps what the microphone heard, to be finished from the menu", async () => {
     const t = await setup({ tapStarts: false, them: Buffer.alloc(0) });
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
     t.taps[0]!.emit({ event: "error", message: "no app you named is playing sound" });
     await t.calls.settled();
@@ -297,7 +296,7 @@ describe("call notes", () => {
 
   it("a full disk on the microphone's side ends the call with a problem that names it, and keeps the folder", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(1, 0.5), false);
     const you = path.join(t.callDir(), "you.pcm");
     rmSync(you);
@@ -319,7 +318,7 @@ describe("call notes", () => {
 
   it("ends a call that reaches its length as Stop does", async () => {
     const t = await setup({ maxCallMs: 30 });
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
     await new Promise((resolve) => setTimeout(resolve, 60));
     await t.calls.settled();
@@ -329,7 +328,7 @@ describe("call notes", () => {
 
   it("a helper that fails mid-call ends the call, keeps what was heard, and Finish the notes makes the capture", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
     t.taps[0]!.emit({ event: "error", message: "avanzel-calltap ended unexpectedly" });
     await t.calls.settled();
@@ -357,7 +356,7 @@ describe("call notes", () => {
       if (broken) throw new Error("disk full");
       return real(call);
     };
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
     await t.calls.stop();
     expect(t.failed).toEqual([
@@ -377,7 +376,7 @@ describe("call notes", () => {
 
   it("finishes a leftover folder, as recovery will", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
     await t.calls.leave(); // Avanzel quits mid-call: the folder stays
     const [id] = readdirSync(t.callsDir);
@@ -390,7 +389,7 @@ describe("call notes", () => {
   it("refuses a thought while the call runs, with the notice, and the call's microphone file keeps growing", async () => {
     const t = await setup();
     expect(t.calls.refuse()).toBe(false); // the guard of a thought's start: with no call it lets the thought start
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(1, 0.5), false);
     const [id] = readdirSync(t.callsDir);
     const you = path.join(t.callsDir, id!, "you.pcm");
@@ -411,7 +410,7 @@ describe("call notes", () => {
       t.state.recording = true; // Record a thought was pressed meanwhile
       return true;
     };
-    expect(await t.calls.start(zoom)).toBe(false);
+    expect(await t.calls.start("Zoom")).toBe(false);
     expect(t.taps).toHaveLength(0);
     expect(t.log).not.toContain("mic on");
     expect(existsSync(t.callsDir)).toBe(false);
@@ -422,8 +421,8 @@ describe("call notes", () => {
     const t = await setup({ consent: false });
     let answer!: (yes: boolean) => void;
     t.host.askConsent = () => new Promise((resolve) => (answer = resolve));
-    const first = t.calls.start(zoom);
-    expect(await t.calls.start("everything")).toBe(false);
+    const first = t.calls.start("Zoom");
+    expect(await t.calls.start()).toBe(false);
     expect(t.calls.refuse()).toBe(true); // a thought doesn't start while a call is starting
     expect(t.log).not.toContain("refused"); // and no notice says a call runs: none does yet
     answer(true);
@@ -442,11 +441,11 @@ describe("call notes", () => {
       },
     };
     const t = await setup({ speech: slow });
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5));
     const stopping = t.calls.stop();
     while (!t.log.includes("finishing")) await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(await t.calls.start("everything")).toBe(false);
+    expect(await t.calls.start()).toBe(false);
     expect(t.taps).toHaveLength(1);
     for (let i = 0; i < 4; i++) {
       release();
@@ -454,13 +453,13 @@ describe("call notes", () => {
     }
     await stopping;
     expect(t.inbox()).toHaveLength(1);
-    expect(await t.calls.start("everything")).toBe(true);
+    expect(await t.calls.start()).toBe(true);
   });
 
   it("keeps a call with no speech in it, marked, and offers Try again", async () => {
     const silent: Transcriber = { ...transcriber, transcribeSegments: async () => [] };
     const t = await setup({ speech: silent });
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5));
     await t.calls.stop();
     const dir = t.callDir();
@@ -486,7 +485,7 @@ describe("call notes", () => {
 
   it("a microphone that didn't start keeps the folder when the call holds sound, and its card says what was heard is safe", async () => {
     const t = await setup({ answerStop: false, audioTimeoutMs: 20 });
-    await t.calls.start(zoom); // the tap wrote the other side's first seconds
+    await t.calls.start("Zoom"); // the tap wrote the other side's first seconds
     await t.calls.cancel(micProblem);
     expect(t.calls.running).toBe(false);
     expect(readdirSync(t.callsDir)).toHaveLength(1);
@@ -496,7 +495,7 @@ describe("call notes", () => {
 
   it("a microphone that didn't start removes the folder when the call holds no sound", async () => {
     const t = await setup({ answerStop: false, audioTimeoutMs: 20, them: Buffer.alloc(0) });
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     await t.calls.cancel(micProblem);
     expect(readdirSync(t.callsDir)).toEqual([]);
     expect(t.failed).toEqual([{ title: "The microphone didn't start.", body: "Nothing was recorded." }]);
@@ -508,7 +507,7 @@ describe("call notes", () => {
     t.host.captureCall = async () => {
       throw new AvanzelError("No speech was heard on this call.");
     };
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
     await t.calls.stop();
     expect(t.failed.map((f) => f.title)).toEqual(["The call's notes couldn't be made."]);
@@ -520,13 +519,13 @@ describe("call notes", () => {
     try {
       vi.setSystemTime(new Date(2026, 10, 4, 10, 0, 0, 100));
       const t = await setup();
-      await t.calls.start(zoom);
+      await t.calls.start("Zoom");
       t.mic(floats(1, 0.5));
       await t.calls.leave(); // its folder stays
       vi.setSystemTime(new Date(2026, 10, 4, 10, 0, 0, 900));
-      await t.calls.start("everything");
+      await t.calls.start();
       expect(readdirSync(t.callsDir).sort()).toEqual(["2026-11-04-100000", "2026-11-04-100000-2"]);
-      expect(CallSession.read(path.join(t.callsDir, "2026-11-04-100000"))?.app).toBe("zoom.us");
+      expect(CallSession.read(path.join(t.callsDir, "2026-11-04-100000"))?.app).toBe("Zoom");
     } finally {
       vi.useRealTimers();
     }
@@ -547,7 +546,7 @@ describe("call notes", () => {
         },
       };
       const t = await setup({ tapStarts: false, speech });
-      await t.calls.start(zoom);
+      await t.calls.start("Zoom");
       vi.setSystemTime(at + 1_000);
       t.mic(floats(1, 0.5)); // the microphone's first second: it opened at `at`
       vi.setSystemTime(at + 5_000);
@@ -564,11 +563,11 @@ describe("call notes", () => {
 
   it("drops a late block of an ended call while a newer one runs, whose blocks still arrive", async () => {
     const t = await setup({ answerStop: false, audioTimeoutMs: 20 });
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     const first = t.micIds[0]!;
     await t.calls.stop(); // its last block never came in time: the other side alone is filed
     expect(t.inbox()).toHaveLength(1);
-    await t.calls.start("everything");
+    await t.calls.start();
     expect(t.micIds[1]).not.toBe(first);
     const you = path.join(t.callDir(), "you.pcm");
     t.calls.audio(first, floats(1, 0.5), true); // the first call's last block, late
@@ -590,7 +589,7 @@ describe("a call that was cut short", () => {
     /** Whether call.json is there. */
     meta?: boolean;
   }
-  function leftover(callsDir: string, id: string, { you = micPcm(2, 0.5), them = pcm(2, 0.1), app = "zoom.us", meta = true }: Leftover = {}) {
+  function leftover(callsDir: string, id: string, { you = micPcm(2, 0.5), them = pcm(2, 0.1), app = "Zoom", meta = true }: Leftover = {}) {
     const dir = path.join(callsDir, id);
     if (meta) new CallSession({ dir, app, startedAt: new Date(2026, 10, 3, 14, 3) });
     else mkdirSync(dir, { recursive: true });
@@ -603,7 +602,7 @@ describe("a call that was cut short", () => {
     const t = await setup();
     const dir = leftover(t.callsDir, "2026-11-03-140300");
     const found = t.calls.recover();
-    expect(found.map(({ id, app, dir }) => ({ id, app, dir }))).toEqual([{ id: "2026-11-03-140300", app: "zoom.us", dir }]);
+    expect(found.map(({ id, app, dir }) => ({ id, app, dir }))).toEqual([{ id: "2026-11-03-140300", app: "Zoom", dir }]);
     expect(t.offers.map((o) => o.call.id)).toEqual(["2026-11-03-140300"]);
     expect(t.inbox()).toHaveLength(0); // nothing is filed until the person chooses it
     await t.offers[0]!.finish();
@@ -653,7 +652,7 @@ describe("a call that was cut short", () => {
 
   it("never offers the folder of the call that runs", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.mic(floats(1, 0.5));
     expect(t.calls.recover()).toEqual([]);
     expect(readdirSync(t.callsDir)).toHaveLength(1);
@@ -663,7 +662,7 @@ describe("a call that was cut short", () => {
     const t = await setup();
     const dir = leftover(t.callsDir, "2026-11-03-140300");
     t.calls.recover();
-    await t.calls.start("everything");
+    await t.calls.start();
     await t.offers[0]!.finish();
     expect(t.inbox()).toHaveLength(0);
     expect(existsSync(dir)).toBe(true);
@@ -727,7 +726,7 @@ describe("a call that was cut short", () => {
     const t = await setup();
     const dir = leftover(t.callsDir, "2026-11-03-140300");
     t.calls.recover();
-    await t.calls.start("everything");
+    await t.calls.start();
     t.mic(floats(1, 0.5));
     expect(t.calls.cutShortCalls).toBe(1);
     await t.calls.finishOldestCutShort();
@@ -752,7 +751,7 @@ describe("what the menu offers", () => {
     expect(t.calls.phase).toBe("idle");
     let answer!: (yes: boolean) => void;
     t.host.askConsent = () => new Promise((resolve) => (answer = resolve));
-    const starting = t.calls.start(zoom);
+    const starting = t.calls.start("Zoom");
     expect(t.calls.phase).toBe("busy");
     answer(true);
     await starting;
@@ -768,7 +767,7 @@ describe("the menu settles after a call ends", () => {
   // The menu is built from `phase` when the host is told `changed`; nothing tells it again later, so the last telling must see the end.
   it("the last change after Stop sees idle", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     await t.calls.stop();
     expect(t.inbox()).toHaveLength(1);
     expect(t.phases.at(-1)).toBe("idle");
@@ -776,7 +775,7 @@ describe("the menu settles after a call ends", () => {
 
   it("the last change after the helper stopped by itself sees idle", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.taps[0]!.emit({ event: "stopped", seconds: 4 });
     await t.calls.settled();
     expect(t.inbox()).toHaveLength(1);
@@ -785,7 +784,7 @@ describe("the menu settles after a call ends", () => {
 
   it("the last change after the helper was lost sees idle", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     t.taps[0]!.emit({ event: "error", message: "gone" });
     await t.calls.settled();
     expect(t.failed.map((f) => f.title)).toEqual(["The other side of the call stopped being heard."]);
@@ -794,7 +793,7 @@ describe("the menu settles after a call ends", () => {
 
   it("the last change after a cancel that keeps the folder offers to finish it", async () => {
     const t = await setup({ answerStop: false, audioTimeoutMs: 20 });
-    await t.calls.start(zoom); // the tap wrote the other side's first seconds
+    await t.calls.start("Zoom"); // the tap wrote the other side's first seconds
     const seen: number[] = [];
     const changed = t.host.changed;
     t.host.changed = () => {
@@ -809,7 +808,7 @@ describe("the menu settles after a call ends", () => {
 
   it("the last change after a cancel sees idle", async () => {
     const t = await setup();
-    await t.calls.start(zoom);
+    await t.calls.start("Zoom");
     await t.calls.cancel(() => ({ title: "The microphone didn't start.", body: "x" }));
     expect(t.phases.at(-1)).toBe("idle");
   });

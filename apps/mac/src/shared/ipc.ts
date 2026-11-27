@@ -1627,8 +1627,6 @@ export interface AvanzelBridge {
     onLevel(callback: (level: number) => void): () => void;
     /** Type a thought, in Capture: the words are saved as Quick saves them. Rejects when they couldn't be, and the field keeps them. */
     type(text: string): Promise<void>;
-    /** Take notes on a call…, in Capture: the call apps running now, by name; `act("call-notes:<index>")` or `"call-notes:everything"` picks. */
-    callApps(): Promise<string[]>;
     /** A preview of a file of raw/attachments (a picture, a video's frame), as a data URL; null when there is none. */
     thumbnail(rel: string): Promise<string | null>;
     /** The trigger word said into the voice trigger's microphone: its words, as speech-to-text writes them; null when none were heard. */
@@ -1637,8 +1635,6 @@ export interface AvanzelBridge {
     hearingTriggerWord(on: boolean): void;
     /** Copy as a prompt: the page, as a prompt for an agent, goes on the clipboard. False when it couldn't. */
     copyPrompt(rel: string): Promise<boolean>;
-    /** Main asks Capture to open Take notes on a call…'s list (the call was asked for from somewhere else). */
-    onPickCall(callback: () => void): () => void;
     /**
      * Ask your library, in Library or Chat: answered as the Ask window's questions are. `history`, Chat's earlier turns, oldest
      * first, goes with a follow-up, so it is read in their light (and still answered from the library).

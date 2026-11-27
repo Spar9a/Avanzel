@@ -140,7 +140,6 @@ import type {
   StudyState,
   TaskInfo,
 } from "../shared/ipc.ts";
-import { callAppLabel, runningCallApps, type CallApp } from "./call-apps.ts";
 import { CALL_CONSENT_DIALOG, CALL_KEPT_LINE, CallNotes, MAX_CALL_MS, type CallHost } from "./call-notes.ts";
 import { CallTap } from "./calltap.ts";
 import { cleanSpeechModel, fakeCallTranscriber, fakeTranscript, patchedSettings } from "./dictionary-settings.ts";
@@ -999,8 +998,8 @@ export class Controller {
       type: () => this.openQuick(),
       ask: () => this.openAsk(),
       undo: () => this.pressUndoShortcut(),
-      // A call's notes: stopped while one runs, else the panel's list of calls to pick from (`pickCall`).
-      call: () => void (this.calls.phase === "running" ? this.stopCallNotes() : this.callNotesOffer() === "ready" ? this.pickCall() : undefined),
+      // A call's notes: stopped while one runs, else started at once (`startCallNotes`).
+      call: () => void (this.calls.phase === "running" ? this.stopCallNotes() : this.callNotesOffer() === "ready" ? this.startCallNotes() : undefined),
       region: () => void this.toggleCapture("region"),
       // A screenshot of a part, as a thought of its own (Capture's Take a screenshot).
       shot: () => void this.screenshotThought("area"),
@@ -1077,7 +1076,7 @@ export class Controller {
     if (action === "dictate") return this.toggleDictate();
     if (action === "capture") return this.toggleCapture();
     if (action === "capture-region") return this.toggleCapture("region");
-    if (action === "call-notes") return this.pickCall();
+    if (action === "call-notes") return void this.startCallNotes();
     if (action === "call-notes-stop") return this.stopCallNotes();
     if (action === "finish-cut-short") return this.calls.finishOldestCutShort();
     if (action === "type") return this.openQuick();
@@ -2766,10 +2765,11 @@ export class Controller {
   // ---------------------------------------------------------------- calls
 
   /**
-   * Notes on a call in `app`, or in everything the Mac plays (`CallNotes.start`): asked about once (CALL_CONSENT_DIALOG), then the call
-   * app's sound and the microphone are taken until `stopCallNotes`. Refused while a recording runs, and while another call does.
+   * Notes on a call (`CallNotes.start`): asked about once (CALL_CONSENT_DIALOG), then everything this Mac plays except Avanzel itself and
+   * the microphone are taken until `stopCallNotes`, whatever app the call is in. `app` is the name people know the call's app by, when
+   * it is known. Refused while a recording runs, and while another call does.
    */
-  async startCallNotes(app: CallApp | "everything"): Promise<boolean> {
+  async startCallNotes(app: string | null = null): Promise<boolean> {
     if (this.recording) return false;
     return this.calls.start(app);
   }
@@ -2814,10 +2814,11 @@ export class Controller {
         return true;
       },
       readyToListen: () => this.readyToListen(),
+      // Avanzel's processes (the main one and its helpers) stay out of the tap, so its own sounds never come back as the other side.
+      ownPids: () => [...new Set([process.pid, ...app.getAppMetrics().map((metric) => metric.pid)])],
       newTap: (opts) => new CallTap(opts),
       transcriber: () => this.callTranscriber(),
-      // The capture names the app as people know it ("Zoom", not its process "zoom.us").
-      captureCall: async (call) => (await this.librarian()).captureCall(call.app ? { ...call, app: callAppLabel(call.app) } : call).path,
+      captureCall: async (call) => (await this.librarian()).captureCall(call).path,
       listening: (startedAt) => {
         this.callCard = {
           kind: "listening",
@@ -2849,7 +2850,7 @@ export class Controller {
       // The notification is held by CallNotes until the call is finished or its folder is gone, so that its click stays alive.
       offerCutShort: (call, finish) => {
         const when = call.startedAt.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-        const where = call.app ? ` in ${callAppLabel(call.app)}` : "";
+        const where = call.app ? ` in ${call.app}` : "";
         return this.notify(
           "Finish notes for a call that was cut short",
           `The call${where} from ${when} was cut short. Click to finish the notes. Your recording stays on this Mac until then.`,
@@ -2876,14 +2877,6 @@ export class Controller {
    */
   private cutShortOffer(): number {
     return this.vault && this.calls.phase === "idle" && !this.recording ? this.calls.cutShortCalls : 0;
-  }
-
-  /**
-   * Take notes on a call…: a native menu under the menu bar icon offers each call app that runs (`runningCallApps`), then everything this
-   * Mac plays, the only row when none runs; the one chosen starts the call (`startCallNotes`).
-   */
-  private async pickCall(): Promise<void> {
-    this.showPanel("capture", undefined, "panel:pick-call");
   }
 
   /**
@@ -5435,7 +5428,7 @@ export class Controller {
 
   /**
    * Brings up the panel under the icon, on `tab` (and Settings' `pane`) when given, else where it was. `then`: a message the page is
-   * sent once it shows, for what it opens in place ("panel:pick-call", Take notes on a call…'s list; "panel:open-page" with the page).
+   * sent once it shows, for what it opens in place ("panel:open-page" with the page).
    */
   showPanel(tab: PanelTab | null, pane?: SettingsPane, then?: string | { channel: string; value: string }): void {
     const win = this.panel();
@@ -5594,14 +5587,6 @@ export class Controller {
       if (!vault || this.recording || pageAt(vault.root, rel) !== "page") return;
       this.showPanel("capture");
       return void this.startRecording("dictate", undefined, { continues: rel });
-    }
-    // A call picked in the panel's own list (`panelCallApps`): one of the apps it was handed, or everything this Mac plays.
-    if (action.startsWith("call-notes:")) {
-      const pick = action.slice(11);
-      const app = pick === "everything" ? "everything" : /^\d+$/.test(pick) ? this.panelCallChoices[Number(pick)] : undefined;
-      if (!app) return;
-      this.hidePanel();
-      return void this.startCallNotes(app);
     }
     const page = action.startsWith("open:");
     const task = action.startsWith("task:");
@@ -6131,19 +6116,6 @@ export class Controller {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }
-
-  /** The call apps running now, offered in the panel's Take notes on a call… (`panelCallApps`), kept so a pick names one of them. */
-  private panelCallChoices: CallApp[] = [];
-
-  /** Take notes on a call…, in the panel: the names of the call apps that run now, in the order `call-notes:<index>` picks them. */
-  async panelCallApps(sender: WebContents): Promise<string[]> {
-    if (!this.isPanelPage(sender)) return [];
-    this.panelCallChoices = await runningCallApps().catch((error: unknown) => {
-      console.warn("call apps", error);
-      return [];
-    });
-    return this.panelCallChoices.map((app) => callAppLabel(app.name));
   }
 
   /** The folders of the owner's own shelves in the library at `root`. A config that can't be read gives none: the built-in pages still list. */

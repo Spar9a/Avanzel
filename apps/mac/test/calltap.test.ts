@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CallTap, macSupportsCallTap, type TapEvent } from "../src/main/calltap.ts";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "avz-calltap-"));
@@ -45,7 +45,7 @@ describe("CallTap with the fake helper", () => {
     process.env.AVANZEL_FAKE_CALLTAP = pcm;
     const outFile = path.join(dir, "them.pcm");
     const events: TapEvent[] = [];
-    const tap = new CallTap({ pids: [1], outFile, onEvent: (e) => events.push(e) });
+    const tap = new CallTap({ exclude: [1], outFile, onEvent: (e) => events.push(e) });
     tap.start();
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(events.map((e) => e.event)).toEqual(["started"]); // still "in the call"
@@ -62,7 +62,7 @@ describe("CallTap with the fake helper", () => {
     writeFileSync(pcm, bytes);
     process.env.AVANZEL_FAKE_CALLTAP = pcm;
     const outFile = path.join(dir, "them.pcm");
-    const tap = new CallTap({ pids: [], outFile, onEvent: () => undefined });
+    const tap = new CallTap({ exclude: [], outFile, onEvent: () => undefined });
     tap.start();
     await tap.stop();
     expect(readFileSync(outFile).equals(bytes)).toBe(true);
@@ -80,7 +80,7 @@ describe("CallTap with a stand-in binary", () => {
     expect(CallTap.available()).toBe(process.platform === "darwin");
   });
 
-  it("names the app's pids, streams stdout to the file and reports started and stopped", async () => {
+  it("names the pids to leave out, streams stdout to the file and reports started and stopped", async () => {
     const dir = tmp();
     const args = path.join(dir, "args.txt");
     CallTap.binaryPath = () =>
@@ -94,21 +94,29 @@ wait`,
       );
     const outFile = path.join(dir, "them.pcm");
     const seen = collect("started");
-    const tap = new CallTap({ pids: [42, 43], outFile, onEvent: seen.onEvent });
+    const tap = new CallTap({ exclude: [42, 43], outFile, onEvent: seen.onEvent });
     tap.start();
     await seen.done;
     await tap.stop();
 
     expect(seen.events).toEqual([{ event: "started" }, { event: "stopped", seconds: 2.5 }]);
     expect(readFileSync(outFile, "utf8")).toBe("abcd");
-    expect(readFileSync(args, "utf8").trim()).toBe("--pid 42 --pid 43");
+    expect(readFileSync(args, "utf8").trim()).toBe("--exclude 42 --exclude 43");
+  });
+
+  it("spawns the helper with one --exclude per pid and no --pid, so it taps everything but those processes", async () => {
+    const dir = tmp();
+    const args = path.join(dir, "args.txt");
+    CallTap.binaryPath = () => script(`echo "$@" > '${args}'\nexit 0`);
+    new CallTap({ exclude: [1, 2], outFile: path.join(dir, "them.pcm"), onEvent: () => undefined }).start();
+    await vi.waitFor(() => expect(readFileSync(args, "utf8").trim()).toBe("--exclude 1 --exclude 2"));
   });
 
   it("treats a signal death during the waiting phase, with no stop asked for, as a cancel", async () => {
     const dir = tmp();
     CallTap.binaryPath = () => script(`echo '{"event":"waiting"}' >&2\nkill -TERM $$\nsleep 5`);
     const events: TapEvent[] = [];
-    const tap = new CallTap({ pids: [9], outFile: path.join(dir, "them.pcm"), onEvent: (e) => events.push(e) });
+    const tap = new CallTap({ exclude: [9], outFile: path.join(dir, "them.pcm"), onEvent: (e) => events.push(e) });
     tap.start();
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(events).toEqual([]);
@@ -120,7 +128,7 @@ wait`,
     const dir = tmp();
     CallTap.binaryPath = () => script(`echo '{"event":"waiting"}' >&2\necho '{"event":"started"}' >&2\nkill -KILL $$\nsleep 5`);
     const seen = collect("error");
-    new CallTap({ pids: [9], outFile: path.join(dir, "them.pcm"), onEvent: seen.onEvent }).start();
+    new CallTap({ exclude: [9], outFile: path.join(dir, "them.pcm"), onEvent: seen.onEvent }).start();
     await seen.done;
     expect(seen.events.map((e) => e.event)).toEqual(["started", "error"]);
     expect(seen.events[1]?.message).toBeTruthy();
@@ -136,7 +144,7 @@ echo '{"event":"started"}' >&2
 wait`,
       );
     const events: TapEvent[] = [];
-    const tap = new CallTap({ pids: [9], outFile: path.join(dir, "no-such-folder", "them.pcm"), onEvent: (e) => events.push(e) });
+    const tap = new CallTap({ exclude: [9], outFile: path.join(dir, "no-such-folder", "them.pcm"), onEvent: (e) => events.push(e) });
     tap.start();
     await tap.stop();
     // Nothing more comes after the error, even later.
@@ -153,7 +161,7 @@ wait`,
     writeFileSync(pcm, Buffer.alloc(64));
     process.env.AVANZEL_FAKE_CALLTAP = pcm;
     const events: TapEvent[] = [];
-    const tap = new CallTap({ pids: [], outFile: path.join(dir, "no-such-folder", "them.pcm"), onEvent: (e) => events.push(e) });
+    const tap = new CallTap({ exclude: [], outFile: path.join(dir, "no-such-folder", "them.pcm"), onEvent: (e) => events.push(e) });
     tap.start();
     await tap.stop();
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -164,7 +172,7 @@ wait`,
     const dir = tmp();
     CallTap.binaryPath = () => script(`echo '{"event":"error","message":"no app you named is playing sound"}' >&2\nexit 1`);
     const seen = collect("error");
-    new CallTap({ pids: [9], outFile: path.join(dir, "them.pcm"), onEvent: seen.onEvent }).start();
+    new CallTap({ exclude: [9], outFile: path.join(dir, "them.pcm"), onEvent: seen.onEvent }).start();
     await seen.done;
     expect(seen.events).toEqual([{ event: "error", message: "no app you named is playing sound" }]);
   });
@@ -173,7 +181,7 @@ wait`,
     const dir = tmp();
     CallTap.binaryPath = () => path.join(dir, "missing");
     const seen = collect("error");
-    const tap = new CallTap({ pids: [], outFile: path.join(dir, "them.pcm"), onEvent: seen.onEvent });
+    const tap = new CallTap({ exclude: [], outFile: path.join(dir, "them.pcm"), onEvent: seen.onEvent });
     tap.start();
     await seen.done;
     expect(seen.events).toHaveLength(1);

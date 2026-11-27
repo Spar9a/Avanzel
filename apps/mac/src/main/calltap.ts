@@ -52,9 +52,12 @@ export class CallTap {
   /** Ends the fake helper's wait for stop() (`runFake`). */
   private releaseFake: (() => void) | null = null;
 
-  constructor(private readonly opts: { pids: number[]; outFile: string; onEvent(e: TapEvent): void }) {}
+  constructor(private readonly opts: { exclude: number[]; outFile: string; onEvent(e: TapEvent): void }) {}
 
-  /** Spawns the helper (no pids taps everything the Mac plays); its sound streams to `outFile`. */
+  /**
+   * Spawns the helper to tap everything the Mac plays except the processes in `exclude` (Avanzel's own, so its sounds and its
+   * spoken replies never get into a call); its sound streams to `outFile`.
+   */
   start(): void {
     if (this.done) return;
     const fake = process.env.AVANZEL_FAKE_CALLTAP;
@@ -80,7 +83,7 @@ export class CallTap {
   }
 
   private run(): Promise<void> {
-    const { pids, outFile, onEvent } = this.opts;
+    const { exclude, outFile, onEvent } = this.opts;
     return new Promise((resolve) => {
       const file = createWriteStream(outFile);
       // A file that can't be written (disk full, no folder) loses the call's sound: the helper ends, and the call ends in an error.
@@ -106,7 +109,7 @@ export class CallTap {
 
       let child: ChildProcess;
       try {
-        child = spawn(CallTap.binaryPath(), pids.flatMap((pid) => ["--pid", String(pid)]), { stdio: ["ignore", "pipe", "pipe"] });
+        child = spawn(CallTap.binaryPath(), exclude.flatMap((pid) => ["--exclude", String(pid)]), { stdio: ["ignore", "pipe", "pipe"] });
       } catch (error) {
         file.end();
         finish({ event: "error", message: errorText(error) });

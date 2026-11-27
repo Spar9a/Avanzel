@@ -7,7 +7,6 @@ import path from "node:path";
 import { idStamp, type CallCapture, type Transcriber } from "@avanzel/engine";
 import type { CardAction } from "../shared/ipc.ts";
 import type { Problem } from "../shared/problems.ts";
-import type { CallApp } from "./call-apps.ts";
 import { CallSession, NoSpeechError, type CallMeta } from "./call-session.ts";
 import type { TapEvent } from "./calltap.ts";
 
@@ -116,7 +115,7 @@ export interface CallHost {
   readonly audioTimeoutMs: number;
   /** How long a call may run (MAX_CALL_MS). */
   readonly maxCallMs: number;
-  /** The call app's sound can be tapped (`CallTap.available`). */
+  /** The Mac's sound can be tapped (`CallTap.available`). */
   tapAvailable(): boolean;
   /** The person has said yes to the consent question (`AppSettings.callConsent`). */
   consented(): boolean;
@@ -126,7 +125,10 @@ export interface CallHost {
   readyToListen(): Promise<boolean>;
   /** A thought (a recording) is being recorded: a call can't take the microphone then. */
   recording(): boolean;
-  newTap(opts: { pids: number[]; outFile: string; onEvent(e: TapEvent): void }): Tap;
+  /** Avanzel's own processes, left out of the call's tap so its sounds and spoken replies never get into the notes. */
+  ownPids(): number[];
+  /** Makes the tap of everything the Mac plays except the processes in `exclude`. */
+  newTap(opts: { exclude: number[]; outFile: string; onEvent(e: TapEvent): void }): Tap;
   transcriber(): Promise<Transcriber>;
   /** Writes the call's capture in the inbox (`Librarian.captureCall`) and gives its path. */
   captureCall(call: CallCapture): Promise<string>;
@@ -213,11 +215,12 @@ export class CallNotes {
   }
 
   /**
-   * Starts notes on a call in `app` (its pids are tapped) or in everything the Mac plays. Refused (false) while a call runs, starts, or
-   * is still being finished, when the Mac can't tap a call, on Not now, when the microphone or the speech model isn't ready, and when
+   * Starts notes on a call. The tap hears everything the Mac plays except Avanzel's own processes, whatever app the call is in; `app`
+   * is only the name people know it by ("Zoom"), kept in the session and the capture unchanged, or null when it isn't known. Refused
+   * (false) while a call runs, starts, or is still being finished, when the Mac can't tap a call, on Not now, when the microphone or the speech model isn't ready, and when
    * a thought began recording while the questions were asked.
    */
-  async start(app: CallApp | "everything"): Promise<boolean> {
+  async start(app: string | null = null): Promise<boolean> {
     if (this.running || this.starting || this.ending > 0 || this.finishingDir !== null) return false;
     this.starting = true;
     this.host.changed();
@@ -231,7 +234,7 @@ export class CallNotes {
       if (!(await host.readyToListen())) return false;
       if (host.recording()) return false; // a thought took the microphone while the questions were up
       const startedAt = new Date();
-      const session = CallSession.create({ callsDir: host.callsDir, id: idStamp(startedAt), app: app === "everything" ? null : app.name, startedAt });
+      const session = CallSession.create({ callsDir: host.callsDir, id: idStamp(startedAt), app, startedAt });
       const call: ActiveCall = {
         id: ++this.lastId,
         dir: session.dir,
@@ -245,7 +248,7 @@ export class CallNotes {
         appQuit: false,
       };
       call.maxTimer.unref?.();
-      call.tap = host.newTap({ pids: app === "everything" ? [] : app.pids, outFile: session.themFile, onEvent: (e) => this.tapSaid(call, e) });
+      call.tap = host.newTap({ exclude: host.ownPids(), outFile: session.themFile, onEvent: (e) => this.tapSaid(call, e) });
       this.active = call;
       this.mic = call;
       host.listening(startedAt.getTime());

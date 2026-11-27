@@ -61,7 +61,6 @@ export function registerIpc(controller: Controller): void {
     if (controller.isPanelPage(e.sender)) controller.hidePanel();
   });
   handle("panel:type", (e, text: unknown) => controller.typeFromPanel(e.sender, text));
-  handle("panel:call-apps", (e) => controller.panelCallApps(e.sender));
   handle("panel:thumbnail", (e, rel: unknown) => controller.panelThumbnail(e.sender, rel));
   handle("panel:hear-trigger-word", (e, samples: unknown) => controller.hearTriggerWord(e.sender, samples));
   on("panel:hearing-trigger-word", (e, on: unknown) => controller.hearingTriggerWord(e.sender, on));

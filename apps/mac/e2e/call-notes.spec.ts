@@ -1,4 +1,4 @@
-// Notes on a call, from the panel's Capture: its list of calls, the consent question, the call's card, what a call refuses
+// Notes on a call, from the panel's Capture: the tile that starts at once, the consent question, the call's card, what a call refuses
 // meanwhile, Stop, and a call cut short by a quit that the next launch offers to finish. The call app's side is AVANZEL_FAKE_CALLTAP
 // (raw 16 kHz mono s16le, made here from a spoken WAV), which holds until Stop as the helper does; the microphone's is
 // AVANZEL_FAKE_AUDIO, and both are heard as AVANZEL_FAKE_TRANSCRIPT. No test opens a real alert: `answerDialogs` stands in for it.
@@ -73,17 +73,13 @@ const callCaptures = (library: string) =>
 const callFolders = (userData: string) => (existsSync(path.join(userData, "calls")) ? readdirSync(path.join(userData, "calls")) : []);
 
 /**
- * Take notes on a call… on the panel's Capture, then Everything this Mac plays, the last of the calls it offers, after any call app that
- * runs on this Mac. Gives the panel.
+ * Take notes on a call… on the panel's Capture: the tile starts the call at once (the consent question, if asked, follows), and it
+ * offers no list of apps. Gives the panel.
  */
 async function takeNotes(app: ElectronApplication): Promise<Page> {
   await call(app, "showPanel", "capture");
   const panel = await windowFor(app, "panel");
-  const tile = callTile(panel, "Take notes on a call…");
-  await tile.click();
-  const choices = panel.locator(`[id="${await tile.getAttribute("aria-controls")}"]`);
-  await expect(choices.getByRole("button").last()).toHaveText("Everything this Mac plays");
-  await choices.getByRole("button", { name: "Everything this Mac plays", exact: true }).click();
+  await callTile(panel, "Take notes on a call…").click();
   return panel;
 }
 
@@ -95,7 +91,7 @@ async function expectCallCard(app: ElectronApplication, capsule: Awaited<ReturnT
   await expect(capsule.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
 }
 
-test("Take notes on a call… with Everything this Mac plays: the call's card, what it refuses meanwhile, and Stop files one call capture", async () => {
+test("Take notes on a call…: the call's card, what it refuses meanwhile, and Stop files one call capture", async () => {
   // A dictionary whose heard-as entry corrects the call's words, and a term that only sounds like one of them, which a call leaves.
   const dictionaryLibrary = await makeLibrary();
   const settings = loadSettings(dictionaryLibrary);

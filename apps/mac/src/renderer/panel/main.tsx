@@ -249,7 +249,7 @@ function takesAdds(listening: NonNullable<PanelSnapshot["listening"]>): boolean 
 
 /**
  * Capture: the ways to start something new, each done here in the panel. Capture the screen asks how first; Take notes on a call…
- * lists the call apps that run now and everything this Mac plays; Type a thought… folds open a field, whose Return saves the words;
+ * starts at once and hears everything this Mac plays but Avanzel (it becomes Stop while one runs); Type a thought… folds open a field, whose Return saves the words;
  * Ask your library… goes to Library, with its field ready (`onAsk`).
  */
 function Capture({ snap, onAsk }: { snap: PanelSnapshot; onAsk(): void }) {
@@ -264,19 +264,6 @@ function Capture({ snap, onAsk }: { snap: PanelSnapshot; onAsk(): void }) {
   const shoot = (action: "shot-screen" | "shot-area" | "shot-marks") => {
     setAskShot(false);
     act(action);
-  };
-  // Take notes on a call…: the apps that run a call now, read as the list opens; null while they are read.
-  const [callApps, setCallApps] = useState<string[] | null>(null);
-  const [askCall, setAskCall] = useState(false);
-  const openCalls = useCallback(() => {
-    setAskCall(true);
-    setCallApps(null);
-    void api.callApps().then(setCallApps, () => setCallApps([]));
-  }, []);
-  useEffect(() => api.onPickCall(openCalls), [openCalls]);
-  const pickCall = (pick: string) => {
-    setAskCall(false);
-    act(`call-notes:${pick}`);
   };
   // Type a thought…: the words stay in the field until they are saved, and stay there when they couldn't be.
   const [typing, setTyping] = useState(false);
@@ -391,22 +378,7 @@ function Capture({ snap, onAsk }: { snap: PanelSnapshot; onAsk(): void }) {
                 shortcut={keyOf(snap, "call")}
                 label={snap.callNotesOffer === "running" ? "Stop taking notes" : "Take notes on a call…"}
                 hint={snap.callNotesOffer === "running" ? "The notes are filed when you stop." : "Both sides of the call, as notes."}
-                {...(snap.callNotesOffer === "running"
-                  ? { onClick: () => act("call-notes-stop") }
-                  : {
-                      open: askCall,
-                      onClick: () => (askCall ? setAskCall(false) : openCalls()),
-                      choices: callApps === null ? (
-                        <Spinner size="small" label="Looking for calls" />
-                      ) : (
-                        <>
-                          {callApps.map((name, i) => (
-                            <Button key={`${name}-${i}`} size="small" variant={i === 0 ? "primary" : "secondary"} icon="call" onClick={() => pickCall(String(i))}>{name}</Button>
-                          ))}
-                          <Button size="small" variant={callApps.length === 0 ? "primary" : "secondary"} onClick={() => pickCall("everything")}>Everything this Mac plays</Button>
-                        </>
-                      ),
-                    })}
+                onClick={() => act(snap.callNotesOffer === "running" ? "call-notes-stop" : "call-notes")}
               />
             )}
             <ActionTile
