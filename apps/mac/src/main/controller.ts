@@ -179,7 +179,7 @@ import { filedLine, reviewProgress, speechProblemOf, waitingLine, type MenuInput
 import { saysNothingHeard } from "./silence.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
-import type { MicHolder } from "./mic-watch.ts";
+import { MicWatch, type MicHolder } from "./mic-watch.ts";
 import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import {
@@ -551,6 +551,13 @@ export class Controller {
   private callCard: CapsuleState | null = null;
   /** When to ask about an app that holds the microphone (`CallOffer`): the capsule's `call-offer` bar asks, and Take notes starts a call. */
   private readonly offer: CallOffer;
+  /**
+   * The watcher that tells `offer` which apps hold the microphone: it runs only while the offer is wanted (`applyCallOffer`), and is null
+   * otherwise.
+   */
+  private micWatch: MicWatch | null = null;
+  /** The last watcher's stop, which quitting waits for so that its helper is gone when Avanzel is. */
+  private micWatchStopped: Promise<void> = Promise.resolve();
   /** The calls left over from an earlier launch were looked for (`recoverCalls`). */
   private callsRecovered = false;
   /**
@@ -805,6 +812,7 @@ export class Controller {
     this.tick();
     if (!this.vault) this.showHome();
     this.updates.start();
+    this.applyCallOffer();
   }
 
   /**
@@ -824,6 +832,8 @@ export class Controller {
    */
   async stopForQuit(): Promise<void> {
     this.quitting = true;
+    this.applyCallOffer(); // quitting: the watcher stops, and its helper with it
+    this.offer.dispose();
     const leaving = this.calls.leave();
     for (const abort of this.runs.keys()) abort.abort();
     this.stopAgentChecks();
@@ -831,7 +841,7 @@ export class Controller {
     this.keepEdit();
     let timer: NodeJS.Timeout | undefined;
     const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, quitWaitMs())));
-    await Promise.race([Promise.allSettled([this.queue, ...this.runs.values(), leaving]), waited]);
+    await Promise.race([Promise.allSettled([this.queue, ...this.runs.values(), leaving, this.micWatchStopped]), waited]);
     clearTimeout(timer);
     this.saveUnwritten();
   }
@@ -848,6 +858,7 @@ export class Controller {
       this.askChanged();
     }
     this.recoverCalls();
+    this.offer.recheck(); // the offer asks only with a library open: one that opened, or closed, may change its answer
     void this.applyCursorDictation(); // dictating into any app needs a library, whose dictionary its words go through
   }
 
@@ -2901,8 +2912,12 @@ export class Controller {
   private offerHost(): OfferHost {
     return {
       ownPids: () => this.ownPids(),
-      // Task 8: and `this.store.get().offerCallNotes`, the setting that turns the offer off.
-      canAsk: () => this.callNotesOffer() === "ready" && this.capsuleState.kind === "hidden",
+      // A dictation's card still held back (`showCursorCard`) takes the free capsule first: its own hide asks the offer again.
+      canAsk: () =>
+        this.store.get().offerCallNotes &&
+        this.callNotesOffer() === "ready" &&
+        this.capsuleState.kind === "hidden" &&
+        this.pendingCursorCards.length === 0,
       callRunning: () => this.calls.phase !== "idle",
       ask: (offered) => void this.showCallOffer(offered),
       withdraw: () => {
@@ -2916,6 +2931,29 @@ export class Controller {
   }
 
   /**
+   * Makes the microphone watcher match what is wanted. It runs exactly while the setting "Offer notes when a call starts" is on, the
+   * call helper is here (`CallTap.available`), Avanzel isn't quitting and this isn't a test run (AVANZEL_TEST=1, where
+   * `micHoldersForTests` stands in for it); otherwise it is stopped, the offer forgets every holder and a question that shows comes
+   * down. Safe to call again: when the watcher already matches, nothing starts or stops. A setting turned on asks the offer to look at
+   * the holders it already knows.
+   */
+  private applyCallOffer(): void {
+    const on = this.store.get().offerCallNotes && !this.quitting;
+    if (on && CallTap.available() && process.env.AVANZEL_TEST !== "1") {
+      if (!this.micWatch) {
+        this.micWatch = new MicWatch({ onHolders: (holders) => this.offer.holders(holders) });
+        this.micWatch.start();
+      }
+    } else if (this.micWatch) {
+      this.micWatchStopped = this.micWatch.stop();
+      this.micWatch = null;
+    }
+    if (on) return this.offer.recheck();
+    this.offer.holders([]);
+    if (!this.quitting && this.capsuleState.kind === "call-offer") this.setCapsule({ kind: "hidden" });
+  }
+
+  /**
    * Shows the question about `offered` (named so, as Electron's `app` is this file's), with its bundle's icon when it has one. The icon
    * takes a moment: if the question was taken back or the capsule filled meanwhile, it gives way, to be asked again once it is free.
    */
@@ -2923,7 +2961,8 @@ export class Controller {
     let icon: string | undefined;
     if (offered.path) {
       try {
-        icon = (await app.getFileIcon(offered.path, { size: "normal" })).toDataURL();
+        const image = await app.getFileIcon(offered.path, { size: "normal" });
+        if (!image.isEmpty()) icon = image.toDataURL(); // an empty icon would be a blank square: the bar leaves its place empty instead
       } catch {
         icon = undefined; // a bundle with no icon to read: the bar leaves its place empty
       }
@@ -6553,6 +6592,7 @@ export class Controller {
       app.setLoginItemSettings({ openAtLogin: after.launchAtLogin });
     }
     if (JSON.stringify(before.cursorDictation) !== JSON.stringify(after.cursorDictation)) await this.applyCursorDictation();
+    if (before.offerCallNotes !== after.offerCallNotes) this.applyCallOffer();
     if (JSON.stringify(before.voiceTrigger) !== JSON.stringify(after.voiceTrigger) || before.microphoneId !== after.microphoneId) {
       if (before.voiceTrigger.enabled !== after.voiceTrigger.enabled || before.microphoneId !== after.microphoneId) this.applyVoiceTrigger();
       this.refreshPanel(); // Capture shows the trigger as it is now

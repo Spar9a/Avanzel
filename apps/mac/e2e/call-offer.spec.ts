@@ -28,10 +28,10 @@ function themPcm(): string {
  * call-notes.spec.ts launches it. Its own config folder keeps the owner's `~/.config/avanzel` out of reach. Waits until call notes
  * could start, which the offer needs before it asks.
  */
-async function launchForCalls() {
+async function launchForCalls(settings: Record<string, unknown> = {}) {
   const library = await makeLibrary();
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
-  writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, callConsent: true, fileMode: "evening" }));
+  writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, callConsent: true, fileMode: "evening", ...settings }));
   const app = await launch({
     AVANZEL_LIBRARY: library,
     AVANZEL_USER_DATA: userData,
@@ -108,6 +108,14 @@ test("nothing is asked about Avanzel's own processes", async () => {
   const { app } = await launchForCalls();
   const own = await app.evaluate(() => process.pid);
   await call(app, "micHoldersForTests", [{ ...ZOOM, pid: own }]);
+  await wait(6_000);
+  expect(await capsuleState(app)).toMatchObject({ kind: "hidden" });
+  await app.close();
+});
+
+test("with Offer notes off, nothing is asked", async () => {
+  const { app } = await launchForCalls({ offerCallNotes: false });
+  await call(app, "micHoldersForTests", [ZOOM]);
   await wait(6_000);
   expect(await capsuleState(app)).toMatchObject({ kind: "hidden" });
   await app.close();

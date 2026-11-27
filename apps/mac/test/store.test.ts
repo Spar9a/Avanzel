@@ -176,6 +176,23 @@ describe("settings store", () => {
     store.update({ checkForUpdates: true });
     expect(new SettingsStore(file).get().checkForUpdates).toBe(true);
   });
+
+  it("offers call notes until the person turns it off, a settings file from before the setting included", () => {
+    expect(DEFAULT_SETTINGS.offerCallNotes).toBe(true);
+    expect(normalizeSettings({}).offerCallNotes).toBe(true);
+    expect(normalizeSettings({ libraryPath: "/Users/me/Brain", fileMode: "evening" }).offerCallNotes).toBe(true);
+    expect(normalizeSettings({ offerCallNotes: "no" }).offerCallNotes).toBe(true);
+    expect(normalizeSettings({ offerCallNotes: false }).offerCallNotes).toBe(false);
+  });
+
+  it("keeps the offer of call notes turned off across an update and a new launch", () => {
+    const file = path.join(tmp(), "settings.json");
+    new SettingsStore(file).update({ offerCallNotes: false });
+    const store = new SettingsStore(file);
+    expect(store.get().offerCallNotes).toBe(false);
+    store.update({ fileMode: "evening" });
+    expect(new SettingsStore(file).get().offerCallNotes).toBe(false);
+  });
 });
 
 describe("noticed shortcuts", () => {

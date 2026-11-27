@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
   cursorDictation: Object.freeze({ enabled: false, key: "right-option" }),
   voiceTrigger: Object.freeze({ enabled: false, word: TRIGGER_WORD, stopWord: STOP_WORD }),
   checkForUpdates: true,
+  offerCallNotes: true,
   agentAccess: false,
   studyOfferDismissed: Object.freeze([]) as unknown as string[],
 }) as AppSettings;
@@ -100,6 +101,8 @@ export function normalizeSettings(raw: unknown): AppSettings {
     voiceTrigger: voiceTriggerOf(r.voiceTrigger),
     // On unless the person turned it off: a settings file from before the setting has it on.
     checkForUpdates: r.checkForUpdates !== false,
+    // On unless the person turned it off, as checkForUpdates is.
+    offerCallNotes: r.offerCallNotes !== false,
     agentAccess: r.agentAccess === true,
     studyOfferDismissed: pathsOf(r.studyOfferDismissed),
   };

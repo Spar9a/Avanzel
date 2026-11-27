@@ -114,6 +114,21 @@ test("General shows the library with its shelves, and each of its controls appli
   await app.close();
 });
 
+test("General offers notes when a call starts, on until it is turned off, and keeps that in settings.json", async () => {
+  const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
+  const app = await launch({ AVANZEL_LIBRARY: await makeLibrary(), AVANZEL_USER_DATA: userData });
+  const settings = await openSettings(app);
+  const offer = settings.getByRole("switch", { name: "Offer notes when a call starts" });
+  await expect(settings.getByRole("heading", { level: 3, name: "Calls" })).toBeVisible();
+  await expect(settings.getByText("When another app uses the microphone, Avanzel asks whether to take notes.", { exact: true })).toBeVisible();
+  await expect(offer).toHaveAttribute("aria-checked", "true");
+  await offer.click();
+  await expect(offer).toHaveAttribute("aria-checked", "false");
+  await expect.poll(() => JSON.parse(readFileSync(path.join(userData, "settings.json"), "utf8")).offerCallNotes).toBe(false);
+  expect((await snapshot(app)).app.offerCallNotes).toBe(false);
+  await app.close();
+});
+
 test("Settings has no sounds: General ends with its Startup group", async () => {
   const app = await launch({ AVANZEL_LIBRARY: await makeLibrary() });
   const settings = await openSettings(app);

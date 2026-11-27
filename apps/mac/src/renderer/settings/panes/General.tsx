@@ -156,6 +156,14 @@ export function General(props: PaneProps & { edits: ReviewEdits; review: StudyRe
         </Notice>
       )}
       <UpdatesGroup {...props} />
+      <Group label="Calls">
+        <Switch
+          label="Offer notes when a call starts"
+          description="When another app uses the microphone, Avanzel asks whether to take notes."
+          checked={snap.app.offerCallNotes}
+          onChange={(offerCallNotes) => attemptChange(props, () => api.setApp({ offerCallNotes }))}
+        />
+      </Group>
       <Group label="Startup">
         <Switch
           label="Open Avanzel when you log in"
