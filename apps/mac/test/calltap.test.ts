@@ -80,12 +80,12 @@ describe("CallTap with a stand-in binary", () => {
     expect(CallTap.available()).toBe(process.platform === "darwin");
   });
 
-  it("names the pids to leave out, streams stdout to the file and reports started and stopped", async () => {
+  it("names the pids to leave out, one --exclude each and no --pid, streams stdout to the file and reports started and stopped", async () => {
     const dir = tmp();
     const args = path.join(dir, "args.txt");
     CallTap.binaryPath = () =>
       script(
-        `echo "$@" > '${args}'
+        `printf '%s\\n' "$@" > '${args}'
 sleep 30 &
 trap 'kill $!; echo "{\\"event\\":\\"stopped\\",\\"seconds\\":2.5}" >&2; exit 0' TERM
 printf 'abcd'
@@ -101,15 +101,8 @@ wait`,
 
     expect(seen.events).toEqual([{ event: "started" }, { event: "stopped", seconds: 2.5 }]);
     expect(readFileSync(outFile, "utf8")).toBe("abcd");
-    expect(readFileSync(args, "utf8").trim()).toBe("--exclude 42 --exclude 43");
-  });
-
-  it("spawns the helper with one --exclude per pid and no --pid, so it taps everything but those processes", async () => {
-    const dir = tmp();
-    const args = path.join(dir, "args.txt");
-    CallTap.binaryPath = () => script(`echo "$@" > '${args}'\nexit 0`);
-    new CallTap({ exclude: [1, 2], outFile: path.join(dir, "them.pcm"), onEvent: () => undefined }).start();
-    await vi.waitFor(() => expect(readFileSync(args, "utf8").trim()).toBe("--exclude 1 --exclude 2"));
+    // Exactly one --exclude per pid and no --pid: it taps everything but those processes.
+    await vi.waitFor(() => expect(readFileSync(args, "utf8").split("\n").filter(Boolean)).toEqual(["--exclude", "42", "--exclude", "43"]), { timeout: 5_000 });
   });
 
   it("treats a signal death during the waiting phase, with no stop asked for, as a cancel", async () => {

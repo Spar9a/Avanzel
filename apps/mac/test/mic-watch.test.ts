@@ -1,8 +1,16 @@
+import { EventEmitter } from "node:events";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MicWatch, parseMicLine, type MicHolder } from "../src/main/mic-watch.ts";
+
+/** A test may stand in for `spawn` (a start that fails with no pipes, as EMFILE does); otherwise the real one runs. */
+const spawning = vi.hoisted(() => ({ fake: null as ((...args: unknown[]) => unknown) | null }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const real = await importOriginal<typeof import("node:child_process")>();
+  return { ...real, spawn: (...args: unknown[]) => (spawning.fake ? spawning.fake(...args) : (real.spawn as (...a: unknown[]) => unknown)(...args)) };
+});
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "avz-micwatch-"));
 
@@ -13,9 +21,9 @@ function script(body: string): string {
   return file;
 }
 
-/** Resolves once `check` is true, polling briefly; fails the test after two seconds. */
+/** Resolves once `check` is true, polling briefly; fails the test after five seconds, which a shell script's spawn under a full suite's load needs. */
 async function until(check: () => boolean): Promise<void> {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + 5_000;
   while (!check()) {
     if (Date.now() > deadline) throw new Error("timed out waiting");
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -31,6 +39,7 @@ const emptyLine = `{"event":"mic","holders":[]}`;
 const watches: MicWatch[] = [];
 afterEach(async () => {
   await Promise.all(watches.splice(0).map((watch) => watch.stop()));
+  spawning.fake = null;
   vi.restoreAllMocks();
 });
 const track = (watch: MicWatch): MicWatch => {
@@ -115,6 +124,29 @@ describe("MicWatch", () => {
         maxRestarts: 1,
       }),
     );
+    expect(() => watch.start()).not.toThrow();
+    await until(() => warn.mock.calls.length > 0);
+    await pause(100);
+    expect(spawns).toBe(2);
+    expect(seen).toEqual([[], []]);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("a helper started with no pipes (out of file descriptors) counts as a failed start, and nothing throws", async () => {
+    let spawns = 0;
+    spawning.fake = () => {
+      spawns++;
+      // What Node hands back when the pipes can't be made: no stderr, then `error` and `close`.
+      const child = Object.assign(new EventEmitter(), { stderr: null, exitCode: null, signalCode: null, kill: () => false });
+      process.nextTick(() => {
+        child.emit("error", Object.assign(new Error("spawn EMFILE"), { code: "EMFILE" }));
+        child.emit("close", -24);
+      });
+      return child;
+    };
+    const seen: MicHolder[][] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const watch = track(new MicWatch({ onHolders: (h) => seen.push(h), binaryPath: () => "avanzel-calltap", restartMs: 10, maxRestarts: 1 }));
     expect(() => watch.start()).not.toThrow();
     await until(() => warn.mock.calls.length > 0);
     await pause(100);

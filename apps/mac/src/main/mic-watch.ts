@@ -117,15 +117,8 @@ export class MicWatch {
       const holders = parseMicLine(value);
       if (holders) this.opts.onHolders(holders);
     };
-    child.stderr!.setEncoding("utf8");
-    child.stderr!.on("data", (chunk: string) => {
-      buffered += chunk;
-      const lines = buffered.split("\n");
-      buffered = lines.pop() ?? "";
-      lines.forEach((value) => value.trim() && line(value));
-    });
 
-    // A failed spawn emits `error` and no `close`; a helper that ran emits `close`. Either ends it once.
+    // Node emits `close` after `error` too (a failed spawn emits both), and the `ended` guard ends the child once.
     let ended = false;
     const end = (): void => {
       if (ended) return;
@@ -136,6 +129,21 @@ export class MicWatch {
     };
     child.on("error", end);
     child.on("close", end);
+
+    // A spawn that couldn't make its pipes (out of file descriptors: EMFILE) hands back no stderr. That is a failed start, ended
+    // the same way, so nothing throws out of start() or the restart timer.
+    const stderr = child.stderr;
+    if (stderr === null) {
+      this.terminate(child);
+      return end();
+    }
+    stderr.setEncoding("utf8");
+    stderr.on("data", (chunk: string) => {
+      buffered += chunk;
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      lines.forEach((value) => value.trim() && line(value));
+    });
   }
 
   /** The helper `child` (null: it never started) has ended. Unless the watch was stopped meanwhile, says nobody holds the mic and restarts, or gives up. */
