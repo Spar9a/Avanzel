@@ -14,7 +14,7 @@ function joined(chunks: readonly Float32Array[]): Float32Array {
 const MIC_LOST_MS = 3_000;
 
 /**
- * How far the worklet's posted frames may lag the audio clock before a reopened call's microphone pads the gap with silence: blocks
+ * How far the worklet's posted frames may lag the wall clock before a reopened call's microphone pads the gap with silence: blocks
  * still on their way from the worklet (100 ms at 16 kHz) are not a gap, and padding for them would push the microphone side late.
  */
 const IN_FLIGHT_FRAMES = 1_600;
@@ -27,8 +27,9 @@ function microphone(deviceId: string | null): MediaStreamConstraints {
 /**
  * A call's watch on its microphone (`start` with `keep`): which start it belongs to, the microphone chosen, whom to tell when none
  * comes back, whether a reopen is under way (and whether a change came meanwhile), and the loss's timer while no microphone is open.
- * `connectedAt` (the audio clock when the first source connected) and `framesSeen` (every frame the worklet posted, paused or not, plus
- * any padding) let a reopen tell how much the worklet didn't post during the gap.
+ * `connectedAt` (the wall clock, `performance.now()` in milliseconds, when the first source connected) and `framesSeen` (every frame
+ * the worklet posted, paused or not, plus any padding) let a reopen tell how much the worklet didn't post during the gap. The wall clock,
+ * not the AudioContext's `currentTime`: that stalls together with the worklet while Chromium switches output, so such a gap went unpadded.
  */
 type Watch = {
   generation: number;
@@ -71,7 +72,7 @@ export class Recorder {
 
   /**
    * Opens the microphone `deviceId` (the default one when null) and records until `stop` or `cancel`. With `keep` (a call), a
-   * microphone that ends or goes away is opened again into the same recording, the gap kept as silence by the audio clock so the
+   * microphone that ends or goes away is opened again into the same recording, the gap kept as silence by the wall clock so the
    * call's two sides stay aligned; `keep.lost()` is called once per loss that lasts MIC_LOST_MS without a microphone. Thoughts and dictation pass no `keep`.
    */
   async start(deviceId: string | null, keep?: { lost(): void }): Promise<void> {
@@ -114,7 +115,7 @@ export class Recorder {
     };
     this.source.connect(this.node);
     if (!keep) return;
-    this.watch = { generation, deviceId, keep, reopening: false, again: false, timer: null, connectedAt: this.context.currentTime, framesSeen: 0 };
+    this.watch = { generation, deviceId, keep, reopening: false, again: false, timer: null, connectedAt: performance.now(), framesSeen: 0 };
     navigator.mediaDevices.addEventListener("devicechange", this.changed);
     for (const track of this.stream.getTracks()) track.addEventListener("ended", this.changed);
     if (this.stream.getTracks().some((track) => track.readyState === "ended")) this.changed(); // it ended while the worklet loaded
@@ -129,19 +130,23 @@ export class Recorder {
       return;
     }
     watch.reopening = true;
-    void this.reopen(watch).finally(() => {
-      watch.reopening = false;
-      if (watch.again && watch === this.watch) {
-        watch.again = false;
-        this.changed();
-      }
-    });
+    // A reopen that throws (a source that can't connect to a closing context) must not surface as an unhandled rejection: the look is
+    // over either way, and the next device change or ended track looks again.
+    void this.reopen(watch)
+      .catch(() => undefined)
+      .finally(() => {
+        watch.reopening = false;
+        if (watch.again && watch === this.watch) {
+          watch.again = false;
+          this.changed();
+        }
+      });
   };
 
   /**
    * Opens the call's microphone again if its track ended or its device is gone: the chosen one if it is still listed, else the
    * default. The new source joins the same worklet before the old one leaves. Whatever the worklet didn't post during the gap (by the
-   * audio clock, past IN_FLIGHT_FRAMES) is added as silence, whether or not the browser fed the ended track's zeros, so the call's two
+   * wall clock at the context's sample rate, past IN_FLIGHT_FRAMES) is added as silence, whether or not the browser fed the ended track's zeros, so the call's two
    * sides stay aligned. A failed open waits for the next device change; the loss's timer tells once.
    */
   private async reopen(watch: Watch): Promise<void> {
@@ -170,7 +175,7 @@ export class Recorder {
     }
     const source = this.context.createMediaStreamSource(stream);
     source.connect(this.node);
-    const missing = Math.round((this.context.currentTime - watch.connectedAt) * this.context.sampleRate) - watch.framesSeen;
+    const missing = Math.round(((performance.now() - watch.connectedAt) / 1_000) * this.context.sampleRate) - watch.framesSeen;
     if (missing > IN_FLIGHT_FRAMES) {
       if (!this.paused) this.chunks.push(new Float32Array(missing));
       watch.framesSeen += missing;

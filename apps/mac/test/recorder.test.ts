@@ -24,8 +24,12 @@ function fakeMedia() {
   /** The microphone sources made, as they were connected and disconnected: "connect 1", "disconnect 1"… */
   const wiring: string[] = [];
   let contexts = 0;
-  /** The audio clock, in seconds, as the recorder reads it from its AudioContext: the test moves it. */
-  const clock = { now: 0 };
+  /**
+   * The wall clock, in milliseconds, as the recorder reads it from `performance.now()`: the test moves it. The AudioContext's own clock
+   * stays at 0, as it stalls with the worklet while Chromium switches output, so a recorder that read it would pad nothing.
+   */
+  const clock = { ms: 0 };
+  vi.spyOn(performance, "now").mockImplementation(() => clock.ms);
   let devices: { kind: string; deviceId: string }[] = [{ kind: "audioinput", deviceId: "default" }];
   const deviceListeners = new Set<() => void>();
   /** "wait": opens when the test calls `open`; "open": at once; "refuse": no microphone. */
@@ -71,9 +75,7 @@ function fakeMedia() {
   vi.stubGlobal("AudioContext", class {
     audioWorklet = { addModule: async () => undefined };
     sampleRate = 16000;
-    get currentTime() {
-      return clock.now;
-    }
+    currentTime = 0;
     constructor() {
       contexts++;
     }
@@ -111,6 +113,7 @@ describe("recorder", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("gives what is new each time it is asked, and still the whole recording at the stop", async () => {
@@ -218,10 +221,10 @@ describe("recorder", () => {
     media.open();
     await starting;
     media.hear(new Float32Array(1_600).fill(1));
-    media.clock.now = 0.1;
+    media.clock.ms = 100;
     media.tracks[0]!.end();
     await settle();
-    media.clock.now = 2.1; // two seconds without a microphone, and the worklet posted nothing
+    media.clock.ms = 2_100; // two seconds without a microphone, and the worklet posted nothing
     media.open();
     await settle();
     media.hear(Float32Array.of(2));
@@ -232,6 +235,31 @@ describe("recorder", () => {
     expect(recording.at(-1)).toBe(2);
   });
 
+  it("a reopen that throws is let go of quietly, and the next change looks again", async () => {
+    const media = fakeMedia();
+    const recorder = new Recorder(() => undefined);
+    const starting = recorder.start(null, { lost: () => undefined });
+    media.open();
+    await starting;
+    const context = (recorder as unknown as { context: { createMediaStreamSource(): unknown } }).context;
+    const make = context.createMediaStreamSource.bind(context);
+    context.createMediaStreamSource = () => {
+      throw new Error("the context is closing");
+    };
+    media.tracks[0]!.end();
+    await settle();
+    media.open();
+    await settle();
+    context.createMediaStreamSource = make;
+    media.change([{ kind: "audioinput", deviceId: "default" }]);
+    await settle();
+    media.open();
+    await settle();
+    expect(media.requests).toHaveLength(3);
+    expect(media.wiring).toEqual(["connect 1", "connect 2", "disconnect 1"]);
+    await recorder.stop();
+  });
+
   it("a gap the worklet filled adds nothing", async () => {
     const media = fakeMedia();
     const recorder = new Recorder(() => undefined);
@@ -239,11 +267,11 @@ describe("recorder", () => {
     media.open();
     await starting;
     media.hear(new Float32Array(1_600).fill(1));
-    media.clock.now = 0.1;
+    media.clock.ms = 100;
     media.tracks[0]!.end();
     await settle();
     media.hear(new Float32Array(32_000)); // the ended track's zeros, posted as the clock went on
-    media.clock.now = 2.15; // and 50 ms still on its way from the worklet: not a gap
+    media.clock.ms = 2_150; // and 50 ms still on its way from the worklet: not a gap
     media.open();
     await settle();
     media.hear(Float32Array.of(2));
