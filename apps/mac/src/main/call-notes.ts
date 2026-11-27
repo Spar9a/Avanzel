@@ -40,10 +40,10 @@ export const CALL_KEPT_LINE = "The call's notes weren't made. What was heard is 
 
 const CANT_TAP: Problem = { title: "Avanzel can't hear calls on this Mac.", body: "Notes on a call need macOS 14.2 or later. Nothing was recorded." };
 const TAP_LOST: Problem = { title: "The other side of the call stopped being heard.", body: "What was heard so far is safe on this Mac." };
-/** The helper failed before it started: the app named had no sound to tap (it waits 10 s for some). */
-const NOT_PLAYING: Problem = {
-  title: "That app wasn't playing sound yet.",
-  body: "Start the notes once the call is on, or choose Everything this Mac plays.",
+/** The helper failed before it started, so the other side was never heard (most often System Audio Recording is off). */
+const TAP_REFUSED: Problem = {
+  title: "The other side of the call couldn't be heard.",
+  body: "System Audio Recording may be off for Avanzel: check System Settings, Privacy & Security, Screen & System Audio Recording.",
 };
 const DISK_FULL: Problem = { title: "There's no room left on this Mac to keep the call.", body: "What was heard so far is safe." };
 const NOT_MADE: Problem = {
@@ -488,7 +488,7 @@ export class CallNotes {
   /**
    * Ends `call` once, however many ask: the microphone stops and its last block is waited for (audioTimeoutMs at most), the helper
    * stops, and then the call is finished (`finish`), kept for Finish the notes with `problem` on its card (`lost`: the helper failed,
-   * or the disk is full), ended with the not-playing notice (`unheard`: the helper failed before it started), or left for later
+   * or the disk is full), ended with the tap-refused notice (`unheard`: the helper failed before it started), or left for later
    * (`leave`).
    */
   private end(call: ActiveCall, how: "finish" | "lost" | "unheard" | "leave", problem: Problem = TAP_LOST): Promise<void> {
@@ -514,7 +514,7 @@ export class CallNotes {
       }
       if (how === "unheard") {
         this.keepIfHeard(call);
-        return host.failed(NOT_PLAYING);
+        return host.failed(TAP_REFUSED);
       }
       if ((await this.finishCallFolder(call.dir)) && call.appQuit) host.notice(APP_QUIT_LINE);
     })().finally(() => {

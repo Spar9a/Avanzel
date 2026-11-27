@@ -268,14 +268,17 @@ describe("call notes", () => {
     expect(t.notices).toEqual([]);
   });
 
-  it("a helper that fails before it started says the app wasn't playing sound, and ends the call with nothing kept", async () => {
+  it("a helper that fails before it started says the other side couldn't be heard, and ends the call with nothing kept", async () => {
     const t = await setup({ tapStarts: false, them: Buffer.alloc(0), answerStop: false, audioTimeoutMs: 20 });
     await t.calls.start("Zoom");
-    t.taps[0]!.emit({ event: "error", message: "no app you named is playing sound" });
+    t.taps[0]!.emit({ event: "error", message: "The sound of this Mac can't be tapped" });
     await t.calls.settled();
     expect(t.calls.running).toBe(false);
     expect(t.failed).toEqual([
-      { title: "That app wasn't playing sound yet.", body: "Start the notes once the call is on, or choose Everything this Mac plays." },
+      {
+        title: "The other side of the call couldn't be heard.",
+        body: "System Audio Recording may be off for Avanzel: check System Settings, Privacy & Security, Screen & System Audio Recording.",
+      },
     ]);
     expect(readdirSync(t.callsDir)).toEqual([]);
     expect(t.calls.cutShortCalls).toBe(0);
@@ -287,9 +290,9 @@ describe("call notes", () => {
     const t = await setup({ tapStarts: false, them: Buffer.alloc(0) });
     await t.calls.start("Zoom");
     t.mic(floats(2, 0.5), false);
-    t.taps[0]!.emit({ event: "error", message: "no app you named is playing sound" });
+    t.taps[0]!.emit({ event: "error", message: "The sound of this Mac can't be tapped" });
     await t.calls.settled();
-    expect(t.failed.map((f) => f.title)).toEqual(["That app wasn't playing sound yet."]);
+    expect(t.failed.map((f) => f.title)).toEqual(["The other side of the call couldn't be heard."]);
     expect(readdirSync(t.callsDir)).toHaveLength(1);
     expect(t.calls.cutShortCalls).toBe(1);
   });
