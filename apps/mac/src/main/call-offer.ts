@@ -177,6 +177,10 @@ export class CallOffer {
     for (const entry of this.entries.values()) {
       if (entry.goneAt === null && !entry.answered && entry.since + HOLD_MS > now) next = Math.min(next, entry.since + HOLD_MS - now);
     }
-    if (next !== Infinity && !this.disposed) this.timer = setTimeout(() => this.recheck(), next);
+    if (next !== Infinity && !this.disposed) {
+      // A host that called `recheck` from inside `ask` or `withdraw` has already set one.
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = setTimeout(() => this.recheck(), next);
+    }
   }
 }

@@ -94,8 +94,11 @@ func audioProcesses(_ pids: [pid_t]) -> [AudioObjectID] {
     }
 }
 
-// The watch: which processes have the microphone open right now, polled once a second. Polling is enough for the 5 s hold
-// before a call is offered, and has no listeners to keep in step.
+// The watch: which processes have the microphone open right now, polled four times a second. Polling has no listeners to keep
+// in step, and a line is printed only when the set changes, so the output stays quiet. 250 ms because a blip (an AirPods
+// route change) must be measured under the 1 s the offer allows before a hold restarts: with a 1 s poll a 300 ms gap shows up
+// as gone on one tick and back about 1 s later, which is no better than a coin flip against that limit.
+let pollInterval = DispatchTimeInterval.milliseconds(250)
 func parentPid(_ pid: pid_t) -> pid_t? {
     var info = proc_bsdinfo()
     let size = Int32(MemoryLayout<proc_bsdinfo>.size)
@@ -161,7 +164,7 @@ if watchMic {
     }
     poll()
     let timer = DispatchSource.makeTimerSource(queue: .main)
-    timer.schedule(deadline: .now() + 1, repeating: 1)
+    timer.schedule(deadline: .now() + pollInterval, repeating: pollInterval)
     timer.setEventHandler(handler: poll)
     timer.resume()
     // The sources are kept here, or they would be released and never fire.

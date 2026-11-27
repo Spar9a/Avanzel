@@ -22,7 +22,7 @@ two streams: you and them.
 - A device with its own input (a USB headset) hands the IOProc its microphone's buffer as well as the tap's. The tap's is
   the last one, and only that one is read.
 - `avanzel-calltap --watch-mic` taps nothing and opens nothing. It says which processes hold the microphone, read from
-  Core Audio once a second, and needs no permission. It prints one line at start and another each time the set changes,
+  Core Audio four times a second (so a blip under a second is seen as one), and needs no permission. It prints one line at start and another each time the set changes,
   until SIGINT or SIGTERM, then `{"event":"stopped"}` and exit 0:
 
   ```

@@ -211,6 +211,30 @@ describe("CallOffer", () => {
     expect(f.asked).toEqual([chromeApp]);
   });
 
+  it("a host that rechecks from inside ask leaves no second timer behind", () => {
+    const asked: OfferedApp[] = [];
+    let offer: CallOffer;
+    offer = new CallOffer({
+      ownPids: () => new Set(),
+      canAsk: () => true,
+      callRunning: () => false,
+      ask: (app) => {
+        asked.push(app);
+        offer.recheck();
+      },
+      withdraw: () => offer.recheck(),
+      take: () => {},
+    });
+    offer.holders([chrome]);
+    tick(2_000);
+    offer.holders([chrome, zoom]);
+    tick(3_000);
+    expect(asked).toEqual([chromeApp]);
+    expect(vi.getTimerCount()).toBe(1);
+    offer.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("does nothing after dispose", () => {
     f.offer.holders([chrome]);
     f.offer.dispose();
