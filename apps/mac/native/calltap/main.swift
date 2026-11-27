@@ -20,7 +20,9 @@
 //   {"event":"mic","holders":[{"pid":1234,"bundle":"com.google.Chrome.helper","appPid":1200,"app":"Google Chrome","path":"/Applications/Google Chrome.app"}]}
 //   {"event":"stopped"}
 // holders is sorted by pid. bundle, appPid, app and path are null when unknown. appPid is the outermost parent of the pid
-// (below launchd) that is a running .app, its own pid included: the app the person sees, not its helper.
+// (below launchd) that is a running .app, its own pid included: the app the person sees, not its helper. When no parent is
+// one, it is the same lookup on the process macOS holds responsible for the pid. It looks every 250 ms while anyone holds
+// the microphone and once a second while nobody does.
 //
 // Usage: avanzel-calltap [--pid <pid>]... [--exclude <pid>]... [--seconds <n>]
 //        avanzel-calltap --watch-mic
@@ -94,11 +96,14 @@ func audioProcesses(_ pids: [pid_t]) -> [AudioObjectID] {
     }
 }
 
-// The watch: which processes have the microphone open right now, polled four times a second. Polling has no listeners to keep
-// in step, and a line is printed only when the set changes, so the output stays quiet. 250 ms because a blip (an AirPods
-// route change) must be measured under the 1 s the offer allows before a hold restarts: with a 1 s poll a 300 ms gap shows up
-// as gone on one tick and back about 1 s later, which is no better than a coin flip against that limit.
-let pollInterval = DispatchTimeInterval.milliseconds(250)
+// The watch: which processes have the microphone open right now. Polling has no listeners to keep in step, and a line is
+// printed only when the set changes, so the output stays quiet. While anyone holds the microphone it looks every 250 ms,
+// because a blip (an AirPods route change) must be measured under the 1 s the offer allows before a hold restarts: with a
+// 1 s poll a 300 ms gap shows up as gone on one tick and back about 1 s later, which is no better than a coin flip against
+// that limit. While nobody does it looks once a second: a first sighting up to 1 s late is nothing against the 5 s hold
+// before the offer, and the slower look saves battery on the hours nobody is on a call.
+let busyPollInterval = DispatchTimeInterval.milliseconds(250)
+let idlePollInterval = DispatchTimeInterval.seconds(1)
 func parentPid(_ pid: pid_t) -> pid_t? {
     var info = proc_bsdinfo()
     let size = Int32(MemoryLayout<proc_bsdinfo>.size)
@@ -106,8 +111,12 @@ func parentPid(_ pid: pid_t) -> pid_t? {
     return pid_t(info.pbi_ppid)
 }
 
-// The outermost app on the way up from a pid, below launchd. A call app's helper holds the microphone, the person knows the app.
-func owningApp(_ pid: pid_t) -> NSRunningApplication? {
+// The process macOS holds responsible for a pid: for an XPC service or a GPU process, the app it works for. It is a libsystem
+// function that no SDK header declares.
+@_silgen_name("responsibility_get_pid_responsible_for_pid") func responsiblePid(_ pid: pid_t) -> pid_t
+
+// The outermost app on the way up from a pid, below launchd.
+func outermostApp(_ pid: pid_t) -> NSRunningApplication? {
     var found: NSRunningApplication? = nil
     var current: pid_t? = pid
     var steps = 0
@@ -117,6 +126,16 @@ func owningApp(_ pid: pid_t) -> NSRunningApplication? {
         steps += 1
     }
     return found
+}
+
+// The app a microphone holder works for. A call app's helper holds the microphone, the person knows the app, so the walk up
+// the parents finds it. XPC services and GPU processes (Safari's com.apple.WebKit.GPU, FaceTime's avconferenced) have launchd
+// as their parent, so the walk finds nothing, but macOS knows which app they work for: then the responsible pid is walked the same way.
+func owningApp(_ pid: pid_t) -> NSRunningApplication? {
+    if let app = outermostApp(pid) { return app }
+    let responsible = responsiblePid(pid)
+    guard responsible != pid, responsible > 1 else { return nil }
+    return outermostApp(responsible)
 }
 
 // Nil when Core Audio's process list can't be read: a passing failure, which must not read as nobody holding the microphone.
@@ -150,24 +169,36 @@ func json(_ value: Any?) -> String {
 
 if watchMic {
     var last: String? = nil
-    let poll = {
-        // Once Avanzel is gone (even killed) launchd has adopted this process, and nobody is left to read what it says.
-        if getppid() == 1 { say(["event": "stopped"]); exit(0) }
-        // A tick that couldn't read the list says nothing; the next one tries again.
-        guard let found = micHolders() else { return }
-        let holders = found.map { holder -> String in
-            let app = owningApp(holder.pid)
-            return "{\"pid\":\(holder.pid),\"bundle\":\(json(holder.bundle)),\"appPid\":\(json(app?.processIdentifier)),\"app\":\(json(app?.localizedName)),\"path\":\(json(app?.bundleURL?.path))}"
-        }
-        let line = "{\"event\":\"mic\",\"holders\":[\(holders.joined(separator: ","))]}"
-        if line == last { return }
-        last = line
-        FileHandle.standardError.write(Data((line + "\n").utf8))
-    }
-    poll()
     let timer = DispatchSource.makeTimerSource(queue: .main)
-    timer.schedule(deadline: .now() + pollInterval, repeating: pollInterval)
+    var interval = idlePollInterval
+    // Looks again sooner or later from now on: every 250 ms while anyone holds the microphone, every second while nobody does.
+    func pace(busy: Bool) {
+        let wanted = busy ? busyPollInterval : idlePollInterval
+        if wanted == interval { return }
+        interval = wanted
+        timer.schedule(deadline: .now() + wanted, repeating: wanted)
+    }
+    let poll = {
+        // Each tick's Core Audio strings and running-app objects are let go before the next, not piled up in a run that never returns.
+        autoreleasepool {
+            // Once Avanzel is gone (even killed) launchd has adopted this process, and nobody is left to read what it says.
+            if getppid() == 1 { say(["event": "stopped"]); exit(0) }
+            // A tick that couldn't read the list says nothing; the next one tries again.
+            guard let found = micHolders() else { return }
+            pace(busy: !found.isEmpty)
+            let holders = found.map { holder -> String in
+                let app = owningApp(holder.pid)
+                return "{\"pid\":\(holder.pid),\"bundle\":\(json(holder.bundle)),\"appPid\":\(json(app?.processIdentifier)),\"app\":\(json(app?.localizedName)),\"path\":\(json(app?.bundleURL?.path))}"
+            }
+            let line = "{\"event\":\"mic\",\"holders\":[\(holders.joined(separator: ","))]}"
+            if line == last { return }
+            last = line
+            FileHandle.standardError.write(Data((line + "\n").utf8))
+        }
+    }
+    timer.schedule(deadline: .now() + interval, repeating: interval)
     timer.setEventHandler(handler: poll)
+    poll()
     timer.resume()
     // The sources are kept here, or they would be released and never fire.
     var stops: [DispatchSourceSignal] = []

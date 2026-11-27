@@ -22,7 +22,8 @@ two streams: you and them.
 - A device with its own input (a USB headset) hands the IOProc its microphone's buffer as well as the tap's. The tap's is
   the last one, and only that one is read.
 - `avanzel-calltap --watch-mic` taps nothing and opens nothing. It says which processes hold the microphone, read from
-  Core Audio four times a second (so a blip under a second is seen as one), and needs no permission. It prints one line at start and another each time the set changes,
+  Core Audio every 250 ms while anyone holds the microphone (so a blip under a second is seen as one) and once a second
+  while nobody does (a first sighting up to 1 s late is nothing against the 5 s hold, and it saves battery). It needs no permission. It prints one line at start and another each time the set changes,
   until SIGINT or SIGTERM (or until its parent is gone and launchd has adopted it, as when Avanzel is killed), then `{"event":"stopped"}` and exit 0:
 
   ```
@@ -31,7 +32,11 @@ two streams: you and them.
 
   `holders` is sorted by `pid`. `bundle`, `appPid`, `app` and `path` are `null` when unknown. `appPid` is the outermost
   parent of `pid` (below launchd) that is a running `.app`, its own pid included, so a helper shows as the app a person
-  knows. `app` is that app's name and `path` its bundle path.
+  knows. `app` is that app's name and `path` its bundle path. XPC services and GPU processes have launchd as their
+  parent, so the walk finds no app, though macOS knows which app they work for: Safari's microphone is held by
+  `com.apple.WebKit.GPU`. Then the same lookup runs on the process macOS holds responsible for the pid
+  (`responsibility_get_pid_responsible_for_pid`, a libsystem function in no SDK header). A daemon such as FaceTime's
+  `avconferenced` is responsible for itself, so its `app` stays `null` and Avanzel names it from its bundle id.
 - Needs macOS 14.2 and the System Audio Recording permission (not for `--watch-mic`). The app that starts it carries the permission, so the
   bundle needs `NSAudioCaptureUsageDescription` in its Info.plist.
 
@@ -60,4 +65,6 @@ A 5 s, 1000 Hz sine (48 kHz WAV) played with `afplay` while `--seconds 4` ran; z
   before the fix recorded nothing there (0 bytes), and without the rate read the tone came out at 1088 Hz, 48/44.1 too
   fast.
 - `--exclude` with `afplay`'s pid: nothing recorded. With another pid: the tone, 1000 Hz.
-- Not checked: AirPods in call mode themselves.
+- The responsible pid of running `com.apple.WebKit.GPU` processes (parent launchd) was the app that hosts them, and
+  `avconferenced`'s was itself.
+- Not checked: AirPods in call mode themselves, and a real USB headset.
