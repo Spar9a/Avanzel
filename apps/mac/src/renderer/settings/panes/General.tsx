@@ -155,7 +155,6 @@ export function General(props: PaneProps & { edits: ReviewEdits; review: StudyRe
           They're safe there.
         </Notice>
       )}
-      <UpdatesGroup {...props} />
       <Group label="Calls">
         <Switch
           label="Offer notes when a call starts"
@@ -164,6 +163,7 @@ export function General(props: PaneProps & { edits: ReviewEdits; review: StudyRe
           onChange={(offerCallNotes) => attemptChange(props, () => api.setApp({ offerCallNotes }))}
         />
       </Group>
+      <UpdatesGroup {...props} />
       <Group label="Startup">
         <Switch
           label="Open Avanzel when you log in"
