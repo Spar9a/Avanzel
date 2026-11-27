@@ -29,6 +29,7 @@ import {
 } from "../src/renderer/capsule/copy.ts";
 import { shelfMakesLine, shelfQuestion } from "../src/renderer/panel/copy.ts";
 import { cancelledLine } from "../src/renderer/setup/copy.ts";
+import { callOfferLine } from "../src/shared/transcribing.ts";
 
 // The capsule's result cards' words that are made from values: what a filing says of itself, of its pages, and the two Stopped
 // cards, which promise the evening review only while the library's runs.
@@ -299,5 +300,12 @@ describe("the filed card's lines on what a filing did in the owner's own folders
       expect(line, line).not.toContain("...");
       expect(line, line).not.toMatch(/(^|[^\p{L}'’])I(?=$|[^\p{L}'’])/u);
     }
+  });
+});
+
+describe("callOfferLine: the capsule's question when another app has held the microphone for a while", () => {
+  it("names the app, or says an app when its name is blank", () => {
+    expect(callOfferLine("Zoom")).toBe("Zoom is using the microphone. Take notes on this call?");
+    expect(callOfferLine(" ")).toBe("An app is using the microphone. Take notes on this call?");
   });
 });

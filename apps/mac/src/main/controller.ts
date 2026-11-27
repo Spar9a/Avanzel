@@ -141,6 +141,7 @@ import type {
   TaskInfo,
 } from "../shared/ipc.ts";
 import { CALL_CONSENT_DIALOG, CALL_KEPT_LINE, CallNotes, MAX_CALL_MS, MIC_LOST_LINE, type CallHost } from "./call-notes.ts";
+import { CallOffer, type OfferedApp, type OfferHost } from "./call-offer.ts";
 import { CallTap } from "./calltap.ts";
 import { cleanSpeechModel, fakeCallTranscriber, fakeTranscript, patchedSettings } from "./dictionary-settings.ts";
 import { TranscriberCache } from "./transcriber-cache.ts";
@@ -178,6 +179,7 @@ import { filedLine, reviewProgress, speechProblemOf, waitingLine, type MenuInput
 import { saysNothingHeard } from "./silence.ts";
 import { rowPage, stepThrottle, withStep, withWritten, type StepThrottle } from "./narration.ts";
 import { openPrivacyPane, permissionStatus, requestMicrophone } from "./permissions.ts";
+import type { MicHolder } from "./mic-watch.ts";
 import { RunStateStore } from "./run-state.ts";
 import { runningAppNames } from "./running-apps.ts";
 import {
@@ -286,6 +288,11 @@ const FINISHED_CARDS: ReadonlySet<CapsuleState["kind"]> = new Set<CapsuleState["
 // How long the capsule says that a filing or a transcription is stopped (hovering over it keeps it longer, as it does any card that
 // hides itself).
 const STOPPED_SHOW_MS = 6_000;
+/**
+ * How long the bar that asks about a call (`call-offer`) waits for an answer before it hides by itself, which counts as Not now: long
+ * enough to notice it while a call begins, short enough not to sit over the screen for the whole call.
+ */
+export const CALL_OFFER_MS = 30_000;
 /** How long Processing shows a thought that came to no note (noted only, or stopped) before it goes, its ring running round it meanwhile. */
 const NO_NOTE_SHOW_MS = 5_000;
 // How long after the pointer leaves what the capsule draws a card that hides itself is let go (`setKeepOpen`). The card and its bar are
@@ -542,6 +549,8 @@ export class Controller {
   private readonly calls: CallNotes;
   /** The listening card of the call that runs, which the capsule goes back to instead of hiding (`setCapsule`); null with no call. */
   private callCard: CapsuleState | null = null;
+  /** When to ask about an app that holds the microphone (`CallOffer`): the capsule's `call-offer` bar asks, and Take notes starts a call. */
+  private readonly offer: CallOffer;
   /** The calls left over from an earlier launch were looked for (`recoverCalls`). */
   private callsRecovered = false;
   /**
@@ -758,6 +767,7 @@ export class Controller {
     this.firstRun = new FirstRunLog(path.join(userData, "first-run.json"));
     this.captureCount = new CaptureCount(path.join(userData, "captures.json"));
     this.calls = new CallNotes(this.callHost(path.join(userData, "calls")));
+    this.offer = new CallOffer(this.offerHost()); // after the calls, which its host asks about
     this.dictations = new DictationHistory(path.join(userData, "dictations.jsonl"), () => this.dictationsChanged());
     this.cursor = new CursorDictation(this.cursorHost()); // after the history, which the host hands it
     this.updates = new Updater(this.updaterHost(), updaterOptions(process.env, app.isPackaged, userData));
@@ -1462,6 +1472,12 @@ export class Controller {
     if (state.kind === "hidden" && this.callCard) state = this.callCard; // while a call runs its card is what the capsule rests on
     if (state.kind !== "editing") this.keepEdit(); // whatever replaces the editor (a recording, a typed thought, an error) keeps its edit
     const was = this.capsuleState;
+    // The question about a call goes: hidden is its 30 s or a dismiss, which count as Not now; anything else took its place, and it is
+    // asked again once the capsule is free.
+    if (was.kind === "call-offer" && state.kind !== "call-offer") {
+      if (state.kind === "hidden") this.offer.answer(false);
+      else this.offer.gaveWay();
+    }
     const wasEditing = was.kind === "editing";
     this.capsuleState = state;
     // The panel shows a recording as the capsule does: it follows as one starts, switches or ends.
@@ -1520,6 +1536,8 @@ export class Controller {
     this.refreshMenu();
     // A dictation's card held back for a thought's (`showCursorCard`) shows once the capsule is free, after whoever hid it has finished.
     if (state.kind === "hidden" && this.pendingCursorCards.length > 0) setTimeout(() => this.showPendingCursorCard(), 0);
+    // A free capsule may ask about a call that waited for it, once whoever hid it has finished.
+    if (state.kind === "hidden") queueMicrotask(() => this.offer.recheck());
   }
 
   /**
@@ -2823,7 +2841,7 @@ export class Controller {
       },
       readyToListen: () => this.readyToListen(),
       // Avanzel's processes (the main one and its helpers) stay out of the tap, so its own sounds never come back as the other side.
-      ownPids: () => [...new Set([process.pid, ...app.getAppMetrics().map((metric) => metric.pid)])],
+      ownPids: () => [...this.ownPids()],
       newTap: (opts) => new CallTap(opts),
       transcriber: () => this.callTranscriber(),
       captureCall: async (call) => (await this.librarian()).captureCall(call).path,
@@ -2854,7 +2872,10 @@ export class Controller {
       },
       failed: (problem, action, actionLabel) => this.fail(problem, action, actionLabel),
       notice: (line) => this.notify(line, ""),
-      changed: () => this.refreshMenu(),
+      changed: () => {
+        this.refreshMenu();
+        this.offer.recheck(); // a call that began takes the question down; one that ended may let an app be asked about
+      },
       // The notification is held by CallNotes until the call is finished or its folder is gone, so that its click stays alive.
       offerCutShort: (call, finish) => {
         const when = call.startedAt.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -2866,6 +2887,60 @@ export class Controller {
         );
       },
     };
+  }
+
+  /** Avanzel's own processes, the main one and its helpers, once each: a call's tap leaves them out, and the offer never asks about them. */
+  private ownPids(): Set<number> {
+    return new Set([process.pid, ...app.getAppMetrics().map((metric) => metric.pid)]);
+  }
+
+  /**
+   * What the offer of call notes (`CallOffer`) needs: it asks only while the capsule is hidden and a call could start, its question is the
+   * capsule's `call-offer` bar, and Take notes starts the call with the app's name.
+   */
+  private offerHost(): OfferHost {
+    return {
+      ownPids: () => this.ownPids(),
+      // Task 8: and `this.store.get().offerCallNotes`, the setting that turns the offer off.
+      canAsk: () => this.callNotesOffer() === "ready" && this.capsuleState.kind === "hidden",
+      callRunning: () => this.calls.phase !== "idle",
+      ask: (offered) => void this.showCallOffer(offered),
+      withdraw: () => {
+        if (this.capsuleState.kind === "call-offer") this.setCapsule({ kind: "hidden" });
+      },
+      take: (offered) => {
+        this.setCapsule({ kind: "hidden" });
+        void this.startCallNotes(offered.name);
+      },
+    };
+  }
+
+  /**
+   * Shows the question about `offered` (named so, as Electron's `app` is this file's), with its bundle's icon when it has one. The icon
+   * takes a moment: if the question was taken back or the capsule filled meanwhile, it gives way, to be asked again once it is free.
+   */
+  private async showCallOffer(offered: OfferedApp): Promise<void> {
+    let icon: string | undefined;
+    if (offered.path) {
+      try {
+        icon = (await app.getFileIcon(offered.path, { size: "normal" })).toDataURL();
+      } catch {
+        icon = undefined; // a bundle with no icon to read: the bar leaves its place empty
+      }
+    }
+    if (this.offer.asking?.pid === offered.pid && this.capsuleState.kind === "hidden") {
+      this.setCapsule({ kind: "call-offer", app: offered.name, ...(icon ? { icon } : {}) }, CALL_OFFER_MS);
+    } else this.offer.gaveWay();
+  }
+
+  /**
+   * Take notes or Not now, on the bar that asks about a call. Only the capsule's own page is heard, and only while the bar shows: Take
+   * notes hides it and starts the call (the offer's `take`), Not now hides it.
+   */
+  answerCallOffer(sender: WebContents, take: boolean): void {
+    if (!isPageOf(sender, this.capsule) || this.capsuleState.kind !== "call-offer") return;
+    this.offer.answer(take);
+    if (!take) this.setCapsule({ kind: "hidden" });
   }
 
   /**
@@ -7379,6 +7454,11 @@ export class Controller {
 
   capsuleStateForTests(): CapsuleState {
     return this.capsuleState;
+  }
+
+  /** The apps that hold the microphone, as the watcher would report them, for the offer of call notes: with AVANZEL_TEST=1 only. */
+  micHoldersForTests(holders: MicHolder[]): void {
+    if (process.env.AVANZEL_TEST === "1") this.offer.holders(holders);
   }
 
   async idleForTests(): Promise<void> {

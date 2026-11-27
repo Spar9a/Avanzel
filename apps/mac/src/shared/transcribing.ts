@@ -90,3 +90,9 @@ export const DICTATION_REFUSED_LINE = "Something else is recording. Try again wh
  * `app`, and its Copy button is there in case it didn't go in.
  */
 export const dictationSentLine = (app: string): string => (app.trim() ? `Pasted into ${app.trim()}.` : "Pasted into the app in front.");
+
+/**
+ * The capsule's question when an app other than Avanzel has held the microphone for a while (`call-offer`): it names the app, so the
+ * person knows which call the notes would be of, or says "An app" when its name is blank.
+ */
+export const callOfferLine = (app: string): string => `${app.trim() || "An app"} is using the microphone. Take notes on this call?`;

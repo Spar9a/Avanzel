@@ -7,7 +7,7 @@ import type { AddingKind, AttachedItem, CapsuleState } from "../../shared/ipc.ts
 import { addChoices, attachedItems } from "../common/attached.ts";
 import { downloadFailedProblem } from "../../shared/problems.ts";
 import { shelfMadeLine } from "../../shared/shelves.ts";
-import { CALL_RUNNING_LINE, DICTATION_REFUSED_LINE, dictationSentLine } from "../../shared/transcribing.ts";
+import { CALL_RUNNING_LINE, callOfferLine, DICTATION_REFUSED_LINE, dictationSentLine } from "../../shared/transcribing.ts";
 import { api, type StateOf } from "./api.ts";
 import { stillInMenuLine } from "./copy.ts";
 import { editorScene } from "./editor.tsx";
@@ -124,6 +124,31 @@ function dictationSentScene(state: StateOf<"dictation-sent">): Scene {
 }
 
 /**
+ * An app other than Avanzel has held the microphone for a while: a bar asks whether to take notes on the call, drawn as the dictation's
+ * bar is, with the app in Zel's place when its icon is known. Not now lets it be; Take notes, the one primary, starts the notes.
+ */
+function callOfferScene(state: StateOf<"call-offer">): Scene {
+  return {
+    bar: {
+      mood: "filed",
+      line: callOfferLine(state.app),
+      // An app with no icon leaves the place empty, as the dictation's bar does: the question is about that app, not the library.
+      app: state.icon ? { icon: state.icon, label: state.app } : null,
+      actions: (
+        <>
+          <Button size="small" variant="quiet" onClick={() => api.answerCallOffer(false)}>
+            Not now
+          </Button>
+          <Button size="small" variant="primary" onClick={() => api.answerCallOffer(true)}>
+            Take notes
+          </Button>
+        </>
+      ),
+    },
+  };
+}
+
+/**
  * What each stacked state draws, from the top of its stack: its card and its bar. Every kind of state is here: a kind added
  * without a scene is a type error, not a blank panel, as `cancelled` and `recorded` were for two tasks.
  */
@@ -157,6 +182,8 @@ function sceneOf(state: Stacked, levels: readonly number[], onAdd?: () => void):
       return shelfMadeScene(state);
     case "dictation-sent":
       return dictationSentScene(state);
+    case "call-offer":
+      return callOfferScene(state);
     default: {
       const unhandled: never = state;
       return unhandled;

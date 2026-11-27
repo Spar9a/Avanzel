@@ -472,7 +472,12 @@ export type CapsuleState =
    * A dictation was pasted into `app` where Accessibility couldn't say the cursor takes text (an Electron app, a web page), so it may have
    * gone nowhere: a bar names the app, with its `icon` when one is known, and offers Copy (`copy-dictation`). It hides by itself.
    */
-  | { kind: "dictation-sent"; app: string; icon?: string };
+  | { kind: "dictation-sent"; app: string; icon?: string }
+  /**
+   * An app other than Avanzel has held the microphone for a while: a bar asks whether to take notes on the call. It hides by itself after
+   * 30 s, which counts as Not now.
+   */
+  | { kind: "call-offer"; app: string; icon?: string };
 
 /**
  * The capsule's cards the panel shows too, in its Processing tab: a filing, and what came of it (filed, stopped, or a problem). The
@@ -1273,6 +1278,8 @@ export interface AvanzelBridge {
     stopCall(): void;
     /** The call's microphone stopped and none came back within 3 s: main tells the person once, while the notes go on with the other side. */
     callMicLost(): void;
+    /** Take notes (`true`) or Not now (`false`), on the bar that asks about a call (`call-offer`): main starts the notes or lets it be. */
+    answerCallOffer(take: boolean): void;
     reportMicError(message: string): void;
     setInteractive(interactive: boolean): void;
     edit(): void;
