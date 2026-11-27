@@ -10,7 +10,18 @@ two streams: you and them.
   one is skipped; only when none does it fail with `no app you named is playing sound`.
 - `--seconds <n>` stops by itself. SIGINT and SIGTERM stop it too.
 - Status lines go to stderr, one JSON object each: `waiting`, `started`, `error`, `stopped`.
-- Needs macOS 14.2 and the System Audio Recording permission. The app that starts it carries the permission, so the
+- `avanzel-calltap --watch-mic` taps nothing and opens nothing. It says which processes hold the microphone, read from
+  Core Audio once a second, and needs no permission. It prints one line at start and another each time the set changes,
+  until SIGINT or SIGTERM, then `{"event":"stopped"}` and exit 0:
+
+  ```
+  {"event":"mic","holders":[{"pid":1234,"bundle":"com.google.Chrome.helper","appPid":1200,"app":"Google Chrome","path":"/Applications/Google Chrome.app"}]}
+  ```
+
+  `holders` is sorted by `pid`. `bundle`, `appPid`, `app` and `path` are `null` when unknown. `appPid` is the outermost
+  parent of `pid` (below launchd) that is a running `.app`, its own pid included, so a helper shows as the app a person
+  knows. `app` is that app's name and `path` its bundle path.
+- Needs macOS 14.2 and the System Audio Recording permission (not for `--watch-mic`). The app that starts it carries the permission, so the
   bundle needs `NSAudioCaptureUsageDescription` in its Info.plist.
 
 Build: `node apps/mac/scripts/build-calltap.mjs` makes a universal binary at `build/avanzel-calltap` (git-ignored).
@@ -20,5 +31,7 @@ Build: `node apps/mac/scripts/build-calltap.mjs` makes a universal binary at `bu
 
 - Everything the Mac plays: a spoken sentence came back through Parakeet v3 word for word.
 - One app (`--pid` of `afplay`) while another app spoke at the same time: only the tapped app's sentence came back.
+- `--watch-mic` from this shell: no permission prompt; a `swift -e` recorder that opened the microphone for 4 s showed up
+  as a holder and dropped out again, with `appPid` the app that hosts the shell.
 - Not checked yet: the permission prompt when the helper runs from the signed Avanzel.app, Bluetooth headsets, and a
   real Zoom, Meet or Teams call.

@@ -13,8 +13,17 @@
 // A pid that never gets an audio object is skipped. Only when none of them does it fail with
 // "no app you named is playing sound".
 //
+// With --watch-mic it taps nothing and opens nothing: it says which processes hold the microphone, from Core Audio, and
+// needs no permission. It prints one line when it starts and another each time the set changes, until SIGINT or SIGTERM:
+//   {"event":"mic","holders":[{"pid":1234,"bundle":"com.google.Chrome.helper","appPid":1200,"app":"Google Chrome","path":"/Applications/Google Chrome.app"}]}
+//   {"event":"stopped"}
+// holders is sorted by pid. bundle, appPid, app and path are null when unknown. appPid is the outermost parent of the pid
+// (below launchd) that is a running .app, its own pid included: the app the person sees, not its helper.
+//
 // Usage: avanzel-calltap [--pid <pid>]... [--seconds <n>]
+//        avanzel-calltap --watch-mic
 import AVFoundation
+import AppKit
 import AudioToolbox
 import CoreAudio
 import Foundation
@@ -34,6 +43,7 @@ func check(_ status: OSStatus, _ what: String) {
 }
 
 var pids: [pid_t] = []
+var watchMic = false
 var limit: Double? = nil
 var args = CommandLine.arguments.dropFirst()
 while let arg = args.popFirst() {
@@ -41,6 +51,7 @@ while let arg = args.popFirst() {
     case "--pid":
         guard let value = args.popFirst().flatMap({ pid_t($0) }) else { fail("--pid needs a process id") }
         pids.append(value)
+    case "--watch-mic": watchMic = true
     case "--seconds": limit = args.popFirst().flatMap { Double($0) }
     default: fail("unknown argument \(arg)")
     }
@@ -64,6 +75,90 @@ func audioProcesses(_ pids: [pid_t]) -> [AudioObjectID] {
         let process = property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyTranslatePIDToProcessObject, as: AudioObjectID.self, qualifier: &processPid, qualifierSize: UInt32(MemoryLayout<pid_t>.size))
         return process == kAudioObjectUnknown ? nil : process
     }
+}
+
+// The watch: which processes have the microphone open right now, polled once a second. Polling is enough for the 5 s hold
+// before a call is offered, and has no listeners to keep in step.
+func parentPid(_ pid: pid_t) -> pid_t? {
+    var info = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+    return pid_t(info.pbi_ppid)
+}
+
+// The outermost app on the way up from a pid, below launchd. A call app's helper holds the microphone, the person knows the app.
+func owningApp(_ pid: pid_t) -> NSRunningApplication? {
+    var found: NSRunningApplication? = nil
+    var current: pid_t? = pid
+    var steps = 0
+    while let candidate = current, candidate > 1, steps < 32 {
+        if let app = NSRunningApplication(processIdentifier: candidate), app.bundleURL?.path.hasSuffix(".app") == true { found = app }
+        current = parentPid(candidate)
+        steps += 1
+    }
+    return found
+}
+
+func micHolders() -> [(pid: pid_t, bundle: String?)] {
+    let system = AudioObjectID(kAudioObjectSystemObject)
+    var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
+    var objects = [AudioObjectID](repeating: kAudioObjectUnknown, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &objects) == noErr else { return [] }
+    var holders: [(pid: pid_t, bundle: String?)] = []
+    for object in objects {
+        guard let running = property(object, kAudioProcessPropertyIsRunningInput, as: UInt32.self), running != 0,
+              let pid = property(object, kAudioProcessPropertyPID, as: pid_t.self) else { continue }
+        var bundleAddress = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyBundleID, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var bundleSize = UInt32(MemoryLayout<CFString?>.size)
+        var bundle: CFString? = nil
+        let status = withUnsafeMutablePointer(to: &bundle) { AudioObjectGetPropertyData(object, &bundleAddress, 0, nil, &bundleSize, $0) }
+        // A process with no bundle id reads as an empty string; that is unknown too.
+        let name = status == noErr ? (bundle as String?) : nil
+        holders.append((pid, name?.isEmpty == false ? name : nil))
+    }
+    return holders.sorted { $0.pid < $1.pid }
+}
+
+// One JSON string, written by hand so the keys keep their order and a missing value is null; the strings are escaped by JSONSerialization.
+func json(_ value: Any?) -> String {
+    switch value {
+    case let text as String:
+        guard let data = try? JSONSerialization.data(withJSONObject: text, options: [.fragmentsAllowed, .withoutEscapingSlashes]) else { return "null" }
+        return String(data: data, encoding: .utf8) ?? "null"
+    case let number as pid_t: return String(number)
+    default: return "null"
+    }
+}
+
+if watchMic {
+    var last: String? = nil
+    let poll = {
+        let holders = micHolders().map { holder -> String in
+            let app = owningApp(holder.pid)
+            return "{\"pid\":\(holder.pid),\"bundle\":\(json(holder.bundle)),\"appPid\":\(json(app?.processIdentifier)),\"app\":\(json(app?.localizedName)),\"path\":\(json(app?.bundleURL?.path))}"
+        }
+        let line = "{\"event\":\"mic\",\"holders\":[\(holders.joined(separator: ","))]}"
+        if line == last { return }
+        last = line
+        FileHandle.standardError.write(Data((line + "\n").utf8))
+    }
+    poll()
+    let timer = DispatchSource.makeTimerSource(queue: .main)
+    timer.schedule(deadline: .now() + 1, repeating: 1)
+    timer.setEventHandler(handler: poll)
+    timer.resume()
+    // The sources are kept here, or they would be released and never fire.
+    var stops: [DispatchSourceSignal] = []
+    for signalNumber in [SIGINT, SIGTERM] {
+        signal(signalNumber, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+        source.setEventHandler { say(["event": "stopped"]); exit(0) }
+        source.resume()
+        stops.append(source)
+    }
+    dispatchMain()
 }
 
 // The tap: the named apps' output, or everything.
