@@ -558,6 +558,8 @@ export class Controller {
   private micWatch: MicWatch | null = null;
   /** The last watcher's stop, which quitting waits for so that its helper is gone when Avanzel is. */
   private micWatchStopped: Promise<void> = Promise.resolve();
+  /** Avanzel is quitting (`stopCallOffer`): the offer is over, and `applyCallOffer` starts no watcher again. */
+  private callOfferStopped = false;
   /** The calls left over from an earlier launch were looked for (`recoverCalls`). */
   private callsRecovered = false;
   /**
@@ -832,8 +834,7 @@ export class Controller {
    */
   async stopForQuit(): Promise<void> {
     this.quitting = true;
-    this.applyCallOffer(); // quitting: the watcher stops, and its helper with it
-    this.offer.dispose();
+    this.stopCallOffer();
     const leaving = this.calls.leave();
     for (const abort of this.runs.keys()) abort.abort();
     this.stopAgentChecks();
@@ -2932,13 +2933,13 @@ export class Controller {
 
   /**
    * Makes the microphone watcher match what is wanted. It runs exactly while the setting "Offer notes when a call starts" is on, the
-   * call helper is here (`CallTap.available`), Avanzel isn't quitting and this isn't a test run (AVANZEL_TEST=1, where
-   * `micHoldersForTests` stands in for it); otherwise it is stopped, the offer forgets every holder and a question that shows comes
-   * down. Safe to call again: when the watcher already matches, nothing starts or stops. A setting turned on asks the offer to look at
-   * the holders it already knows.
+   * call helper is here (`CallTap.available`), the offer isn't over for quitting (`stopCallOffer`) and this isn't a test run
+   * (AVANZEL_TEST=1, where `micHoldersForTests` stands in for it). Otherwise it is stopped, the offer is told that nobody holds the
+   * microphone (an app it knew is forgotten 10 s later, not at once) and a question that shows comes down. Safe to call again: when the
+   * watcher already matches, nothing starts or stops. A setting turned on asks the offer to look at the holders it already knows.
    */
   private applyCallOffer(): void {
-    const on = this.store.get().offerCallNotes && !this.quitting;
+    const on = this.store.get().offerCallNotes && !this.callOfferStopped;
     if (on && CallTap.available() && process.env.AVANZEL_TEST !== "1") {
       if (!this.micWatch) {
         this.micWatch = new MicWatch({ onHolders: (holders) => this.offer.holders(holders) });
@@ -2950,7 +2951,19 @@ export class Controller {
     }
     if (on) return this.offer.recheck();
     this.offer.holders([]);
-    if (!this.quitting && this.capsuleState.kind === "call-offer") this.setCapsule({ kind: "hidden" });
+    if (!this.callOfferStopped && this.capsuleState.kind === "call-offer") this.setCapsule({ kind: "hidden" });
+  }
+
+  /**
+   * Ends the offer of call notes for good, as Avanzel quits: the watcher's helper is signalled (`micWatchStopped` is its stop, which
+   * `stopForQuit` waits for and a quit that stops nothing else doesn't) and the offer is disposed. Both quit paths come here (`stopForQuit`,
+   * and `stopAgentChecks` for a quit with nothing to stop), and a second call does nothing more.
+   */
+  private stopCallOffer(): void {
+    if (this.callOfferStopped) return;
+    this.callOfferStopped = true;
+    this.applyCallOffer();
+    this.offer.dispose();
   }
 
   /**
@@ -7044,6 +7057,7 @@ export class Controller {
    */
   stopAgentChecks(): void {
     this.checksStopped = true;
+    this.stopCallOffer(); // the microphone watcher's helper is a process of its own: it ends with Avanzel, whichever way the quit went
     void this.hosted.stopAll(); // the model server on this Mac stops with Avanzel; the signal is sent before this returns
     this.updates.stop();
     if (this.trayTimer) clearTimeout(this.trayTimer); // the menu bar's count stops where it is, and `showTray` sets no timer again

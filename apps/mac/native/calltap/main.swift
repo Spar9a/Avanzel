@@ -151,6 +151,8 @@ func json(_ value: Any?) -> String {
 if watchMic {
     var last: String? = nil
     let poll = {
+        // Once Avanzel is gone (even killed) launchd has adopted this process, and nobody is left to read what it says.
+        if getppid() == 1 { say(["event": "stopped"]); exit(0) }
         // A tick that couldn't read the list says nothing; the next one tries again.
         guard let found = micHolders() else { return }
         let holders = found.map { holder -> String in

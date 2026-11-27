@@ -23,7 +23,7 @@ two streams: you and them.
   the last one, and only that one is read.
 - `avanzel-calltap --watch-mic` taps nothing and opens nothing. It says which processes hold the microphone, read from
   Core Audio four times a second (so a blip under a second is seen as one), and needs no permission. It prints one line at start and another each time the set changes,
-  until SIGINT or SIGTERM, then `{"event":"stopped"}` and exit 0:
+  until SIGINT or SIGTERM (or until its parent is gone and launchd has adopted it, as when Avanzel is killed), then `{"event":"stopped"}` and exit 0:
 
   ```
   {"event":"mic","holders":[{"pid":1234,"bundle":"com.google.Chrome.helper","appPid":1200,"app":"Google Chrome","path":"/Applications/Google Chrome.app"}]}
