@@ -24,6 +24,8 @@ function fakeMedia() {
   /** The microphone sources made, as they were connected and disconnected: "connect 1", "disconnect 1"… */
   const wiring: string[] = [];
   let contexts = 0;
+  /** The audio clock, in seconds, as the recorder reads it from its AudioContext: the test moves it. */
+  const clock = { now: 0 };
   let devices: { kind: string; deviceId: string }[] = [{ kind: "audioinput", deviceId: "default" }];
   const deviceListeners = new Set<() => void>();
   /** "wait": opens when the test calls `open`; "open": at once; "refuse": no microphone. */
@@ -68,6 +70,10 @@ function fakeMedia() {
   vi.stubGlobal("document", { baseURI: "file:///capsule/" });
   vi.stubGlobal("AudioContext", class {
     audioWorklet = { addModule: async () => undefined };
+    sampleRate = 16000;
+    get currentTime() {
+      return clock.now;
+    }
     constructor() {
       contexts++;
     }
@@ -93,7 +99,7 @@ function fakeMedia() {
     devices = list;
     for (const listener of [...deviceListeners]) listener();
   };
-  return { released, open: () => open(), hear, tracks, requests, wiring, contexts: () => contexts, nodes, change, deviceListeners, answer };
+  return { released, open: () => open(), hear, tracks, requests, wiring, contexts: () => contexts, nodes, change, deviceListeners, answer, clock };
 }
 
 /** Lets the recorder's promises run (they need no timer, so this works with fake timers too). */
@@ -203,6 +209,45 @@ describe("recorder", () => {
     expect(media.contexts()).toBe(1);
     expect(media.nodes).toHaveLength(1);
     expect(media.wiring).toEqual(["connect 1", "connect 2", "disconnect 1"]);
+  });
+
+  it("a gap the worklet didn't fill is kept as silence, so the call's sides stay aligned", async () => {
+    const media = fakeMedia();
+    const recorder = new Recorder(() => undefined);
+    const starting = recorder.start(null, { lost: () => undefined });
+    media.open();
+    await starting;
+    media.hear(new Float32Array(1_600).fill(1));
+    media.clock.now = 0.1;
+    media.tracks[0]!.end();
+    await settle();
+    media.clock.now = 2.1; // two seconds without a microphone, and the worklet posted nothing
+    media.open();
+    await settle();
+    media.hear(Float32Array.of(2));
+    const recording = await recorder.stop();
+    expect(recording).toHaveLength(1_600 + 32_000 + 1);
+    expect(recording.subarray(0, 1_600).every((v) => v === 1)).toBe(true);
+    expect(recording.subarray(1_600, 1_600 + 32_000).every((v) => v === 0)).toBe(true);
+    expect(recording.at(-1)).toBe(2);
+  });
+
+  it("a gap the worklet filled adds nothing", async () => {
+    const media = fakeMedia();
+    const recorder = new Recorder(() => undefined);
+    const starting = recorder.start(null, { lost: () => undefined });
+    media.open();
+    await starting;
+    media.hear(new Float32Array(1_600).fill(1));
+    media.clock.now = 0.1;
+    media.tracks[0]!.end();
+    await settle();
+    media.hear(new Float32Array(32_000)); // the ended track's zeros, posted as the clock went on
+    media.clock.now = 2.15; // and 50 ms still on its way from the worklet: not a gap
+    media.open();
+    await settle();
+    media.hear(Float32Array.of(2));
+    expect(await recorder.stop()).toHaveLength(1_600 + 32_000 + 1);
   });
 
   it("a chosen microphone that goes away is replaced by the default one", async () => {
