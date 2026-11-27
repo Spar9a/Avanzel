@@ -9,8 +9,23 @@ export const BLIP_MS = 1_000;
 /** How long an app must stay off the microphone before it is forgotten, which also ends a "Not now" for it. */
 export const RELEASE_MS = 10_000;
 
-/** Daemons that stand for an app, from the Task 1 check only (bundle → the app's name). */
-export const DAEMON_APPS: Readonly<Record<string, string>> = {};
+/**
+ * Daemons that stand for an app (bundle → the app's name). A daemon has launchd as its parent and is responsible for itself,
+ * so the watcher can't name its app. The FaceTime entry is provisional: the final review saw FaceTime's media run in
+ * `/usr/libexec/avconferenced` (whose code signature says `com.apple.avconferenced`), and the owner's real-call check confirms it.
+ */
+export const DAEMON_APPS: Readonly<Record<string, string>> = { "com.apple.avconferenced": "FaceTime" };
+
+/** Some apps' own names aren't the names people know them by. */
+const EVERYDAY_NAMES: Readonly<Record<string, string>> = { "zoom.us": "Zoom" };
+
+/**
+ * The name to show and write for a call app: some apps' own names aren't the names people know ("zoom.us" is Zoom). Every
+ * other name passes through unchanged. Used for the question and for call notes, old ones included, so they read the same.
+ */
+export function callAppName(name: string): string {
+  return Object.hasOwn(EVERYDAY_NAMES, name) ? (EVERYDAY_NAMES[name] ?? name) : name;
+}
 
 /** The app a question is about: `pid` is its outermost process (a daemon's own pid for a daemon), `path` its bundle if known. */
 export interface OfferedApp {
@@ -76,7 +91,7 @@ export class CallOffer {
     for (const holder of list) {
       if (own.has(holder.pid) || (holder.appPid !== null && own.has(holder.appPid))) continue;
       if (holder.app !== null && holder.appPid !== null) {
-        if (!present.has(holder.appPid)) present.set(holder.appPid, { pid: holder.appPid, name: holder.app, path: holder.path });
+        if (!present.has(holder.appPid)) present.set(holder.appPid, { pid: holder.appPid, name: callAppName(holder.app), path: holder.path });
       } else if (holder.app === null && holder.bundle !== null && Object.hasOwn(DAEMON_APPS, holder.bundle)) {
         const name = DAEMON_APPS[holder.bundle];
         if (name !== undefined && !present.has(-holder.pid)) present.set(-holder.pid, { pid: holder.pid, name, path: holder.path });
@@ -165,12 +180,16 @@ export class CallOffer {
         this.host.withdraw();
       }
     } else if (this.askingKey === null && this.host.canAsk()) {
+      // The first one past 5 s is the one held longest, the earliest `since`: an app seen first may have let go and come back.
+      let first: [number, Entry] | null = null;
       for (const [key, entry] of this.entries) {
         if (entry.goneAt !== null || entry.answered || now - entry.since < HOLD_MS) continue;
-        this.askingKey = key;
-        this.asked = entry.app;
-        this.host.ask(entry.app);
-        break;
+        if (first === null || entry.since < first[1].since) first = [key, entry];
+      }
+      if (first !== null) {
+        this.askingKey = first[0];
+        this.asked = first[1].app;
+        this.host.ask(first[1].app);
       }
     }
     let next = Infinity;

@@ -141,7 +141,7 @@ import type {
   TaskInfo,
 } from "../shared/ipc.ts";
 import { CALL_CONSENT_DIALOG, CALL_KEPT_LINE, CallNotes, MAX_CALL_MS, MIC_LOST_LINE, type CallHost } from "./call-notes.ts";
-import { CallOffer, type OfferedApp, type OfferHost } from "./call-offer.ts";
+import { CallOffer, callAppName, type OfferedApp, type OfferHost } from "./call-offer.ts";
 import { CallTap } from "./calltap.ts";
 import { cleanSpeechModel, fakeCallTranscriber, fakeTranscript, patchedSettings } from "./dictionary-settings.ts";
 import { TranscriberCache } from "./transcriber-cache.ts";
@@ -290,9 +290,10 @@ const FINISHED_CARDS: ReadonlySet<CapsuleState["kind"]> = new Set<CapsuleState["
 const STOPPED_SHOW_MS = 6_000;
 /**
  * How long the bar that asks about a call (`call-offer`) waits for an answer before it hides by itself, which counts as Not now: long
- * enough to notice it while a call begins, short enough not to sit over the screen for the whole call.
+ * enough to notice it while a call begins, short enough not to sit over the screen for the whole call. With AVANZEL_TEST=1,
+ * AVANZEL_CALL_OFFER_MS replaces it, so an e2e test can watch the question time out without waiting 30 s.
  */
-export const CALL_OFFER_MS = 30_000;
+export const CALL_OFFER_MS = (process.env.AVANZEL_TEST === "1" && Number(process.env.AVANZEL_CALL_OFFER_MS)) || 30_000;
 /** How long Processing shows a thought that came to no note (noted only, or stopped) before it goes, its ring running round it meanwhile. */
 const NO_NOTE_SHOW_MS = 5_000;
 // How long after the pointer leaves what the capsule draws a card that hides itself is let go (`setKeepOpen`). The card and its bar are
@@ -560,6 +561,11 @@ export class Controller {
   private micWatchStopped: Promise<void> = Promise.resolve();
   /** Avanzel is quitting (`stopCallOffer`): the offer is over, and `applyCallOffer` starts no watcher again. */
   private callOfferStopped = false;
+  /**
+   * Capture screen is hiding the capsule and taking its shot (`toggleCapture`): the capsule is hidden but not free, so the offer of call
+   * notes doesn't ask (`offerHost`'s `canAsk`), or its question would be in the shot.
+   */
+  private settingUpCapture = false;
   /** The calls left over from an earlier launch were looked for (`recoverCalls`). */
   private callsRecovered = false;
   /**
@@ -1737,6 +1743,20 @@ export class Controller {
     const screen = permissionStatus("screen");
     if (screen === "denied" || screen === "restricted") return this.cantSeeScreen();
     const vault = this.requireVault();
+    this.settingUpCapture = true;
+    try {
+      await this.shootForComment(vault, area, continues);
+    } finally {
+      this.settingUpCapture = false;
+      this.offer.recheck(); // a capture that ended with the capsule free (the crosshair's Esc) may let a waiting question show
+    }
+  }
+
+  /** Capture screen's hide-and-shoot and the recording that goes with it, while `settingUpCapture` keeps the offer of call notes away. */
+  private async shootForComment(vault: Vault, area: "screen" | "region", continues: string | undefined): Promise<void> {
+    // A question about a call that shows, or whose bar is still on its way (`showCallOffer`), gives way rather than counting as Not now:
+    // it is asked again once the capsule is free.
+    this.offer.gaveWay();
     if (this.capsule.isVisible()) this.setCapsule({ kind: "hidden" });
     await new Promise((r) => setTimeout(r, 80)); // let the capsule leave the screen before the shot
     // Two things can go wrong, and each says so: the screen can't be captured (and its screenshot claimed and written), or it was, and
@@ -2856,7 +2876,8 @@ export class Controller {
       ownPids: () => [...this.ownPids()],
       newTap: (opts) => new CallTap(opts),
       transcriber: () => this.callTranscriber(),
-      captureCall: async (call) => (await this.librarian()).captureCall(call).path,
+      // The app's everyday name (`callAppName`), so a folder an older Avanzel left with "zoom.us" reads "Zoom" too.
+      captureCall: async (call) => (await this.librarian()).captureCall({ ...call, ...(call.app ? { app: callAppName(call.app) } : {}) }).path,
       listening: (startedAt) => {
         this.callCard = {
           kind: "listening",
@@ -2891,7 +2912,7 @@ export class Controller {
       // The notification is held by CallNotes until the call is finished or its folder is gone, so that its click stays alive.
       offerCutShort: (call, finish) => {
         const when = call.startedAt.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-        const where = call.app ? ` in ${call.app}` : "";
+        const where = call.app ? ` in ${callAppName(call.app)}` : "";
         return this.notify(
           "Finish notes for a call that was cut short",
           `The call${where} from ${when} was cut short. Click to finish the notes. Your recording stays on this Mac until then.`,
@@ -2915,6 +2936,7 @@ export class Controller {
       ownPids: () => this.ownPids(),
       // A dictation's card still held back (`showCursorCard`) takes the free capsule first: its own hide asks the offer again.
       canAsk: () =>
+        !this.settingUpCapture &&
         this.store.get().offerCallNotes &&
         this.callNotesOffer() === "ready" &&
         this.capsuleState.kind === "hidden" &&

@@ -10,8 +10,8 @@ import { call, filesUnder, launch, makeLibrary, read, speechWav, windowFor } fro
 
 const ASKED = "Zoom is using the microphone. Take notes on this call?";
 
-/** Zoom, holding the microphone, as the watcher reports it. */
-const ZOOM = { pid: 4242, bundle: "us.zoom.xos", appPid: 4242, app: "Zoom", path: null };
+/** Zoom, holding the microphone, as the watcher reports it: by its own name, "zoom.us", which the capsule and the notes call Zoom. */
+const ZOOM = { pid: 4242, bundle: "us.zoom.xos", appPid: 4242, app: "zoom.us", path: null };
 
 /** The call app's side of a call: a spoken WAV as raw 16 kHz mono s16le. */
 function themPcm(): string {
@@ -28,7 +28,7 @@ function themPcm(): string {
  * call-notes.spec.ts launches it. Its own config folder keeps the owner's `~/.config/avanzel` out of reach. Waits until call notes
  * could start, which the offer needs before it asks.
  */
-async function launchForCalls(settings: Record<string, unknown> = {}) {
+async function launchForCalls(settings: Record<string, unknown> = {}, env: Record<string, string> = {}) {
   const library = await makeLibrary();
   const userData = mkdtempSync(path.join(tmpdir(), "avz-e2e-data-"));
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, callConsent: true, fileMode: "evening", ...settings }));
@@ -39,6 +39,7 @@ async function launchForCalls(settings: Record<string, unknown> = {}) {
     AVANZEL_FAKE_CALLTAP: themPcm(),
     AVANZEL_FAKE_AUDIO: speechWav("Shall we start with the budget?"),
     AVANZEL_FAKE_TRANSCRIPT: "Shall we start with the budget?",
+    ...env,
   });
   const capsule = await windowFor(app, "capsule");
   await expect.poll(async () => ((await call(app, "panelSnapshot")) as { callNotesOffer: string }).callNotesOffer, { timeout: 15_000 }).toBe("ready");
@@ -118,5 +119,29 @@ test("with Offer notes off, nothing is asked", async () => {
   await call(app, "micHoldersForTests", [ZOOM]);
   await wait(6_000);
   expect(await capsuleState(app)).toMatchObject({ kind: "hidden" });
+  await app.close();
+});
+
+test("a question left unanswered goes after its time, which counts as Not now", async () => {
+  const { app } = await launchForCalls({}, { AVANZEL_CALL_OFFER_MS: "2000" });
+  await call(app, "micHoldersForTests", [ZOOM]);
+  await expect.poll(() => capsuleState(app), { timeout: 15_000 }).toMatchObject({ kind: "call-offer", app: "Zoom" });
+  await expect.poll(() => capsuleState(app), { timeout: 3_500 }).toMatchObject({ kind: "hidden" });
+
+  await call(app, "micHoldersForTests", [ZOOM]);
+  await wait(6_000);
+  expect(await capsuleState(app)).toMatchObject({ kind: "hidden" });
+  await app.close();
+});
+
+test("a question that gives way to something else is asked again once the capsule is free", async () => {
+  const { app } = await launchForCalls();
+  await call(app, "micHoldersForTests", [ZOOM]);
+  await expect.poll(() => capsuleState(app), { timeout: 15_000 }).toMatchObject({ kind: "call-offer", app: "Zoom" });
+
+  // Another card takes the capsule (the bar that says there is no filing to undo, gone by itself after 1.5 s).
+  await call(app, "setCapsule", { kind: "nothing-to-undo" }, 1_500);
+  expect(await capsuleState(app)).toMatchObject({ kind: "nothing-to-undo" });
+  await expect.poll(() => capsuleState(app), { timeout: 10_000 }).toMatchObject({ kind: "call-offer", app: "Zoom" });
   await app.close();
 });
